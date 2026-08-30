@@ -1,0 +1,25 @@
+[package]
+name         = "buildl-cli"
+version      = "0.1.0"
+description  = "The `buildl` binary — a thin clap shell over the buildl library."
+readme       = "README.md"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+
+[[bin]]
+name = "buildl"
+path = "src/main.rs"
+# The binary shares its name with the library; without this, `cargo doc` collides
+# on target/doc/buildl (cargo #6313). The bin has no public API to document.
+doc  = false
+
+[dependencies]
+# The library carries all logic; this crate is argument parsing and phase
+# orchestration only (architecture.md §1).
+buildl = { workspace = true }
+
+[lints]
+workspace = true
