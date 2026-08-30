@@ -1,0 +1,18 @@
+[package]
+name         = "buildl"
+version      = "0.1.0"
+description  = "A sandboxed, deterministic build system whose build files are written in Lua and evaluated on the airsl embedded runtime."
+readme       = "README.md"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+
+# Empty scaffold — the design phase is not closed (the depfile question,
+# docs/fundamental-walkthrough.md §6). Dependencies are added from the
+# workspace catalog as modules land; none are used yet.
+[dependencies]
+
+[lints]
+workspace = true

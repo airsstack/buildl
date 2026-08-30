@@ -1,0 +1,72 @@
+[workspace]
+resolver = "3"
+members  = ["crates/buildl", "crates/buildl-cli"]
+
+[workspace.package]
+edition      = "2024"
+rust-version = "1.91"
+license      = "Apache-2.0"
+repository   = "https://github.com/airsstack/buildl"
+authors      = ["rstlix0x0 <rstlix.dev@gmail.com>"]
+
+[workspace.dependencies]
+# The embedded Lua runtime buildl declares its build files on. A dependency of the
+# `declare` module ONLY (architecture.md §1.1) — no other module may know Lua exists,
+# so an airsl upgrade's blast radius stays one module deep. Pulls in mlua/lua54
+# vendored transitively, so a C compiler is required to build this workspace.
+airsl      = "0.1.3"
+# Serialization for every phase handoff (Vec<Declaration> → TargetGraph → Plan →
+# Vec<ActionOutcome>) and the durable stores. NOTE: all JSON output must leave
+# through the one canonical sorted-key serializer (architecture.md §5.2), built on
+# serde_json — never through serde_json::to_string directly.
+serde      = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+# Errors. One structured enum in the library, airsl-style — structured fields,
+# no message parsing anywhere (architecture.md §4).
+thiserror  = "2.0.18"
+# SHA-256 for the Digest type — files, outputs, action keys, log blobs. SHA-256
+# over blake3 for REAPI compatibility (decision record, architecture.md §6); the
+# stat cache makes hashing rare on warm builds anyway.
+sha2       = "0.10"
+# Parallel file hashing in the Plan phase. Confined to the `plan` module (decision
+# record §6) so the executor's plain-threads model stays singular.
+rayon      = "1"
+# buildl.toml (the ceiling) parsing in `manifest`. Read-only, like airsl's
+# extension manifests: the `display` (serialization) default feature is dropped.
+toml       = { version = "0.8", default-features = false, features = ["parse"] }
+# Source globbing for `b.sources()` — the declaration phase's only filesystem
+# read; results are sorted host-side so declaration is deterministic regardless
+# of filesystem order (design.md).
+globset    = "0.4"
+walkdir    = "2.5"
+# Exec-dir materialisation for the tier-2 input sandbox and temp-file-then-rename
+# atomic writes in `store` (architecture.md §3.5).
+tempfile   = "3.23.0"
+# CLI argument parsing (buildl-cli).
+clap       = { version = "4", features = ["derive"] }
+# Internal workspace member — path for local builds, version for publish-readiness.
+# `buildl-cli` inherits this with `{ workspace = true }`. Cargo strips the path and
+# keeps the version when packaging, so the published crate depends on crates.io.
+buildl     = { version = "0.1.0", path = "crates/buildl" }
+
+[workspace.lints.rust]
+unsafe_code        = "forbid"
+missing_docs       = "warn"
+unreachable_pub    = "warn"
+unused_must_use    = "deny"
+
+[workspace.lints.clippy]
+pedantic           = { level = "warn", priority = -1 }
+nursery            = { level = "warn", priority = -1 }
+unwrap_used        = "deny"
+expect_used        = "warn"
+panic              = "deny"
+todo               = "warn"
+dbg_macro          = "deny"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+
+[profile.release]
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"
