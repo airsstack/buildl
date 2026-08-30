@@ -1,0 +1,21 @@
+{
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
+  "extraKnownMarketplaces": {
+    "claudestacks": {
+      "source": {
+        "source": "github",
+        "repo": "airsstack/claudestacks"
+      }
+    }
+  },
+  "enabledPlugins": {
+    "claudestacks@claudestacks": true,
+    "claudestacks-cmux@claudestacks": true,
+    "claudestacks-guideline-rust@claudestacks": true,
+    "claudestacks-journal@claudestacks": true,
+    "claudestacks-sdlc@claudestacks": true
+  }
+}
