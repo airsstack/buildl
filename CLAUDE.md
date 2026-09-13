@@ -41,3 +41,35 @@ Determinism house rules (architecture.md §5) apply to any future code: no `Hash
 
 - Both spec docs carry `**Author:** rstlix0x0 · **Date:** … · **Reviewers:** —` headers and numbered reference lists; new design content should cite into those lists.
 - License is Apache-2.0, following airsstack convention. buildl is part of the airsstack ecosystem and the first consumer of airsl's policy model and host-module seam.
+
+## Response style
+
+Two rules govern how answers are written in this repository.
+
+**1. Concise mode is always on.** Level `full`, stored at `$AIRSSTACK_HOME/cc/concise.json`
+(default `$HOME/.airsstack/cc/concise.json`) and re-injected every turn by the
+`claudestacks` `UserPromptSubmit` hook. Drop articles where unambiguous, filler, hedging and
+pleasantries; fragments are fine; prefer the short synonym. Never compress away technical
+substance — code blocks, shell commands and error text stay verbatim, technical terms stay
+exact. Write normally for security warnings, irreversible-action confirmations and ordered
+multi-step instructions. Invoke the `claudestacks:concise` skill to change or restore the level.
+
+**2. Prefer a diagram or table to a narrative paragraph.** Anything with structure — a
+pipeline, a state machine, a module graph, a decision matrix, a milestone ladder — is shown,
+not described. Three sentences of prose tracing a data path is a fenced ASCII diagram
+instead:
+
+```text
+  build.lua ──► Load ──► Resolve ──► Plan ──► Execute ──► Record
+                 │         │          │         │           │
+             Vec<Decl>  TargetGraph  Plan   Vec<Outcome>  cas + row + log
+                 └── check   └── graph  └── plan       └── build
+```
+
+Comparisons, option sets and per-file breakdowns go in Markdown tables. Prose is for the
+argument connecting them — the reasoning, the trade-off, the recommendation — not for
+restating what the picture already shows.
+
+**Chat ASCII, document Mermaid.** This rule governs terminal responses only. The design
+documents use Mermaid deliberately (GitHub renders it) — never convert a `mermaid` block in
+`docs/` to ASCII, and keep using Mermaid when adding diagrams there.
