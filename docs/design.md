@@ -26,7 +26,7 @@ airsl supplies exactly the substrate this needs [1]:
 
 - Lua 5.4 statically linked, no interpreter to install, integer/float distinction preserved (byte-stable JSON).
 - A policy model with three independent axes: language surface, parameterised grants, resource ceilings.
-- A host-module seam (`HostModule`, `ModuleSet`, `InstallContext`) so buildl's declaration API installs under its own `buildl` root table without forking airsl.
+- A host-module seam (`HostModule`, `ModuleSet`, `InstallContext`) so buildl's declaration API installs as its own `buildl` module table without forking airsl.
 - Deterministic primitives: sorted JSON keys, sorted directory walks, locale pinned to C.
 - Measured engine economics: ~128 µs to construct an engine, ~4.6 µs per reused evaluation, ~136 µs for a fresh engine per evaluation — cheap enough to give every build file a disposable engine.
 
@@ -113,7 +113,9 @@ Two rules carried over from airsl's extension design deliberately: variables and
 
 ## 5. The Lua declaration API
 
-Installed under the root table `buildl` (`RootTable::new("buildl")` — validated by airsl against reserved words and shadowable globals [1]).
+Delivered as the **`buildl` module table**: one airsl `HostModule` whose table holds every helper a build file calls. The engine keeps airsl's default root table, so the curated host modules (§12.1) stay reachable as `airsstack.json`, `airsstack.path`, `airsstack.glob` and the rest, and the `buildl` module is installed beside them as `airsstack.buildl`. During installation the module also binds that same table to the global `buildl` — one table, two names — so build files write `buildl.target(...)` rather than `airsstack.buildl.target(...)`. The binding holds because airsl installs modules after it withholds unsafe globals and never locks the global table afterwards [1]. airsl's root-table validation does not cover a global a module binds, so keeping the name `buildl` clear of Lua's reserved words and standard globals is buildl's responsibility.
+
+Every `build.lua` is evaluated with the `buildl` table already loaded. It begins as the declaration primitives below and is the framework surface everything later builds on: plugins (§10) arrive through `buildl.use`, and whatever a plugin generates is still these primitives.
 
 ```lua
 -- build.lua (workspace root)
@@ -127,7 +129,7 @@ b.rule("cc", {
 })
 
 for _, src in ipairs(b.sources("src/**/*.c")) do
-  b.target(b.path.stem(src) .. ".o", { rule = "cc", inputs = { src } })
+  b.target(airsstack.path.stem(src) .. ".o", { rule = "cc", inputs = { src } })
 end
 
 b.target("app", {

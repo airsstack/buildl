@@ -54,7 +54,7 @@ b.rule("cc", {
 })
 
 for _, src in ipairs(b.sources("src/**/*.c")) do
-  b.target(b.path.stem(src) .. ".o", { rule = "cc", inputs = { src } })
+  b.target(airsstack.path.stem(src) .. ".o", { rule = "cc", inputs = { src } })
 end
 
 b.target("app", {

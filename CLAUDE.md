@@ -28,6 +28,7 @@ Section cross-references between the docs (e.g. "design §8.5", "§12.4 ledger")
 **Structural rules (architecture.md §1.1):**
 - airsl is a dependency of the `declare` module only; no other module knows Lua exists.
 - Modules depend strictly downward; phase modules meet only through `types/` and `store/`.
+- Build files run with two globals: `airsstack` (airsl's default root table, holding the curated host modules — `json`, `path`, `regex`, `hash`, `glob`) and `buildl` (buildl's own module table — the declaration framework). They are one table bound twice: the `buildl` `HostModule` installs as `airsstack.buildl` and binds the same table to the global `buildl` inside `install` (design §5). Never rename the root table to `buildl`.
 
 ## Planned workspace shape
 

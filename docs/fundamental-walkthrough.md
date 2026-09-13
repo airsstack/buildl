@@ -160,7 +160,7 @@ The one fundamental buildl does not yet cover: **dynamic input discovery** — N
 
 ```lua
 -- design.md section 5 — per-file C compilation
-b.target(b.path.stem(src) .. ".o", { rule = "cc", inputs = { src } })
+b.target(airsstack.path.stem(src) .. ".o", { rule = "cc", inputs = { src } })
 ```
 
 ```mermaid
