@@ -1,6 +1,6 @@
 # buildl — internal architecture
 
-**Status: draft for review.** Companion to [`buildl-design.md`](https://claude.ai/cowork/buildl-design.md): that document says _what buildl is and why_; this one says _how it is built in Rust_. Scope follows the §13 decision there — the build-system core first: Load → Resolve → Plan → Execute → Record, the action cache and cas, and the `check` / `graph` / `plan` / `build` commands. Plugins, remote, and watch are designed for but not implemented by anything here.
+**Status: draft for review.** Companion to [`design.md`](./design.md): that document says _what buildl is and why_; this one says _how it is built in Rust_. Scope follows the §13 decision there — the build-system core first: Load → Resolve → Plan → Execute → Record, the action cache and cas, and the `check` / `graph` / `plan` / `build` commands. Plugins, remote, and watch are designed for but not implemented by anything here.
 
 **Author:** rstlix0x0 · **Date:** 2026-08-23 · **Reviewers:** —
 
