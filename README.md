@@ -126,16 +126,20 @@ Each CLI command is the Load → Resolve → Plan → Execute → Record pipelin
 
 ## Repository layout
 
-A Cargo workspace mirroring airsl's shape — a library crate carrying everything public, a CLI crate that is a thin shell over it:
+A Cargo workspace of four crates, dependency-inverted so every flow of a build is testable without Lua, a filesystem, or a process:
 
 ```text
 buildl/
   crates/
-    buildl/            # the library — manifest, declare, graph, plan, exec, store
-    buildl-cli/        # the `buildl` binary: clap + phase orchestration
+    buildl-core/                      # domain data, ports (traits), pure logic: no I/O, no Lua
+    buildl-lua/                       # evaluates build.lua through airsl
+    buildl/                           # adapters + composition root: the complete framework
+    buildl-cli/                       # the `buildl` binary: thin clap shell
   docs/
-    design.md          # what buildl is and why
-    architecture.md    # how it is built in Rust
+    design.md                         # what buildl is and why
+    architecture.md                   # how each part works in Rust
+    architecture-building-blocks.md   # how the parts fit: C4 views, crates, ports
+    fundamental-walkthrough.md        # the design mapped onto build-system theory
 ```
 
 Workspace policy is inherited verbatim from airsl [1]: `unsafe_code = "forbid"`, `unwrap_used` and `panic` denied, pedantic + nursery clippy at warn, every dependency commented with its reason.

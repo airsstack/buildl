@@ -59,7 +59,7 @@ Consequences of the split:
 
 ## 3. Workspace layout and artifacts
 
-buildl is delivered as a Cargo workspace mirroring airsl's own layout: `crates/buildl` (library — graph, scheduler, cache, host module) and `crates/buildl-cli` (the `buildl` binary). On disk in a user's project:
+buildl is delivered as a Cargo workspace of four crates: `crates/buildl-core` (domain data, ports, and the pure logic of every phase), `crates/buildl-lua` (the airsl adapter that evaluates build files), `crates/buildl` (the remaining adapters and the composition root), and `crates/buildl-cli` (the `buildl` binary). Their building blocks are in [`architecture-building-blocks.md`](./architecture-building-blocks.md). On disk in a user's project:
 
 ```text
 myproject/
