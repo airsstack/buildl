@@ -2,9 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Status: design phase — no code exists yet
+## Status: scaffold in place, implementation not started
 
-buildl is a sandboxed, deterministic build system whose build files are written in Lua and evaluated on the [airsl](https://github.com/airsstack/airsl) embedded runtime. Nothing is implemented; the repository currently contains only design documents. Work here means editing docs, not writing code — until the one pre-development blocker is resolved: **the depfile problem** (dynamic input discovery, e.g. C header dependencies the compiler reports at execute time). See `docs/fundamental-walkthrough.md` §6; the decision is either "fine-grained C is out of scope for v1" or Ninja-style depfile support host-side.
+buildl is a sandboxed, deterministic build system whose build files are written in Lua and evaluated on the [airsl](https://github.com/airsstack/airsl) embedded runtime. The repository holds the design documents plus a workspace scaffold: both crates exist as doc-comment stubs with no dependencies wired, and the `cargo make dod` gate and CI matrix are live. No pipeline module is implemented.
+
+The pre-development blocker is **resolved** (2026-09-13): fine-grained per-file C/C++ compilation is out of scope for v1, and buildl's mechanism for dynamic input discovery is the **discovery target** (design §10) — a cached action whose output a later declaration pass consumes — not depfile parsing. See `docs/fundamental-walkthrough.md` §6 for the reasoning and design §13 for the scope note. Implementation may begin.
 
 ## Documents and their roles
 

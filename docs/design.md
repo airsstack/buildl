@@ -628,6 +628,8 @@ What remains honestly implicit — the kernel version, libc, filesystem semantic
 
 **Scope decision (2026-08-23): buildl is a build system first.** The defining capability is answering _"does this need to run at all?"_ — the action key, cas, and dirty check. Task-runner use (chores via `always = true`, alias-only graphs, cargo-make replacement) is a degenerate case the model yields for free and is explicitly not a v1 design driver. Nothing is designed _for_ it; nothing needs removing to allow it later.
 
+**Scope decision (2026-09-13): fine-grained per-file C/C++ compilation is out of scope for v1.** The §5 per-`.o` pattern is unsound without dynamic input discovery, since the headers a compiler reads are never declared — traced in the walkthrough's §6. Every stack in §9 and every plugin in §10.3 wraps a toolchain that tracks its own internal dependencies, so no v1 use case needs the fine-grained shape. Where dynamic discovery _is_ needed, the mechanism is the **discovery target** (§10) — a cached action whose output a later declaration pass consumes — not a depfile side channel in the executor. The residual case discovery targets do not cover, per-action mid-execution discovery, extends their contract (§14) if it is ever required. No branch of this decision changes the Lua surface.
+
 Dependency-ordered, with the airsl extension work interleaved:
 
 1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `run`/`plan`/`graph`/`check`, local cache and cas. Needs only shipped airsl.

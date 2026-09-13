@@ -194,7 +194,15 @@ flowchart TD
     LOUD --> OK["Correct but unusable —<br/>fine-grained C is effectively<br/>unsupported without depfiles"]
 ```
 
-Tier 2 converts the correctness bug into a loud failure — the sandbox doing exactly its job [4] — but that only proves fine-grained C/C++ cannot be expressed, not that it works. The worked examples in design §9 avoid the problem by wrapping whole self-tracking toolchains (`go build ./...`, `cargo build`) with full source globs, which is sound. The resolution to record before development: either declare fine-grained C compilation out of scope for v1, or add Ninja-style depfile support — the executor parses the compiler's `.d` output, records _observed_ inputs beside the cache row, and folds them into the next run's key [5]. The depfile option is host-side only; the Lua surface never changes.
+Tier 2 converts the correctness bug into a loud failure — the sandbox doing exactly its job [4] — but that only proves fine-grained C/C++ cannot be expressed, not that it works. The worked examples in design §9 avoid the problem by wrapping whole self-tracking toolchains (`go build ./...`, `cargo build`) with full source globs, which is sound.
+
+**Resolution (2026-09-13): fine-grained per-file C/C++ compilation is out of scope for v1, and buildl's mechanism for dynamic input discovery is the _discovery target_ (design §10), not depfile parsing.**
+
+Two findings settle it. First, the gap is one build pattern in one stack, not a general hole: every other toolchain discovers its own dependencies internally, which is why design §9 wraps each as a single action and why the §10.3 plugin catalog — `go`, `bun`, `rust`, `docker`, `proto`, `python` — contains no C/C++ entry. Second, buildl already owns a native answer to dynamic discovery. Design §10 decided it: an ordinary cached action whose JSON output a later declaration pass consumes, so everything executed stays inside the granted, planned, cached world. A depfile is the executor reading a file a compiler happened to drop; a discovery target is a first-class node with an action key, a grant, and a plan row — the same explicitness ledger (§12.4) as everything else.
+
+What genuinely remains is narrower than "depfiles": _per-action, mid-execution_ discovery, which is the one shape a discovery target does not cover, since its output feeds the next declaration pass rather than the running action. Should that case ever be needed, it extends the discovery-target contract (design §14) rather than grafting a `.d` side channel into `exec`. Ninja's depfile format [5] would then be one possible adapter, not the design.
+
+The Lua surface is unaffected in every branch of this decision.
 
 ---
 
@@ -267,16 +275,15 @@ mindmap
       REAPI-shaped for remote
       Settings fold into the key
       Phony escape hatch — always true
-    Gap
-      Dynamic inputs — depfiles
-      C headers scenario unsound at tier 1
     Deferred by decision
+      Fine-grained C — per-file object graphs
+      Dynamic inputs — discovery targets §10
       Configurations — one target one platform
       Incremental Load — lazy loading pre-named
       Remote cache then execution
 ```
 
-One sentence per branch: everything the two fundamentals documents name as load-bearing exists in the specs as a concrete mechanism; the single pre-development blocker is deciding the depfile question, because it is a correctness property, not a feature; and the deferred items all have pre-named fallbacks, which is what makes them reversible.
+One sentence per branch: everything the two fundamentals documents name as load-bearing exists in the specs as a concrete mechanism; the one correctness question the taxonomy predicted — dependencies discovered during execution (§1) — is answered by discovery targets (design §10) with fine-grained C deferred behind it (§6); and the deferred items all have pre-named fallbacks, which is what makes them reversible.
 
 ---
 
