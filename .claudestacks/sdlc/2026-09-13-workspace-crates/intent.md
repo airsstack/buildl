@@ -22,7 +22,7 @@ The airsl requirement is `0.1.3`. The decision is to accept the newest `0.1.x` r
 
 ## Affected systems
 
-- Workspace root: `Cargo.toml` (members, `rust-version`, dependency catalog and its comments), `rust-toolchain.toml`, `deny.toml`, `.github/workflows/ci.yml` comments, `CLAUDE.md` status line
+- Workspace root: `Cargo.toml` (members, `rust-version`, dependency catalog and its comments), `rust-toolchain.toml`, `deny.toml`, `.github/workflows/ci.yml` (comments and toolchain install steps), `CLAUDE.md` status line
 - New crates: `crates/buildl-core`, `crates/buildl-lua`
 - Existing crates: `crates/buildl`, `crates/buildl-cli` (manifests, rustdoc, READMEs)
 
@@ -35,7 +35,8 @@ The airsl requirement is `0.1.3`. The decision is to accept the newest `0.1.x` r
   - `buildl-cli` → `buildl`
   - `buildl-core` → no buildl crate and no airsl
 - The airsl requirement accepts any `0.1.x` release, and `cargo update` resolves to the newest.
-- The pinned toolchain channel and the workspace `rust-version` are both `1.94`, matching airsl's minimum supported Rust version.
+- The toolchain channel is `stable`, so local builds and CI always run the gate on the latest stable Rust release.
+- The workspace `rust-version` is `1.94`, matching airsl's minimum supported Rust version.
 - No rustdoc, README, manifest or tooling comment describes the pre-resolution scaffold or the single-crate module layout.
 - `cargo make dod` passes.
 - `cargo deny check` passes. Any duplicate-version or license finding introduced by airsl's dependency graph is fixed, or recorded in `deny.toml` with a reason.
