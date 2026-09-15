@@ -1,0 +1,19 @@
+[package]
+name         = "buildl-lua"
+version      = "0.1.0"
+description  = "Lua build-file evaluation for buildl, on the airsl embedded runtime."
+readme       = "README.md"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+
+[dependencies]
+# The only buildl crate that depends on a Lua runtime.
+airsl       = { workspace = true }
+# The ports this crate implements.
+buildl-core = { workspace = true }
+
+[lints]
+workspace = true

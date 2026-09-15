@@ -2,6 +2,7 @@
 resolver = "3"
 members  = [
     "crates/buildl-core",
+    "crates/buildl-lua",
     "crates/buildl",
     "crates/buildl-cli",
 ]
@@ -15,10 +16,12 @@ authors      = ["rstlix0x0 <rstlix.dev@gmail.com>"]
 
 [workspace.dependencies]
 # The embedded Lua runtime buildl declares its build files on. A dependency of the
-# `declare` module ONLY (architecture.md §1.1) — no other module may know Lua exists,
-# so an airsl upgrade's blast radius stays one module deep. Pulls in mlua/lua54
-# vendored transitively, so a C compiler is required to build this workspace.
-airsl      = "0.1.3"
+# `buildl-lua` crate ONLY — no other crate may know Lua exists, so an airsl
+# upgrade's blast radius stays one crate deep. The requirement accepts the newest
+# 0.1.x release; airsl 0.1 requires rustc 1.94, which sets this workspace's
+# rust-version. Pulls in mlua/lua54 vendored transitively, so a C compiler is
+# required to build this workspace.
+airsl      = "0.1"
 # Serialization for every phase handoff (Vec<Declaration> → TargetGraph → Plan →
 # Vec<ActionOutcome>) and the durable stores. NOTE: all JSON output must leave
 # through the one canonical sorted-key serializer (architecture.md §5.2), built on
@@ -53,6 +56,7 @@ clap       = { version = "4", features = ["derive"] }
 # strips the path and keeps the version when packaging, so a published crate
 # depends on crates.io.
 buildl-core = { version = "0.1.0", path = "crates/buildl-core" }
+buildl-lua  = { version = "0.1.0", path = "crates/buildl-lua" }
 buildl      = { version = "0.1.0", path = "crates/buildl" }
 
 [workspace.lints.rust]
