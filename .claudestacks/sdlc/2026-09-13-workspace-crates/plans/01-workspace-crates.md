@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-09-13
 ---
 
@@ -37,7 +37,7 @@ crates/buildl-cli/README.md         — modify  no design-phase status, no docs/
 crates/buildl-cli/src/main.rs       — modify  binary doc without scaffold narration
 Makefile.toml                       — modify  "neither crate" → "no crate"
 .github/workflows/ci.yml            — modify  toolchain steps install or update stable; matrix comment names adapters, not exec/store modules
-deny.toml                           — modify  drop unused-allowed-license override; comments for four members
+deny.toml                           — modify  unused-allowed-license allow → deny; comments for four members
 CLAUDE.md                           — modify  status paragraph, workspace-shape heading, adapter dependency rule
 ```
 
@@ -48,7 +48,7 @@ Every command runs from the repository root. Facts these tasks depend on, the ai
 - `rustup check` reports the latest stable release as `1.98.1 (48a229cea 2026-09-01)`.
 - `rustup toolchain install --help` (rustup 1.29.1) reads: "Install or update the given toolchains, or by default the active toolchain". Run with no argument, it installs or updates the toolchain `rust-toolchain.toml` names.
 - `rust-version = "stable"` is rejected by cargo with `error: expected a version like "1.32"`, so `rust-version` carries a number.
-- With this plan's final tree applied to a scratch copy of the repository on rustc 1.98.1, `cargo make dod` passes, `cargo deny check` prints `advisories ok, bans ok, licenses ok, sources ok` with the `unused-allowed-license` override removed, and `cargo tree -d` finds no duplicate versions for the host platform (`--target all` shows `syn` 2.0.119 beside 3.0.5, which `cargo deny check` accepts).
+- With this plan's final tree applied to a scratch copy of the repository on rustc 1.98.1, `cargo make dod` passes, `cargo deny check` prints `advisories ok, bans ok, licenses ok, sources ok` with `unused-allowed-license = "deny"` (re-checked 2026-09-15 on the committed tree), and `cargo tree -d` finds no duplicate versions for the host platform (`--target all` shows `syn` 2.0.119 beside 3.0.5, which `cargo deny check` accepts).
 
 ### Task 1 — Follow stable Rust with a 1.94 minimum
 
@@ -368,7 +368,7 @@ Every command runs from the repository root. Facts these tasks depend on, the ai
    $ cargo make dod
    [cargo-make] INFO - Build Done in <n> seconds.
    ```
-   Expected: `buildl-lua` depends on exactly `airsl` (0.1.4, or a newer 0.1.x if one has been published) and `buildl-core`. `cargo tree -d` finds no duplicate versions for the host platform. With `--target all` it lists one: `syn` 2.0.119 (via `jiff-static`, a proc-macro under airsl's `jiff`) alongside `syn` 3.0.5, and Task 7's `cargo deny check` accepts it. `Locking 0 packages` means airsl already resolves to the newest compatible 0.1.x; the `note:` count may differ. The gate exits 0, and the first build compiles vendored Lua from C. `Cargo.lock` now contains airsl's dependency graph.
+   Expected: `buildl-lua` depends on exactly `airsl` (0.1.4, or a newer 0.1.x if one has been published) and `buildl-core`. `cargo tree -d` finds no duplicate versions for the host platform. With `--target all` it lists two groups: `syn` 2.0.119 (via `jiff-static`, a proc-macro under airsl's `jiff`) alongside `syn` 3.0.5, and `jiff-core` 0.1.1 twice, once under `jiff-static` and once under `jiff`. The `jiff-core` group is one version reached through a proc-macro and a normal edge, not two versions. Task 7's `cargo deny check` accepts both. `Locking 0 packages` means airsl already resolves to the newest compatible 0.1.x; the `note:` count may differ. The gate exits 0, and the first build compiles vendored Lua from C. `Cargo.lock` now contains airsl's dependency graph.
 9. Commit `feat(buildl-lua): add the buildl-lua crate on airsl 0.1`, including `Cargo.lock`.
 
 ### Task 4 — Wire buildl as the composition root
@@ -609,7 +609,7 @@ Every command runs from the repository root. Facts these tasks depend on, the ai
 
 1. Confirm the scaffold-era override is present:
    ```
-   $ grep -n 'unused-allowed-license\|empty scaffolds\|planned\|Both workspace members\|pins every direct one' deny.toml
+   $ grep -n 'unused-allowed-license = "allow"\|empty scaffolds\|planned\|Both workspace members\|pins every direct one' deny.toml
    ```
    Expected: matches for all five patterns.
 2. In `deny.toml`, replace:
@@ -622,7 +622,7 @@ Every command runs from the repository root. Facts these tasks depend on, the ai
    # Permissive licenses only, seeded from airsl's graph — the set buildl's
    # dependency catalog resolves into.
    ```
-3. In `deny.toml`, delete these lines, which directly follow `exceptions = []`:
+3. In `deny.toml`, replace these lines, which directly follow `exceptions = []`:
    ```toml
    # The member crates are still empty scaffolds, so most of the allow list is not
    # yet exercised by the graph. Without this, every unmatched allowance warns on
@@ -630,6 +630,13 @@ Every command runs from the repository root. Facts these tasks depend on, the ai
    # first real dependencies land.
    unused-allowed-license = "allow"
    ```
+   with:
+   ```toml
+   # An allowance no crate in the graph uses fails the check, so the allow list
+   # never grows past what the dependency graph actually needs.
+   unused-allowed-license = "deny"
+   ```
+   Deleting the override is not enough: cargo-deny's default for this key only warns, so an unused allowance would still exit 0.
 4. In `deny.toml`, replace:
    ```toml
    # Both workspace members are published to crates.io under Apache-2.0, so their
@@ -651,11 +658,11 @@ Every command runs from the repository root. Facts these tasks depend on, the ai
    ```
 6. Verify:
    ```
-   $ grep -n 'unused-allowed-license\|empty scaffolds\|planned\|Both workspace members\|pins every direct one' deny.toml
+   $ grep -n 'unused-allowed-license = "allow"\|empty scaffolds\|planned\|Both workspace members\|pins every direct one' deny.toml
    $ cargo deny check
    advisories ok, bans ok, licenses ok, sources ok
    ```
-   Expected: grep prints nothing. cargo-deny passes with no `license-not-encountered` warning, which shows that airsl's graph uses every allowed license.
+   Expected: grep prints nothing. cargo-deny passes with `unused-allowed-license = "deny"`, which shows that airsl's graph uses every allowed license; an allowance no crate uses would instead fail with `error[license-not-encountered]` and `licenses FAILED` (exit 4).
 7. Commit `build(repo): enforce unused license allowances in cargo-deny`.
 
 ### Task 8 — Record the four-crate scaffold in CLAUDE.md
@@ -688,12 +695,12 @@ Every command runs from the repository root. Facts these tasks depend on, the ai
    ```
    with:
    ```markdown
-   Adapters depend on `buildl-core`; `buildl-lua` never depends on `buildl`, and adapter modules inside `buildl` never import each other. `buildl` is the single composition root, and the only crate that depends on another adapter crate (`buildl-lua`).
+   Adapters depend on `buildl-core`; `buildl-lua` never depends on `buildl`, and adapter modules inside `buildl` never import each other. `buildl` is the single composition root, and the only adapter crate that depends on another adapter crate (`buildl-lua`).
    ```
 5. Verify:
    ```
    $ grep -n 'planned, not yet created\|## Planned workspace shape\|never on each other' CLAUDE.md
-   $ grep -n '## Workspace shape\|single composition root, and the only crate' CLAUDE.md
+   $ grep -n '## Workspace shape\|single composition root, and the only adapter crate' CLAUDE.md
    ```
    Expected: the first grep prints nothing; the second prints two lines.
 6. Commit `docs(repo): record the four-crate scaffold in CLAUDE.md`.
@@ -705,7 +712,67 @@ Every command runs from the repository root. Facts these tasks depend on, the ai
 - `cargo make dod` exits 0 on the stable toolchain (1.98.1 when checked), with `rust-version` 1.94.
 - `cargo deny check` prints `advisories ok, bans ok, licenses ok, sources ok`.
 - `cargo tree -p <crate> -e normal --depth 1 --prefix none` gives exactly these direct dependencies: `buildl-core` → none; `buildl-lua` → `airsl`, `buildl-core`; `buildl` → `buildl-core`, `buildl-lua`; `buildl-cli` → `buildl`.
-- `cargo tree -d` prints `warning: nothing to print.` for the host platform. With `--target all`, the only duplicate is `syn` (2.0.119 via `jiff-static`, and 3.0.5), which `cargo deny check` accepts.
+- `cargo tree -d` prints `warning: nothing to print.` for the host platform. With `--target all`, it lists `syn` (2.0.119 via `jiff-static`, and 3.0.5) and `jiff-core` 0.1.1 reached through two edges, both of which `cargo deny check` accepts.
 - `cargo update -p airsl --dry-run` reports `Locking 0 packages`: airsl is at the newest compatible 0.1.x.
 - `grep -rn 'scaffold\|design phase\|docs/\|depfile\|architecture\.md\|design\.md' crates` prints nothing; no rustdoc or crate README references planning documents.
 - `git diff --stat <commit before Task 1> HEAD -- docs/` is empty: no design document changed.
+
+## Review findings
+
+Tasks 1–4 were reviewed one task at a time; Tasks 5–8 as one batch. No review returned a blocking finding.
+
+- reversion-guard — `rust-version` 1.94 is never built: the gate runs only on stable and CI has no 1.94 job — `Cargo.toml:7` — open; not in this intent
+- reversion-guard — `rustup toolchain install` with no argument needs rustup 1.28 or newer on the runners (the reviewer's belief, not checked) — `.github/workflows/ci.yml:43` — open; unverified until the first CI run
+- reversion-guard — nothing catches a revert to `rustup show` alone — `.github/workflows/ci.yml:49` — recorded
+- scope — the deny job also installs rustfmt and clippy, which cargo-deny never uses (pre-existing) — `.github/workflows/ci.yml:85` — recorded
+- doc-accuracy — "the center buildl's other crates depend on" was false until Task 4 — `crates/buildl-core/src/lib.rs:3` — resolved by Task 4 (Task 4 review confirmed)
+- doc-accuracy — "Concrete adapters live in the `buildl-lua` and `buildl` crates", and the README link `../buildl-lua` was broken until Task 3 — `crates/buildl-core/src/lib.rs:17`, `crates/buildl-core/README.md:5` — link resolves after Task 3; the sentence states where adapters go
+- reversion-guard — nothing enforces "no filesystem, process, thread, environment or clock API" in `buildl-core` (no clippy `disallowed-*` config, no cargo-deny ban) — `crates/buildl-core/src/lib.rs:4` — follow-up for the `buildl-core` foundation chain
+- doc-accuracy — the port list omits Clock, Manifest/Approver, Reporter, StatCache/ToolResolver and Dispatcher — `crates/buildl-core/src/lib.rs:11` — recorded
+- doc-accuracy — "holds only module declarations and re-exports", but the file holds neither — `crates/buildl-core/src/lib.rs:20`, `crates/buildl-lua/src/lib.rs:18`, `crates/buildl/src/lib.rs:24` — recorded
+- doc-discipline — "added as the code that needs them lands" narrates future work in a manifest comment — `crates/buildl-core/Cargo.toml:14` — recorded
+- workspace — "Members inherit these with `{ workspace = true }`" was untrue for `buildl-core` and `buildl-lua` until Task 4 — `Cargo.toml:51-52` — resolved by Task 4
+- reversion-guard — removing `crates/buildl-lua` from `members` dropped the crate from the gate silently — `Cargo.toml:5` — mitigated by Task 4: as a path dependency of `buildl` it stays a member (Task 4 review, scratch copy)
+- dependency — `airsl = "0.1"` lowers the accepted minimum from 0.1.3 to 0.1.0, and no minimal-versions check exists — `Cargo.toml:24` — intended by the intent; raise the floor when the first airsl call lands
+- reversion-guard — nothing enforces "airsl only from `buildl-lua`", and removing `buildl`'s dependency edges still passes the gate — `Cargo.toml:24`, `crates/buildl/Cargo.toml:13` — follow-up chain (author's decision): a `deny.toml` `wrappers` ban on airsl plus a per-crate `cargo tree --depth 1` check
+- doc-accuracy — "The ports this crate implements" is plural; `buildl-lua` implements one port — `crates/buildl-lua/Cargo.toml:15` — recorded
+- doc-accuracy — "bound to the pipeline here alongside the others" is present tense with no binding code yet — `crates/buildl/Cargo.toml:15` — recorded
+- doc-accuracy — the README and `lib.rs` list different adapters, and neither matches the port catalog; the responsibilities omit the environment and terminal adapters, `LocalPorts`, the `Workspace` facade and the `buildl-core` re-export — `crates/buildl/README.md:5`, `crates/buildl/src/lib.rs:14` — recorded
+- plan-text — `cargo tree -d --target all` also lists `jiff-core` 0.1.1 twice, not only `syn` — Task 3 step 8, verification summary — fixed in this plan (author chose to amend during the run)
+- unguarded-fix — deleting `unused-allowed-license = "allow"` only turns an unused allowance into a warning (exit 0) — `deny.toml` — fixed and verified: set to `"deny"`. `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`, exit=0. A scratch copy with an extra `"0BSD"` allowance → `error[license-not-encountered]: license was not encountered`, `licenses FAILED`, exit=4
+- doc-accuracy — "the only crate that depends on another adapter crate" is false, since `buildl-cli` depends on `buildl` — `CLAUDE.md:31` — fixed and verified: now "the only adapter crate". `grep -n '## Workspace shape\|single composition root, and the only adapter crate' CLAUDE.md` → lines 31 and 34
+- doc-accuracy — `description` says "a thin clap shell", but clap is not a dependency — `crates/buildl-cli/Cargo.toml:4` — follow-up (author's decision)
+- doc-accuracy — "Every workspace member is published to crates.io", but none is yet — `deny.toml` `[licenses.private]` comment — follow-up
+- doc-accuracy — the `skip` list comment says it "freezes the current state", but `skip = []` — `deny.toml` bans section — follow-up
+- doc-accuracy — cites `architecture.md §5.2`, which does not exist — `Cargo.toml:27` — follow-up
+- doc-accuracy — the new §6 citation backs "storage adapters" more narrowly than the replaced `architecture.md §3.5` — `Cargo.toml:49-50` — follow-up
+- doc-accuracy — the `Digester` and `Manifest` ports are called "adapters" — `Cargo.toml:38-41` — kept; matches the architecture documents' wording
+- docs-consistency — rule 2 ("Adapters depend on `buildl-core` only") conflicts with the `buildl → buildl-lua` edge allowed by the §4 table — `docs/architecture-building-blocks.md` §7 — follow-up; `docs/` is outside this intent
+
+## Probe results
+
+- `rustup toolchain install --help` (rustup 1.29.1) → `Install or update the given toolchains, or by default the active toolchain` — holds
+- Task 1 start state: `grep -n 'channel' rust-toolchain.toml` → `6:channel = "stable"`; `grep -n 'rust-version' Cargo.toml` → `7:rust-version = "1.91"`; `grep -n 'pinned' .github/workflows/ci.yml` → lines 45, 78, 81 — holds (the channel was already `stable`, which step 1 allows)
+- `grep -n 'Digester\|Manifest\b\|storage adapter' docs/architecture-building-blocks.md` → `246:|`Manifest`|…|`buildl`|` and `247:|`Digester`|…|`buildl`|` — holds for Task 6's adapter names
+- `cargo tree -d` → `warning: nothing to print.` — holds
+- `cargo tree -d --target all` → `jiff-core v0.1.1` under `jiff-static` and under `jiff`, `syn v2.0.119`, `syn v3.0.5` — **AGAINST PLAN** (it named `syn` only); plan amended
+- `cargo update -p airsl --dry-run` → `Locking 0 packages to latest Rust 1.94 compatible versions`, `note: pass `--verbose` to see 1 unchanged dependencies behind latest` — holds (the count may vary)
+- `cargo tree -i airsl --workspace -e normal --depth 1` → `airsl v0.1.4`, `buildl-lua v0.1.0` — holds
+- Override deleted, extra `"0BSD"` allowance, scratch copy (Tasks 5–8 review) → `warning[license-not-encountered]`, `licenses ok`, exit 0 — **AGAINST PLAN** (Task 7's title says "enforce")
+- `unused-allowed-license = "deny"`, extra `"0BSD"` allowance, scratch copy: `cargo deny --manifest-path <copy>/Cargo.toml check licenses` → `error[license-not-encountered]: license was not encountered`, `licenses FAILED`, exit=4 — the fix works
+- Before Task 4, `crates/buildl-lua` dropped from `members` (Task 3 review, scratch copy) → clippy exit 0 and `buildl-lua` never checked. After Task 4 (Task 4 review) → gate exit 0 and `buildl-lua` still checked as an automatic path member
+- `buildl-core` and `buildl-lua` deleted from `crates/buildl/Cargo.toml` (Task 4 review, scratch copy) → `cargo make dod` exit 0 — edges unguarded
+- `grep -rn 'scaffold\|design phase\|docs/\|depfile\|architecture\.md\|design\.md' crates` → no output, exit 1 — holds
+- `git diff --stat 096106c HEAD -- docs/` → no output — holds
+
+## Deviations
+
+- 2026-09-15 — Handoff session: `handoff.lua init` was refused by the worktree guard (`airsl run … --allow-exec git`). The run used a scratchpad `handoff/` directory with no `.active` lease.
+- 2026-09-15 — Task 1 step 2 was a no-op: `rust-toolchain.toml` already held the target content, committed in 096106c.
+- 2026-09-15 — Commits: at the checkpoint the author chose one commit per task. Tasks 1–4 had accumulated uncommitted, so each commit was rebuilt from a per-task snapshot taken after that task's review, and `cargo make dod` exited 0 on every rebuilt tree before its commit. Commit bodies were written by the orchestrator.
+- 2026-09-15 — Tasks 5–8 ran as one parallel batch (disjoint files, no shared symbols) with one review. The Task 7 and Task 8 coders skipped `cargo make dod`, since their files lie outside its scope; the orchestrator ran it once for the batch (exit 0).
+- 2026-09-15 — Task 3 step 8 and the verification summary were amended for the `jiff-core` duplicate (author: amend now).
+- 2026-09-15 — Task 7 sets `unused-allowed-license = "deny"` instead of only deleting the override. Steps 1, 3 and 6, the file-structure line and the facts line were amended (author's decision after the review showed deletion only warns).
+- 2026-09-15 — Task 8 says "the only adapter crate that depends on another adapter crate". Steps 4 and 5 were amended (author's decision).
+- 2026-09-15 — The Tasks 5–8 fix round (two one-line edits) was made inline by the orchestrator instead of by a fresh coder. The touched verifications were re-run: `cargo deny check` and the Task 8 greps.
+- 2026-09-15 — The orchestrator once wrote a gate log to the worktree's parent directory (`../dod-t1.log`) and moved it to the scratchpad. No repository file was affected.
