@@ -1,6 +1,6 @@
-//! The `buildl` binary — a thin shell over the `buildl` library.
+//! The `buildl` binary — the command-line entry point to the `buildl` library.
 //!
-//! This crate is a scaffold: argument parsing and phase orchestration arrive
-//! with the library's implementation.
+//! All build logic lives in the library crates; this binary depends on the
+//! `buildl` crate alone.
 
 const fn main() {}

@@ -1,8 +1,8 @@
 # buildl-cli
 
-The `buildl` binary — a thin [clap](https://crates.io/crates/clap) shell over the [`buildl`](../buildl) library, which carries all logic.
+The `buildl` binary — the command-line entry point to the [`buildl`](../buildl) build system library.
 
-**Status: design phase.** This crate is an empty scaffold. See the repository's [`docs/design.md`](../../docs/design.md) and [`docs/architecture.md`](../../docs/architecture.md) for what is planned.
+**Status:** pre-release; the binary provides no commands.
 
 ## License
 
