@@ -25,10 +25,9 @@ env:
 jobs:
   dod:
     name: Definition of Done
-    # The matrix mirrors airsl's: once `airsl` lands in the dependency graph it
-    # compiles vendored Lua 5.4 from C, and the exec/store modules touch paths,
-    # processes and filesystems in platform-specific ways. A break there is
-    # invisible on a single runner, so the matrix is in place from day one.
+    # The matrix mirrors airsl's: `airsl` compiles vendored Lua 5.4 from C, and
+    # the execution and storage adapters touch paths, processes and filesystems
+    # in platform-specific ways. A break there is invisible on a single runner.
     #
     # Unix only, deliberately — matching airsl, which refuses to build off unix.
     strategy:

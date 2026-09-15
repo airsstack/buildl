@@ -27,7 +27,7 @@ min_version = "0.37.0"
 [env]
 CARGO_TERM_COLOR = "always"
 
-# `--all-features` below is carried for forward-safety: neither crate in this
+# `--all-features` below is carried for forward-safety: no crate in this
 # workspace declares Cargo `[features]`, so today it equals the default build.
 # It stays in every command so the gate stays correct the day a feature is added.
 

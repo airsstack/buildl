@@ -28,18 +28,18 @@ airsl      = "0.1"
 # serde_json — never through serde_json::to_string directly.
 serde      = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
-# Errors. One structured enum in the library, airsl-style — structured fields,
+# Errors. One structured enum in `buildl-core`, airsl-style — structured fields,
 # no message parsing anywhere (architecture.md §4).
 thiserror  = "2.0.18"
 # SHA-256 for the Digest type — files, outputs, action keys, log blobs. SHA-256
 # over blake3 for REAPI compatibility (decision record, architecture.md §6); the
 # stat cache makes hashing rare on warm builds anyway.
 sha2       = "0.10"
-# Parallel file hashing in the Plan phase. Confined to the `plan` module (decision
-# record §6) so the executor's plain-threads model stays singular.
+# Parallel file hashing in the Plan phase. Confined to the `Digester` adapter in
+# `buildl` (decision record §6) so the executor's plain-threads model stays singular.
 rayon      = "1"
-# buildl.toml (the ceiling) parsing in `manifest`. Read-only, like airsl's
-# extension manifests: the `display` (serialization) default feature is dropped.
+# buildl.toml (the ceiling) parsing in the `Manifest` adapter. Read-only, like
+# airsl's extension manifests: the `display` (serialization) default feature is dropped.
 toml       = { version = "0.8", default-features = false, features = ["parse"] }
 # Source globbing for `b.sources()` — the declaration phase's only filesystem
 # read; results are sorted host-side so declaration is deterministic regardless
@@ -47,7 +47,7 @@ toml       = { version = "0.8", default-features = false, features = ["parse"] }
 globset    = "0.4"
 walkdir    = "2.5"
 # Exec-dir materialisation for the tier-2 input sandbox and temp-file-then-rename
-# atomic writes in `store` (architecture.md §3.5).
+# atomic writes in the storage adapters (architecture-building-blocks.md §6).
 tempfile   = "3.23.0"
 # CLI argument parsing (buildl-cli).
 clap       = { version = "4", features = ["derive"] }
