@@ -7,9 +7,9 @@ created: 2026-09-13
 
 **Goal:** Bring the workspace to the four-crate dependency-inverted layout.
 
-**Architecture:** Four members, listed in dependency order: `buildl-core` (no dependencies) ← `buildl-lua` (`buildl-core`, `airsl`) ← `buildl` (`buildl-core`, `buildl-lua`) ← `buildl-cli` (`buildl`). The edges are declared now, before any code uses them, so the compiler enforces the dependency rules from the first line of the `buildl-core` foundation chain onward. Every crate is a documented stub. Each `lib.rs` is export-only and carries the four-question `//!` block, with no items and no tests; each states in its own `//!` block that it is export-only, without naming an internal rule. No rustdoc or crate README references planning documents. The toolchain moves to 1.94 because every airsl `0.1.x` release requires it.
+**Architecture:** Four members, listed in dependency order: `buildl-core` (no dependencies) ← `buildl-lua` (`buildl-core`, `airsl`) ← `buildl` (`buildl-core`, `buildl-lua`) ← `buildl-cli` (`buildl`). The edges are declared now, before any code uses them, so the compiler enforces the dependency rules from the first line of the `buildl-core` foundation chain onward. Every crate is a documented stub. Each `lib.rs` is export-only and carries the four-question `//!` block, with no items and no tests; each states in its own `//!` block that it is export-only, without naming an internal rule. No rustdoc or crate README references planning documents. The toolchain follows the `stable` channel, so the gate always runs on the latest stable release; `rust-version` moves to 1.94 because every airsl `0.1.x` release requires it.
 
-**Tech Stack:** Rust 1.94 (edition 2024, resolver 3), Cargo workspaces, cargo-make (`cargo make dod`), cargo-deny 0.20, airsl `0.1` (resolves to 0.1.4 today).
+**Tech Stack:** Rust stable (1.98.1 when checked; `rust-version` 1.94, edition 2024, resolver 3), Cargo workspaces, cargo-make (`cargo make dod`), cargo-deny 0.20, airsl `0.1` (resolves to 0.1.4 today).
 
 **Content authority:** `.claudestacks/sdlc/2026-09-13-workspace-crates/intent.md` (approved, `spec: skipped`). The layout comes from `docs/architecture-building-blocks.md` §4 and the dependency rules from §7.
 
@@ -20,7 +20,7 @@ created: 2026-09-13
 ## File structure
 
 ```
-rust-toolchain.toml                 — modify  channel 1.91 → 1.94
+rust-toolchain.toml                 — modify  channel 1.91 → stable, comment for the stable channel
 Cargo.toml                          — modify  rust-version, members, airsl "0.1", internal member entries, catalog comments
 Cargo.lock                          — modify  new member entries and airsl's dependency graph
 crates/buildl-core/Cargo.toml       — create  manifest, no dependencies
@@ -36,47 +36,101 @@ crates/buildl-cli/Cargo.toml        — modify  dependency comment without archi
 crates/buildl-cli/README.md         — modify  no design-phase status, no docs/ links
 crates/buildl-cli/src/main.rs       — modify  binary doc without scaffold narration
 Makefile.toml                       — modify  "neither crate" → "no crate"
-.github/workflows/ci.yml            — modify  matrix comment names adapters, not exec/store modules
+.github/workflows/ci.yml            — modify  toolchain steps install or update stable; matrix comment names adapters, not exec/store modules
 deny.toml                           — modify  drop unused-allowed-license override; comments for four members
 CLAUDE.md                           — modify  status paragraph, workspace-shape heading, adapter dependency rule
 ```
 
-Every command runs from the repository root. Facts these tasks depend on, all checked on 2026-09-13:
+Every command runs from the repository root. Facts these tasks depend on, the airsl facts checked on 2026-09-13 and the toolchain facts and dry run re-checked on 2026-09-15:
 
 - crates.io lists airsl versions `0.1.0`–`0.1.4`, and every one declares `rust_version` `1.94` (`https://crates.io/api/v1/crates/airsl`).
 - On rustc 1.91.1, a crate depending on `airsl = "0.1"` fails with `airsl@0.1.4 requires rustc 1.94`. On 1.94.1 it builds.
-- With this plan's final tree applied to a scratch copy of the repository, `cargo make dod` passes, `cargo deny check` prints `advisories ok, bans ok, licenses ok, sources ok` with the `unused-allowed-license` override removed, and `cargo tree -d` finds no duplicate versions for the host platform (`--target all` shows `syn` 2.0.119 beside 3.0.5, which `cargo deny check` accepts).
+- `rustup check` reports the latest stable release as `1.98.1 (48a229cea 2026-09-01)`.
+- `rustup toolchain install --help` (rustup 1.29.1) reads: "Install or update the given toolchains, or by default the active toolchain". Run with no argument, it installs or updates the toolchain `rust-toolchain.toml` names.
+- `rust-version = "stable"` is rejected by cargo with `error: expected a version like "1.32"`, so `rust-version` carries a number.
+- With this plan's final tree applied to a scratch copy of the repository on rustc 1.98.1, `cargo make dod` passes, `cargo deny check` prints `advisories ok, bans ok, licenses ok, sources ok` with the `unused-allowed-license` override removed, and `cargo tree -d` finds no duplicate versions for the host platform (`--target all` shows `syn` 2.0.119 beside 3.0.5, which `cargo deny check` accepts).
 
-### Task 1 — Pin toolchain 1.94
+### Task 1 — Follow stable Rust with a 1.94 minimum
 
 **Files:**
 - Modify `rust-toolchain.toml`
 - Modify `Cargo.toml`
+- Modify `.github/workflows/ci.yml`
 
 **Steps:**
 
-1. Confirm the current toolchain:
+1. Confirm the current settings:
    ```
-   $ rustc --version
-   rustc 1.91.1 (ed61e7d7e 2025-11-07)
+   $ grep -n 'channel' rust-toolchain.toml
+   $ grep -n 'rust-version' Cargo.toml
+   7:rust-version = "1.91"
+   $ grep -n 'pinned' .github/workflows/ci.yml
    ```
-2. In `rust-toolchain.toml`, replace `channel    = "1.91"` with:
+   Expected: `channel` reads `"1.91"` (or `"stable"`, if the channel was already switched in the working tree); `rust-version` reads `"1.91"`; `ci.yml` has three `pinned` matches (two step names, one comment).
+2. Replace the whole of `rust-toolchain.toml` with:
    ```toml
-   channel    = "1.94"
+   [toolchain]
+   # Tracks the latest stable release, so every local build and CI run shows that
+   # buildl compiles and passes the gate on current stable Rust. The oldest compiler
+   # buildl supports is recorded separately, as `rust-version` in the workspace
+   # manifest.
+   channel = "stable"
+   components = ["rustfmt", "clippy"]
+   profile = "minimal"
    ```
 3. In `Cargo.toml` under `[workspace.package]`, replace `rust-version = "1.91"` with:
    ```toml
    rust-version = "1.94"
    ```
-4. Verify:
+4. In `.github/workflows/ci.yml` (the `dod` job), replace:
+   ```yaml
+         # `rustup show` resolves the override in rust-toolchain.toml and installs it.
+         # The versions printed below are the record of which toolchain the gate ran on.
+         - name: Install the pinned Rust toolchain
+           run: |
+             rustup show
    ```
+   with:
+   ```yaml
+         # `rustup toolchain install` with no argument installs the toolchain
+         # rust-toolchain.toml names, or updates it when the runner image carries an
+         # older stable. The versions printed below are the record of which toolchain
+         # the gate ran on.
+         - name: Install the latest stable Rust toolchain
+           run: |
+             rustup toolchain install
+             rustup show
+   ```
+5. In `.github/workflows/ci.yml` (the `deny` job), replace:
+   ```yaml
+         # cargo-deny shells out to `cargo metadata`, and `cargo` here is a rustup
+         # shim that resolves rust-toolchain.toml, so the pinned toolchain gets
+         # fetched either way. Doing it in its own step keeps that cost out of the
+         # check's log.
+         - name: Install the pinned Rust toolchain
+           run: rustup show
+   ```
+   with:
+   ```yaml
+         # cargo-deny shells out to `cargo metadata`, and `cargo` here is a rustup
+         # shim that resolves rust-toolchain.toml, so the toolchain it names is
+         # needed either way. Installing it in its own step keeps that cost out of
+         # the check's log.
+         - name: Install the latest stable Rust toolchain
+           run: rustup toolchain install
+   ```
+6. Verify:
+   ```
+   $ rustup toolchain install
+   info: the active toolchain `stable-aarch64-apple-darwin` has been installed
    $ rustc --version
-   rustc 1.94.1 (e408947bf 2026-03-25)
+   rustc 1.98.1 (48a229cea 2026-09-01)
+   $ grep -n 'pinned' .github/workflows/ci.yml
    $ cargo make dod
    [cargo-make] INFO - Build Done in <n> seconds.
    ```
-   Expected: rustc reports a 1.94.x version (rustup installs the channel if it is missing), and the gate exits 0.
-5. Commit `build(repo): pin toolchain 1.94 for airsl 0.1`.
+   Expected: rustc reports the latest stable release (1.98.1 when checked; a newer stable is equally correct), grep prints nothing, and the gate exits 0. The host triple in the `info:` line varies by machine.
+7. Commit `build(repo): follow stable Rust with a 1.94 minimum`.
 
 ### Task 2 — Add the buildl-core crate
 
@@ -622,7 +676,7 @@ Every command runs from the repository root. Facts these tasks depend on, all ch
    ```
    with:
    ```markdown
-   The repository holds the design documents plus a workspace scaffold: all four crates — `buildl-core`, `buildl-lua`, `buildl`, `buildl-cli` — exist as doc-comment stubs with their dependency edges wired per `architecture-building-blocks.md` §7 (airsl, `0.1` on toolchain 1.94, only in `buildl-lua`), and the `cargo make dod` gate, `cargo deny` check and CI matrix are live. No pipeline module is implemented.
+   The repository holds the design documents plus a workspace scaffold: all four crates — `buildl-core`, `buildl-lua`, `buildl`, `buildl-cli` — exist as doc-comment stubs with their dependency edges wired per `architecture-building-blocks.md` §7 (airsl `0.1`, only in `buildl-lua`; toolchain `stable`, `rust-version` 1.94), and the `cargo make dod` gate, `cargo deny` check and CI matrix are live. No pipeline module is implemented.
    ```
 3. In `CLAUDE.md`, replace the heading `## Planned workspace shape` with:
    ```markdown
@@ -648,7 +702,7 @@ Every command runs from the repository root. Facts these tasks depend on, all ch
 
 ## Verification summary (plan-level)
 
-- `cargo make dod` exits 0 on toolchain 1.94.
+- `cargo make dod` exits 0 on the stable toolchain (1.98.1 when checked), with `rust-version` 1.94.
 - `cargo deny check` prints `advisories ok, bans ok, licenses ok, sources ok`.
 - `cargo tree -p <crate> -e normal --depth 1 --prefix none` gives exactly these direct dependencies: `buildl-core` → none; `buildl-lua` → `airsl`, `buildl-core`; `buildl` → `buildl-core`, `buildl-lua`; `buildl-cli` → `buildl`.
 - `cargo tree -d` prints `warning: nothing to print.` for the host platform. With `--target all`, the only duplicate is `syn` (2.0.119 via `jiff-static`, and 3.0.5), which `cargo deny check` accepts.
