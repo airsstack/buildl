@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status: scaffold in place, implementation not started
 
-buildl is a sandboxed, deterministic build system whose build files are written in Lua and evaluated on the [airsl](https://github.com/airsstack/airsl) embedded runtime. The repository holds the design documents plus a workspace scaffold: the `buildl` and `buildl-cli` crates exist as doc-comment stubs with no dependencies wired (`buildl-core` and `buildl-lua` are planned, not yet created), and the `cargo make dod` gate and CI matrix are live. No pipeline module is implemented.
+buildl is a sandboxed, deterministic build system whose build files are written in Lua and evaluated on the [airsl](https://github.com/airsstack/airsl) embedded runtime. The repository holds the design documents plus a workspace scaffold: all four crates — `buildl-core`, `buildl-lua`, `buildl`, `buildl-cli` — exist as doc-comment stubs with their dependency edges wired per `architecture-building-blocks.md` §7 (airsl `0.1`, only in `buildl-lua`; toolchain `stable`, `rust-version` 1.94), and the `cargo make dod` gate, `cargo deny` check and CI matrix are live. No pipeline module is implemented.
 
 The pre-development blocker is **resolved** (2026-09-13): fine-grained per-file C/C++ compilation is out of scope for v1, and buildl's mechanism for dynamic input discovery is the **discovery target** (design §10) — a cached action whose output a later declaration pass consumes — not depfile parsing. See `docs/fundamental-walkthrough.md` §6 for the reasoning and design §13 for the scope note. Implementation may begin.
 
@@ -28,10 +28,10 @@ Section cross-references between the docs (e.g. "design §8.5", "§12.4 ledger")
 
 **Structural rules (architecture-building-blocks.md §7):**
 - airsl is a dependency of the `buildl-lua` crate only; no other crate knows Lua exists.
-- Dependency inversion: `buildl-core` holds domain data, ports (traits), and the pure logic of every phase, and depends on no buildl crate, no airsl, and no I/O API. Adapters (`buildl-lua`, `buildl`) depend on `buildl-core` only, never on each other. `buildl` is the single composition root. Every pipeline flow must be testable in `buildl-core` against fake ports.
+- Dependency inversion: `buildl-core` holds domain data, ports (traits), and the pure logic of every phase, and depends on no buildl crate, no airsl, and no I/O API. Adapters depend on `buildl-core`; `buildl-lua` never depends on `buildl`, and adapter modules inside `buildl` never import each other. `buildl` is the single composition root, and the only adapter crate that depends on another adapter crate (`buildl-lua`). Every pipeline flow must be testable in `buildl-core` against fake ports.
 - Build files run with two globals: `airsstack` (airsl's default root table, holding the curated host modules — `json`, `path`, `regex`, `hash`, `glob`) and `buildl` (buildl's own module table — the declaration framework). They are one table bound twice: the `buildl` `HostModule` installs as `airsstack.buildl` and binds the same table to the global `buildl` inside `install` (design §5). Never rename the root table to `buildl`.
 
-## Planned workspace shape
+## Workspace shape
 
 Four crates, published to crates.io in dependency order: `buildl-core` (domain data, ports, pure logic) → `buildl-lua` (the airsl adapter) → `buildl` (the remaining adapters and the composition root — the complete framework) → `buildl-cli` (thin clap shell, the `buildl` binary). The core is a crate, never a `mod core`: a crate-root module named `core` shadows Rust's built-in `core` crate. Workspace policy inherited verbatim from airsl: `unsafe_code = "forbid"`, `unwrap_used` and `panic` denied, pedantic + nursery clippy at warn, every dependency commented with its reason in the workspace `Cargo.toml`.
 
