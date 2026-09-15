@@ -4,7 +4,7 @@ members  = ["crates/buildl", "crates/buildl-cli"]
 
 [workspace.package]
 edition      = "2024"
-rust-version = "1.91"
+rust-version = "1.94"
 license      = "Apache-2.0"
 repository   = "https://github.com/airsstack/buildl"
 authors      = ["rstlix0x0 <rstlix.dev@gmail.com>"]
