@@ -71,6 +71,10 @@ dependencies = [
 [[package]]
 name = "buildl"
 version = "0.1.0"
+dependencies = [
+ "buildl-core",
+ "buildl-lua",
+]
 
 [[package]]
 name = "buildl-cli"

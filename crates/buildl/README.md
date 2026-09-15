@@ -2,9 +2,9 @@
 
 A sandboxed, deterministic build system whose build files are written in Lua and evaluated on the [airsl](https://github.com/airsstack/airsl) embedded runtime.
 
-This is the library crate — all logic lives here; the `buildl` binary in [`buildl-cli`](../buildl-cli) is a thin shell over it.
+This is the framework crate. Its role is to bind concrete adapters — storage, hashing, execution, and the Lua evaluator from [`buildl-lua`](../buildl-lua) — to the pipeline defined in [`buildl-core`](../buildl-core). The `buildl` binary in [`buildl-cli`](../buildl-cli) is a thin shell over it.
 
-**Status: design phase.** This crate is an empty scaffold. See the repository's [`docs/design.md`](../../docs/design.md) and [`docs/architecture.md`](../../docs/architecture.md) for what is planned.
+**Status:** pre-release; the crate has no public API.
 
 ## License
 
