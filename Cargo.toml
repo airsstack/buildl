@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
-members  = ["crates/buildl", "crates/buildl-cli"]
+members  = [
+    "crates/buildl-core",
+    "crates/buildl",
+    "crates/buildl-cli",
+]
 
 [workspace.package]
 edition      = "2024"
@@ -44,10 +48,12 @@ walkdir    = "2.5"
 tempfile   = "3.23.0"
 # CLI argument parsing (buildl-cli).
 clap       = { version = "4", features = ["derive"] }
-# Internal workspace member — path for local builds, version for publish-readiness.
-# `buildl-cli` inherits this with `{ workspace = true }`. Cargo strips the path and
-# keeps the version when packaging, so the published crate depends on crates.io.
-buildl     = { version = "0.1.0", path = "crates/buildl" }
+# Internal workspace members, in dependency order — path for local builds, version
+# for publish-readiness. Members inherit these with `{ workspace = true }`. Cargo
+# strips the path and keeps the version when packaging, so a published crate
+# depends on crates.io.
+buildl-core = { version = "0.1.0", path = "crates/buildl-core" }
+buildl      = { version = "0.1.0", path = "crates/buildl" }
 
 [workspace.lints.rust]
 unsafe_code        = "forbid"

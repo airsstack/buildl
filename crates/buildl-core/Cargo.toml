@@ -1,0 +1,18 @@
+[package]
+name         = "buildl-core"
+version      = "0.1.0"
+description  = "Domain data, ports, and pure pipeline logic for the buildl build system — no I/O, no Lua."
+readme       = "README.md"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+authors.workspace      = true
+
+# No buildl crate, no airsl, no I/O library — ever. Pure-computation crates from
+# the workspace catalog (serde, serde_json, thiserror, sha2) are the only
+# dependencies this crate may take, added as the code that needs them lands.
+[dependencies]
+
+[lints]
+workspace = true

@@ -12,3 +12,7 @@ version = "0.1.0"
 dependencies = [
  "buildl",
 ]
+
+[[package]]
+name = "buildl-core"
+version = "0.1.0"
