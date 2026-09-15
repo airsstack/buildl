@@ -34,7 +34,7 @@ ignore = []
 # ---------------------------------------------------------------------------
 
 [licenses]
-# Permissive licenses only, seeded from airsl's graph — the set buildl's planned
+# Permissive licenses only, seeded from airsl's graph — the set buildl's
 # dependency catalog resolves into. Anything arriving outside this set fails the
 # check, which is the point: a copyleft dependency should be a decision, not a
 # silent transitive addition.
@@ -46,14 +46,12 @@ allow = [
 ]
 confidence-threshold = 0.8
 exceptions = []
-# The member crates are still empty scaffolds, so most of the allow list is not
-# yet exercised by the graph. Without this, every unmatched allowance warns on
-# each run until the dependency catalog is actually consumed. Remove once the
-# first real dependencies land.
-unused-allowed-license = "allow"
+# An allowance no crate in the graph uses fails the check, so the allow list
+# never grows past what the dependency graph actually needs.
+unused-allowed-license = "deny"
 
 [licenses.private]
-# Both workspace members are published to crates.io under Apache-2.0, so their
+# Every workspace member is published to crates.io under Apache-2.0, so its
 # license text is a distribution question and is checked like any other crate.
 ignore = false
 
@@ -66,7 +64,8 @@ ignore = false
 # be acknowledged here. The `skip` list below freezes the current state, so a
 # *new* duplicate fails even though the known ones pass.
 multiple-versions = "deny"
-# No `version = "*"` dependencies. The root manifest pins every direct one.
+# No `version = "*"` dependencies. The root manifest gives every direct one an
+# explicit version requirement.
 wildcards = "deny"
 highlight = "all"
 workspace-default-features = "allow"

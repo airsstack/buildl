@@ -9,10 +9,11 @@ license.workspace      = true
 repository.workspace   = true
 authors.workspace      = true
 
-# Empty scaffold — the design phase is not closed (the depfile question,
-# docs/fundamental-walkthrough.md §6). Dependencies are added from the
-# workspace catalog as modules land; none are used yet.
 [dependencies]
+# The pipeline, its ports, and the domain values this crate's adapters serve.
+buildl-core = { workspace = true }
+# The Lua build-file adapter, bound to the pipeline here alongside the others.
+buildl-lua  = { workspace = true }
 
 [lints]
 workspace = true

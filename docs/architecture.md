@@ -1,6 +1,6 @@
 # buildl — internal architecture
 
-**Status: draft for review.** Companion to [`buildl-design.md`](https://claude.ai/cowork/buildl-design.md): that document says _what buildl is and why_; this one says _how it is built in Rust_. Scope follows the §13 decision there — the build-system core first: Load → Resolve → Plan → Execute → Record, the action cache and cas, and the `check` / `graph` / `plan` / `build` commands. Plugins, remote, and watch are designed for but not implemented by anything here.
+**Status: draft for review.** Companion to [`design.md`](./design.md): that document says _what buildl is and why_; this one says _how each part works in Rust_, and [`architecture-building-blocks.md`](./architecture-building-blocks.md) says _how the parts are put together_. Scope follows the §13 decision there — the build-system core first: Load → Resolve → Plan → Execute → Record, the action cache and cas, and the `check` / `graph` / `plan` / `build` commands. Plugins, remote, and watch are designed for but not implemented by anything here.
 
 **Author:** rstlix0x0 · **Date:** 2026-08-23 · **Reviewers:** —
 
@@ -8,66 +8,42 @@
 
 ## 1. Workspace layout
 
-Mirrors airsl's own workspace shape [1]: a library crate carrying everything public, a CLI crate that is a thin shell over it.
+Four crates, split so the logic of a build depends only on abstractions it owns. [`architecture-building-blocks.md`](./architecture-building-blocks.md) owns the layout — its C4 views, the port catalog (§6), and the dependency rules (§7) — and this document refers to crates and ports by those names.
 
 ```text
 buildl/
-  Cargo.toml                 # workspace: resolver 3, shared lints (airsl's lint set)
+  Cargo.toml        # workspace: resolver 3, shared lints (airsl's lint set)
   crates/
-    buildl/                  # the library — all logic lives here
-      src/
-        lib.rs
-        manifest/            # buildl.toml: parsing, ceiling, validation
-        declare/             # Load phase: engine-per-file, the HostModule, staging
-        graph/               # Resolve phase: interning, labels, validation, the DAG
-        plan/                # Plan phase: action keys, stat cache, dirty set
-        exec/                # Execute phase: scheduler, workers, strategies, output
-        store/               # cas, action cache, log — all durable state
-        settings/            # build settings (b.option / --set)
-        types/               # newtypes: Label, Digest, ActionKey, Provenance, ...
-        error.rs             # error enum + classification
-      tests/                 # phase-boundary integration tests
-    buildl-cli/              # the `buildl` binary: clap + phase orchestration
-      src/
-        main.rs
-        cli.rs               # argument surface
-        cmd_build.rs  cmd_plan.rs  cmd_graph.rs  cmd_check.rs  cmd_doctor.rs
+    buildl-core/    # domain data, ports (traits), pure logic of every phase: no I/O, no Lua
+    buildl-lua/     # DeclarationSource over airsl: engine per file, the buildl HostModule
+    buildl/         # every other adapter + LocalPorts: the composition root
+    buildl-cli/     # the `buildl` binary: clap argument surface, exit codes
 ```
 
 Inherited workspace policy, verbatim from airsl [1]: `unsafe_code = "forbid"`, `unwrap_used` and `panic` denied, pedantic + nursery clippy at warn, every dependency commented with its reason in the workspace `Cargo.toml`.
 
-### 1.1 Module dependency graph
+### 1.1 Crate dependency graph
 
-Modules depend strictly downward; the phase modules never depend on each other laterally — they meet only through the types crate-module and the store:
+Every dependency points at `buildl-core`; `buildl` is the one crate that names concrete adapters together (building blocks §7):
 
 ```mermaid
-%% Module dependency graph — arrows point at the dependency
+%% Crate dependency graph — arrows point at the dependency
 graph TD
-    CLI["buildl-cli"] --> LIB["buildl lib.rs<br/>pipeline orchestration"]
-    LIB --> DECL["declare"]
-    LIB --> GRAPH["graph"]
-    LIB --> PLAN["plan"]
-    LIB --> EXEC["exec"]
-    DECL --> MAN["manifest"]
-    DECL --> TYPES["types"]
-    GRAPH --> TYPES
-    PLAN --> STORE["store"]
-    PLAN --> TYPES
-    EXEC --> STORE
-    EXEC --> TYPES
-    MAN --> TYPES
-    STORE --> TYPES
-    DECL --> AIRSL["airsl<br/>Engine, Policy, HostModule"]
+    CLI["buildl-cli<br/>argument surface"] --> LIB["buildl<br/>adapters + composition root"]
+    LIB --> LUA["buildl-lua<br/>DeclarationSource via airsl"]
+    LIB --> CORE["buildl-core<br/>domain data · ports · pure logic"]
+    LUA --> CORE
+    LUA --> AIRSL["airsl<br/>Engine, Policy, HostModule"]
 ```
 
 Two structural rules the graph encodes:
 
-- **airsl is a dependency of `declare` only.** No other module knows Lua exists. The whole runtime boundary is one module deep, which is what keeps the execution side testable without a Lua state and keeps an airsl upgrade's blast radius contained.
-- **Phases communicate through values, not calls.** `declare` produces `Vec<Declaration>`, `graph` consumes it and produces `TargetGraph`, `plan` produces `Plan`, `exec` produces `Vec<ActionOutcome>`. `lib.rs` owns the sequence; no phase invokes the next. This is §8 of the design doc made literal: each handoff is a serializable value, so each phase is unit-testable alone and `buildl graph` / `buildl plan` are just serializations of a handoff.
+- **airsl is a dependency of `buildl-lua` only.** No other crate knows Lua exists, and `buildl-core` cannot name airsl at all because airsl is not among its dependencies. The whole runtime boundary is one crate deep, which is what keeps the execution side testable without a Lua state and keeps an airsl upgrade's blast radius contained.
+- **Phases communicate through values, not calls.** Load produces `Vec<Declaration>`, Resolve consumes it and produces `TargetGraph`, Plan produces `Plan`, Execute produces `Vec<ActionOutcome>`. The pipeline in `buildl-core` owns the sequence; no phase invokes the next. This is §8 of the design doc made literal: each handoff is a serializable value, so each phase is unit-testable alone and `buildl graph` / `buildl plan` are just serializations of a handoff.
 
 ## 2. Core types
 
-All in `types/`, all newtypes over primitives, following airsl's `types/` discipline (`ModuleName`, `RootTable`, `ChunkName` — validated at construction, impossible to construct invalid) [1].
+All in `buildl-core`, all newtypes over primitives, following airsl's `types/` discipline (`ModuleName`, `RootTable`, `ChunkName` — validated at construction, impossible to construct invalid) [1].
 
 ```mermaid
 %% Core type relationships
@@ -152,9 +128,21 @@ stateDiagram-v2
 
 ## 3. Phase implementations
 
+Each phase's logic lives in `buildl-core` and reaches I/O only through ports; the adapters live in `buildl-lua` and `buildl` (building blocks §6). The subsections keep the phase vocabulary:
+
+|Section|Logic in `buildl-core`|Ports it uses|Adapter crate|
+|---|---|---|---|
+|§3.1 `declare`|directory queue, `subdir`, sorted merge|`DeclarationSource`|`buildl-lua`|
+|§3.2 `graph`|resolve, validations, cycle detection|—|—|
+|§3.3 `plan`|key assembly, dirty set, ceiling check|`Digester`, `StatCache`, `ToolResolver`, `ActionCache`, `Manifest`|`buildl`|
+|§3.4 `exec`|`Schedule` state machine|`Dispatcher`, `ExecStrategy`, `ContentStore`, `Reporter`|`buildl`|
+|§3.5 `store`|record ordering: cas, row, log|`ContentStore`, `ActionCache`, `EventLog`, `Clock`|`buildl`|
+
 ### 3.1 `declare` — the airsl boundary
 
-The only module that speaks Lua. Per build file: construct an `Engine` with the declaration policy (custom `LanguageSurface` without `os`, curated `ModuleSet` — design doc §12.1), evaluate, drop the engine (~136 µs; isolation by disposal [1]).
+The only crate that speaks Lua is `buildl-lua`, which implements the `DeclarationSource` port for one build file at a time; the directory queue and the merge described below are Load logic in `buildl-core`. Per build file: construct an `Engine` with the declaration policy (custom `LanguageSurface` without `os`, curated `ModuleSet` — design doc §12.1), evaluate, drop the engine (~136 µs; isolation by disposal [1]).
+
+Installation: the engine keeps airsl's default `airsstack` root table, the `buildl` `HostModule` populates its own table, and inside `install` it binds that same table to the global `buildl` (design doc §5) — so every build file is evaluated with `buildl` loaded and `airsstack` beside it. `HostModule: Send + Sync` is part of airsl's contract, which is what rules the staging buffer's shape below.
 
 The mechanics of collection: the `buildl` `HostModule`'s closures capture an `Arc<Mutex<Vec<Declaration>>>` staging buffer plus the current file's `Provenance`. `b.target(...)` validates its option table shape _immediately_ (unknown field → error naming file and field, airsl-refusal style) and pushes a `Declaration`. `b.subdir(dir)` pushes onto the directory queue owned by the Load driver — Lua never recurses.
 
@@ -170,26 +158,28 @@ Cycle detection is iterative DFS (explicit stack — a deep graph must not overf
 
 Bottom-up over a toposort. Per node: assemble `KeyComponents`, hash inputs through the stat cache, fold dep keys (already computed — toposort guarantees it), digest the canonical serialization of the components.
 
-The stat cache is a `BTreeMap<PathBuf, StatEntry { mtime, size, digest }>` loaded from `.buildl/statcache.json`; a hit on (mtime, size) reuses the digest, a miss re-hashes and updates — ninja's mtime discipline with content-hash truth underneath [3]. File hashing fans out with rayon's parallel iterators [5] — files are independent, the work is chunkable, and rayon's pool is confined to the `plan` module (decision record §6).
+The stat cache is a `BTreeMap<PathBuf, StatEntry { mtime, size, digest }>` loaded from `.buildl/statcache.json`; a hit on (mtime, size) reuses the digest, a miss re-hashes and updates — ninja's mtime discipline with content-hash truth underneath [3]. File hashing fans out with rayon's parallel iterators [5] — files are independent, the work is chunkable, and rayon's pool is confined to the `Digester` adapter in `buildl` (decision record §6).
 
 Output: `Plan { dirty, reasons, wanted }` — and the ceiling check runs here, so a `Plan` that would exceed the ceiling is an `Err`, not a plan.
 
 ### 3.4 `exec` — the scheduler
 
-Plain threads, no async runtime (decision record §6). The scheduler owns: the state array (§2.1), dep counters (`Vec<AtomicU32>`), a ready queue (`std::sync::mpsc` channel), and N worker threads. Workers loop: receive `NodeId` → run the action through the strategy (below) → send `ActionOutcome` back on a results channel. The scheduler thread is the only writer of states and counters on completion — single-writer bookkeeping, so no lock ordering to reason about.
+Two halves. The scheduling logic is `Schedule`, a pure state machine in `buildl-core`: it owns the state array (§2.1) and one dependency counter per node, hands out ready `NodeId`s, and on `complete(node, class)` marks dependents ready or skipped. Its caller is the only writer, so the counters are plain integers — single-writer bookkeeping, so no lock ordering to reason about. Parallelism is the `Dispatcher` port. Its v1 adapter in `buildl` uses plain threads, no async runtime (decision record §6): a ready queue (`std::sync::mpsc` channel) and N worker threads that receive a `NodeId`, run the action through the strategy (below), and send an `ActionOutcome` back on a results channel. Tests drive `Schedule` through an inline dispatcher on one thread.
 
 Execution strategies are one trait, the design doc's isolation ladder (§12.2) as code:
 
 ```rust
 pub trait ExecStrategy: Send + Sync {
+    /// The materialised exec dir; each isolation tier has its own shape.
+    type Dir;
     /// Materialise the action's exec dir (inputs visible per this strategy's tier).
-    fn prepare(&self, action: &ReadyAction) -> Result<ExecDir>;
+    fn prepare(&self, action: &ReadyAction) -> Result<Self::Dir>;
     /// Spawn and wait, capturing output. No shell, ever.
-    fn run(&self, dir: &ExecDir, action: &ReadyAction) -> Result<RawOutcome>;
+    fn run(&self, dir: &Self::Dir, action: &ReadyAction) -> Result<RawOutcome>;
 }
 ```
 
-v1 ships `Bare` (tier 1: workspace cwd, granted env only) and `InputSandbox` (tier 2: temp dir, symlinked declared inputs). `OsSandbox` and `Container` are later impls of the same trait — the trait is in v1 so the ladder is a seam, not a refactor.
+The trait is a `buildl-core` port, and `buildl` ships the v1 adapters: `Bare` (tier 1: workspace cwd, granted env only) and `InputSandbox` (tier 2: temp dir, symlinked declared inputs). `OsSandbox` and `Container` are later impls of the same trait — the trait is in v1 so the ladder is a seam, not a refactor.
 
 Output capture: piped stdout/stderr read by two threads per action into buffers, blobs written to the cas, digests recorded on the outcome. Printing is owned by a single reporter on the scheduler side (block per completed action; TTY status line) — workers never touch the terminal.
 
@@ -201,7 +191,7 @@ The cas is `.buildl/cas/ab/cdef...` (two-char shard dirs). Every write is temp-f
 
 ## 4. Error architecture
 
-One `thiserror` enum in the library, airsl-style: structured fields, no message parsing anywhere [1]. The design doc's three failure classes (§8.7) are a `#[non_exhaustive]` enum carried _on_ errors and outcomes, not inferred from them:
+One `thiserror` enum in `buildl-core`, airsl-style: structured fields, no message parsing anywhere [1]. The design doc's three failure classes (§8.7) are a `#[non_exhaustive]` enum carried _on_ errors and outcomes, not inferred from them:
 
 ```rust
 pub enum OutcomeClass {
@@ -223,7 +213,7 @@ House rules enforcing design-doc §12 at the code level — checkable in review,
 1. **No `HashMap` iteration reaches any output.** Anything serialized, displayed, or hashed iterates a `BTreeMap`/sorted `Vec`. (`HashMap` is fine as a pure lookup table.)
 2. **All JSON leaves through one canonical serializer** — sorted keys, fixed float handling. `graph.json`, `cache.json`, `log.jsonl`, and the bytes hashed into an `ActionKey` all use it, so "the key of X" and "the file of X" can never disagree.
 3. **Parallelism is never observable.** Parallel load merges sorted (§3.1); parallel hashing writes into pre-indexed slots; the executor's completion _order_ appears only in the log's timestamps, never in any artifact.
-4. **Wall clock is quarantined.** `now()` is read in exactly two places — log event timestamps and durations — via one `clock.rs` helper; nothing else in the library may name time. Grep-enforceable.
+4. **Wall clock is quarantined.** `now()` is read in exactly two places — log event timestamps and durations — via the `Clock` port, whose only real adapter lives in `buildl`; `buildl-core` cannot name the system clock at all, so the crate boundary enforces the rule rather than grep.
 5. **Double-run checks are CI, not doctrine.** `buildl check` runs declaration twice and diffs staging hashes; the test suite builds a fixture workspace twice and asserts byte-identical `graph.json`, `cache.json`, and cas contents.
 
 ## 6. Decision records
@@ -232,20 +222,21 @@ House rules enforcing design-doc §12 at the code level — checkable in review,
 |---|---|---|
 |Async runtime|**None — threads**|The workload is process-spawning and file-hashing: worker count ≈ core count, no fan-out beyond it, no IO multiplexing need. An async runtime buys nothing and costs a dependency tree and an ecosystem split. Revisit only if remote execution's network fan-out demands it.|
 |Graph library|**Own arenas; petgraph declined** [2]|Built once, immutable, three algorithms needed, must serialize stably (§3.2).|
-|Parallel hashing|**rayon, confined to `plan`** [5]|Chunkable CPU-bound work is its exact use case; confining it keeps the executor's threading model singular.|
+|Parallel hashing|**rayon, confined to the `Digester` adapter** [5]|Chunkable CPU-bound work is its exact use case; confining it keeps the executor's threading model singular.|
 |Hash|**SHA-256**|REAPI compatibility [4] outweighs blake3's speed; the stat cache makes hashing rare on warm builds anyway.|
 |Cache files|**JSON via the canonical serializer**|Diff-stable and debuggable beats compact; airsl's sorted-key JSON is the precedent [1]. Binary formats only if profiling demands.|
 |Worker/scheduler channel|**std mpsc**|One producer set, one consumer, no select needed; crossbeam only if the reporter grows a second consumer.|
-|Lua exposure|**`declare` module only**|An airsl (or mlua [6]) upgrade touches one module; everything else compiles Lua-free.|
+|Lua exposure|**`buildl-lua` crate only**|An airsl (or mlua [6]) upgrade touches one crate; `buildl-core` compiles Lua-free by construction, since airsl is not among its dependencies.|
+|Structure|**Four dependency-inverted crates**|Every flow testable against fake ports; recorded with its alternatives in building blocks §10.|
 
 ## 7. Testing strategy
 
-The narrow handoffs are the test surface:
+The narrow handoffs are the test surface. Each flow runs first in `buildl-core` against fake ports — no Lua state, filesystem, process, or thread — and again against real adapters in the crate that owns them; the layers are in building blocks §8.
 
-- **`declare`**: fixture build files → assert exact `Vec<Declaration>`; hostile fixtures (huge loops, `pairs` tricks, bad option tables) → assert refusal shape and instruction-ceiling stops.
+- **`declare`** (`buildl-lua`): fixture build files → assert exact `Vec<Declaration>`; hostile fixtures (huge loops, `pairs` tricks, bad option tables) → assert refusal shape and instruction-ceiling stops.
 - **`graph`**: staging lists (no Lua) → golden `graph.json`; duplicate/unknown/cycle fixtures → assert full provenance in errors.
 - **`plan`**: synthetic graphs + a tempdir tree → dirty sets and reasons; stat-cache hit/miss/mtime-rollback cases.
-- **`exec`**: fake actions (`/bin/sh`-free — tiny compiled helpers) → state-machine transitions, keep-going semantics, output block integrity, crash-safety (kill a worker mid-action, assert no cache row).
+- **`exec`**: scripted fake strategies in `buildl-core` → state-machine transitions, keep-going semantics, crash-safety (a failing cache commit leaves no row); tiny compiled helpers (`/bin/sh`-free) against the real `Bare` and `InputSandbox` adapters → output block integrity, a worker killed mid-action leaves no row.
 - **End-to-end**: a fixture workspace built twice — second run all-cached and byte-identical state (§5.5); then one file touched — assert exactly the expected dirty closure rebuilds.
 - **The airsl repo as dogfood** (design doc §13): buildl's own gate eventually runs under buildl.
 

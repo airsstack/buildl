@@ -1,11 +1,8 @@
 [toolchain]
-# Pinned to a minor channel rather than an exact patch. An exact patch is worth pinning
-# only where something asserts verbatim rustc diagnostics — `trybuild` fixtures, say.
-# Nothing in this repository does, so a patch release that merely rewords a diagnostic
-# must not turn the gate red.
-#
-# The channel matches `rust-version` in the workspace manifest, so the MSRV claim is
-# exercised by every ordinary build rather than asserted and never checked.
-channel    = "1.91"
+# Tracks the latest stable release, so every local build and CI run shows that
+# buildl compiles and passes the gate on current stable Rust. The oldest compiler
+# buildl supports is recorded separately, as `rust-version` in the workspace
+# manifest.
+channel = "stable"
 components = ["rustfmt", "clippy"]
-profile    = "minimal"
+profile = "minimal"

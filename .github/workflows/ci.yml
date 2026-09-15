@@ -25,10 +25,9 @@ env:
 jobs:
   dod:
     name: Definition of Done
-    # The matrix mirrors airsl's: once `airsl` lands in the dependency graph it
-    # compiles vendored Lua 5.4 from C, and the exec/store modules touch paths,
-    # processes and filesystems in platform-specific ways. A break there is
-    # invisible on a single runner, so the matrix is in place from day one.
+    # The matrix mirrors airsl's: `airsl` compiles vendored Lua 5.4 from C, and
+    # the execution and storage adapters touch paths, processes and filesystems
+    # in platform-specific ways. A break there is invisible on a single runner.
     #
     # Unix only, deliberately — matching airsl, which refuses to build off unix.
     strategy:
@@ -40,10 +39,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # `rustup show` resolves the override in rust-toolchain.toml and installs it.
-      # The versions printed below are the record of which toolchain the gate ran on.
-      - name: Install the pinned Rust toolchain
+      # `rustup toolchain install` with no argument installs the toolchain
+      # rust-toolchain.toml names, or updates it when the runner image carries an
+      # older stable. The versions printed below are the record of which toolchain
+      # the gate ran on.
+      - name: Install the latest stable Rust toolchain
         run: |
+          rustup toolchain install
           rustup show
           cargo --version
           cargo clippy --version
@@ -75,11 +77,11 @@ jobs:
       - uses: actions/checkout@v5
 
       # cargo-deny shells out to `cargo metadata`, and `cargo` here is a rustup
-      # shim that resolves rust-toolchain.toml, so the pinned toolchain gets
-      # fetched either way. Doing it in its own step keeps that cost out of the
-      # check's log.
-      - name: Install the pinned Rust toolchain
-        run: rustup show
+      # shim that resolves rust-toolchain.toml, so the toolchain it names is
+      # needed either way. Installing it in its own step keeps that cost out of
+      # the check's log.
+      - name: Install the latest stable Rust toolchain
+        run: rustup toolchain install
 
       - name: Install cargo-deny
         uses: taiki-e/install-action@v2

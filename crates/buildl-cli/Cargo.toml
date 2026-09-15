@@ -17,8 +17,8 @@ path = "src/main.rs"
 doc  = false
 
 [dependencies]
-# The library carries all logic; this crate is argument parsing and phase
-# orchestration only (architecture.md §1).
+# The binary's only library dependency. All build logic lives in the library
+# crates, and core types reach the binary through `buildl`, never directly.
 buildl = { workspace = true }
 
 [lints]

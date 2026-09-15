@@ -4,7 +4,7 @@
 
 The positioning in one sentence: Lua where Starlark sits in Bazel [5], ninja's execution discipline underneath [4], and airsl's capability model as the trust layer neither of them has.
 
-> **Status: design phase.** Nothing described here is implemented yet. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md); one correctness question (dynamic input discovery — the depfile problem) is being resolved before development begins.
+> **Status: design settled, implementation starting.** Nothing described here is implemented yet. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
 
 ---
 
@@ -54,7 +54,7 @@ b.rule("cc", {
 })
 
 for _, src in ipairs(b.sources("src/**/*.c")) do
-  b.target(b.path.stem(src) .. ".o", { rule = "cc", inputs = { src } })
+  b.target(airsstack.path.stem(src) .. ".o", { rule = "cc", inputs = { src } })
 end
 
 b.target("app", {
@@ -126,23 +126,28 @@ Each CLI command is the Load → Resolve → Plan → Execute → Record pipelin
 
 ## Repository layout
 
-A Cargo workspace mirroring airsl's shape — a library crate carrying everything public, a CLI crate that is a thin shell over it:
+A Cargo workspace of four crates, dependency-inverted so every flow of a build is testable without Lua, a filesystem, or a process:
 
 ```text
 buildl/
   crates/
-    buildl/            # the library — manifest, declare, graph, plan, exec, store
-    buildl-cli/        # the `buildl` binary: clap + phase orchestration
+    buildl-core/                      # domain data, ports (traits), pure logic: no I/O, no Lua
+    buildl-lua/                       # evaluates build.lua through airsl
+    buildl/                           # adapters + composition root: the complete framework
+    buildl-cli/                       # the `buildl` binary: thin clap shell
   docs/
-    design.md          # what buildl is and why
-    architecture.md    # how it is built in Rust
+    design.md                         # what buildl is and why
+    architecture.md                   # how each part works in Rust
+    architecture-building-blocks.md   # how the parts fit: C4 views, crates, ports
+    fundamental-walkthrough.md        # the design mapped onto build-system theory
+    roadmap.md                        # milestone status and the development ladder
 ```
 
 Workspace policy is inherited verbatim from airsl [1]: `unsafe_code = "forbid"`, `unwrap_used` and `panic` denied, pedantic + nursery clippy at warn, every dependency commented with its reason.
 
 ## Roadmap
 
-Dependency-ordered, from [`design.md` §13](./docs/design.md). buildl is a **build system first** — the defining capability is answering *"does this need to run at all?"*; task-runner use is a degenerate case the model yields for free.
+Dependency-ordered, from [`design.md` §13](./docs/design.md); progress and the development ladder are tracked in [`roadmap.md`](./docs/roadmap.md). buildl is a **build system first** — the defining capability is answering *"does this need to run at all?"*; task-runner use is a degenerate case the model yields for free.
 
 1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `run`/`plan`/`graph`/`check`, local cache and cas
 2. **`query` / `rdeps`** — small work, transforms CI for large repos
