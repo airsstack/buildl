@@ -14,6 +14,7 @@ The pre-development blocker is **resolved** (2026-09-13): fine-grained per-file 
 - `docs/architecture.md` — how each part works in Rust: core types, phase implementations, error architecture, decision records (§6), determinism engineering rules (§5).
 - `docs/architecture-building-blocks.md` — how the parts are put together: C4 views, the four crates, ports and adapters, dependency rules, testing layers, publishing. Owns the workspace layout.
 - `docs/fundamental-walkthrough.md` — maps the design onto build-system theory (Build Systems à la Carte); names the depfile gap.
+- `docs/roadmap.md` — how the design §13 sequence is being built: milestone status, the milestone 1 intent ladder (I1–I6, I-lua) with each slice's status, and follow-ups carried between slices. Update it whenever an SDLC chain changes state.
 - `README.md` — condensed public summary of the design and architecture documents. Keep it consistent with the docs when either changes.
 
 Section cross-references between the docs (e.g. "design §8.5", "§12.4 ledger") are load-bearing — preserve them when renumbering or restructuring.
