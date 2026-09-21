@@ -109,6 +109,35 @@ command = "cargo"
 args = ["deny", "check", "-D", "unused-wrapper"]
 
 # ---------------------------------------------------------------------------
+# Architecture guards
+# ---------------------------------------------------------------------------
+
+[tasks.guard-crate-edges]
+category = "Gate"
+description = "Assert every member's direct dependencies against crates/expected-edges.txt"
+# cargo-deny states which edges are forbidden; nothing there states which edges
+# must exist, and nothing there sees a forbidden dependency on a crate that is
+# not in the graph yet. A committed dump of the live graph covers both.
+script_runner = "@shell"
+script = '''
+expected="crates/expected-edges.txt"
+actual="$(mktemp)"
+trap 'rm -f "${actual}"' EXIT
+
+for member in buildl-core buildl-lua buildl buildl-cli; do
+    echo "# ${member}" >> "${actual}"
+    cargo tree -p "${member}" --depth 1 --edges normal,dev --prefix none --format '{lib}' \
+        | tail -n +2 >> "${actual}"
+done
+
+if ! diff -u "${expected}" "${actual}"; then
+    echo "guard: crate edges do not match ${expected}" >&2
+    echo "       fix the manifest, or update the golden file if the change is intended" >&2
+    exit 1
+fi
+'''
+
+# ---------------------------------------------------------------------------
 # Development helpers
 # ---------------------------------------------------------------------------
 
