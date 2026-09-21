@@ -94,3 +94,37 @@ jobs:
       # through cargo-make, so the promotion has to be written in both places.
       - name: cargo deny check
         run: cargo deny check -D unused-wrapper
+
+  msrv:
+    name: Minimum supported Rust
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # `rust-version` in the workspace manifest is a promise to downstream
+    # crates, and nothing else in CI compiles on it — the `dod` matrix runs on
+    # stable. This job is the only thing that makes the declared floor true.
+    #
+    # Deliberately CI-only, with no cargo-make task: running it locally means
+    # installing a second toolchain, which no contributor should be required to
+    # do. Anyone who does have it can run the last step's command directly.
+    steps:
+      - uses: actions/checkout@v5
+
+      # The manifest stays the single source of truth for the floor. Hard-coding
+      # the version here would create a second place to update and a silent
+      # disagreement the day only one of them moves.
+      - name: Resolve the declared rust-version
+        id: msrv
+        run: echo "version=$(sed -n 's/^rust-version *= *"\(.*\)"/\1/p' Cargo.toml)" >> "$GITHUB_OUTPUT"
+
+      - name: Install the declared toolchain
+        run: rustup toolchain install ${{ steps.msrv.outputs.version }} --profile minimal
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: msrv
+
+      # `check`, not the full gate: MSRV is a compilation question. `--all-targets`
+      # extends it to test and example code, where a post-floor API is just as
+      # likely to appear. `+<version>` overrides rust-toolchain.toml's `stable` pin.
+      - name: cargo check on the declared floor
+        run: cargo +${{ steps.msrv.outputs.version }} check --workspace --all-targets --all-features

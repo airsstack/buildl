@@ -204,12 +204,86 @@ that row.
 
 ## Review findings
 
-_Filled in during execution._
+One reviewer pass over the combined plan 03 + plan 04 diff. Findings landing in this plan:
+
+| # | Tier | Finding | Disposition |
+|---|---|---|---|
+| 1 | risk | `.github/workflows/ci.yml:98` — nothing in the gate catches removal of the `msrv` job itself | declined — out of scope, and the same class as the guard-removal gap plans 01 and 02 both left open. Recorded rather than fixed, so the chain's record stays consistent about it. |
+| 2 | cleanup | `:117` — the resolved version is never asserted non-empty; if `rust-version` moves or is reformatted, `sed` yields an empty string | declined — it fails closed, not open. `cargo +` with no version errors out, so the job turns red; only the message is unhelpful. |
+| 3 | cleanup | `:122` — `Swatinem/rust-cache` keys on the runner's default toolchain (stable), not the floor this job installs, and the step is the only unnamed one in the file | declined — `shared-key: msrv` isolates the entry, so the miskeying costs cache efficiency, not correctness. The YAML is spec §4's verbatim. |
+| 4 | cleanup | This plan's line 28 cites `docs/roadmap.md` §5 row 9, which plan 04 deletes | declined — this plan is a historical record of what was true when it was written. |
+
+The reviewer re-ran the Definition of Done itself rather than reading the implementers' receipts.
+`cargo make dod`, `cargo fmt --check`, `cargo clippy -D warnings`, `cargo deny check -D unused-wrapper`
+and `cargo +1.94 check --workspace --all-targets --all-features` all exited 0, so the new job starts
+green.
 
 ## Probe results
 
-_Filled in during execution — the real output of task 1 step 4._
+Task 1 step 4, falsification. `u32::bit_width` behaved exactly as the plan predicted — no
+substitution was needed. Stable here is `rustc 1.98.1 (48a229cea 2026-09-01)`.
+
+Stable accepts it:
+
+```
+$ cargo check -p buildl-core
+    Checking buildl-core v0.1.0 (…/crates/buildl-core)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.63s
+```
+
+The declared floor rejects it:
+
+```
+$ cargo +1.94 check --workspace --all-targets --all-features
+    Checking buildl-core v0.1.0 (…/crates/buildl-core)
+error[E0658]: use of unstable library feature `uint_bit_width`
+ --> crates/buildl-core/src/probe.rs:4:33
+  |
+4 | pub fn probe(n: u32) -> u32 { n.bit_width() }
+  |                                 ^^^^^^^^^
+  |
+  = note: see issue #142326 <https://github.com/rust-lang/rust/issues/142326> for more information
+
+For more information about this error, try `rustc --explain E0658`.
+error: could not compile `buildl-core` (lib test) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `buildl-core` (lib) due to 1 previous error
+```
+
+Exit code 101. Stable green, floor red — which is the entire value of the job. The probe was then
+removed and both toolchains confirmed green again.
+
+One probe the plan does not call for was added, because the job's correctness rests on it and
+nothing else in the plan would catch a failure. The `Resolve the declared rust-version` step embeds
+a `sed` expression with backslash groups inside `$(…)` inside YAML — the exact shape a YAML
+round-trip mangles silently. The step's `run:` string was read back through PyYAML and then
+actually executed, with `GITHUB_OUTPUT` pointed at a scratch file:
+
+```
+post-parse run string:
+'echo "version=$(sed -n \'s/^rust-version *= *"\\(.*\\)"/\\1/p\' Cargo.toml)" >> "$GITHUB_OUTPUT"'
+
+exit 0, stderr ''
+GITHUB_OUTPUT contents: 'version=1.94\n'
+```
+
+So the step does not merely parse — it resolves the floor to `1.94` for real.
 
 ## Deviations
 
-_Filled in during execution._
+1. **The plan says `.github/workflows/ci.yml` "currently ends at :94". It ends at 96.** The `msrv`
+   job was appended after the real last line (`run: cargo deny check -D unused-wrapper`). No other
+   consequence.
+
+2. **Task 1 step 5's tree-clean assertion was run scoped to `crates/buildl-core`.** Three other
+   tasks were editing `docs/` concurrently in the same run, so the unscoped form the plan specifies
+   would have reported their work and could never have passed. The scoped form printed nothing, and
+   `crates/buildl-core/src/` was confirmed to hold only `lib.rs`.
+
+3. **Task 2 was executed directly rather than by its assigned implementer.** That implementer
+   returned having performed no tool calls at all, and reported so rather than claiming a green
+   result. `.github/workflows/ci.yml` was verified untouched before the work was redone.
+
+4. **An extra verification was added to task 2** — the post-YAML-parse execution of the `sed` step,
+   recorded under Probe results above. The plan asks only that the file parse as YAML, which would
+   not have caught a mangled expression.
