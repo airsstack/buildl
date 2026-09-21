@@ -89,6 +89,8 @@ jobs:
           tool: cargo-deny
 
       # Advisories, licences, duplicate versions and source registries. Policy
-      # and every suppression live in deny.toml.
+      # and every suppression live in deny.toml. `-D unused-wrapper` must match
+      # Makefile.toml's `deny` task — CI invokes the binary directly rather than
+      # through cargo-make, so the promotion has to be written in both places.
       - name: cargo deny check
-        run: cargo deny check
+        run: cargo deny check -D unused-wrapper

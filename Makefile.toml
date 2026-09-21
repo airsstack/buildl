@@ -101,8 +101,12 @@ description = "cargo-deny: security advisories, licenses, duplicate versions, so
 # disagree with its source of truth. This check also answers to a moving
 # advisory database rather than to the working tree, so it can fail on a commit
 # that changed nothing.
+#
+# `-D unused-wrapper` promotes cargo-deny's own warning to an error: a wrapper
+# declared for a crate that is not in the graph is a ban list describing a
+# dependency graph that no longer exists. The same flag is on the CI step.
 command = "cargo"
-args = ["deny", "check"]
+args = ["deny", "check", "-D", "unused-wrapper"]
 
 # ---------------------------------------------------------------------------
 # Development helpers
