@@ -583,16 +583,107 @@ none do, including `sleep_ms`, `park_timeout_ms`, `sleep_until`, `set_times_nofo
 
 7. Commit `build(repo): run the buildl-core purity guard before every commit`.
 
+
 ---
 
 ## Review findings
 
-_Filled in during execution._
+One reviewer round over the whole diff, then one fix round. Its central result: **the guard
+as this plan specified it failed open in three ways** — each one a state in which a purity ban
+is absent, unresolvable or suppressed and `cargo make dod` still exits 0. That is precisely the
+failure this plan exists to remove, so all three were treated as blocking. Every hole was
+reproduced before the fix and re-checked after.
+
+| # | Tier | Finding | Disposition |
+|---|---|---|---|
+| 1 | 🔴 | `grep -qE '^[^#]*allow-invalid'` fails open: `^[^#]*` rejects any line with an earlier `#`, so an entry whose `reason` contains one (`"see issue #42"`) escapes the check | applied — strip comment lines first, then match plainly |
+| 2 | 🔴 | the source-suppression grep binds attribute and lint name to one line; rustfmt's own multi-line `#![allow(\n    clippy::disallowed_types\n)]` splits them and evades it | applied — match the lint name with no attribute context |
+| 3 | 🟡 | a blanket `#![allow(clippy::all)]` or `#![allow(clippy::style)]` names no `disallowed_` text at all, and `--include='*.rs'` never sees `Cargo.toml`, where `[lints.clippy] disallowed_types = "allow"` silences a ban identically | applied — both group names added to the pattern; a fifth assertion added for the manifest |
+| 4 | 🟡 | the comment claimed "four assertions close that and the three ways a ban can be switched off", and `clippy.toml`'s header claimed "There is no escape hatch" — completeness guarantees findings 1–3 falsify | applied — both rewritten to state coverage, not exhaustiveness |
+| 5 | 🟡 | `echo "${out}"` under the `@shell` runner's `sh` interprets backslash escapes; a `\c` in clippy output truncates the rest and can drop the `clippy.toml:NN` span the rot check greps for | applied — `printf '%s\n'` at all three capture sites |
+| 6 | 🟡 | nothing catches removal of `guard-core-purity` from `[tasks.clippy]`'s `dependencies` | declined — new guard machinery, outside this plan's one objective |
+| 7 | 🟡 | `clippy.toml:19` cited "the chain's spec §3.2 and plan 02" — an internal planning path in a file that ships inside the published crate (doc-comment-discipline) | applied — replaced with a pointer to `docs/architecture-building-blocks.md` §1.2 |
+| 8 | 🟡 | nothing catches a reversion of the ban list; deleting any of the 128 entries leaves the gate green, where plan 01's sibling guard machine-enforces the same class with a golden file | declined — new machinery, outside this plan's objective |
+| 9 | 🔵 | `split_paths`/`join_paths`/`JoinPathsError` reasons claimed "the environment is ambient authority"; these three read nothing from the environment | applied |
+| 10 | 🔵 | `process::id` and `thread::panicking` reasons described process execution and scheduling; neither does either | applied |
+| 11 | 🔵 | three reasons cited "(architecture.md 5.4)", which resolves to no heading — §5 has no subsections | applied — now `architecture.md §5 rule 4` |
+| 12 | 🔵 | the guard's `cargo clippy -p buildl-core` duplicates `[tasks.clippy]`'s `--workspace` run; deliberate but undocumented | applied — noted in the task comment |
+| 13 | ❓ | `clippy.toml` ships inside the published crate (no manifest `exclude`), so downstream vendorers inherit all 128 bans | raised to the author; not decided here |
+
+Verified clean by the reviewer and not changed: 128 entries (71/51/6), zero duplicates, valid
+TOML, every entry resolves on rustc 1.98.1, all three lint tables fire under a positive control,
+rot detection survives a warm cache, `set -e` is on under `@shell` and `out=$(…) || {…}` does not
+swallow clippy's exit code, `dbg!` is not a gap, and no interaction breakage with plan 01's
+`guard-crate-edges` or `crates/expected-edges.txt`.
 
 ## Probe results
 
-_Filled in during execution — the real output of each falsification step above._
+Every falsification the plan specifies was run, plus three the plan did not anticipate. Task 2
+step 2, task 2 step 5 and task 3 step 4 are the green-path runs; the rest are failures, and
+cargo-make reports a failed task as exit **105**.
+
+| Falsification | Plan step | Result |
+|---|---|---|
+| clean tree, guard passes | T2.2 | exit 0 |
+| a real violation — `SystemTime::now()` in `buildl-core` | T2.3 | exit 105 |
+| inner-attribute suppression `#![allow(clippy::disallowed_types)]` | T2.4 | exit 105 — clippy itself exits clean; the guard catches it anyway |
+| probe removed, guard green again | T2.5 | exit 0 |
+| a rotted ban, three consecutive runs on a warm cache | T3.1 | exit 105 on all three, identically — cargo replays the cached diagnostic, so the span-path check is not a cold-cache trick |
+| `allow-invalid = true` on an entry | T3.2 | exit 105 |
+| missing `clippy.toml` | T3.3 | exit 105 |
+| config restored, guard green | T3.4 | exit 0 |
+| full gate | T3.6 | `cargo make dod` exit 0; `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok` |
+| **`allow-invalid = true` with a `#` in the reason** | — | **not in the plan.** Before: exit 0 (fail-open). After: exit 105 |
+| **multi-line `#![allow(\n clippy::disallowed_types\n)]`** | — | **not in the plan.** Before: exit 0 with `cargo fmt --check` also green. After: exit 105 |
+| **`[lints.clippy] disallowed_types = "allow"` in the manifest** | — | **not in the plan.** Before: exit 0. After: exit 105 |
+
+`clippy::allow_attributes` was checked as a negative control against the new pattern's `\b`
+anchors and is correctly **not** matched, so the broadened grep introduces no false positive.
+
+Two predicted outputs in the plan were loose and are not defects. cargo-make prints both
+`Task: <name>` and `Running Task: <name>` for a script task invoked by name, where the plan shows
+only the second; and `cargo deny check` prints one summary line, not four. A `SystemTime` return
+type plus a `SystemTime::now()` call also fires the type ban twice, not once — the plan's step
+predicted three diagnostic lines and reality gives four.
 
 ## Deviations
 
-_Filled in during execution._
+1. **The `allow-invalid` check is not the plan's.** The plan's `grep -q 'allow-invalid' "${config}"`
+   (line 402) matches the header comment its own task 1 body writes into `clippy.toml` (line 151),
+   so the guard could never pass. The shipped check strips comment lines and then matches:
+
+   ```sh
+   if grep -vE '^[[:space:]]*#' "${config}" | grep -q 'allow-invalid'; then
+   ```
+
+   An intermediate attempt, `grep -qE '^[^#]*allow-invalid'`, was written and then replaced: it
+   fixed the false positive but introduced a false negative on any entry whose `reason` contains
+   a `#`. Both states were reproduced.
+
+2. **The source-suppression pattern is not the plan's.** `#!?\[[^]]*disallowed_` (line 421) is
+   line-scoped and blind to blanket group allows. The shipped check is
+
+   ```sh
+   if grep -rnE --include='*.rs' 'clippy::(disallowed_|all\b|style\b)' crates/buildl-core; then
+   ```
+
+   `clippy::all` and `clippy::style` are named because `clippy-driver -Whelp` shows
+   `disallowed-methods`, `disallowed-types` and `disallowed-macros` as members of exactly those
+   two groups.
+
+3. **A fifth assertion was added.** The plan specifies four; a crate-local `[lints]` override in
+   `crates/buildl-core/Cargo.toml` defeats all four, so the guard now asserts that table is
+   exactly `workspace = true`.
+
+4. **`printf '%s\n'` replaces `echo` at the three diagnostic-capture sites**, so a backslash
+   escape in clippy's output cannot truncate the text the rot check greps.
+
+5. **Task 3 step 3's backup path** was the session scratchpad rather than `/tmp`, per this
+   environment's constraint. `clippy.toml` is untracked, so `git status` cannot prove it was
+   restored; restoration was proven by `diff` against a pristine copy instead of the plan's
+   `git status --short` assertion.
+
+The plan's task 2 and task 3 bodies still show the superseded `allow-invalid` and suppression
+patterns inline. They are left as written — the plan is the record of what was specified, and
+these deviations are the record of what shipped. The chain's `spec.md` §3.3 quotes the same
+superseded guard script and should be reconciled when plan 04 amends the documentation.
