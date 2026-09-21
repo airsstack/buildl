@@ -257,6 +257,18 @@ banned: they read files at compile time, which is deterministic and visible in t
 
 ### 3.3 Invocation — `guard-core-purity`
 
+> **Superseded by what shipped.** The script quoted below is the design-time draft. Three of its
+> checks were found to fail open while plan 02 was being executed, and the task in `Makefile.toml`
+> is the corrected version — six assertions, not five. Read `[tasks.guard-core-purity]` in
+> `Makefile.toml` for the shipped guard; the record of what was wrong and how each hole was
+> reproduced is in `plans/02-core-purity-bans.md` and in commit `2e4a300`. In short:
+> `grep -q 'allow-invalid'` below always matches the config's own header comment and so can never
+> pass; `#!?\[[^]]*disallowed_` binds the attribute and the lint name to one line, which a
+> rustfmt-stable multi-line `#![allow(...)]` splits apart; and neither the blanket group allows
+> (`clippy::all`, `clippy::style`, which contain all three `disallowed_*` lints) nor a crate-local
+> `[lints.clippy]` table in `Cargo.toml` was covered at all. This block is kept unedited as the
+> design-time record.
+
 The existing `cargo make clippy` step would already fail on a real violation, but not on a ban
 entry that stopped resolving (§1). A dedicated cargo-make script task makes both fatal and adds
 two more assertions:

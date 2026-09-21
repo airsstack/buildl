@@ -243,12 +243,66 @@ docs/roadmap.md                       — [modify] §3 I-guard status, new §4 r
 
 ## Review findings
 
-_Filled in during execution._
+One reviewer pass over the combined plan 03 + plan 04 diff. Findings landing in this plan:
+
+| # | Tier | Finding | Disposition |
+|---|---|---|---|
+| 1 | risk | `docs/architecture-building-blocks.md:259` — the replacement sentence cites "`architecture.md` §5.4", a section that does not exist. `architecture.md` §5 has no subsections; the target is §5 rule 4. Worse, this document has its own `### 5.4 Pure logic`, so the reference silently resolves to the wrong document. | applied — repointed to `architecture.md` §5 rule 4. The dangling reference was inherited from the sentence being replaced and was carried forward by this plan's own mandated text. |
+| 2 | risk | `docs/roadmap.md:66` — `**done**, 2026-09-18` is contradicted by the commits the same table cites. Every commit in `1fa8421`…`f8941e3` is dated 2026-09-21, and the neighbouring I1 row (`**done**, 2026-09-15`, commits dated 2026-09-15) proves the cell is a completion date, not a chain-creation date. | applied — changed to `**done**, 2026-09-21 (§4)`. The plan mandated the wrong literal. |
+| 3 | risk | `docs/roadmap.md:88` — the new §4 row is covered by the sentence claiming the plan files hold the full execution record, but plans 03 and 04's record sections were still placeholders. | applied — this section and plan 03's are that record. |
+| 4 | risk | `spec.md` §3.3 quotes the superseded guard script. Plan 02's Deviations assigned reconciling it to this plan, which neither did it nor recorded the deferral — and marking I-guard done closes the chain over a spec whose `grep -q 'allow-invalid'` can never pass, whose suppression regex is the evadable one, and which says "five exits" where the tree has six. | applied — a marked note was added at the head of §3.3 naming what the shipped task does instead and pointing at `Makefile.toml` and commit `2e4a300`. The draft script itself is left unedited as the design-time record, per the chain convention that nothing is removed. |
+| 5 | cleanup | `:259` — the three-item failure list reads as exhaustive over a guard that has six exits. | applied — the sentence now says the guard covers three further ways the bans can be switched off, which the task itself enumerates. Plan 02's review caught this same defect class in both `Makefile.toml` and `clippy.toml`. |
+| 6 | cleanup | `:270` — the §7 row's enumeration omits the network bans. `crates/buildl-core/clippy.toml` bans `std::net::TcpListener`, `std::net::TcpStream` and `std::net::UdpSocket` at lines 139-141. | applied — "network" added to the enumeration. A doc amendment whose purpose is replacing an inaccurate claim should not ship an incomplete list. |
+| 7 | cleanup | `docs/architecture.md:216` — the rewritten line re-asserts "`now()` is read in exactly two places", which is unverifiable because the code does not exist yet. | declined — the claim is design intent, it is present verbatim in the sentence being replaced, and this plan's scope is the enforcement clause, not the intent clause. |
+
+The reviewer re-ran the Definition of Done itself rather than reading the implementers' receipts:
+`cargo make dod`, `cargo fmt --check`, `cargo clippy -D warnings` and
+`cargo deny check -D unused-wrapper` all exited 0.
 
 ## Probe results
 
-_Filled in during execution._
+Every anchor this plan locates by text was confirmed present and verbatim before any edit, and every
+post-edit assertion was run:
+
+| Assertion | Predicted | Observed |
+|---|---|---|
+| `git diff --stat docs/architecture-building-blocks.md` | `5 +++--` | `5 +++--` |
+| `grep -n 'enforced by the crate boundary' docs/architecture-building-blocks.md` | nothing | nothing |
+| `grep -c 'crate boundary' docs/architecture-building-blocks.md` | `1` | **`2`** — see deviation 1 |
+| `git diff --stat docs/architecture.md` | `2 +-` | `2 +-` |
+| `grep -n 'crate boundary enforces' docs/architecture.md` | nothing | nothing |
+| `grep -c '\|I1 review\|' docs/roadmap.md` | `6` | `6` (was 9) |
+| `grep -n '\|I-guard\|$' docs/roadmap.md` | nothing | nothing |
+| `grep -n '^\|10\|' docs/roadmap.md` (control) | the row-10 line | the row-10 line |
+| surviving §5 `#` values | 3, 4, 5, 6, 7, 8, 10 | 3, 4, 5, 6, 7, 8, 10 |
+| `grep -rn 'roadmap.*§5 row' docs/ README.md` | — | no hits, so nothing outside the roadmap pointed at a deleted row |
+
+The two claims the new prose makes about the tree were checked against the tree rather than against
+the plan, before the sentences were written: `Instant`, `SystemTime` and `SystemTimeError` are banned
+under `disallowed-types` (not `disallowed-methods`) in `crates/buildl-core/clippy.toml`, and
+`[tasks.guard-core-purity]` exists in `Makefile.toml` and runs inside `cargo make dod` by the chain
+`dod` → `clippy` → `dependencies = ["guard-core-purity", "guard-crate-edges"]`.
 
 ## Deviations
 
-_Filled in during execution._
+1. **Task 1 step 4's `grep -c 'crate boundary'` returns 2, not the predicted 1 — and the plan is what
+   is wrong.** The plan's own mandated replacement text contains the phrase ("The crate boundary does
+   not enforce it"), so the count can never come out at 1. The step's real assertions both hold: the
+   false claim is gone, and the §10 parenthetical survives untouched. The number was not forced.
+
+2. **The §4 Completed-intents row's closing SHA was written provisionally and updated at the commit
+   gate.** Nothing in plans 03 or 04 was committed while they were being executed — committing is the
+   user's separate act — so the true closing commit did not exist at write time. The plan's step 2
+   anticipates this case.
+
+3. **`spec.md` §3.3 was amended with a superseded-note rather than rewritten.** Plan 02's Deviations
+   assigned this reconciliation here. The draft script is kept unedited beneath the note, because the
+   chain's convention is that a superseded artifact keeps its content and is marked, not deleted.
+
+4. **Two reviewer cleanups outside the plan's literal text were applied** — the exhaustive-sounding
+   failure list and the enumeration missing the network bans (findings 5 and 6 above). Both are the
+   same defect class this chain exists to remove: a document asserting a completeness it does not
+   keep.
+
+5. **Task 1's line-339 instruction now refers to line 340.** The §7 table gained a row, shifting the
+   §10 decision-record parenthetical down by one. It was left untouched, as the plan directs.
