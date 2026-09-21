@@ -256,7 +256,7 @@ classDiagram
 |`Clock`|log timestamps and durations|system clock|`buildl`|
 |`Reporter`|output blocks and the status line|TTY, plain|`buildl`|
 
-The `Clock` port is `architecture.md` §5.4's quarantine of the wall clock, enforced by the crate boundary: `buildl-core` has no way to read time except through the port.
+The `Clock` port is `architecture.md` §5 rule 4's quarantine of the wall clock. The crate boundary does not enforce it — `std::time` is in scope for every crate — so `crates/buildl-core/clippy.toml` bans `Instant`, `SystemTime` and `SystemTimeError` by name, and `cargo make guard-core-purity` fails the gate when one is used, when a ban stops resolving, when a source file suppresses the lint, and on three further ways the bans can be switched off that the task itself enumerates.
 
 ## 7. Dependency rules
 
@@ -267,7 +267,8 @@ The `Clock` port is `architecture.md` §5.4's quarantine of the wall clock, enfo
 
 |Rule|Enforced by|
 |---|---|
-|1, 4, and the cross-crate half of 2|the compiler — a crate cannot import what its `[dependencies]` does not list|
+|the dependency half of 1, rule 4, and the cross-crate half of 2|`deny.toml`'s `[bans].deny` wrapper lists, which name the only direct parents a crate may have, plus `cargo make guard-crate-edges`, which diffs every member's direct dependencies against `crates/expected-edges.txt`. The compiler covers only imports: it stops a crate using what its `[dependencies]` omits, but not a dependency being added, and not one being removed.|
+|the "no I/O API" half of 1|`crates/buildl-core/clippy.toml`, an enumerated ban on the filesystem, process, thread, network, environment, standard-stream and clock APIs, asserted by `cargo make guard-core-purity`|
 |adapter isolation inside `buildl`|review, until an adapter earns its own crate (§11)|
 
 ## 8. Testing layers
