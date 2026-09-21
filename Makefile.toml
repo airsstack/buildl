@@ -52,6 +52,12 @@ args = ["fmt", "--all", "--", "--check"]
 [tasks.clippy]
 category = "Gate"
 description = "Lint every target, warnings are errors"
+# The architecture guards hang here rather than on `dod`: `dod` mirrors the
+# rust-guidelines five-command Definition of Done and gains no sixth step (see
+# the `deny` task's comment). Hanging them off `clippy` puts both in front of
+# anyone about to commit, because `cargo make`, `cargo make dod` and
+# `cargo make clippy` all run them.
+dependencies = ["guard-crate-edges"]
 # `--all-targets` covers tests, examples and benches — a lint living only in
 # test code passes silently without it. `-D warnings` also promotes plain rustc
 # warnings, which is why the gate has no separate `cargo build` step.
