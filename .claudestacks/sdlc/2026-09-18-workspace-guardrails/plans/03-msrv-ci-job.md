@@ -1,5 +1,5 @@
 ---
-status: draft
+status: approved
 created: 2026-09-18
 ---
 
