@@ -143,6 +143,73 @@ if ! diff -u "${expected}" "${actual}"; then
 fi
 '''
 
+[tasks.guard-core-purity]
+category = "Gate"
+description = "Assert buildl-core names no I/O, process, thread, environment or clock API"
+# `cargo make clippy` already fails on a real violation. What it does not fail
+# on is a ban entry that stopped resolving: clippy warns and exits 0, so every
+# ban could rot away under a green gate. The assertions below cover: config
+# presence, ban rot surfaced by clippy's own diagnostics, `allow-invalid`
+# silencing a rotted ban, source-level suppression of a `disallowed_*` lint
+# (directly or via a blanket group allow), and a crate-local `[lints]`
+# override in the manifest.
+script_runner = "@shell"
+script = '''
+config="crates/buildl-core/clippy.toml"
+if [ ! -f "${config}" ]; then
+    echo "guard: ${config} is missing — every purity ban is gone" >&2
+    exit 1
+fi
+
+out=$(cargo clippy -p buildl-core --all-targets --all-features -- -D warnings 2>&1) || {
+    printf '%s\n' "${out}"
+    exit 1
+}
+printf '%s\n' "${out}"
+
+# Any diagnostic whose span points at the config file means a ban stopped resolving.
+if printf '%s\n' "${out}" | grep -qE 'clippy\.toml:[0-9]+'; then
+    echo "guard: a ban in crates/buildl-core/clippy.toml no longer resolves" >&2
+    exit 1
+fi
+
+# clippy.toml's own header comment documents the allow-invalid flag, so a plain
+# `grep -q 'allow-invalid' "${config}"` always matches that comment line and can
+# never pass. Strip comment lines first, then match the remaining TOML plainly:
+# that still catches a live `allow-invalid = true` entry no matter what else is
+# on the line (a `#` inside a quoted reason string no longer hides it).
+if grep -vE '^[[:space:]]*#' "${config}" | grep -q 'allow-invalid'; then
+    echo "guard: allow-invalid disables rot detection for a ban entry" >&2
+    exit 1
+fi
+
+# Match the lint name alone, with no attribute syntax around it, so no spelling
+# of the suppression — `#[allow]`, `#![allow]`, `#[expect]`, `cfg_attr`, or a
+# rustfmt-stable multi-line attribute that splits the name onto its own line —
+# can evade a line-scoped pattern. `clippy::all` and `clippy::style` are listed
+# alongside `disallowed_` because disallowed-methods, disallowed-types and
+# disallowed-macros are members of exactly those two groups (per
+# `clippy-driver -Whelp`); allowing either group silences all three bans without
+# ever naming them.
+if grep -rnE --include='*.rs' 'clippy::(disallowed_|all\b|style\b)' crates/buildl-core; then
+    echo "guard: a purity ban was suppressed in source" >&2
+    echo "       move the call to an adapter behind a port, or delete the ban" >&2
+    echo "       and record the decision in architecture.md §6" >&2
+    exit 1
+fi
+
+# `--include='*.rs'` above never sees the manifest, yet a crate-local
+# `[lints.clippy]` override there silences a ban just as effectively as a
+# source suppression. buildl-core's lint table is exactly `[lints]` /
+# `workspace = true` today; assert it stays that way.
+manifest_lints="$(sed -n '/^\[lints/,/^\[/p' crates/buildl-core/Cargo.toml | grep -vE '^\[|^[[:space:]]*$')"
+if [ "${manifest_lints}" != "workspace = true" ]; then
+    echo "guard: crates/buildl-core/Cargo.toml's [lints] table is not plain \`workspace = true\`" >&2
+    echo "       a crate-local lint override can allow a disallowed_* lint" >&2
+    exit 1
+fi
+'''
+
 # ---------------------------------------------------------------------------
 # Development helpers
 # ---------------------------------------------------------------------------
