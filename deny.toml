@@ -71,7 +71,32 @@ highlight = "all"
 workspace-default-features = "allow"
 external-default-features = "allow"
 allow = []
-deny = []
+deny = [
+    { crate = "airsl", wrappers = ["buildl-lua"], reason = """\
+        ABB §7 rule 1 and §1.2: buildl-core must never depend on airsl, so buildl-lua alone \
+        names it and an airsl upgrade's blast radius stays one crate deep""" },
+    { crate = "buildl-core", wrappers = ["buildl-lua", "buildl"], reason = """\
+        ABB §7 rule 4: the binary reaches core types through buildl's re-exports, so \
+        buildl-cli keeps exactly one library dependency""" },
+    { crate = "buildl-lua", wrappers = ["buildl"], reason = """\
+        ABB §7 rules 1 and 4: buildl-core depends on no buildl crate, and buildl-cli reaches \
+        core types only through buildl's re-exports, so buildl alone may name the adapter \
+        directly""" },
+    { crate = "buildl", wrappers = ["buildl-cli"], reason = """\
+        ABB §7 rule 2: buildl-lua never imports buildl, so only buildl-cli may depend on it \
+        directly""" },
+    { crate = "mlua", wrappers = ["airsl"], reason = """\
+        the Lua runtime is airsl's implementation detail; no buildl crate names it directly""" },
+    { crate = "toml", wrappers = ["airsl"], reason = """\
+        ABB §1.2: buildl-core must never depend on toml; §6 places buildl.toml parsing in the \
+        Manifest adapter inside buildl""" },
+    { crate = "walkdir", wrappers = ["airsl"], reason = """\
+        ABB §1.2: buildl-core does no filesystem traversal""" },
+    { crate = "tempfile", wrappers = ["airsl"], reason = """\
+        ABB §1.2: temp-file-then-rename is a storage-adapter concern""" },
+    { crate = "globset", wrappers = ["airsl"], reason = """\
+        ABB §1.2: b.sources() globbing is a filesystem read, not core logic""" },
+]
 skip = []
 skip-tree = []
 
