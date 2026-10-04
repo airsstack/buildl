@@ -1,0 +1,13 @@
+# buildl-core
+serde
+serde_json
+sha2
+thiserror
+# buildl-lua
+airsl
+buildl_core
+# buildl
+buildl_core
+buildl_lua
+# buildl-cli
+buildl

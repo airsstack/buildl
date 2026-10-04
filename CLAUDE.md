@@ -78,3 +78,24 @@ restating what the picture already shows.
 **Chat ASCII, document Mermaid.** This rule governs terminal responses only. The design
 documents use Mermaid deliberately (GitHub renders it) — never convert a `mermaid` block in
 `docs/` to ASCII, and keep using Mermaid when adding diagrams there.
+
+**3. Finish the objective. Do not manufacture work.**
+
+The task as asked is the deliverable. Deliver it and stop.
+
+- **Do not hunt for edge cases.** Once the thing asked for works and is verified, it is done.
+  Probing for further weaknesses, hypothetical failure modes, or "one more hole" is scope the
+  user did not ask for and does not want.
+- **Do not report every problem found.** Report only what blocks the objective or changes a
+  decision the user must make. A defect you can fix in one edit: fix it silently and move on.
+  A theoretical gap outside the task's scope: leave it out entirely.
+- **No running "still open" lists.** Do not end responses with outstanding-items tables,
+  open questions, or things "left for you to decide" unless the user genuinely cannot proceed
+  without answering.
+- **Ask at most what changes the work.** Prefer deciding with a stated assumption over asking.
+  Several rounds of questions on one task is a failure, not thoroughness.
+- **Rigour serves the objective, not itself.** Verifying a claim the deliverable rests on is
+  right. Verifying claims nobody asked about, or re-verifying what is already proven, is
+  over-complication and wastes the user's time.
+
+When in doubt: what was asked for, done and checked, in the fewest moves.

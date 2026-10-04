@@ -35,6 +35,18 @@ Dependency inversion targets I/O and volatile subsystems. A stable library doing
 |`thiserror`|`rayon`, `tempfile`, `walkdir`, `globset`|
 |`sha2`|any other buildl crate|
 
+The table is the dependency rule. `crates/buildl-core/clippy.toml` is its enumeration: 130 entries
+across `disallowed-methods`, `disallowed-types` and `disallowed-macros`, partitioned into nine
+families — the filesystem (41, counting the nine `Path` methods that reach it), the environment
+(23, including the compile-time reads and the two `PATH`-format helpers), threads (20), processes
+(15), the platform filesystem extensions (13), the standard streams (10, including the print
+macros), the clock (3), the network (3) — and floating-point numbers (2), which are not an I/O
+surface at all. The nine counts sum to the 130, so the partition is the whole config. A float is
+banned because a non-finite one serializes as JSON `null`, so a value could reach an action key
+differing from the value it was computed from (`architecture.md` §5 rule 2). `cargo make
+guard-core-purity` asserts that every entry still resolves, that no source file suppresses the
+lints, and that the config is not switched off.
+
 ### 1.3 The name `buildl`
 
 Three different things carry the name, and the crate structure keeps them apart:
@@ -129,8 +141,9 @@ Every value is a validated newtype or a serializable handoff; field-level detail
 
 |Kind|Types|
 |---|---|
-|Names and identity|`Label`, `NodeId`, `Provenance`|
+|Names and identity|`Directory`, `TargetName`, `Label`, `NodeId`, `Provenance`|
 |Content|`Digest` — the single SHA-256 type for files, outputs, keys, and log blobs|
+|Time|`Timestamp` — nanoseconds since the Unix epoch, the current one obtained only through the `Clock` port|
 |Phase handoffs|`Declaration`, `TargetGraph`, `Plan`, `ActionOutcome`|
 |Incrementality|`KeyComponents`, `ActionKey`|
 |Authority|`Ceiling`, `WantedSet`, `Grants`|
@@ -142,12 +155,12 @@ Every value is a validated newtype or a serializable handoff; field-level detail
 /// Evaluates one build file. The directory queue, `subdir` handling, and the
 /// sorted merge across files are Load logic in `buildl-core`, not the adapter's.
 pub trait DeclarationSource {
-    fn evaluate(&self, file: &BuildFile) -> Result<StagedFile, LoadError>;
+    fn evaluate(&self, file: &BuildFile) -> Result<StagedFile>;
 }
 
 /// Workers write output blobs concurrently.
 pub trait ContentStore: Send + Sync {
-    fn put(&self, bytes: &[u8]) -> Result<Digest, StoreError>;
+    fn put(&self, bytes: &[u8]) -> Result<Digest>;
     fn contains(&self, digest: &Digest) -> bool;
 }
 
@@ -155,24 +168,29 @@ pub trait ContentStore: Send + Sync {
 pub trait ActionCache {
     fn row(&self, label: &Label) -> Option<&CacheRow>;
     fn upsert(&mut self, label: Label, row: CacheRow);
-    fn commit(&mut self) -> Result<(), StoreError>;
+    fn commit(&mut self) -> Result<()>;
 }
 
 pub trait EventLog {
-    fn append(&mut self, event: &OutcomeEvent) -> Result<(), StoreError>;
+    fn append(&mut self, event: &OutcomeEvent) -> Result<()>;
 }
 
 pub trait ExecStrategy: Send + Sync {
     /// Each isolation tier materialises a differently shaped exec dir.
     type Dir;
-    fn prepare(&self, action: &ReadyAction) -> Result<Self::Dir, InfraFailure>;
-    fn run(&self, dir: &Self::Dir, action: &ReadyAction) -> Result<RawOutcome, InfraFailure>;
+    fn prepare(&self, action: &ReadyAction) -> Result<Self::Dir>;
+    fn run(&self, dir: &Self::Dir, action: &ReadyAction) -> Result<RawOutcome>;
 }
 
 pub trait Clock {
     fn now(&self) -> Timestamp;
 }
 ```
+
+Every fallible port method returns the crate's one `Result`, not an error type of its own:
+`architecture.md` §4 settles the error model as a single structured enum, so `Result<StagedFile>`
+above is `core::result::Result<StagedFile, buildl_core::Error>`. The enum is `#[non_exhaustive]`,
+and each phase adds the variants it earns.
 
 ### 5.3 `Pipeline` and the `Ports` bundle
 
@@ -256,7 +274,7 @@ classDiagram
 |`Clock`|log timestamps and durations|system clock|`buildl`|
 |`Reporter`|output blocks and the status line|TTY, plain|`buildl`|
 
-The `Clock` port is `architecture.md` §5.4's quarantine of the wall clock, enforced by the crate boundary: `buildl-core` has no way to read time except through the port.
+The `Clock` port is `architecture.md` §5 rule 4's quarantine of the wall clock. The crate boundary does not enforce it — `std::time` is in scope for every crate — so `crates/buildl-core/clippy.toml` bans `Instant`, `SystemTime` and `SystemTimeError` by name, and `cargo make guard-core-purity` fails the gate when one is used, when a ban stops resolving, when a source file suppresses the lint, and on three further ways the bans can be switched off that the task itself enumerates.
 
 ## 7. Dependency rules
 
@@ -267,7 +285,8 @@ The `Clock` port is `architecture.md` §5.4's quarantine of the wall clock, enfo
 
 |Rule|Enforced by|
 |---|---|
-|1, 4, and the cross-crate half of 2|the compiler — a crate cannot import what its `[dependencies]` does not list|
+|the dependency half of 1, rule 4, and the cross-crate half of 2|`deny.toml`'s `[bans].deny` wrapper lists, which name the only direct parents a crate may have, plus `cargo make guard-crate-edges`, which diffs every member's direct dependencies against `crates/expected-edges.txt`. The compiler covers only imports: it stops a crate using what its `[dependencies]` omits, but not a dependency being added, and not one being removed.|
+|the "no I/O API" half of 1|`crates/buildl-core/clippy.toml`, an enumerated ban on the filesystem, process, thread, network, environment, standard-stream and clock APIs, asserted by `cargo make guard-core-purity`|
 |adapter isolation inside `buildl`|review, until an adapter earns its own crate (§11)|
 
 ## 8. Testing layers
