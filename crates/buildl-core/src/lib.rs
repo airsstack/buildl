@@ -24,4 +24,4 @@ pub mod error;
 pub mod types;
 
 pub use error::{Error, NameKind, Result};
-pub use types::{Directory, Label, TargetName};
+pub use types::{Digest, Directory, Label, NodeId, Provenance, TargetName, Timestamp};
