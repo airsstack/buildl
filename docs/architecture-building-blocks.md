@@ -141,8 +141,9 @@ Every value is a validated newtype or a serializable handoff; field-level detail
 
 |Kind|Types|
 |---|---|
-|Names and identity|`Label`, `NodeId`, `Provenance`|
+|Names and identity|`Directory`, `TargetName`, `Label`, `NodeId`, `Provenance`|
 |Content|`Digest` — the single SHA-256 type for files, outputs, keys, and log blobs|
+|Time|`Timestamp` — nanoseconds since the Unix epoch, the current one obtained only through the `Clock` port|
 |Phase handoffs|`Declaration`, `TargetGraph`, `Plan`, `ActionOutcome`|
 |Incrementality|`KeyComponents`, `ActionKey`|
 |Authority|`Ceiling`, `WantedSet`, `Grants`|
@@ -154,12 +155,12 @@ Every value is a validated newtype or a serializable handoff; field-level detail
 /// Evaluates one build file. The directory queue, `subdir` handling, and the
 /// sorted merge across files are Load logic in `buildl-core`, not the adapter's.
 pub trait DeclarationSource {
-    fn evaluate(&self, file: &BuildFile) -> Result<StagedFile, LoadError>;
+    fn evaluate(&self, file: &BuildFile) -> Result<StagedFile>;
 }
 
 /// Workers write output blobs concurrently.
 pub trait ContentStore: Send + Sync {
-    fn put(&self, bytes: &[u8]) -> Result<Digest, StoreError>;
+    fn put(&self, bytes: &[u8]) -> Result<Digest>;
     fn contains(&self, digest: &Digest) -> bool;
 }
 
@@ -167,24 +168,29 @@ pub trait ContentStore: Send + Sync {
 pub trait ActionCache {
     fn row(&self, label: &Label) -> Option<&CacheRow>;
     fn upsert(&mut self, label: Label, row: CacheRow);
-    fn commit(&mut self) -> Result<(), StoreError>;
+    fn commit(&mut self) -> Result<()>;
 }
 
 pub trait EventLog {
-    fn append(&mut self, event: &OutcomeEvent) -> Result<(), StoreError>;
+    fn append(&mut self, event: &OutcomeEvent) -> Result<()>;
 }
 
 pub trait ExecStrategy: Send + Sync {
     /// Each isolation tier materialises a differently shaped exec dir.
     type Dir;
-    fn prepare(&self, action: &ReadyAction) -> Result<Self::Dir, InfraFailure>;
-    fn run(&self, dir: &Self::Dir, action: &ReadyAction) -> Result<RawOutcome, InfraFailure>;
+    fn prepare(&self, action: &ReadyAction) -> Result<Self::Dir>;
+    fn run(&self, dir: &Self::Dir, action: &ReadyAction) -> Result<RawOutcome>;
 }
 
 pub trait Clock {
     fn now(&self) -> Timestamp;
 }
 ```
+
+Every fallible port method returns the crate's one `Result`, not an error type of its own:
+`architecture.md` §4 settles the error model as a single structured enum, so `Result<StagedFile>`
+above is `core::result::Result<StagedFile, buildl_core::Error>`. The enum is `#[non_exhaustive]`,
+and each phase adds the variants it earns.
 
 ### 5.3 `Pipeline` and the `Ports` bundle
 

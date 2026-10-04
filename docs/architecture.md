@@ -49,13 +49,14 @@ All in `buildl-core`, all newtypes over primitives, following airsl's `types/` d
 %% Core type relationships
 classDiagram
     class Label {
-        directory: String
-        name: String
+        directory: Directory
+        name: TargetName
         parse(s) Result~Label~
+        resolve(s, base) Result~Label~
     }
     class Provenance {
         file: PathBuf
-        directory: String
+        directory: Directory
     }
     class Declaration {
         label: Label
@@ -211,7 +212,16 @@ Classification is structural at the site that knows (spawn error vs non-zero exi
 House rules enforcing design-doc §12 at the code level — checkable in review, some in CI:
 
 1. **No `HashMap` iteration reaches any output.** Anything serialized, displayed, or hashed iterates a `BTreeMap`/sorted `Vec`. (`HashMap` is fine as a pure lookup table.)
-2. **All JSON leaves through one canonical serializer** — sorted keys, fixed float handling. `graph.json`, `cache.json`, `log.jsonl`, and the bytes hashed into an `ActionKey` all use it, so "the key of X" and "the file of X" can never disagree.
+2. **All JSON leaves through one canonical serializer** — object keys sorted at every level, and
+   floating-point values rejected where the serializer can see them. `graph.json`, `cache.json`,
+   `log.jsonl`, and the bytes hashed into an `ActionKey` all use it, so "the key of X" and "the
+   file of X" can never disagree. The float rule is enforced twice over, because neither half is
+   complete alone: the serializer walks the value *after* `serde_json::to_value` has produced a
+   tree, so it catches every finite float a dependency's `Serialize` impl might smuggle in — but
+   it cannot catch a non-finite one, because `serde_json` turns `NaN` and `±Infinity` into `null`
+   before the walk sees them, indistinguishable from a genuine `null`. The real guarantee is
+   `crates/buildl-core/clippy.toml`'s ban on `f32` and `f64` in the crate, asserted by
+   `cargo make guard-core-purity`; the serializer's walk is the second line, not the first.
 3. **Parallelism is never observable.** Parallel load merges sorted (§3.1); parallel hashing writes into pre-indexed slots; the executor's completion _order_ appears only in the log's timestamps, never in any artifact.
 4. **Wall clock is quarantined.** `now()` is read in exactly two places — log event timestamps and durations — via the `Clock` port, whose only real adapter lives in `buildl`. The crate boundary does not enforce this: `std::time` is in scope for every crate. `crates/buildl-core/clippy.toml` bans `Instant`, `SystemTime` and `SystemTimeError` under `disallowed-types`, and `cargo make guard-core-purity` runs that ban inside `cargo make dod` — so it is lint configuration, not grep and not the compiler, that keeps the rule true.
 5. **Double-run checks are CI, not doctrine.** `buildl check` runs declaration twice and diffs staging hashes; the test suite builds a fixture workspace twice and asserts byte-identical `graph.json`, `cache.json`, and cas contents.
@@ -228,6 +238,10 @@ House rules enforcing design-doc §12 at the code level — checkable in review,
 |Worker/scheduler channel|**std mpsc**|One producer set, one consumer, no select needed; crossbeam only if the reporter grows a second consumer.|
 |Lua exposure|**`buildl-lua` crate only**|An airsl (or mlua [6]) upgrade touches one crate; `buildl-core` compiles Lua-free by construction, since airsl is not among its dependencies.|
 |Structure|**Four dependency-inverted crates**|Every flow testable against fake ports; recorded with its alternatives in building blocks §10.|
+|Label syntax|**Absolute only, with a separate resolver**|A `Label` is `//dir:name` and nothing else, so no phase downstream asks whether the one it holds still needs resolving. `Label::resolve` is the single place the three forms a build file may write — `//dir:name`, `:sibling`, and a bare `name` — become one. Closes the relative-label half of design §14.|
+|Directory-only labels|**Rejected, not resolved to `//dir:dir`**|Bazel's shorthand is not adopted: the design document states no such rule, and one target with two spellings breaks the `Display` → `parse` round-trip and admits two cache keys meaning the same target.|
+|Floats in canonical JSON|**Refused outright, banned at compile time**|Nothing in the domain model is float-valued, and a non-finite float serializes as `null`, which would make an action key disagree with the value it was computed from. See §5 rule 2.|
+|`Timestamp` representation|**`u64` nanoseconds since the Unix epoch; no date dependency**|The clock feeds durations as well as event timestamps (§5 rule 4) and `Instant` is banned in `buildl-core`, so a duration is the difference of two timestamps — which second resolution could not express. Unrelated to `SOURCE_DATE_EPOCH`, a whole-second value the sandbox hands to an action. Formatting belongs to the adapter that displays it, where a date library may be taken.|
 
 ## 7. Testing strategy
 

@@ -645,7 +645,7 @@ Dependency-ordered, with the airsl extension work interleaved:
 
 ## 14. Open questions
 
-- **Label syntax details:** `//dir:target` adopted here; relative labels (`:sibling`), and whether `subdir` should be implicit via file discovery, are open.
+- **Label syntax details:** _partially resolved_ — `//dir:target` is adopted, and relative labels are too: a build file may write `:sibling` or a bare `name`, both resolved against the declaring directory, which is what §5's own `deps = { "main.o", "util.o", "//lib:text" }` already mixes. A directory-only `//dir` is rejected rather than read as `//dir:dir`. Whether `subdir` should be implicit via file discovery remains open.
 - **Discovery targets** (§10): _partially resolved_ — `b.fetch` (§9.6) settles the most important case: an impure operation made pure by a pinned checksum. The general contract for feeding an arbitrary cached action's JSON output back into declaration (one extra pass vs a fixpoint) remains open.
 - **Per-target grant narrowing:** the wanted set is currently workspace-granular; whether individual targets should carry narrower grants (defense in depth at tier 3+) is open.
 - **`buildl.toml` vs declaration in Lua:** the ceiling must stay in inert TOML (it gates the Lua). How much of `[execution]` belongs there versus in the root build file is taste.
