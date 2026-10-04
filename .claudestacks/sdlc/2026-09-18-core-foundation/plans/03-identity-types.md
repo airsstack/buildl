@@ -308,8 +308,11 @@ crates/buildl-core/src/lib.rs              — [modify] re-export each type (eve
    ```
 
    `Debug` is hand-written, which is why `Debug` is absent from the derive list: the derived form
-   would print 32 integers. `from_hex` uses `bytes.get(..)` rather than indexing so that no path
-   can panic, which matters because `clippy::panic` is denied workspace-wide.
+   would print 32 integers. `from_hex` uses `bytes.get(..)` rather than indexing because an
+   out-of-range index would panic at runtime, and `get` makes the bounds check explicit so the
+   function returns `Error::InvalidName` instead. No lint enforces this: `clippy::panic` fires only
+   on the `panic!` macro, and `clippy::indexing_slicing` is not enabled in the workspace, so the
+   gate would accept indexing here. It is a design choice, not a gate requirement.
 
 5. Run and confirm green, then run the gate:
 
@@ -678,9 +681,11 @@ crates/buildl-core/src/lib.rs              — [modify] re-export each type (eve
    }
    ```
 
-   The backwards-clock test is the load-bearing one: the wall clock is not monotonic and
-   `clippy::panic` is denied workspace-wide, so a reversed pair has to be representable rather than
-   fatal.
+   The backwards-clock test is the load-bearing one: the wall clock is not monotonic, so a reversed
+   pair is a legitimate input rather than a fault, and `u64` subtraction on one would underflow —
+   panicking in debug, wrapping in release. `Option` makes that case representable. No lint forces
+   this: `clippy::panic` fires only on the `panic!` macro and catches neither underflow nor
+   indexing. It is a design choice, not a gate requirement.
 
    Add `pub mod timestamp;` and `pub use timestamp::Timestamp;` to
    `crates/buildl-core/src/types/mod.rs`, extend its `Responsibilities` list, and widen the
@@ -836,3 +841,4 @@ At the end of this plan `buildl-core` exports `Digest`, `NodeId`, `Provenance` a
 - **2026-10-04 — the orchestrator's fix-round brief misstated the expected test total** as 41 where 40 is correct. The brief counted the malformed-JSON reject assertion as a fourth standalone test, but the finding it came from models that assertion on `directory.rs`, which appends it inside the existing round-trip test rather than adding a new `#[test]` function. The coder followed the sibling shape as instructed, reported 40 explicitly, and named the discrepancy rather than inventing a test to reach the stated number. Recorded because the brief, not the plan, was the wrong half — the same error the orchestrator made on plan `02` task 1.
 - **2026-10-04 — the review's applied findings were fixed through one fresh coder spawn, and the reviewer was not re-spawned over the result.** Per the one-fix-round budget: only the verification the fix touches was re-run. The reviewer's `blocking:` line already read `none` before the fix round, so the three applied findings were improvements over work that was already shippable, not repairs to a blocked state.
 - **2026-10-04 — the new `FromStr` guard was not mutation-tested.** The identical guard shape on `Directory` was mutation-tested during plan `02` and shown to fail when the `FromStr` body stopped routing through the validating constructor; this is the same accept/reject mechanism on a different type, so re-proving it would re-verify an established result rather than test something new.
+- **2026-10-04 — this plan's prose was amended after execution, on the author's authorization.** The two passages that justified a design choice with "`clippy::panic` is denied workspace-wide" (then at lines 312 and 682) now state the real reasons — an out-of-range index panics at runtime, and `u64` subtraction on a reversed clock pair underflows — and say explicitly that no lint enforces either, since `clippy::panic` fires only on the `panic!` macro and `clippy::indexing_slicing` is not enabled. The prescribed code is unchanged and the shipped source never carried the false attribution; only this document did. Amended here rather than left for plan `05`, which consumes `Timestamp`, to read.

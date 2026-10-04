@@ -613,8 +613,11 @@ that file's stated derivation true.
 Two residues, written down rather than left for a later reader to discover:
 
 - **Non-string map keys stringify silently.** `serde_json` renders a `BTreeMap<u32, _>` as
-  `{"7":"x"}`. §3.4's rule — every `types/` newtype serializes as its `Display` string — is what
-  keeps core maps honest; nothing mechanically prevents a future type from keying a map on a
+  `{"7":"x"}`. §3.4's rule — the four types that can appear as a map key or inside a label
+  (`Directory`, `TargetName`, `Label`, `Digest`) each serialize as their `Display` string — is what
+  keeps core maps honest. It is not a crate-wide property: `NodeId` and `Timestamp` are transparent
+  scalars serializing as bare numbers, and `Provenance` is a two-field struct with no string form,
+  none of which keys a map. Nothing mechanically prevents a future type from keying a map on a
   number.
 - **Float *formatting* is `serde_json`'s, not a specification's.** Finite floats would render
   `1.0`, `1e+300`, `0.30000000000000004`. This is irrelevant while §7.1's ban holds, and is noted
