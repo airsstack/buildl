@@ -34,6 +34,19 @@ pub enum Error {
         /// Why the grammar rejected it.
         reason: &'static str,
     },
+    /// A value could not be serialized as JSON at all.
+    #[error("value could not be serialized as canonical JSON")]
+    CanonicalJson {
+        /// The underlying `serde_json` failure.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// A floating-point number reached the canonical serializer.
+    #[error("floating-point value at {path} cannot appear in canonical JSON")]
+    FloatRejected {
+        /// Where in the value the float was found, as a JSONPath-style location.
+        path: String,
+    },
 }
 
 /// Which domain name an [`Error::InvalidName`] is about.
@@ -86,6 +99,29 @@ mod tests {
         assert_eq!(
             err.to_string(),
             r#"invalid label: "//lib" — must hold ':' and a target name"#
+        );
+    }
+
+    #[test]
+    fn canonical_json_states_the_value_could_not_be_serialized() {
+        let Err(source) = serde_json::to_value(u128::MAX) else {
+            unreachable!("u128::MAX has no JSON number representation")
+        };
+        let err = Error::CanonicalJson { source };
+        assert_eq!(
+            err.to_string(),
+            "value could not be serialized as canonical JSON"
+        );
+    }
+
+    #[test]
+    fn float_rejected_states_where_the_float_was_found() {
+        let err = Error::FloatRejected {
+            path: "$.timings.elapsed".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "floating-point value at $.timings.elapsed cannot appear in canonical JSON"
         );
     }
 }

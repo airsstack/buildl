@@ -21,6 +21,7 @@
 //! logic to unit-test.
 
 pub mod error;
+pub mod json;
 pub mod types;
 
 pub use error::{Error, NameKind, Result};
