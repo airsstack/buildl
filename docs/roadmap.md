@@ -63,7 +63,7 @@ graph LR
 |Intent|Crate|Scope|Done when|Status|
 |---|---|---|---|---|
 |**I1 workspace**|all|Create `buildl-core` and `buildl-lua`; wire the §7 dependency graph (core ← lua ← buildl ← cli); airsl requirement `0.1`; toolchain `stable`, `rust-version` 1.94; remove stale scaffold wording|`cargo make dod` and `cargo deny check` pass; crate edges match architecture-building-blocks §7|**done**, 2026-09-15 (§4)|
-|**I2 foundation**|`buildl-core`|`Label`, `Digest`, `NodeId`, `Provenance`, `Timestamp`; the error model; the canonical JSON serializer; the `Clock` port|unit tests pass; no I/O|**intent approved**, 2026-09-18; chain `2026-09-18-core-foundation`|
+|**I2 foundation**|`buildl-core`|`Label`, `Digest`, `NodeId`, `Provenance`, `Timestamp`; the error model; the canonical JSON serializer; the `Clock` port|unit tests pass; no I/O|**done**, 2026-10-04 (§4)|
 |**I-guard**|—|Machine-check the three rules the workspace currently honours by convention: the crate edges, `buildl-core`'s freedom from filesystem, process, thread, environment and clock APIs, and the declared `rust-version`|each rule turns the gate red when violated|**done**, 2026-09-21 (§4)|
 |**I3 Load**|`buildl-core`|`Declaration`, `BuildFile`, `StagedFile`, `DeclarationSource`; the `Pipeline` skeleton and `FakePorts`|a fake source's output becomes `Vec<Declaration>`|not started|
 |**I-lua**|`buildl-lua`|`DeclarationSource` on airsl; the `buildl` table bound to both `airsstack.buildl` and the `buildl` global (design §5)|`build.lua` fixtures produce exact declarations|not started|
@@ -86,6 +86,7 @@ Ground rules for the ladder:
 |---|---|---|---|
 |I1 workspace|`.claudestacks/sdlc/2026-09-13-workspace-crates/`|`01-workspace-crates` (8 tasks)|`0a8817f` … `3e462d5`|
 |I-guard|`.claudestacks/sdlc/2026-09-18-workspace-guardrails/`|`01-crate-edge-guards` (4 tasks), `02-core-purity-bans` (3 tasks), `03-msrv-ci-job` (2 tasks), `04-doc-amendments` (3 tasks)|`1fa8421` … `a718139`|
+|I2 foundation|`.claudestacks/sdlc/2026-09-18-core-foundation/`|`01-error-model` (2 tasks), `02-label-types` (4 tasks), `03-identity-types` (4 tasks), `04-canonical-json` (4 tasks), `05-clock-port` (1 task), `06-documentation` (6 tasks)|`70184be` … `13cc89c`|
 
 The plan file's `## Review findings`, `## Probe results` and `## Deviations` sections hold the full execution record. §5 lists the follow-ups from that record that are still open.
 
@@ -95,13 +96,14 @@ Findings an earlier slice recorded but left out of scope, each assigned to the s
 
 |#|Follow-up|Origin|Target|
 |---|---|---|---|
-|3|Refresh the crate-level docs once real modules exist: port lists that omit `Clock`, `Manifest`/`Approver`, `Reporter`, `StatCache`/`ToolResolver` and `Dispatcher`; "holds only module declarations and re-exports" in `lib.rs` files that hold neither; `buildl`'s adapter list, which disagrees between its README and `lib.rs`.|I1 review|each crate's first code slice (I2, I-lua, adapters)|
+|3|Refresh the crate-level docs once real modules exist. `buildl-core` is done (§4). Still open: `buildl-lua`, `buildl` and `buildl-cli` — port lists that omit `Manifest`/`Approver`, `Reporter`, `StatCache`/`ToolResolver` and `Dispatcher`; "holds only module declarations and re-exports" in `lib.rs` files that hold neither; `buildl`'s adapter list, which disagrees between its README and `lib.rs`.|I1 review|each crate's first code slice (I-lua, adapters)|
 |4|Raise the airsl floor above `0.1.0` when the first airsl call lands. No minimal-versions check exists.|I1 review|I-lua|
 |5|The `buildl-cli` `description` says "a thin clap shell", but clap is not yet a dependency.|I1 review|CLI slice|
 |6|Tooling comment accuracy: `Cargo.toml` cites `architecture.md` §5.2, which does not exist; the §6 citation for storage adapters is narrower than the one it replaced; `deny.toml` says every member "is published" and that the `skip` list "freezes" the current state while `skip = []`.|I1 review|unassigned, docs sweep|
 |7|architecture-building-blocks §7 rule 2 ("adapters depend on `buildl-core` only") and §4's lead sentence ("no adapter depends on another") conflict with the `buildl → buildl-lua` edge that the §4 crate table lists.|I1 review|unassigned, docs sweep|
 |8|design §13 names the milestone 1 commands `run`/`plan`/`graph`/`check`; design's command table and `architecture.md` name the full pipeline `build`.|roadmap write-up|unassigned, docs sweep|
 |10|CI's `rustup toolchain install` with no argument needs rustup 1.28 or newer on the runners. This is not yet verified.|I1 review|first CI run on a pushed branch|
+|11|No guard asserts that a phase module in `buildl-core` does not import another. The rule is `architecture.md`'s "no phase invokes the next"; the mechanism would be a golden file of permitted intra-crate module edges, diffed by a `cargo make` task, in the shape of `guard-crate-edges`. I2 shipped no phase module, so the guard would have asserted nothing.|I2 review|I4 Resolve, the first slice with two phase modules|
 
 ## 6. Process notes
 
