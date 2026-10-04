@@ -146,6 +146,8 @@ disallowed-types = [
     { path = "std::os::unix::fs::FileTypeExt", reason = "platform filesystem extensions belong to an adapter, never to core" },
     { path = "std::os::unix::fs::DirEntryExt", reason = "platform filesystem extensions belong to an adapter, never to core" },
     { path = "std::os::unix::fs::DirBuilderExt", reason = "platform filesystem extensions belong to an adapter, never to core" },
+    { path = "f32", reason = "no float reaches canonical JSON; a non-finite float serializes as `null`, which would make an action key disagree with the value it was computed from (architecture.md §5 rule 2)" },
+    { path = "f64", reason = "no float reaches canonical JSON; a non-finite float serializes as `null`, which would make an action key disagree with the value it was computed from (architecture.md §5 rule 2)" },
 ]
 
 disallowed-macros = [

@@ -35,6 +35,18 @@ Dependency inversion targets I/O and volatile subsystems. A stable library doing
 |`thiserror`|`rayon`, `tempfile`, `walkdir`, `globset`|
 |`sha2`|any other buildl crate|
 
+The table is the dependency rule. `crates/buildl-core/clippy.toml` is its enumeration: 130 entries
+across `disallowed-methods`, `disallowed-types` and `disallowed-macros`, partitioned into nine
+families — the filesystem (41, counting the nine `Path` methods that reach it), the environment
+(23, including the compile-time reads and the two `PATH`-format helpers), threads (20), processes
+(15), the platform filesystem extensions (13), the standard streams (10, including the print
+macros), the clock (3), the network (3) — and floating-point numbers (2), which are not an I/O
+surface at all. The nine counts sum to the 130, so the partition is the whole config. A float is
+banned because a non-finite one serializes as JSON `null`, so a value could reach an action key
+differing from the value it was computed from (`architecture.md` §5 rule 2). `cargo make
+guard-core-purity` asserts that every entry still resolves, that no source file suppresses the
+lints, and that the config is not switched off.
+
 ### 1.3 The name `buildl`
 
 Three different things carry the name, and the crate structure keeps them apart:
