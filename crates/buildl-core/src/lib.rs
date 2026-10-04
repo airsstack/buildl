@@ -19,3 +19,7 @@
 //!
 //! This file holds only module declarations and re-exports, so it carries no
 //! logic to unit-test.
+
+pub mod error;
+
+pub use error::{Error, NameKind, Result};

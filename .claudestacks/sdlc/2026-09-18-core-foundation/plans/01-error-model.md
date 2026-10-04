@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-04
 ---
 
@@ -345,3 +345,46 @@ plan's task 1 front-loads — but they are **not** file-disjoint: both append a 
 `crates/buildl-core/src/lib.rs` (`pub mod types;` and `pub mod json;` respectively), as do plans
 `03` and `05`. Run them in either order, or concurrently only if you reconcile that one file by
 hand. Plan `03` additionally depends on `02`, because its `Provenance` holds a `Directory`.
+
+---
+
+## Review findings
+
+- doc-comment accuracy (risk) — the manifest comment still read "added as the code that needs them lands" while the table beside it declared all four edges; a later reader could have "fixed" it by deleting three. Restated as front-loaded, naming the guard as the reason — `crates/buildl-core/Cargo.toml:12-16`. Fixed and verified: `cargo make dod` → `[cargo-make] INFO - Build Done in 5.46 seconds.`; `cargo make deny` → `advisories ok, bans ok, licenses ok, sources ok`.
+- doc-comment-discipline (nit) — shipped README still reads "**Status:** pre-release; the crate has no public API.", false once `pub use error::{Error, NameKind, Result}` lands — `crates/buildl-core/README.md:7`. Not fixed here: plan `06` task 2 owns the README rewrite, so this is signed-off carry-over rather than drift.
+- doc-comment-discipline (nit) — "belongs to the reporting adapter" named a component that does not exist in the tree; the architecture's name is the `Reporter` port, which `crates/buildl-core/clippy.toml` already uses. Reworded — `crates/buildl-core/src/error.rs:14`. Fixed and verified by the same `cargo make dod` run above.
+- doc-comment-discipline, leakage rule (nit) — "later work adds the variants its phases earn" was forward-work narration; the contract-bearing half stands alone — `crates/buildl-core/src/error.rs:23`. Fixed and verified by the same `cargo make dod` run above.
+- reversion guard (nit) — nothing in the gate catches removal of `#[non_exhaustive]` from either enum: in-crate matching is unaffected and no downstream crate matches exhaustively yet — `crates/buildl-core/src/error.rs:26` and `:45`. No action taken; the crate is unpublished and the cheap guard is a compile-fail fixture, which has no home until a downstream consumer exists.
+
+## Probe results
+
+- **Claim: `guard-crate-edges` rejects the four undeclared edges, with the hunk the plan quotes.** `cargo make guard-crate-edges` after the manifest edit. Real output — matched the plan exactly, hunk header included:
+  ```
+  --- crates/expected-edges.txt	2026-09-21 08:13:43
+  +++ /var/folders/8w/4ccj7cw90nx4d32s72tqf5nw0000gn/T/tmp.rKdOnftT95	2026-10-04 09:24:23
+  @@ -1,4 +1,8 @@
+   # buildl-core
+  +serde
+  +serde_json
+  +sha2
+  +thiserror
+   # buildl-lua
+   airsl
+   buildl_core
+  guard: crate edges do not match crates/expected-edges.txt
+         fix the manifest, or update the golden file if the change is intended
+  Error while executing command, exit code: 1
+  ```
+- **Claim: the golden-file rewrite turns the guard green.** `cargo make guard-crate-edges` → `[cargo-make] INFO - Build Done in 0.70 seconds.`
+- **Claim: four declared-but-unused dependencies do not trip the gate.** This rests on `unused_crate_dependencies` not being enabled in the workspace lint table. `cargo make dod` → `[cargo-make] INFO - Build Done in 6.82 seconds.` with zero warnings. Confirmed.
+- **Claim: `cargo deny` accepts the four new edges.** `cargo make deny` → `advisories ok, bans ok, licenses ok, sources ok` — the plan's predicted line verbatim.
+- **Claim: the step-1 placeholder fails with `error[E0432]` at `crates/buildl-core/src/error.rs:5:17`.** Run as part of the task's red step; the failure matched the cited error and location exactly.
+- **Structural check: `lib.rs`'s doc block ends with "This file holds only module declarations and re-exports, so it carries no logic to unit-test."** Read at `crates/buildl-core/src/lib.rs:20-21` before the task began. Present, and still true after the task.
+- **Claim the plan does *not* make, checked because the spec does:** spec §6 names three `Error` variants, and this plan ships only `InvalidName`. Verified against `plans/04-canonical-json.md:319-332`, which declares `CanonicalJson` and `FloatRejected`. The staging is deliberate and `#[non_exhaustive]` is what makes it non-breaking — not a dropped requirement.
+
+## Deviations
+
+- **2026-10-04 — no commits.** Each task's final step names a commit. None was run: the commit gate belongs to the author, and no agent in this flow runs a commit. Messages held for the author: `build(buildl-core): take the four permitted pure-computation dependencies` (task 1) and `feat(buildl-core): report every failure through one structured enum` (task 2).
+- **2026-10-04 — task 1 ran inline rather than through a coder subagent.** It is a four-line manifest edit plus a golden-file rewrite, with no red-green code cycle of its own; its red step is the guard, which the orchestrator ran directly. Delegating it would have cost a spawn and bought nothing.
+- **2026-10-04 — the three applied review findings were fixed inline rather than routed to a fresh coder spawn.** All three were single-line doc or comment edits. The gate was re-run over the result rather than the reviewer being re-spawned, per the one-fix-round budget.
+- **2026-10-04 — `crates/buildl-core/src/error.rs` was registered intent-to-add** so the reviewer's diff against HEAD would include the new file. Nothing was committed.
