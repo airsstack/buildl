@@ -22,7 +22,9 @@
 
 pub mod error;
 pub mod json;
+pub mod ports;
 pub mod types;
 
 pub use error::{Error, NameKind, Result};
+pub use ports::Clock;
 pub use types::{Digest, Directory, Label, NodeId, Provenance, TargetName, Timestamp};
