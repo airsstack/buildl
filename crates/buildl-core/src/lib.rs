@@ -21,5 +21,7 @@
 //! logic to unit-test.
 
 pub mod error;
+pub mod types;
 
 pub use error::{Error, NameKind, Result};
+pub use types::{Directory, Label, TargetName};

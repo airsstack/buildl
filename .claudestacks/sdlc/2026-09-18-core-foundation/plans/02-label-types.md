@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-04
 depends-on: [01]
 ---
@@ -875,3 +875,49 @@ beside plans `03` and `04`.
 
 At the end of this plan `buildl-core` exports `Directory`, `TargetName` and `Label`; every form in
 `design.md` §5 parses; and `//lib` is rejected with a recorded reason.
+
+---
+
+## Review findings
+
+- unit-test-mandate (risk) — `FromStr` was an unguarded invariant on all three types: no test exercised it, because the round-trip tests go through `serde_json::from_str` and the serde `try_from` attribute, a different code path. Confirmed independently with `grep -rn 'parse::<' crates/ --include='*.rs'`, which returned nothing — `crates/buildl-core/src/types/directory.rs:107`, `target_name.rs:84`, `label.rs:106`. Fixed: one accept and one reject assertion per type in the turbofish `parse::<T>()` form, added to each file's existing test module. Verified by mutation, not merely by a green run — see Probe results.
+- doc-comment-discipline (nit) — `label.rs`'s type doc claimed round-tripping with the snippet `Label::parse(label.to_string())`, which does not typecheck: `parse` takes `&str` and `to_string()` yields `String`, with no coercion at an argument position. The claim was true, only the snippet wrong — `crates/buildl-core/src/types/label.rs:23`. Fixed to `Label::parse(&label.to_string())`.
+- doc-comment-discipline (nit) — `directory.rs`'s module doc justified the file by "two types hold one: a label's directory half and a provenance record's declaring directory", but `grep -rn 'Provenance' crates/ --include='*.rs'` returned nothing: forward-work narration about a type not in the tree — `crates/buildl-core/src/types/directory.rs:3`. Fixed to justify the file by the holder that exists today.
+- unit-test-mandate (nit) — `Label::new` had no test and no call site, so mis-assigning its two fields would have been invisible to the gate — `crates/buildl-core/src/types/label.rs:36`. Fixed: `new_joins_the_directory_and_name_in_order` pins it the way `orders_by_directory_then_name` pins field order.
+- unit-test-mandate (nit) — `AsRef<str>` has no test and no call site on `Directory` (`:101`) or `TargetName` (`:78`). Accepted as-is, not fixed: it is a one-line delegation to `as_str`, which is itself pinned, and the trait has no in-tree consumer yet to pin it against.
+- strong-types (nit) — when one half fails, the error carries that half's `NameKind` and value rather than the whole label: `Label::parse("//lib:")` renders `invalid target name: "" — must not be empty`, losing the spelling the user typed — `crates/buildl-core/src/types/label.rs:61`. Accepted as-is: the rustdoc documents the behaviour deliberately, and this is diagnostic quality rather than a defect. Worth revisiting when the reporting adapter exists and can add the outer context.
+- spec §3.1 (amendment) — `Directory::root` and `is_root` widen the property table, which still names only `parse`, `as_str`, `Display`, `AsRef<str>` and `FromStr`. Recorded in this plan's task 1 with rationale rather than as a spec edit, so §3.1 is not later read as the full surface.
+- spec §3.3 (amendment) — the spec's signature block writes `pub fn new`; the implementation is `pub const fn new`, and `directory()` / `name()` are `const` too. A strict widening, forced by `clippy::missing_const_for_fn` and prescribed by this plan's task-3 code block.
+
+## Probe results
+
+- **Claim: `clippy::unwrap_used` does not fire on `Option::unwrap_or`, so `resolve`'s `raw.strip_prefix(':').unwrap_or(raw)` is safe to write as given.** The plan asserted this citing only itself ("this exact line was compiled ... and is clean"), so it needed independent proof. Throwaway crate with two functions, one using `.unwrap_or(raw)` and one using `.unwrap()`, compiled under `cargo clippy -- -D clippy::unwrap_used`. Real output:
+  ```
+  error: used `unwrap()` on an `Option` value
+   --> src/lib.rs:6:5
+  6 |     raw.strip_prefix(':').unwrap()
+    = note: requested on the command line with `-D clippy::unwrap-used`
+  error: could not compile `unwrapprobe` (lib) due to 1 previous error
+  ```
+  One error, at the `.unwrap()` line only; the `.unwrap_or(raw)` line passed. The control is built in — the same run proves the lint was active. **Came out for the plan.** Probe deleted.
+- **Claim: the new `FromStr` guards would actually catch the regression they were written for.** A passing test is not evidence of that, so the guard was mutation-tested: `Directory`'s `FromStr` body was replaced with `Ok(Self(raw.to_owned()))` — the exact break the reviewer described — and the suite re-run. Real output:
+  ```
+  test types::directory::tests::from_str_routes_through_parse ... FAILED
+  thread 'types::directory::tests::from_str_routes_through_parse' panicked at crates/buildl-core/src/types/directory.rs:184:9:
+  assertion failed: "/lib".parse::<Directory>().is_err()
+  test result: FAILED. 20 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out
+  ```
+  The file was then restored from a backup copy and the suite returned to `21 passed; 0 failed`. The guard is real, not decorative.
+- **Claim: `docs/architecture.md:72` is `by_label: BTreeMap~Label_NodeId~`, which is why `Label`'s field order is load-bearing.** Read directly. Line 72 is exactly `        by_label: BTreeMap~Label_NodeId~` inside the `class TargetGraph` block. Confirmed, and `Label`'s fields are declared `directory` then `name` as required.
+- **Claim: the label corpus comes from `docs/design.md:135-136`, `:140`, `:141`.** Read directly, all three exact: `:135-136` is `b.target("app", {` / `deps = { "main.o", "util.o", "//lib:text" },`; `:140` is `b.alias("default", "app")`; `:141` is `b.test("app_test", { deps = { "app" }, ... })`. The names that must parse are therefore `main.o`, `util.o`, `app`, `default`, `app_test`, `text`, and directory `lib`. Confirmed.
+- **Claim: `FromStr` was untested before the fix round.** `grep -rn 'parse::<' crates/ --include='*.rs'` → no output. Control: the same grep for `from_str` found the serde round-trip tests, so the method was sound. **Came out against the plan**, which had treated `FromStr` as covered by the round-trip assertions.
+- **Claim: `Provenance` is not yet in the tree.** `grep -rn 'Provenance' crates/ --include='*.rs'` → no output. Confirmed; it arrives in plan `03`.
+- **Each task's red step and test total.** Every one matched the plan's prediction exactly: task 1 `error[E0432] ... super::Directory` at `directory.rs:10:9` then `running 6 tests`; task 2 the same error for `super::TargetName` at `target_name.rs:10:9` then `running 9 tests`; task 3 for `super::Label` at `label.rs:10:9` then `running 14 tests`; task 4 `error[E0599] ... no associated function ... named `resolve`` then `running 17 tests`.
+
+## Deviations
+
+- **2026-10-04 — no commits.** Each task's final step names a commit; none was run. The commit gate belongs to the author, and no agent in this flow runs a commit. Messages held for the author: `feat(buildl-core): validate a workspace-relative directory path` (task 1), `feat(buildl-core): validate the name half of a label` (task 2), `feat(buildl-core): parse a target's absolute label` (task 3), and `feat(buildl-core): resolve a build file's label references against its directory` (task 4).
+- **2026-10-04 — four tests beyond the plan's count, from the review fix round.** The plan ends at 17 tests; the tree holds 21. The four added are `from_str_routes_through_parse` on each of the three types, plus `new_joins_the_directory_and_name_in_order` on `Label`. They add no behaviour — they pin invariants the plan left unguarded.
+- **2026-10-04 — task 4's red step produced ten compile errors, not the single `error[E0599]` line the plan quotes.** Same root cause and same error code; the three new tests simply call `resolve` from ten sites. Matches in kind, not in count.
+- **2026-10-04 — the orchestrator's brief for task 1 misstated the expected test total** as "6 new on top of the 2 that already exist" where the plan means 6 in total. The coder read the plan correctly, added 4, and reported the number explicitly as instructed, so the error never reached the code. Recorded because the brief, not the plan, was the wrong half.
+- **2026-10-04 — `crates/buildl-core/src/types/` was registered intent-to-add** so the reviewer's diff against HEAD would include the four new files. Nothing was committed.
