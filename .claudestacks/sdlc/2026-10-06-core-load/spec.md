@@ -96,7 +96,7 @@ carry no primitive that has a meaning beyond itself.
 ```rust
 pub struct Written<T> {
     text: String,
-    _target: PhantomData<fn() -> T>,
+    target: PhantomData<fn() -> T>,
 }
 ```
 
@@ -109,7 +109,7 @@ exactly one conversion, so a `Written<Label>` cannot be converted into a `Direct
 |---|---|
 |`Written<TargetName>::parse()`|`TargetName::parse(text)`|
 |`Written<Label>::resolve(&Directory)`|`Label::resolve(text, base)` — the absolute, `:name` and bare forms|
-|`Written<Directory>::under(&Directory)`|join `base` and `text` with `/` (just `text` at the root), then `Directory::parse`|
+|`Written<Directory>::under(&Directory)`|refuse empty text (an empty `subdir` at the root would otherwise name the root itself); join `base` and `text` with `/` (just `text` at the root), then `Directory::parse`|
 |`Written<OutputName>::parse()`|`OutputName::parse(text)` — relative to the target's output directory, not the base|
 |`Written<SourcePath>`, `Written<EnvName>`, `Written<Argument>`, `Written<Description>`, `Written<SettingName>`, `Written<SettingValue>` `::parse()`|the target type's `parse`, with no base|
 
@@ -177,12 +177,16 @@ pub struct Setting { name: SettingName, default: SettingValue }
   two correct runs compare unequal and fail `check`. Order lives on the staged form only, where it
   locates Load's own errors.
 - `Declaration` and every type it holds derive `Serialize`, `Deserialize`, `Clone`, `PartialEq`,
-  `Eq`, `PartialOrd`, `Ord` and `Debug`, so the handoff is serializable and totally ordered.
+  `Eq`, `PartialOrd`, `Ord`, `Hash` and `Debug`, so the handoff is serializable and totally ordered.
+- The records `Target`, `Rule`, `Alias`, `Setting` (and every staged record in §3.4) have `pub`
+  fields: they carry no invariant beyond their fields' own types, and `Target`'s nine fields exceed
+  what clippy's `too_many_arguments` allows in a constructor. `Declaration` keeps private fields with
+  `new` and accessors.
 
 ### 3.4 The port's values
 
 ```rust
-pub struct BuildFile   { provenance: Provenance }
+pub struct BuildFile(Provenance);
 pub enum   Evaluated   { Staged(StagedFile), Absent }
 pub struct StagedFile  { declarations: Vec<StagedDeclaration>, subdirs: Vec<StagedSubdir> }
 pub struct StagedSubdir { path: Written<Directory>, order: DeclarationOrder }
@@ -222,7 +226,7 @@ one type. Load builds it as `Provenance::new(<dir>/<entry>, dir)`. `Provenance` 
 ### 4.1 Signature and placement
 
 ```rust
-// load/load.rs
+// load/traversal.rs
 pub fn load<S: DeclarationSource>(source: &S, entry: &EntryName) -> Result<Vec<Declaration>>;
 ```
 
@@ -247,7 +251,7 @@ the `Ports` bundle, so it is testable against a single fake.
 
 - **Explicit only.** The evaluated set is exactly the root plus the closure of `subdir` requests.
   Nothing asks the filesystem what exists.
-- **Repeats are skipped**, not errors. That also makes cycles (`a` → `b` → `a`) terminate.
+- **Repeats are skipped**, not errors. A cycle cannot be written at all: `under` only joins downward and `..` is refused, so a file can name only directories below its own. The seen set catches repeats, such as the root requesting `a/x` while `a` also requests `x`.
 - **Escapes fail at construction**: `under` builds `lib/../x`, which `Directory::parse` rejects
   (§1.1).
 - **Absence is core's decision.** The port reports `Absent`; core raises `MissingBuildFile`, with
@@ -323,7 +327,7 @@ pub trait Ports {
 ### 5.2 `Pipeline` and `check`
 
 ```rust
-// pipeline/pipeline.rs
+// pipeline/driver.rs
 pub struct Pipeline<P: Ports> { source: P::Source }
 
 impl<P: Ports> Pipeline<P> {
@@ -349,11 +353,16 @@ nondeterminism fails it.
 
 ### 5.3 Fakes
 
-`pipeline/fakes.rs`, `#[cfg(test)]`: `FakeSource` holds a `BTreeMap<Directory, FakeFile>`, where
-`FakeFile` is either a `StagedFile` to return or an `EvaluationFailure` to raise as `Error::Evaluation`,
-and returns `Absent` for a directory it does not hold; `FakePorts` implements `Ports` with
-`Source = FakeSource`. `load/` tests use `FakeSource` directly. A fake that returns a different
-`StagedFile` on its second call (interior mutability, test-only) exercises `Nondeterministic`.
+The fakes live outside `src/`, in the integration-test helper `crates/buildl-core/tests/flows/common.rs`,
+and implement the public traits through the public API only. That placement is deliberate: if the
+fakes can build every `StagedFile` and implement `DeclarationSource` from outside the crate, so can
+`buildl-lua`, which the compiler then checks on every build. It also keeps `load/` from naming
+`pipeline/`, even in tests.
+
+`FakeSource` holds a `BTreeMap<Directory, FakeFile>`, where `FakeFile` is either a `StagedFile` to
+return or an `EvaluationFailure` to raise as `Error::Evaluation`, and returns `Absent` for a directory
+it does not hold; `FakePorts` implements `Ports` with `Source = FakeSource`. A fake that returns a
+different `StagedFile` on its second call (interior mutability) exercises `Nondeterministic`.
 
 ---
 
@@ -367,7 +376,7 @@ All are additions to the `#[non_exhaustive]` `Error`; none reshapes an existing 
 |---|---|---|
 |`Evaluation`|`provenance`, `failure: EvaluationFailure`, `diagnostic: Diagnostic`|the adapter could not evaluate a build file|
 |`MissingBuildFile`|`directory: Directory`, `requested_by: Option<Provenance>`|the port returns `Absent`|
-|`InvalidDeclaration`|`provenance`, `order: DeclarationOrder`, `field: DeclarationField`, `source: Box<Error>`|a `Written<T>` fails its conversion, including an escaping `subdir`|
+|`InvalidDeclaration`|`provenance`, `order: DeclarationOrder`, `field: DeclarationField`, `source: Box<Self>` (`use_self` rejects `Box<Error>` inside the enum)|a `Written<T>` fails its conversion, including an escaping `subdir`|
 |`ActionConflict`|`provenance`, `order`, `found: ActionFound`|a target names both or neither of `rule` and `run`|
 |`Nondeterministic`|`provenance`, `first_run: Option<Box<Declaration>>`, `second_run: Option<Box<Declaration>>`|`check`'s two runs differ|
 
@@ -393,8 +402,8 @@ type, `Command` included.
 ### 6.2 Queue size, and the risk left to I-lua
 
 The queue is not capped. Its size is bounded by construction: a directory is queued at most once, and
-every evaluated directory must hold a real build file, or Load stops. Cycles terminate through the
-seen set.
+every evaluated directory must hold a real build file, or Load stops. Since a `subdir` can only name a descendant, the
+traversal is a tree walk and cannot loop.
 
 One resource risk is real and is not the queue's: the adapter stages declarations in a Rust-side
 buffer (`architecture.md:148`), which the Lua memory ceiling (`[declaration] memory`,
@@ -416,8 +425,25 @@ crates/buildl-core/src/
                     description.rs  setting.rs  entry_name.rs  field_name.rs  diagnostic.rs
                     declaration.rs  build_file.rs
   ports/          + declaration_source.rs  bundle.rs
-  load/           NEW  mod.rs (export-only)  load.rs
-  pipeline/       NEW  mod.rs (export-only)  pipeline.rs  fakes.rs (#[cfg(test)])
+  load/           NEW  mod.rs (export-only)  traversal.rs
+  pipeline/       NEW  mod.rs (export-only)  driver.rs
+
+crates/buildl-core/tests/flows/      one integration-test binary
+  main.rs         crate doc; `pub mod common; mod load; mod check;`
+  common.rs       FakeSource, FakeFile, FakePorts — public-API fakes, `pub` and documented
+  load.rs         traversal flows through the port
+  check.rs        Pipeline::check flows
+
+The logic files are `traversal.rs` and `driver.rs`, not `load/load.rs` and `pipeline/pipeline.rs`:
+clippy's `module_inception` fails the gate on a module named after its parent (probe: `error: module
+has the same name as its containing module` under `-D warnings`).
+
+One binary rather than one per file, because the gate's lints make a shared helper module
+unworkable across several (probe: `tests/common/mod.rs` shared by two test files failed
+`cargo clippy --all-targets -- -D warnings` with `missing documentation for the crate`,
+`unreachable pub item` and `function only_a is never used`; `pub(crate)` instead fails
+`redundant_pub_crate`). A `pub mod common` with documented `pub` items in a single
+`tests/flows/main.rs` binary passed the same command.
 ```
 
 `declaration.rs` holds `Declaration`, `Declared`, `Target`, `Action`, `Rule`, `Alias`, `Setting` and
@@ -431,15 +457,21 @@ other phase.
 
 ## 8. Testing
 
-Every logic file carries colocated `#[cfg(test)]` tests; `mod.rs` and `lib.rs` are export-only, and
-the two trait files are pure trait definitions. No test uses Lua, the filesystem, a process or a
-thread.
+Two layers, and neither replaces the other:
+
+- **Colocated unit tests.** Every logic file carries `#[cfg(test)]` tests; `mod.rs` and `lib.rs` are
+  export-only, and the two trait files are pure trait definitions. In `load/traversal.rs` they cover the
+  pure helpers that need no port: resolving a `subdir`, converting a staged declaration, the sort key.
+- **Integration tests** in `crates/buildl-core/tests/`, against the public-API fakes of §5.3: every
+  flow that goes through `DeclarationSource`, both for `load` and for `Pipeline::check`.
+
+No test uses Lua, the filesystem, a process or a thread.
 
 |Scenario|Assertion|
 |---|---|
 |`subdir` requests enqueued out of order (`architecture-building-blocks.md` §8)|output sorted by directory, then declared name|
 |the same file's declarations shuffled, as `pairs` would|canonical JSON of the output is byte-identical|
-|a `subdir` repeated, and a cycle `a` → `b` → `a`|each directory evaluated exactly once|
+|a `subdir` repeated in one file, and the root requesting `a/x` while `a` requests `x`|each directory evaluated exactly once|
 |`subdir("../x")`, `subdir("/x")`|`InvalidDeclaration { field: Subdir }` with the requester's provenance|
 |root absent; a requested directory absent|`MissingBuildFile` with `requested_by` `None`; `Some(provenance)`|
 |a target with both, and with neither, of `rule` and `run`|`ActionConflict { found: Both }`; `{ found: Neither }`|
@@ -452,7 +484,7 @@ thread.
 |`run = {}`|`InvalidDeclaration { field: Run }`|
 |a fake whose second evaluation differs|`check` → `Nondeterministic` carrying both differing declarations and the lacking file's provenance|
 |a `pairs`-shuffled fake across the two runs|`check` succeeds|
-|every new type|accept and reject sides of its grammar; a serde round-trip; `Display` where it is hand-written|
+|every new type|accept and reject sides of its grammar; a serde round-trip for every serialized type (`Written<T>` and `Diagnostic` never leave the port boundary or an error, so they have none); `Display` where it is hand-written|
 |every new `Error` variant|its `Display` line|
 
 ---
@@ -468,9 +500,12 @@ thread.
 |`docs/architecture.md` §3.1|the merge key becomes (directory, declared name, value); the staging buffer holds staged declarations; `b.subdir` requests return inside `StagedFile` instead of pushing onto the queue|
 |`docs/architecture.md` §7|the `declare` row asserts exact `StagedFile`s for `buildl-lua` fixtures, not `Vec<Declaration>`|
 |`docs/architecture.md` §5 rule 5|"diffs staging hashes" becomes "compares the two staging lists"|
+|`crates/buildl-core/src/lib.rs` crate rule 5|a phase's pure helpers are tested in the file under test; its flows through a port are tested in `tests/` against public-API fakes|
+|`docs/architecture-building-blocks.md` §8|the fakes live in `buildl-core`'s integration tests (`tests/flows/common.rs`), not under `#[cfg(test)]`|
 |`docs/architecture-building-blocks.md` §5.2, §5.3|`evaluate` returns `Result<Evaluated>`; `Ports` is declared in `ports/`|
 |`docs/architecture-building-blocks.md` §8|the out-of-order scenario's assertion becomes "sorted by directory, then declared name"|
 |`docs/roadmap.md`|the I3 row and §4 on completion; a new §5 follow-up: per-file staging cap, target I-lua|
+|`README.md` (repository)|the status line no longer says no pipeline phase is implemented|
 
 Section numbers and Mermaid blocks in `docs/` are preserved.
 
