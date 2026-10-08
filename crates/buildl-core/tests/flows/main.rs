@@ -7,4 +7,5 @@
 
 pub mod common;
 
+mod check;
 mod load;

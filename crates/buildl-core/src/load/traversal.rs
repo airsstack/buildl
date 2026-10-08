@@ -11,6 +11,7 @@
 //! [`DeclarationSource`] port does; and checking one declaration
 //! against another, which the phase that builds the graph does.
 
+use std::cmp::Ordering;
 use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
 
@@ -274,18 +275,22 @@ fn convert_setting(staged: &StagedSetting, site: &Site<'_>) -> Result<Setting> {
     Ok(Setting { name, default })
 }
 
-/// Sorts by declaring directory, then declared name as bytes, then the whole declaration.
+/// The order Load returns declarations in: declaring directory, then declared name as bytes,
+/// then the whole declaration.
 ///
 /// The last key makes the order total without the order calls were made in, which a `pairs`
 /// loop changes from one evaluation to the next.
+pub(crate) fn declaration_order(a: &Declaration, b: &Declaration) -> Ordering {
+    a.provenance()
+        .directory()
+        .cmp(b.provenance().directory())
+        .then_with(|| a.item().name().cmp(b.item().name()))
+        .then_with(|| a.cmp(b))
+}
+
+/// Sorts by [`declaration_order`].
 fn sort(declarations: &mut [Declaration]) {
-    declarations.sort_by(|a, b| {
-        a.provenance()
-            .directory()
-            .cmp(b.provenance().directory())
-            .then_with(|| a.item().name().cmp(b.item().name()))
-            .then_with(|| a.cmp(b))
-    });
+    declarations.sort_by(declaration_order);
 }
 
 #[cfg(test)]

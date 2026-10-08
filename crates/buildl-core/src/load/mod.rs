@@ -14,3 +14,5 @@
 pub mod traversal;
 
 pub use traversal::load;
+
+pub(crate) use traversal::declaration_order;

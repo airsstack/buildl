@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-10-06
 depends-on: [06]
 ---
@@ -918,3 +918,23 @@ crates/buildl-core/tests/flows/common.rs   — [modify] FakePorts (task 2); seco
 - `src/pipeline/`, `tests/flows/check.rs`, `tests/flows/common.rs` and `tests/flows/main.rs` match
   the final state byte for byte; `src/lib.rs` differs from it only in the crate doc's module-map row
   for `pipeline` and the status paragraph, which plan `08` writes.
+
+## Review findings
+
+- correctness 🔴 — `first_difference` picked the lesser declaration with `a.min(b)`, `Declaration`'s derived `Ord` (provenance file path first), not Load's sort order (directory, declared name, whole declaration); across directories the two disagree (`app/build.lua` < `build.lua`, but root < `app`), so the error named a file that did not change — `src/pipeline/driver.rs:57`. Fixed: Load's comparator extracted as crate-private `load::declaration_order`, used by both `sort` and `first_difference` (`min_by`). Verified: `cargo make dod` → lib `137 passed`, flows `13 passed`, doctests `2 passed`, 0 failed.
+- doc 🔴 — `first_difference` doc stated the invariant the code broke — `src/pipeline/driver.rs:46`. Fixed: doc now says the lesser in the order Load sorts by.
+- test-coverage 🟡 — no test where the first differing pair spans root vs subdirectory, or `a-b` vs `a/b` — `src/pipeline/driver.rs:115`. Fixed: unit tests `a_root_declaration_is_named_over_a_subdirectory_one` (red: left "app/build.lua", right "build.lua") and `a_dash_directory_is_named_over_a_nested_one_it_sorts_before` (red: left "a/b/build.lua", right "a-b/build.lua"); green: `cargo test -p buildl-core --lib pipeline` → 5 passed.
+- spec drift 🟡 — spec §8 "a fake whose second evaluation differs" requires both differing declarations; the flow asserted a one-sided pair only — `tests/flows/check.rs`. Fixed: flow `a_root_declaration_is_named_over_a_subdirectory_one_it_sorts_before` through `FakeSource::with_second_run`, both sides `Some` (red: left "app/build.lua", right "build.lua"); green: `cargo test -p buildl-core --test flows check` → 4 passed.
+- guideline 🟡 — public `Pipeline<P>` lacked `Debug` (M-PUBLIC-DEBUG) — `src/pipeline/driver.rs:16`. Fixed: hand-written `impl<P: Ports> fmt::Debug for Pipeline<P> where P::Source: fmt::Debug`.
+- doc 🔵 — `FakeSource` doc did not mention its second-run mode — `tests/flows/common.rs:22`. Fixed.
+- spec 🔵 — spec §7 lists `mod load; mod check;`; delivery is alphabetical. No change.
+
+## Probe results
+
+- Claim: buildl-core lib has 131 unit tests before Task 1. `cargo test -p buildl-core --lib` → `test result: ok. 132 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out`. **Against the plan** (plan 06's fix round added one test); every lib count shifted +1, no behavioural impact.
+- Claim (reviewer probe, scratch crate over the public API): with run 1 root empty, run 2 root declaring setting `r`, both runs `subdir("app")` with identical `app`, `check` names the changed file. Output before the fix: `Nondeterministic`, named file `app/build.lua`. **Against the plan's Task 1 code.**
+
+## Deviations
+
+- 2026-10-08 — `first_difference` no longer uses `Declaration`'s derived `Ord`. The plan's Task 1 code picked `a.min(b)`, which orders by file path first and so disagrees with Load's sort across directories, breaking spec §5.2's "its file is the one to fix". Load's sort comparator moved into `pub(crate) fn declaration_order` in `load/traversal.rs` (re-exported `pub(crate)` from `load/mod.rs`); `sort` and `first_difference` share it. Rejected: a hand-written `Ord` on `Declaration` — it would put Load's sort key on a public type's trait. Spec §5.2 wording is correct and unchanged.
+- 2026-10-08 — added two unit tests, one flow and a `Debug` impl beyond the plan (review findings above). Final counts: lib 137 (plan: 134), flows 13 (plan: 12).

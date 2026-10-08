@@ -2,13 +2,13 @@
 //!
 //! Everything here uses only `buildl_core`'s public API, exactly as an adapter crate would.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
 use buildl_core::{
     BuildFile, DeclarationOrder, DeclarationSource, Diagnostic, Directory, Error, Evaluated,
-    EvaluationFailure, Freshness, NetworkAccess, Result, StagedDeclaration, StagedFile, StagedItem,
-    StagedSetting, StagedSubdir, StagedTarget, TargetRole, Written,
+    EvaluationFailure, Freshness, NetworkAccess, Ports, Result, StagedDeclaration, StagedFile,
+    StagedItem, StagedSetting, StagedSubdir, StagedTarget, TargetRole, Written,
 };
 
 /// What the fake holds for one directory.
@@ -22,10 +22,16 @@ pub enum FakeFile {
 
 /// A build-file source holding fixed files per directory, recording every evaluation.
 ///
-/// A directory it holds no file for evaluates to [`Evaluated::Absent`].
+/// Built with [`FakeSource::new`] it holds one set of files. Built with
+/// [`FakeSource::with_second_run`] it holds two, and switches from the first to the second when
+/// the root directory is evaluated a second time, so every directory evaluated after that point
+/// reads from the second set. A directory it holds no file for evaluates to
+/// [`Evaluated::Absent`].
 #[derive(Debug)]
 pub struct FakeSource {
-    files: BTreeMap<Directory, FakeFile>,
+    first: BTreeMap<Directory, FakeFile>,
+    second: Option<BTreeMap<Directory, FakeFile>>,
+    root_evaluations: Cell<u32>,
     evaluated: RefCell<Vec<Directory>>,
 }
 
@@ -34,7 +40,24 @@ impl FakeSource {
     #[must_use]
     pub const fn new(files: BTreeMap<Directory, FakeFile>) -> Self {
         Self {
-            files,
+            first: files,
+            second: None,
+            root_evaluations: Cell::new(0),
+            evaluated: RefCell::new(Vec::new()),
+        }
+    }
+
+    /// A source returning `first` until the root is evaluated a second time, and `second` from
+    /// then on — a workspace that declares differently on its second load.
+    #[must_use]
+    pub const fn with_second_run(
+        first: BTreeMap<Directory, FakeFile>,
+        second: BTreeMap<Directory, FakeFile>,
+    ) -> Self {
+        Self {
+            first,
+            second: Some(second),
+            root_evaluations: Cell::new(0),
             evaluated: RefCell::new(Vec::new()),
         }
     }
@@ -49,8 +72,15 @@ impl FakeSource {
 impl DeclarationSource for FakeSource {
     fn evaluate(&self, file: &BuildFile) -> Result<Evaluated> {
         let directory = file.directory();
+        if directory.is_root() {
+            self.root_evaluations.set(self.root_evaluations.get() + 1);
+        }
         self.evaluated.borrow_mut().push(directory.clone());
-        match self.files.get(directory) {
+        let files = match &self.second {
+            Some(second) if self.root_evaluations.get() > 1 => second,
+            _ => &self.first,
+        };
+        match files.get(directory) {
             None => Ok(Evaluated::Absent),
             Some(FakeFile::Staged(staged)) => Ok(Evaluated::Staged(staged.clone())),
             Some(FakeFile::Fails(failure)) => Err(Error::Evaluation {
@@ -60,6 +90,14 @@ impl DeclarationSource for FakeSource {
             }),
         }
     }
+}
+
+/// The bundle choosing [`FakeSource`].
+#[derive(Debug)]
+pub struct FakePorts;
+
+impl Ports for FakePorts {
+    type Source = FakeSource;
 }
 
 /// A directory from known-valid text.
