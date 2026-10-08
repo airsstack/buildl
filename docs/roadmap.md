@@ -99,7 +99,6 @@ Findings an earlier slice recorded but left out of scope, each assigned to the s
 |#|Follow-up|Origin|Target|
 |---|---|---|---|
 |5|The `buildl-cli` `description` says "a thin clap shell", but clap is not yet a dependency.|I1 review|CLI slice|
-|10|CI's `rustup toolchain install` with no argument needs rustup 1.28 or newer on the runners. This is not yet verified.|I1 review|first CI run on a pushed branch|
 |11|No guard asserts that a phase module in `buildl-core` does not import another. The rule is `architecture.md`'s "no phase invokes the next"; the mechanism would be a golden file of permitted intra-crate module edges, diffed by a `cargo make` task, in the shape of `guard-crate-edges`. I2 shipped no phase module, so the guard would have asserted nothing.|I2 review|I4 Resolve, the first slice with two phase modules|
 |13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs; which directories to skip is known only once `buildl.toml` is parsed.|I-lua spec §6.2|I4 Resolve (the `Manifest` port)|
 
