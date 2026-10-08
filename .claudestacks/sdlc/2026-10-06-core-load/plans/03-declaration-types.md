@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-06
 depends-on: [01, 02]
 ---
@@ -1732,3 +1732,21 @@ End state:
 This is the first review checkpoint of the chain: plans 04 (error variants holding
 `DeclarationOrder` and `Declaration`) and 05 (`DeclarationSource` returning `Evaluated`) build on
 these types.
+
+## Review findings
+
+- doc accuracy — 🔵 `DeclarationOrder` doc said a `pairs` loop issues calls in a different order "on each evaluation"; reworded to "may issue … from one evaluation to the next" — `crates/buildl-core/src/types/build_file.rs:22-23` — fixed; verified by `cargo make dod` (Build Done, `test result: ok. 111 passed`).
+- test coverage — 🔵 the round-trip loop never serialized `Rule { description: None }`; added a fifth item `//:ld` with `description: None` — `crates/buildl-core/src/types/declaration.rs` `serializes_as_exact_canonical_json_and_round_trips` — fixed; verified by `cargo make dod` (Build Done, `test result: ok. 111 passed`).
+- reviewer verdict: spec compliant, no drift, blocking set empty; re-ran `cargo make dod`, `guard-core-purity`, `guard-crate-edges` (Build Done), `cargo deny check` (`advisories ok, bans ok, licenses ok, sources ok`), `cargo test -p buildl-core --lib` (`111 passed`).
+
+## Probe results
+
+- baseline test count is 105 — `cargo test -p buildl-core --lib` — `test result: ok. 105 passed; 0 failed` — matches plan.
+- `crate::json::canonical::to_string` exists — `grep -n "pub fn to_string" json/canonical.rs` — `json/canonical.rs:80:pub fn to_string<T: Serialize + ?Sized>(value: &T) -> Result<String>` — matches plan.
+- `Provenance::file` exists and is not `const` — `types/provenance.rs:39:    pub fn file(&self) -> &Path {` — matches plan.
+- `Directory::root` is `const` — `types/directory.rs:33:    pub const fn root() -> Self {` — matches plan.
+- all other asserted facts settled by each task's own red-green step (red E0432 then green, counts 106, 106, 106, 107, 109, 110, 111 ×6 as the plan states).
+
+## Deviations
+
+- 2026-10-08 — one coder ran all 12 tasks (user's one-subagent-per-plan decision) and `cargo make dod` ran once at plan end rather than per task; per-task commits not made — the user holds the commit gate.

@@ -27,6 +27,8 @@
 mod grammar;
 
 pub mod argument;
+pub mod build_file;
+pub mod declaration;
 pub mod description;
 pub mod diagnostic;
 pub mod digest;
@@ -45,6 +47,14 @@ pub mod timestamp;
 pub mod written;
 
 pub use argument::{Argument, Command};
+pub use build_file::{
+    BuildFile, DeclarationOrder, Evaluated, StagedAlias, StagedDeclaration, StagedFile, StagedItem,
+    StagedRule, StagedSetting, StagedSubdir, StagedTarget,
+};
+pub use declaration::{
+    Action, Alias, Declaration, Declared, Freshness, NetworkAccess, Rule, Setting, Target,
+    TargetRole,
+};
 pub use description::Description;
 pub use diagnostic::Diagnostic;
 pub use digest::Digest;

@@ -56,10 +56,14 @@ pub mod json;
 pub mod ports;
 pub mod types;
 
-pub use error::{Error, NameKind, Result};
+pub use error::{
+    ActionFound, DeclarationField, Error, EvaluationFailure, EvaluationLimit, NameKind, Result,
+};
 pub use ports::Clock;
 pub use types::{
-    Argument, Command, Description, Diagnostic, Digest, Directory, EntryName, EnvName, FieldName,
-    Label, NodeId, OutputName, Provenance, SettingName, SettingValue, SourcePath, TargetName,
-    Timestamp, Written,
+    Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
+    Description, Diagnostic, Digest, Directory, EntryName, EnvName, Evaluated, FieldName,
+    Freshness, Label, NetworkAccess, NodeId, OutputName, Provenance, Rule, Setting, SettingName,
+    SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
+    StagedSetting, StagedSubdir, StagedTarget, Target, TargetName, TargetRole, Timestamp, Written,
 };

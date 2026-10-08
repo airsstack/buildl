@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-06
 depends-on: [03]
 ---
@@ -1028,3 +1028,29 @@ classification enums of spec §6.1, every one rendered by a pinned `Display` str
 outside the crate. No caller of these variants exists yet: plan `06`'s Load raises
 `Evaluation`, `MissingBuildFile`, `InvalidDeclaration` and `ActionConflict`, and plan `07`'s
 `check` raises `Nondeterministic`.
+
+## Review findings
+
+- doc accuracy — 🟡 module doc claimed `Display` always renders one line, but `Evaluation` interpolates an adapter `Diagnostic` that may span lines; narrowed to "one diagnostic, on one line unless an adapter's own message spans several" — `crates/buildl-core/src/error.rs:18-19` — fixed; verified by `cargo make dod` (`Build Done in 8.17 seconds`, `test result: ok. 118 passed`).
+- error chain — 🟡 `InvalidDeclaration` renders `{source}` in `Display` and also returns it from `source()`, so a chain-walking reporter prints it twice (unlike `CanonicalJson`) — `crates/buildl-core/src/error.rs` `InvalidDeclaration` — not changed: the Display string is pinned by the plan and spec §6.1; no chain-walking reporter exists yet. Revisit when the `Reporter` adapter lands.
+- redundancy — 🔵 `#[source]` on a field already named `source` enforces nothing — `error.rs` `InvalidDeclaration` — kept, matches the existing `CanonicalJson` style.
+- doc accuracy — 🔵 "A closed set" on a `#[non_exhaustive]` enum; reworded to closed for adapters, open for matching callers — `error.rs` `EvaluationFailure` — fixed; same `cargo make dod` run.
+- doc clarity — ❓ `DeclarationField::Name` vs `SettingName` overlap for a setting's name; `Name` documented as "A target's, rule's or alias's name." — `error.rs` `DeclarationField::Name` — fixed; same `cargo make dod` run.
+- test precision — 🔵 `source(&err).is_some()` did not pin which error is the source; now compares `source().unwrap().to_string()` with the inner error's text — `error.rs` `invalid_declaration_names_the_site_the_field_and_the_grammar` — fixed; same `cargo make dod` run.
+- process — 🔵 plan asks for a commit per task; work left uncommitted for the user's commit gate.
+- spec wording — 🔵 `ActionConflict`/`UnknownField` imply rather than state what was wanted; `Nondeterministic` names only the file (Task 6 allows it) — not changed, strings are plan-pinned.
+- reviewer verdict: spec compliant, blocking set empty; re-ran `cargo make dod`, `guard-core-purity`, `guard-crate-edges` (ok), `cargo deny check` (`advisories ok, bans ok, licenses ok, sources ok`), `cargo test -p buildl-core --lib` (`118 passed`, `error::` 11).
+
+## Probe results
+
+- `NameKind` has 14 variants — `awk '/pub enum NameKind/,/^}/' error.rs | grep -cE '^    [A-Z][A-Za-z]+,'` — `14` — matches plan.
+- `DeclarationOrder::new(u32)` exists — `types/build_file.rs:31:    pub const fn new(index: u32) -> Self {` — matches plan.
+- `Provenance::new(PathBuf, Directory)` exists — `types/provenance.rs:33:    pub const fn new(file: PathBuf, directory: Directory) -> Self {` — matches plan.
+- `Diagnostic::new(impl Into<String>)` exists — `types/diagnostic.rs:23:    pub fn new(text: impl Into<String>) -> Self {` — matches plan.
+- error.rs imports only `core::fmt` — `error.rs:16:use core::fmt;` — matches plan.
+- start counts 111 overall, 4 under `error::` — `cargo make dod` output after plan 03 — `test result: ok. 111 passed`, four `error::tests::` lines — matches plan.
+- remaining facts (compiler errors, test counts per task) settled by each task's own red-green step.
+
+## Deviations
+
+- 2026-10-08 — one coder ran all 6 tasks (user's one-subagent-per-plan decision) and `cargo make dod` ran once at plan end rather than per task; per-task commits not made — the user holds the commit gate.
