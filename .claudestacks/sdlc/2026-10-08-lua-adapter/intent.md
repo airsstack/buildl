@@ -52,10 +52,11 @@ first real `buildl check` can run.
   others: `fs`, `proc`, `env`, `time` and `stdio` are absent. `buildl` is a child of `airsstack`
   and does not inherit from it. The table holds only buildl's own API, so `buildl.json` is `nil`
   and build files reach airsl modules through `airsstack`.
-- `b.sources(pattern)` returns sorted, workspace-relative paths, cannot read outside the workspace,
-  and is the declaration phase's only filesystem access.
+- `b.sources(pattern)` returns sorted paths relative to the declaring directory, cannot read outside
+  the workspace, and is the declaration phase's only filesystem access.
 - Each build file runs on a fresh engine. Evaluating the same file twice yields byte-identical staged
-  output, `math.random` included, so `check`'s double run can never be tripped by entropy.
+  output, `math.random` included. The one entropy source left open, address-derived text from
+  `tostring` or `string.format` of a table or function, is named and recorded as a follow-up.
 - Every way an evaluation can fail maps onto I3's `EvaluationFailure` (`Syntax`, `Runtime`,
   `Refused`, `LimitReached{Instructions|Memory|Staging}`, `UnknownField`, `WrongFieldType`), with a
   `Diagnostic` a person can act on. No change to `buildl-core` is needed.
