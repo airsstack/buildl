@@ -105,7 +105,7 @@ impl DeclarationSource for LuaSource {
         let staging = Arc::new(Mutex::new(Staging::new(self.limits.memory_bytes().get())));
         let outcome = BuildlModule::new(
             Arc::clone(&staging),
-            Sources::new(&self.root, file.directory()),
+            Sources::new(&self.root, file.directory(), self.limits.walk_entries()),
         )
         .and_then(|module| engine::build(&self.limits, module))
         .and_then(|engine| {

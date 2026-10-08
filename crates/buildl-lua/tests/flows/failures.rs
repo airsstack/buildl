@@ -1,8 +1,12 @@
 //! Every way a build file can fail maps onto one `EvaluationFailure`, with a usable diagnostic.
 
-use buildl_core::{EvaluationFailure, EvaluationLimit, Written};
+use std::fs;
+use std::num::NonZeroU64;
 
-use crate::common::failure_of;
+use buildl_core::{DeclarationSource, Error, EvaluationFailure, EvaluationLimit, Written};
+use buildl_lua::{DeclarationLimits, LuaSource};
+
+use crate::common::{failure_of, root_file, workspace};
 
 #[test]
 fn a_file_that_does_not_parse_is_a_syntax_failure() {
@@ -66,6 +70,44 @@ fn staging_past_the_staging_budget_reaches_the_staging_limit() {
         diagnostic
             .as_str()
             .ends_with("buildl.alias: staging budget of 16777216 bytes exceeded"),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn a_source_walk_past_the_walk_ceiling_reaches_the_walk_limit_even_when_caught() {
+    let (_dir, root) = workspace("pcall(buildl.sources, '*.c')\nreturn 'ok'");
+    for name in ["a.c", "b.c", "c.c"] {
+        fs::write(root.join(name), "").unwrap();
+    }
+    let limits = DeclarationLimits::default().with_walk_entries(NonZeroU64::new(3).unwrap());
+    match LuaSource::new(&root, limits).evaluate(&root_file()) {
+        Err(Error::Evaluation {
+            failure,
+            diagnostic,
+            ..
+        }) => {
+            assert_eq!(
+                failure,
+                EvaluationFailure::LimitReached {
+                    limit: EvaluationLimit::Walk,
+                }
+            );
+            assert_eq!(
+                diagnostic.as_str(),
+                "line 1: buildl.sources: walk budget of 3 entries exceeded"
+            );
+        }
+        other => panic!("expected a walk limit, got {other:?}"),
+    }
+}
+
+#[test]
+fn declaring_address_derived_text_is_a_runtime_failure() {
+    let (failure, diagnostic) = failure_of("buildl.alias(tostring({}), 'app')");
+    assert_eq!(failure, EvaluationFailure::Runtime);
+    assert!(
+        diagnostic.as_str().contains("a table has no stable text"),
         "{diagnostic}"
     );
 }

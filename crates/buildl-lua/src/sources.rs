@@ -11,28 +11,39 @@
 //! Non-responsibilities: turning the paths into inputs. They are returned to Lua as text relative
 //! to the declaring directory, and joined with it after evaluation.
 
+use core::num::NonZeroU64;
+use core::sync::atomic::{AtomicU64, Ordering};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
-use buildl_core::{Directory, EvaluationFailure};
+use buildl_core::{Directory, EvaluationFailure, EvaluationLimit};
 use globset::GlobBuilder;
 use walkdir::WalkDir;
 
 use crate::refusal::Refusal;
 
 /// The walk for one declaring directory.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Clones share one entry count, so every `buildl.sources` call of one build file draws on the same
+/// ceiling.
+#[derive(Debug, Clone)]
 pub(crate) struct Sources {
     root: PathBuf,
     directory: PathBuf,
+    ceiling: NonZeroU64,
+    visited: Arc<AtomicU64>,
 }
 
 impl Sources {
-    /// The walk for `directory`, under the canonical workspace `root`.
-    pub(crate) fn new(root: &Path, directory: &Directory) -> Self {
+    /// The walk for `directory`, under the canonical workspace `root`, that visits at most
+    /// `ceiling` directory entries over its lifetime.
+    pub(crate) fn new(root: &Path, directory: &Directory, ceiling: NonZeroU64) -> Self {
         Self {
             root: root.to_path_buf(),
             directory: root.join(directory.as_str()),
+            ceiling,
+            visited: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -40,7 +51,8 @@ impl Sources {
     /// `/`-separated and sorted by bytes.
     ///
     /// The matcher uses the same flags as airsl's `glob` module: `*` stops at `/`, and `**/`
-    /// matches zero or more directories.
+    /// matches zero or more directories. Every entry the walk visits, of any kind, counts against
+    /// the ceiling; visiting more than it refuses with the walk limit.
     pub(crate) fn find(&self, pattern: &str) -> Result<Vec<String>, Refusal> {
         let matcher = GlobBuilder::new(pattern)
             .literal_separator(true)
@@ -65,9 +77,20 @@ impl Sources {
         }
 
         let mut found = Vec::new();
-        for entry in WalkDir::new(&base).follow_root_links(false) {
+        for entry in WalkDir::new(&base)
+            .follow_root_links(false)
+            .sort_by_file_name()
+        {
             let entry = entry
                 .map_err(|error| Refusal::new(EvaluationFailure::Runtime, error.to_string()))?;
+            if self.visited.fetch_add(1, Ordering::Relaxed) >= self.ceiling.get() {
+                return Err(Refusal::new(
+                    EvaluationFailure::LimitReached {
+                        limit: EvaluationLimit::Walk,
+                    },
+                    format!("walk budget of {} entries exceeded", self.ceiling),
+                ));
+            }
             if !entry.file_type().is_file() {
                 continue;
             }
@@ -97,13 +120,15 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use core::num::NonZeroU64;
     use std::fs;
     use std::os::unix::fs::symlink;
     use std::path::{Path, PathBuf};
 
-    use buildl_core::{Directory, EvaluationFailure};
+    use buildl_core::{Directory, EvaluationFailure, EvaluationLimit};
 
     use super::Sources;
+    use crate::limits::DeclarationLimits;
 
     /// A canonical temporary workspace holding `files`, each created empty.
     fn workspace(files: &[&str]) -> (tempfile::TempDir, PathBuf) {
@@ -118,12 +143,89 @@ mod tests {
     }
 
     fn sources(root: &Path, directory: &str) -> Sources {
+        sources_capped(root, directory, DeclarationLimits::default().walk_entries())
+    }
+
+    fn sources_capped(root: &Path, directory: &str, walk_entries: NonZeroU64) -> Sources {
         let directory = if directory.is_empty() {
             Directory::root()
         } else {
             Directory::parse(directory).unwrap()
         };
-        Sources::new(root, &directory)
+        Sources::new(root, &directory, walk_entries)
+    }
+
+    fn entries(count: u64) -> NonZeroU64 {
+        NonZeroU64::new(count).unwrap()
+    }
+
+    fn walk_limit() -> EvaluationFailure {
+        EvaluationFailure::LimitReached {
+            limit: EvaluationLimit::Walk,
+        }
+    }
+
+    #[test]
+    fn a_walk_that_visits_exactly_the_ceiling_passes() {
+        // The root directory and three files are four entries.
+        let (_dir, root) = workspace(&["a.c", "b.c", "c.c"]);
+        let found = sources_capped(&root, "", entries(4)).find("*.c").unwrap();
+        assert_eq!(found, ["a.c", "b.c", "c.c"]);
+    }
+
+    #[test]
+    fn a_walk_that_visits_more_than_the_ceiling_is_refused() {
+        let (_dir, root) = workspace(&["a.c", "b.c", "c.c"]);
+        let refusal = sources_capped(&root, "", entries(3))
+            .find("*.c")
+            .unwrap_err();
+        assert_eq!(refusal.failure(), &walk_limit());
+        assert_eq!(
+            refusal.diagnostic("sources", None).as_str(),
+            "buildl.sources: walk budget of 3 entries exceeded"
+        );
+    }
+
+    #[test]
+    fn entries_are_counted_across_calls() {
+        let (_dir, root) = workspace(&["a.c", "b.c", "c.c"]);
+        let walk = sources_capped(&root, "", entries(7));
+        assert!(walk.find("*.c").is_ok());
+        let refusal = walk.find("*.c").unwrap_err();
+        assert_eq!(refusal.failure(), &walk_limit());
+    }
+
+    #[test]
+    fn calls_that_together_stay_at_the_ceiling_pass() {
+        let (_dir, root) = workspace(&["a.c", "b.c", "c.c"]);
+        let walk = sources_capped(&root, "", entries(8));
+        assert!(walk.find("*.c").is_ok());
+        assert!(walk.find("*.c").is_ok());
+        assert!(walk.find("*.c").is_err());
+    }
+
+    #[test]
+    fn a_clone_shares_the_count() {
+        let (_dir, root) = workspace(&["a.c", "b.c", "c.c"]);
+        let walk = sources_capped(&root, "", entries(7));
+        let copy = walk.clone();
+        assert!(walk.find("*.c").is_ok());
+        assert_eq!(copy.find("*.c").unwrap_err().failure(), &walk_limit());
+    }
+
+    #[test]
+    fn directories_and_symlinks_count_as_entries() {
+        let (_dir, root) = workspace(&["d/a.c"]);
+        symlink(root.join("d"), root.join("link")).unwrap();
+        // root, d, d/a.c and link.
+        assert!(sources_capped(&root, "", entries(4)).find("**/*.c").is_ok());
+        assert_eq!(
+            sources_capped(&root, "", entries(3))
+                .find("**/*.c")
+                .unwrap_err()
+                .failure(),
+            &walk_limit()
+        );
     }
 
     #[test]

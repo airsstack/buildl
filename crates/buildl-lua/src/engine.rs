@@ -67,7 +67,7 @@ mod tests {
         let root = fs::canonicalize(dir.path()).unwrap();
         let module = BuildlModule::new(
             Arc::new(Mutex::new(Staging::new(u64::MAX))),
-            Sources::new(&root, &Directory::root()),
+            Sources::new(&root, &Directory::root(), limits.walk_entries()),
         )
         .unwrap();
         (dir, build(limits, module).unwrap())

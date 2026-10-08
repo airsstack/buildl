@@ -3,13 +3,15 @@
 //! Its own file because it is the one airsl host module buildl writes. airsl installs it as
 //! `airsstack.buildl`, and its installation binds the same table to the global `buildl`. It also
 //! withholds the three globals that would let a build file's output vary between runs or reach the
-//! host's stdout: `math.random`, `math.randomseed` and `print`.
+//! host's stdout: `math.random`, `math.randomseed` and `print`, and replaces `tostring` and
+//! `string.format` with versions that refuse address-derived text.
 //!
 //! Responsibilities: [`BuildlModule`]; turning a primitive call into a staged record or a sticky
 //! refusal that names the build file's line.
 //!
-//! Non-responsibilities: the argument shapes, which `primitives` owns, and the walk behind
-//! `buildl.sources`, which `sources` owns.
+//! Non-responsibilities: the argument shapes, which `primitives` owns, the walk behind
+//! `buildl.sources`, which `sources` owns, and the replacement functions, which `stable_text`
+//! owns.
 
 use std::sync::{Arc, Mutex, TryLockError};
 
@@ -20,6 +22,7 @@ use buildl_core::{EvaluationFailure, EvaluationLimit, StagedItem, TargetRole};
 use crate::primitives;
 use crate::refusal::Refusal;
 use crate::sources::Sources;
+use crate::stable_text;
 use crate::staging::{Exceeded, Staging};
 
 /// The `buildl` host module for one build file's evaluation.
@@ -129,6 +132,7 @@ impl HostModule for BuildlModule {
         math.set("random", Value::Nil).map_err(fail)?;
         math.set("randomseed", Value::Nil).map_err(fail)?;
         globals.set("print", Value::Nil).map_err(fail)?;
+        stable_text::install(lua).map_err(fail)?;
         Ok(())
     }
 }
@@ -226,6 +230,7 @@ mod tests {
     };
 
     use super::BuildlModule;
+    use crate::limits::DeclarationLimits;
     use crate::sources::Sources;
     use crate::staging::Staging;
 
@@ -239,8 +244,15 @@ mod tests {
         let mut modules = ModuleSet::new();
         modules
             .insert(Box::new(
-                BuildlModule::new(Arc::clone(staging), Sources::new(&root, &Directory::root()))
-                    .unwrap(),
+                BuildlModule::new(
+                    Arc::clone(staging),
+                    Sources::new(
+                        &root,
+                        &Directory::root(),
+                        DeclarationLimits::default().walk_entries(),
+                    ),
+                )
+                .unwrap(),
             ))
             .unwrap();
         let engine = Engine::builder()
@@ -285,6 +297,17 @@ mod tests {
             u64::MAX,
         );
         assert_eq!(result.unwrap(), "nilnilnilfunction");
+    }
+
+    #[test]
+    fn replaces_tostring_and_format_with_address_free_versions() {
+        let (result, _) = run(
+            "local a = pcall(tostring, {})\n\
+             local b = pcall(string.format, '%p', 1)\n\
+             return tostring(a) .. tostring(b) .. string.format('%s', 'x')",
+            u64::MAX,
+        );
+        assert_eq!(result.unwrap(), "falsefalsex");
     }
 
     #[test]

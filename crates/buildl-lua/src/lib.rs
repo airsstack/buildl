@@ -14,11 +14,14 @@
 //!   the global `buildl`: `target`, `test`, `rule`, `alias`, `option`, `subdir` and `sources`.
 //! - Keeping the declaration phase sandboxed: airsl's minimal language surface, no grant of any
 //!   kind, only the `json`, `path`, `regex`, `hash` and `glob` modules, and no `math.random`,
-//!   `math.randomseed`, `print` or `airsstack.path.absolute`. `buildl.sources` is the only
-//!   filesystem read, and it walks only the declaring directory.
-//! - Bounding a build file's memory and instructions: the ceilings of [`DeclarationLimits`], and
-//!   a byte budget, equal to the memory ceiling, on what one file may stage. The host-side
-//!   `buildl.sources` walk and wall time are outside both ceilings.
+//!   `math.randomseed`, `print` or `airsstack.path.absolute`, and with `tostring` and
+//!   `string.format` refusing address-derived text (a table, function, thread or userdata without `__tostring`,
+//!   and `%p`). `buildl.sources` is the only filesystem read, and it walks only the declaring
+//!   directory.
+//! - Bounding a build file's memory, instructions and source walk: the ceilings of
+//!   [`DeclarationLimits`], and a byte budget, equal to the memory ceiling, on what one file may
+//!   stage. The `buildl.sources` walk is capped at `walk_entries` directory entries per build
+//!   file, counted across all its calls. Wall time is outside every ceiling.
 //!
 //! # Non-responsibilities
 //!
@@ -39,6 +42,7 @@
 //! | `values` | the Lua value readers every primitive shares |
 //! | `refusal` | why a primitive call was refused |
 //! | `sources` | the host-side walk behind `buildl.sources` |
+//! | `stable_text` | `tostring` and `string.format` without address-derived text |
 //! | `staging` | the staging buffer: order, byte budget, first refusal |
 //! | `classify` | airsl failures named as `EvaluationFailure` kinds |
 //!
@@ -54,6 +58,7 @@ mod primitives;
 mod refusal;
 mod source;
 mod sources;
+mod stable_text;
 mod staging;
 mod values;
 
