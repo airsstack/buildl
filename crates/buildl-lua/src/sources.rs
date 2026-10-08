@@ -255,7 +255,10 @@ mod tests {
     #[test]
     fn a_pattern_cannot_reach_outside_the_declaring_directory() {
         let (_dir, root) = workspace(&["lib/a.c", "app/b.c"]);
-        assert!(sources(&root, "lib").find("../**/*.c").unwrap().is_empty());
+        assert_eq!(
+            sources(&root, "lib").find("../**/*.c").unwrap(),
+            Vec::<String>::new()
+        );
     }
 
     #[test]

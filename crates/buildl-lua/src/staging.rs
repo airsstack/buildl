@@ -230,7 +230,10 @@ mod tests {
             staging.stage_subdir(Written::new("lib")),
             Err(Exceeded::Budget(charge - 1))
         );
-        assert!(staging.finish().unwrap().subdirs.is_empty());
+        assert_eq!(
+            staging.finish().unwrap().subdirs,
+            Vec::<StagedSubdir>::new()
+        );
     }
 
     #[test]
