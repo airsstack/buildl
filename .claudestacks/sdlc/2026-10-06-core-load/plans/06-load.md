@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-06
 depends-on: [04, 05]
 ---
@@ -2245,3 +2245,27 @@ End state:
 Every load scenario of spec §8 has a test (table in Context). `grep -rn 'HashMap\|HashSet' crates/buildl-core/src/load`
 returns nothing. Plan `07` adds `mod check;` to `main.rs`, `FakePorts` and the second-run map to
 `common.rs`; plan `08` adds the `load` row to the crate doc's module map.
+
+## Review findings
+
+- test (reversion guard) — sort tie-break `.then_with(|| a.cmp(b))` untested; deleting it left 131 unit + 9 flows green — `load/traversal.rs:287` — fixed: added `declarations_sharing_a_directory_and_name_sort_by_content_in_either_order`; deleting the tie-break makes it FAIL (restored); verified `cargo make dod` → `132 passed`, `9 passed`, `2 passed`, `Build Done in 2.79 seconds.`
+- test (reversion guard) — flow `the_requester_of_a_shared_missing_directory_does_not_depend_on_call_order` could not fail (root requested `a/gone` directly) — `tests/flows/load.rs:146` — fixed: scenario now root `["a/b","a"]` / `["a","a/b"]`, `a`→`b/c`, `a/b`→`c`, expects `no build file in //a/b/c (requested by a/build.lua)`; removing `resolved.sort()` makes it FAIL (8 passed, 1 failed; restored); same dod verification.
+- doc (checkable claim) — comment claimed the fakes build every staged value and implement every port — `tests/flows/main.rs:5` — fixed: narrowed to staged targets/settings/subdirs and `DeclarationSource`. Plan Task 2 carried the over-claim verbatim.
+- doc — "Returns the first of:" read as precedence — `load/traversal.rs:36` — fixed: "Returns the first error met, one of:".
+- style — inline `crate::types::{TargetName,Target,OutputName,Label}` paths — `load/traversal.rs:153,354,426,451` — fixed: imported.
+- spec wording — §4.1 / plan End state say `load/` depends on `ports::DeclarationSource` and `types/` only; it also imports crate-wide `crate::error` — `spec.md` §4.1 — not amended: `error` is crate-wide, not a phase; the no-other-phase rule holds.
+
+## Probe results
+
+- `Written::{as_written,resolve,under}` exist — grep → `written.rs:43`, `:65`, `:80` — holds.
+- `json::canonical::to_vec` exists — grep → `json/canonical.rs:68` — holds.
+- `Label::new(Directory, TargetName)`, `Directory::root`, `Directory::as_str`, `EntryName::as_str`, `Diagnostic::new` — grep → `label.rs:36`, `directory.rs:33`, `:61`, `entry_name.rs:47`, `diagnostic.rs:23` — holds.
+- `Command` and its empty-command reason — grep → `argument.rs:87`, `:101` `must hold at least one argument`, `:176` `invalid command: "" — must hold at least one argument` — holds (lives in `argument.rs`, not a `command.rs`).
+- `MissingBuildFile` Display — grep → `error.rs:72` `no build file in //{directory}{}`; test `error.rs:458` `no build file in //lib/text (requested by lib/build.lua)` — holds.
+- `crates/buildl-core/tests/` absent before the plan — `ls tests` → `No such file or directory` — holds.
+- Behavioural claims (join/escape rules, conversions, sort) were settled by the plan's own red-green steps: every red failed as stated and green counts matched 119/1 → 131/9.
+
+## Deviations
+
+- 2026-10-08 — one coder ran all 11 tasks; `cargo make dod` ran once at plan end, not per task; no per-task commits (commit gate is the user's).
+- 2026-10-08 — fix round added one unit test and rewrote one flow scenario beyond the plan's code (review findings above); unit count ends at 132, not the plan's 131.

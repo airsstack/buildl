@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-06
 depends-on: [03]
 ---
@@ -398,3 +398,23 @@ runs two doctests, each implementing a trait from outside the crate. Two differe
 finished crate remain, both owned by plan `08`: `evaluate`'s `# Errors` names `Error::Evaluation` as
 a code span rather than as the intra-doc link, and `ports/mod.rs` lacks the sentence "Every trait of
 the crate lives here, so no logic module declares one."
+
+## Review findings
+
+- guideline (unit-test-mandate) — pure trait file lacked the exemption citation — `ports/bundle.rs:1` — fixed: added "This file holds only a trait definition, so it carries no logic to unit-test."; verified `cargo make dod` → `118 passed`, `2 passed` (doctests), `Build Done in 2.48 seconds.`
+- guideline (unit-test-mandate) — same missing exemption citation — `ports/declaration_source.rs:1` — fixed, same line, same verification.
+- doc (checkable claim) — "The real implementation lives in an adapter crate" false today — `ports/declaration_source.rs:9` — fixed: "belongs in".
+- doc — `Error::Evaluation` is a plain code span though plan 04 landed the variant — `ports/declaration_source.rs:59` — left for plan 08, which owns the intra-doc link.
+- test scope — doctest asserts only the `Absent` branch — `ports/declaration_source.rs:23` — accepted: doctest shows implementability only.
+
+## Probe results
+
+- `ports/mod.rs` declares only `clock` — `cat crates/buildl-core/src/ports/mod.rs` → `pub mod clock;` / `pub use clock::Clock;` — holds.
+- `lib.rs` re-exports `pub use ports::Clock;` — `grep -n "pub use" crates/buildl-core/src/lib.rs` → `62:pub use ports::Clock;` — holds.
+- `Written::new`, `Directory::parse`/`is_root`, `Provenance::new` exist — grep → `written.rs:34`, `directory.rs:44`, `directory.rs:67`, `provenance.rs:33` — holds.
+- cargo-make tasks exist — `grep -n '^\[tasks\.' Makefile.toml` → `dod` L41, `deny` L102, `guard-crate-edges` L121, `guard-core-purity` L146 — holds.
+- Plan-level: `cargo make deny` → `advisories ok, bans ok, licenses ok, sources ok`; `cargo +1.94 check --workspace --all-targets --all-features` → `Finished`.
+
+## Deviations
+
+- 2026-10-08 — one coder ran both tasks; `cargo make dod` ran once at plan end, not per task; no per-task commits (commit gate is the user's). Red outputs were produced against a tree with plan 04 landed; error kind (E0432) matched, line numbers not compared.

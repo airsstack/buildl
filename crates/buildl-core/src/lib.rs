@@ -53,13 +53,15 @@
 
 pub mod error;
 pub mod json;
+pub mod load;
 pub mod ports;
 pub mod types;
 
 pub use error::{
     ActionFound, DeclarationField, Error, EvaluationFailure, EvaluationLimit, NameKind, Result,
 };
-pub use ports::Clock;
+pub use load::load;
+pub use ports::{Clock, DeclarationSource, Ports};
 pub use types::{
     Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
     Description, Diagnostic, Digest, Directory, EntryName, EnvName, Evaluated, FieldName,
