@@ -39,7 +39,7 @@ graph TD
     end
 ```
 
-The line between the two subgraphs is airsl's boundary. Declaration is safe on untrusted input (its only grant is filesystem read on the workspace, for source globbing); parallelism lives in the Rust worker pool, where it works; and a build file that loops forever is stopped by airsl's instruction ceiling before it wastes anyone's time.
+The line between the two subgraphs is airsl's boundary. Declaration is safe on untrusted input (its engine holds no grant at all, and `b.sources()` reads the declaring directory host-side); parallelism lives in the Rust worker pool, where it works; and a build file that loops forever is stopped by airsl's instruction ceiling before it wastes anyone's time.
 
 ## A taste of `build.lua`
 

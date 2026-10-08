@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-08
 depends-on: [07]
 ---
@@ -356,3 +356,29 @@ not here.
 - `RUSTDOCFLAGS="-D warnings" cargo doc -p buildl-lua --no-deps` exits `0`.
 - Both grep checks (Tasks 2 and 3) print nothing, and the roadmap check (Task 4) prints the expected rows.
 - `cargo make dod` exits `0`.
+
+## Review findings
+
+- security claim / doc accuracy (🟡, blocking) — "Bounding every resource a build file can consume" was false. The host-side `buildl.sources` walk and wall time sit outside both ceilings — `crates/buildl-lua/src/lib.rs:19`. **Fixed**: the doc now reads "Bounding a build file's memory and instructions", and says the walk and wall time are outside both ceilings.
+- doc accuracy (🟡, blocking) — the design §8 Mermaid node `confined, read-only grant` contradicted §2 as amended, and `engine.rs` (`GrantSet::declared()`) — `docs/design.md` §8. **Fixed**: the node now reads `confined, no grant` and is still Mermaid.
+- spec omission (🟡, blocking) — the spec §12 table left out `docs/fundamental-walkthrough.md`. Its §4 still said "grant: fs read on workspace only" (sequence diagram) and "a single explicit grant", so the plan Goal was unmet — spec §12. **Fixed**: both lines now say no grant, with sources listed host-side (design §2). The sequence diagram is still Mermaid.
+- doc accuracy (🔵) — "a diagnostic with the line" — `crates/buildl-lua/README.md:11`. **Fixed**: it now reads "with the line where known".
+- doc accuracy (🔵) — the sticky-refusal sentence was stated with no exception — `README.md:15`. **Fixed**: added that a call made while another buildl call is in progress raises an error without failing the file (the `WouldBlock` arm of `guarded`).
+- doc consistency (🔵) — the module table said `module` holds "its sticky refusals" — `lib.rs:37`. **Fixed**: it now says `module` "raises refusals".
+- doc precision (🔵) — "a directory that resolves outside the workspace" — `docs/design.md:148`. **Fixed**: it now reads "a declaring directory".
+- dangling citation (🔵) — "`buildl-lua` are done (§4)" pointed at a §4 row that did not exist yet — `docs/roadmap.md:100`. **Fixed** when the chain closed: §4 gained the I-lua row, and the §3 I-lua status changed to done.
+- reversion (🔵) — the stale-claim greps run once and are not in the DoD. Acceptable for prose; no change.
+
+Blocking set: the three 🟡 items above, all fixed. The reviewer re-ran `cargo make dod` and it exited 0. Every factual claim was checked against the shipped code: the seven primitives, the curated surface, no grant, the 16 MiB / 10 000 000 defaults, budget = `memory_bytes`, the sources walk rules, splicing, and sticky refusals. After the fix round, `grep -rn -e 'read-only grant' -e 'fs read on workspace' -e 'single explicit grant' -e 'every resource' -e 'workspace-read grant' -e 'only grant is filesystem' docs crates/buildl-lua README.md` printed nothing, and the coder's `cargo make dod` gave `Build Done in 8.54 seconds`.
+
+## Probe results
+
+- Task 4 premise: before the edit, `sed -n '/^## 5/,/^## 6/p' docs/roadmap.md | grep -oE '^[|][0-9]+[|]' | tr -d '|' | tr '\n' ' '` gave `3 4 5 6 7 8 10 11 12`, so rows 4 and 12 existed. After the edit it gave `3 5 6 7 8 10 11 13 14 15`, matching the plan.
+- Tasks 2 and 3: every "existing text" quote in the plan was found verbatim. Task 2's stale-claim grep printed nothing, and so did Task 3's.
+- Final workspace gate (all four tasks in the tree): `cargo make dod` gave `test result: ok.` with 137, 13, 81, 16, 2 and 2 passed, and `Build Done in 4.45 seconds`. `cargo deny check` gave `advisories ok, bans ok, licenses ok, sources ok`.
+
+## Deviations
+
+- 2026-10-08 — `docs/fundamental-walkthrough.md` §4 was edited. It is outside the plan's file list, which the spec §12 table omitted, and was changed to meet the plan Goal. The spec §12 table itself was not amended.
+- 2026-10-08 — The crate docs (`lib.rs`, `README.md`) differ from the plan text. They narrow the resource claim, add "where known", add the re-entrant-call exception, and say `module` "raises" refusals. All of these came from review findings.
+- 2026-10-08 — Tasks 2–4 ran as three concurrent coders, because their files are disjoint. Task 1 ran after plan 07's fix round, because it edits `lib.rs`. The plan's per-task commits were not made; commits are left to the user.

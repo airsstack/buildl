@@ -364,12 +364,12 @@ Once published, the ports are a semver contract:
 |Port openness|**Open, unsealed traits**|Adapters are implemented in other crates [5]; ports grow through default methods.|
 |Scheduler|**Pure `Schedule` + `Dispatcher` port**|Keep-going and skip semantics are testable without threads; the scheduler was already the single writer (`architecture.md` §3.4), so counters need no atomics.|
 |Load granularity|**`DeclarationSource` evaluates one file**|The directory queue and the sorted merge are determinism-bearing logic, so they stay in `buildl-core` where fakes can test them.|
+|Source globbing|**Host-side in `buildl-lua`**|`b.sources()` walks with `globset` and `walkdir`, so the declaration engine holds no grant and `airsstack.glob.walk` is refused; sorting, symlink policy and the containment check are buildl's, in one place.|
 |Diagram notation|**Mermaid `graph` with C4 element labels**|Renders wherever the other documents' Mermaid renders; Mermaid's dedicated C4 syntax is marked experimental.|
 
 ## 11. Open questions
 
 - Whether a shared test kit of fake ports is published or kept internal, once `buildl` or `buildl-lua` tests need `buildl-core`'s fakes.
-- Where `b.sources()` globbing runs: through `airsstack.glob.walk` inside `buildl-lua`, or host-side behind a port — the workspace `Cargo.toml` currently catalogs `globset` and `walkdir` for it.
 - When an adapter inside `buildl` earns its own crate: an independent consumer, a heavy dependency, or a platform-specific build.
 
 ## References

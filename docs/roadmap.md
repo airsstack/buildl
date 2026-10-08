@@ -66,7 +66,7 @@ graph LR
 |**I2 foundation**|`buildl-core`|`Label`, `Digest`, `NodeId`, `Provenance`, `Timestamp`; the error model; the canonical JSON serializer; the `Clock` port|unit tests pass; no I/O|**done**, 2026-10-04 (§4)|
 |**I-guard**|—|Machine-check the three rules the workspace currently honours by convention: the crate edges, `buildl-core`'s freedom from filesystem, process, thread, environment and clock APIs, and the declared `rust-version`|each rule turns the gate red when violated|**done**, 2026-09-21 (§4)|
 |**I3 Load**|`buildl-core`|`Declaration`, `BuildFile`, `StagedFile`, `DeclarationSource`; the `Pipeline` skeleton and `FakePorts`|a fake source's output becomes `Vec<Declaration>`|**done**, 2026-10-08 (§4)|
-|**I-lua**|`buildl-lua`|`DeclarationSource` on airsl; the `buildl` table bound to both `airsstack.buildl` and the `buildl` global (design §5)|`build.lua` fixtures produce exact declarations|**in progress**, plans 01–04 of 8 done 2026-10-08 (`.claudestacks/sdlc/2026-10-08-lua-adapter/`)|
+|**I-lua**|`buildl-lua`|`DeclarationSource` on airsl; the `buildl` table bound to both `airsstack.buildl` and the `buildl` global (design §5)|`build.lua` fixtures produce exact declarations|**done**, 2026-10-08 (§4)|
 |**I4 Resolve**|`buildl-core`|the `TargetGraph` arena, label resolution, cycle detection, grants (wanted set ∩ ceiling)|the pipeline stops at `graph`|not started|
 |**I5 Plan**|`buildl-core`|the action key, `KeyComponents`, why-dirty; the digest, stat, tool and cache-read ports|the pipeline stops at `plan`|not started|
 |**I6 Execute + Record**|`buildl-core`|`Schedule`, `Dispatcher`, `ExecStrategy`; cas, cache and log writes; the crash-safety invariant (design §8.5)|a full `build` runs against fakes|not started|
@@ -88,6 +88,7 @@ Ground rules for the ladder:
 |I-guard|`.claudestacks/sdlc/2026-09-18-workspace-guardrails/`|`01-crate-edge-guards` (4 tasks), `02-core-purity-bans` (3 tasks), `03-msrv-ci-job` (2 tasks), `04-doc-amendments` (3 tasks)|`1fa8421` … `a718139`|
 |I2 foundation|`.claudestacks/sdlc/2026-09-18-core-foundation/`|`01-error-model` (2 tasks), `02-label-types` (4 tasks), `03-identity-types` (4 tasks), `04-canonical-json` (4 tasks), `05-clock-port` (1 task), `06-documentation` (6 tasks)|`70184be` … `13cc89c`|
 |I3 Load|`.claudestacks/sdlc/2026-10-06-core-load/`|`01-value-types` (11 tasks), `02-written` (7 tasks), `03-declaration-types` (12 tasks), `04-load-errors` (6 tasks), `05-ports` (2 tasks), `06-load` (11 tasks), `07-pipeline-check` (3 tasks), `08-documentation` (8 tasks)|`1d6593d` … `4192376`|
+|I-lua|`.claudestacks/sdlc/2026-10-08-lua-adapter/`|`01-workspace-config` (4 tasks), `02-staging` (1 task), `03-value-readers` (2 tasks), `04-sources-walk` (1 task), `05-buildl-module` (2 tasks), `06-lua-source` (5 tasks), `07-fixtures` (4 tasks), `08-documentation` (4 tasks)|`27f7976` … `5e83952`|
 
 The plan file's `## Review findings`, `## Probe results` and `## Deviations` sections hold the full execution record. §5 lists the follow-ups from that record that are still open.
 
@@ -97,15 +98,16 @@ Findings an earlier slice recorded but left out of scope, each assigned to the s
 
 |#|Follow-up|Origin|Target|
 |---|---|---|---|
-|3|Refresh the crate-level docs once real modules exist. `buildl-core` is done (§4). Still open: `buildl-lua`, `buildl` and `buildl-cli` — port lists that omit `Manifest`/`Approver`, `Reporter`, `StatCache`/`ToolResolver` and `Dispatcher`; "holds only module declarations and re-exports" in `lib.rs` files that hold neither; `buildl`'s adapter list, which disagrees between its README and `lib.rs`.|I1 review|each crate's first code slice (I-lua, adapters)|
-|4|Raise the airsl floor above `0.1.0` when the first airsl call lands. No minimal-versions check exists.|I1 review|I-lua|
+|3|Refresh the crate-level docs once real modules exist. `buildl-core` and `buildl-lua` are done (§4). Still open: `buildl` and `buildl-cli` — port lists that omit `Manifest`/`Approver`, `Reporter`, `StatCache`/`ToolResolver` and `Dispatcher`; "holds only module declarations and re-exports" in `lib.rs` files that hold neither; `buildl`'s adapter list, which disagrees between its README and `lib.rs`.|I1 review|each crate's first code slice (adapters)|
 |5|The `buildl-cli` `description` says "a thin clap shell", but clap is not yet a dependency.|I1 review|CLI slice|
 |6|Tooling comment accuracy: `Cargo.toml` cites `architecture.md` §5.2, which does not exist; the §6 citation for storage adapters is narrower than the one it replaced; `deny.toml` says every member "is published" and that the `skip` list "freezes" the current state while `skip = []`.|I1 review|unassigned, docs sweep|
 |7|architecture-building-blocks §7 rule 2 ("adapters depend on `buildl-core` only") and §4's lead sentence ("no adapter depends on another") conflict with the `buildl → buildl-lua` edge that the §4 crate table lists.|I1 review|unassigned, docs sweep|
 |8|design §13 names the milestone 1 commands `run`/`plan`/`graph`/`check`; design's command table and `architecture.md` name the full pipeline `build`.|roadmap write-up|unassigned, docs sweep|
 |10|CI's `rustup toolchain install` with no argument needs rustup 1.28 or newer on the runners. This is not yet verified.|I1 review|first CI run on a pushed branch|
 |11|No guard asserts that a phase module in `buildl-core` does not import another. The rule is `architecture.md`'s "no phase invokes the next"; the mechanism would be a golden file of permitted intra-crate module edges, diffed by a `cargo make` task, in the shape of `guard-crate-edges`. I2 shipped no phase module, so the guard would have asserted nothing.|I2 review|I4 Resolve, the first slice with two phase modules|
-|12|Add a per-file staging cap to the `buildl-lua` adapter. It stages declarations in a Rust-side buffer that the Lua memory ceiling (`[declaration] memory`, design §4) does not count, and the instruction ceiling bounds a file's calls but not, verifiably, how many declarations they stage, since airsl's per-call cost is not measured. Declaration is meant to be safe on untrusted input (design §2), so the cap is refused in airsl's refusal style; `buildl-core` already carries that failure as `EvaluationFailure::LimitReached { limit: EvaluationLimit::Staging }`.|I3 spec|I-lua|
+|13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs; which directories to skip is known only once `buildl.toml` is parsed.|I-lua spec §6.2|I4 Resolve (the `Manifest` port)|
+|14|Reword `EvaluationLimit::Staging`'s rustdoc ("the cap on how many declarations one file may stage") to the byte budget `buildl-lua` enforces: the in-memory size of each staged record plus its text, up to the memory ceiling.|I-lua spec D3|the next slice that touches `buildl-core`|
+|15|Address-derived text is still nondeterministic: `tostring` or `string.format` (`%s`, `%p`) of a table or function renders an address, and `check`'s double run sees it only when the two addresses differ. Closing it means replacing `tostring` and wrapping `string.format` in the `buildl` module.|I-lua spec D12|unassigned|
 
 ## 6. Process notes
 
