@@ -64,6 +64,26 @@ pub enum NameKind {
     Label,
     /// A content digest.
     Digest,
+    /// A workspace-relative source file path.
+    SourcePath,
+    /// A path inside a target's output directory.
+    OutputName,
+    /// An environment variable name.
+    EnvName,
+    /// One element of a command's argument vector.
+    Argument,
+    /// A whole command: a non-empty argument vector.
+    Command,
+    /// A rule's one-line description.
+    Description,
+    /// A build setting's name.
+    SettingName,
+    /// A build setting's value.
+    SettingValue,
+    /// The file name every directory's build file has.
+    EntryName,
+    /// A field name in a declaration's option table.
+    FieldName,
 }
 
 impl fmt::Display for NameKind {
@@ -73,6 +93,16 @@ impl fmt::Display for NameKind {
             Self::TargetName => "target name",
             Self::Label => "label",
             Self::Digest => "digest",
+            Self::SourcePath => "source path",
+            Self::OutputName => "output name",
+            Self::EnvName => "environment variable name",
+            Self::Argument => "argument",
+            Self::Command => "command",
+            Self::Description => "description",
+            Self::SettingName => "setting name",
+            Self::SettingValue => "setting value",
+            Self::EntryName => "entry file name",
+            Self::FieldName => "field name",
         })
     }
 }
@@ -87,6 +117,16 @@ mod tests {
         assert_eq!(NameKind::TargetName.to_string(), "target name");
         assert_eq!(NameKind::Label.to_string(), "label");
         assert_eq!(NameKind::Digest.to_string(), "digest");
+        assert_eq!(NameKind::SourcePath.to_string(), "source path");
+        assert_eq!(NameKind::OutputName.to_string(), "output name");
+        assert_eq!(NameKind::EnvName.to_string(), "environment variable name");
+        assert_eq!(NameKind::Argument.to_string(), "argument");
+        assert_eq!(NameKind::Command.to_string(), "command");
+        assert_eq!(NameKind::Description.to_string(), "description");
+        assert_eq!(NameKind::SettingName.to_string(), "setting name");
+        assert_eq!(NameKind::SettingValue.to_string(), "setting value");
+        assert_eq!(NameKind::EntryName.to_string(), "entry file name");
+        assert_eq!(NameKind::FieldName.to_string(), "field name");
     }
 
     #[test]

@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-06
 depends-on: [01]
 ---
@@ -995,3 +995,19 @@ in its final order: `TargetName`, `Label`, `Directory`, `SourcePath`, `OutputNam
 - Plans 03 and 04 consume this plan's output: the staged types hold `Written<…>` fields, and
   `EvaluationFailure::{UnknownField, WrongFieldType}` hold a `Written<FieldName>` whose
   `as_written()` their `Display` renders.
+
+## Review findings
+
+- api — derives on `Written<T>` bound `T` on all seven traits though `T` is a marker; all eleven targets implement them — `types/written.rs:25`. Not acted on (nit; plan-prescribed).
+- perf — each conversion borrows `&self` and copies the text, one allocation per value at Load — `types/written.rs:55` and siblings. Not acted on (plan-prescribed).
+- modularity — `"must not be empty"` literal repeated across `written.rs`, `grammar.rs`, `env_name.rs` — `types/written.rs:85`. Existing pattern; not acted on.
+- spec — §3.1 conversion table omitted `Written<FieldName>::parse()`, which plan Task 6 and spec §6 (`UnknownField`, `WrongFieldType`) use — `spec.md:114`. Fixed: row now lists `Written<FieldName>`.
+
+## Probe results
+
+- Plan code compiles and passes the gate as written — prototype `written.rs` at session scratchpad `proto/`, verified during planning; execution: final `written.rs` byte-identical to prototype; every red step produced the plan's named error (E0432 task 1, E0599 tasks 2–7); `cargo make dod` → 105 passed. Not against the plan.
+- `Written<T>` is `Send + Sync` and covariant for any `T` (doc-comment claim) — reviewer compile probe in scratchpad — holds. Not against the plan.
+
+## Deviations
+
+- 2026-10-06 — tasks 1–7 run by one coder sequentially (all edit `types/written.rs`); `cargo make dod` not run after every task; per-task commits not made (user holds the commit gate).

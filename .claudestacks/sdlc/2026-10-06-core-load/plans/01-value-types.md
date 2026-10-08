@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-06
 ---
 
@@ -2678,3 +2678,21 @@ pub use types::{
 Every grammar boundary is pinned by a test that names its reason string, every string type
 round-trips through JSON as a string and rejects an invalid string on the way in, and `FromStr`
 on each type routes through `parse`.
+
+## Review findings
+
+- test-coverage — `key` grammar test rejected 257 bytes but never accepted 256, so a `>`→`>=` slip went unpinned — `types/grammar.rs` `key_rejects_each_documented_form_with_its_reason`. Fixed (added `assert_eq!(key(&"a".repeat(256)), Ok(()));`) and verified: `cargo test -p buildl-core --lib grammar` → `test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 93 filtered out`.
+- test-coverage — `EnvName` and `Description` rejection tests assert rejection, not the reason string — `types/env_name.rs`, `types/description.rs`. Not acted on (non-blocking).
+- docs — crate-doc row for `types` still reads "names, identities, instants" — `lib.rs:25`. Not acted on; plan 08 rewrites crate docs.
+- naming — `NameKind`/`InvalidName` now classify non-names (`Argument`, `Command`, `Description`, `SettingValue`) — `error.rs`. Spec-mandated; wording only.
+- style — nine doc-comment lines at 101–116 chars, copied verbatim from the plan — 8 files. Gate passes (rustfmt does not wrap comments).
+- correctness — `Description` "one line" rule uses `char::is_control`, which admits U+2028/U+2029 and bidi overrides — `types/description.rs`. Meets spec's "no control characters"; not acted on.
+- process — plan asks one commit per task; execution left one uncommitted tree — whole plan. Commit split is the user's call.
+
+## Probe results
+
+- Plan code compiles and passes the gate as written — prototype built from plans 01–07 at session scratchpad `proto/`, `cargo make dod` green during planning; execution matched: every red step produced the error kind the plan names (E0599 ×10 task 1, E0432 tasks 2–11), green counts 54→98. Not against the plan.
+
+## Deviations
+
+- 2026-10-06 — tasks 1–11 run by one coder sequentially rather than one coder per task (every task shares `types/mod.rs`/`lib.rs`, so no parallel batch existed); `cargo make dod` run after tasks 2, 5, 11 rather than after each; per-task commits not made (user holds the commit gate).

@@ -58,4 +58,8 @@ pub mod types;
 
 pub use error::{Error, NameKind, Result};
 pub use ports::Clock;
-pub use types::{Digest, Directory, Label, NodeId, Provenance, TargetName, Timestamp};
+pub use types::{
+    Argument, Command, Description, Diagnostic, Digest, Directory, EntryName, EnvName, FieldName,
+    Label, NodeId, OutputName, Provenance, SettingName, SettingValue, SourcePath, TargetName,
+    Timestamp, Written,
+};

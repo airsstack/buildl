@@ -111,7 +111,7 @@ exactly one conversion, so a `Written<Label>` cannot be converted into a `Direct
 |`Written<Label>::resolve(&Directory)`|`Label::resolve(text, base)` — the absolute, `:name` and bare forms|
 |`Written<Directory>::under(&Directory)`|refuse empty text (an empty `subdir` at the root would otherwise name the root itself); join `base` and `text` with `/` (just `text` at the root), then `Directory::parse`|
 |`Written<OutputName>::parse()`|`OutputName::parse(text)` — relative to the target's output directory, not the base|
-|`Written<SourcePath>`, `Written<EnvName>`, `Written<Argument>`, `Written<Description>`, `Written<SettingName>`, `Written<SettingValue>` `::parse()`|the target type's `parse`, with no base|
+|`Written<SourcePath>`, `Written<EnvName>`, `Written<Argument>`, `Written<Description>`, `Written<SettingName>`, `Written<SettingValue>`, `Written<FieldName>` `::parse()`|the target type's `parse`, with no base|
 
 Crate rule 2 bounds what lives here. `resolve` and `under` each combine a value with a `Directory` of
 the same family: a `Label` contains a `Directory`, and `under` joins two directories. Joining a

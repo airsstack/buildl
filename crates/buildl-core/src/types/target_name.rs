@@ -14,6 +14,7 @@ use core::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, NameKind, Result};
+use crate::types::grammar;
 
 /// The name half of a label, such as `app` or `main.o`.
 ///
@@ -25,9 +26,6 @@ use crate::error::{Error, NameKind, Result};
 pub struct TargetName(String);
 
 impl TargetName {
-    /// Longest accepted name, in bytes.
-    const MAX_LEN: usize = 256;
-
     /// Validates `raw` and wraps it.
     ///
     /// # Errors
@@ -36,30 +34,14 @@ impl TargetName {
     /// or holds a character outside ASCII alphanumerics, `.`, `-` and `_`.
     pub fn parse(raw: impl Into<String>) -> Result<Self> {
         let raw = raw.into();
-        let invalid = |reason: &'static str| Error::InvalidName {
-            kind: NameKind::TargetName,
-            value: raw.clone(),
-            reason,
-        };
-
-        if raw.is_empty() {
-            return Err(invalid("must not be empty"));
+        match grammar::name(&raw) {
+            Ok(()) => Ok(Self(raw)),
+            Err(reason) => Err(Error::InvalidName {
+                kind: NameKind::TargetName,
+                value: raw,
+                reason,
+            }),
         }
-        if raw.len() > Self::MAX_LEN {
-            return Err(invalid("must be at most 256 bytes"));
-        }
-        if raw == "." || raw == ".." {
-            return Err(invalid("must not be '.' or '..'"));
-        }
-        if !raw
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
-        {
-            return Err(invalid(
-                "may hold only ASCII letters, digits, '.', '-' and '_'",
-            ));
-        }
-        Ok(Self(raw))
     }
 
     /// The name as a string slice.
