@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-08
 depends-on: [01]
 ---
@@ -414,3 +414,22 @@ crates/buildl-lua/src/lib.rs     — [modify] declare `mod staging;`
 
 - `cargo test -p buildl-lua --lib staging::tests` reports 9 passed.
 - `cargo make dod` exits `0`; the only `buildl-lua` change is `staging.rs` and its `mod` line.
+
+## Review findings
+
+- doc-comment-discipline — the module doc says diagnostics render before a record reaches the buffer, but `Exceeded`'s Display renders after a refusal — `crates/buildl-lua/src/staging.rs:9`
+- doc-comment-discipline — the `Exceeded::Order` doc is off by one: order `u32::MAX` is never issued. This cannot happen in practice because the byte budget trips first — `staging.rs:33`
+- strong-types — the budget and charge are raw `u64`, as the plan specifies, in a private module — `staging.rs:49`
+- unit-test-mandate — no test checks that a refused record leaves `charged` and `next` unchanged — `staging.rs:111`
+- modularity — `item_bytes` reads fields by name instead of destructuring every field, so a new core string field would go uncharged silently — `staging.rs:142`
+- spec drift — spec §4 has the caller check the refusal and then call `into_file()`; plan and code fold both into `Staging::finish()`. The behaviour is equal, but no amendment records it — spec §4
+
+Blocking set: none. The reviewer re-ran `cargo make dod` and it exited 0.
+
+## Probe results
+
+- No separate probe was needed. The task's red step proved its premises: `cargo test -p buildl-lua --lib staging::tests` first gave `error[E0432]: unresolved imports super::Exceeded, super::Staging, super::item_bytes, super::record_size`, then `test result: ok. 9 passed; 0 failed`.
+
+## Deviations
+
+- 2026-10-08 — The plan's per-task commit was not made. Commits are left to the user.

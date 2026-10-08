@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-08
 depends-on: [01]
 ---
@@ -696,3 +696,26 @@ crates/buildl-lua/src/lib.rs     — [modify] declare both modules              
 
 - `cargo test -p buildl-lua --lib refusal::tests` reports 3 passed and `values::tests` 21 passed.
 - `cargo make dod` exits `0`.
+
+## Review findings
+
+- determinism / reversion guard (🟡) — `closed_refuses_the_first_unknown_key_in_sorted_order` caught a removed `keys.sort()` only by chance, because Lua 5.4 seeds its string hash per state — `crates/buildl-lua/src/values.rs:113`. **Fixed and verified.** The test now runs 64 fresh `Lua` states over `{ zeta, run, alpha, mu }`. With line 113 commented out, the test failed 3 runs out of 3: `test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 32 filtered out`. After restoring the line, `cargo make dod` gave `test result: ok. 33 passed` and `Build Done`.
+- doc-comment-discipline — the module doc names three refusal producers, but only the value readers exist yet — `refusal.rs:3`
+- strong-types — `diagnostic(primitive: &str, …)` takes any string; a `Primitive` enum would stop a typo — `refusal.rs:55`
+- escaping — the subject and unknown keys are rendered unescaped, so a newline in a name can forge a `line N:` diagnostic line. Risk is low, because the author of the build file is the one reading it — `refusal.rs:62`, `values.rs:121`
+- modularity — the nested and flat list branches repeat the same push logic — `values.rs:58`
+- unit-test-mandate — no test reaches the "nested table that is not a list" refusal — `values.rs:61`
+- reversion guard — no test guards `raw_len`/`raw_get` in `sequence` or the `count != len` check — `values.rs:135`, `:148`
+- spec note — the §6.1 example key `<number>` renders as `<integer>`, consistent with §7.3 — spec §6.1
+
+Blocking set: none. The reviewer re-ran `cargo make dod` and it exited 0.
+
+## Probe results
+
+- The tasks' red steps proved their premises. `refusal::tests` gave `error[E0432]: unresolved import super::Refusal` and then `3 passed`. `values::tests` gave `error[E0432]: unresolved imports super::closed, …` and then `21 passed`. The lib total is 33.
+- Determinism guard probe: with `keys.sort()` at `values.rs:113` commented out, `cargo test -p buildl-lua --lib closed_refuses_the_first_unknown_key_in_sorted_order` gave `FAILED. 0 passed; 1 failed` on 3 runs out of 3. The file was then restored.
+
+## Deviations
+
+- 2026-10-08 — `values.rs` test `closed_refuses_the_first_unknown_key_in_sorted_order` departs from the plan text. It loops over 64 fresh `Lua` states and adds a fourth key, `mu = 3`, so that reverting the sort fails reliably instead of on about one run in three. The test count is unchanged at 21.
+- 2026-10-08 — One coder ran Tasks 1–2 in order, because Task 2 imports Task 1's `Refusal`. Commits are left to the user.

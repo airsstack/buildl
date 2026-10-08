@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-08
 depends-on: [01, 03]
 ---
@@ -321,3 +321,26 @@ On Linux the green run reports 9 tests, not 8 (see Context).
 
 - `cargo test -p buildl-lua --lib sources::tests` reports 8 passed on macOS, 9 on Linux.
 - `cargo make dod` exits `0`.
+
+## Review findings
+
+- strong-types — `root` is documented as canonical but not checked. A non-canonical root fails safe, because every call is refused — `crates/buildl-lua/src/sources.rs:40`
+- doc-comment-discipline — the `find` rustdoc does not list its refusal cases — `sources.rs:52`
+- reversion guard — `.backslash_escape(true)` is globset's Unix default, so no test catches its removal — `sources.rs:54`
+- reversion guard — no test fails if `.follow_root_links(false)` is removed; the D14 test refuses at `starts_with` first — `sources.rs:76`
+- unit-test-mandate — no test covers the walk io-error branch — `sources.rs:78`
+- D16 — a failed `strip_prefix` skips the entry silently. This cannot happen in practice — `sources.rs:82`
+- risk — the Linux-only non-UTF-8 test has never compiled or run here, so CI ubuntu will run it first. globset builds a byte-mode regex, so it is expected to pass — `sources.rs:207`
+- spec drift — §6.2 canonicalises the base before building the matcher; the code builds the matcher first. The difference shows only when a call has both a bad pattern and a missing directory — spec §6.2
+- spec drift — §6.2 renders a walk io error as `<path>: <io error>`; the code passes walkdir's message through: `IO error for operation on <path>: …` — spec §6.2
+
+Blocking set: none. The reviewer re-ran `cargo make dod` and it exited 0, and confirmed that airsl 0.1.4 `src/modules/glob.rs` uses `literal_separator(true)` and `backslash_escape(true)`.
+
+## Probe results
+
+- The task's red step proved its premises. `cargo test -p buildl-lua --lib sources::tests` gave `error[E0432]: unresolved import super::Sources`, then `test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 33 filtered out` on macOS.
+- Batch gate: `cargo make dod` gave a buildl-lua lib total of `41 passed` and `Build Done`. `cargo deny check` gave `advisories ok, bans ok, licenses ok, sources ok`.
+
+## Deviations
+
+- 2026-10-08 — The plan's per-task commit was not made. Commits are left to the user.
