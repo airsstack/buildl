@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-10-06
 depends-on: [07]
 ---
@@ -876,3 +876,26 @@ planning reference. Every row of spec §9's table is covered — lib.rs crate do
 3), crate rule 5 (task 1), `design.md` §14 and §12.1 (task 4), `architecture.md` §2, §3.1, §5 rule 5
 and §7 (task 5), `architecture-building-blocks.md` §5.2, §5.3 and both §8 rows (task 6), and the
 roadmap (task 8), and the repository README (task 7) — plus `architecture-building-blocks.md` §1.1, which the table omits (task 6).
+
+## Review findings
+
+- doc accuracy 🟡 — `EntryName` and `FieldName` listed as "the validated values a declaration's fields hold"; neither is — `crates/buildl-core/src/types/mod.rs:17`. Fixed: own bullet for each. Verified: `cargo make dod` → lib `137 passed`, flows `13 passed`, doctests `2 passed`, "Build Done in 9.74 seconds."
+- README consistency 🔵 — "all tested against in-memory fakes" also covered the vocabulary, error enum and serializer — `README.md:7`. Fixed: "whose flows run against in-memory fakes".
+- doc accuracy 🔵 — "a different order on each evaluation" overclaimed — `docs/architecture.md` §3.1. Fixed: "may issue".
+- doc accuracy 🔵 — fakes-table row "static declarations per file" predated the staged port — `docs/architecture-building-blocks.md` §8. Fixed: "a fixed staged file, absence or evaluation failure per directory".
+- diagram fidelity 🔵 — §2 diagram adds `Target --> Label` but not the `Rule`/`Alias` label edges — `docs/architecture.md` §2. No change: the diagram follows the plan text.
+- reversion guard 🔵 — prose amendments have no gate beyond rustdoc's intra-doc links. No change possible.
+- spec drift 🔵 — spec §9 row 1 asks the crate README to describe `ports` as holding every trait; only `lib.rs` does (plan Task 3 text omits it). No change.
+- spec amendment 🔵 — CLAUDE.md pointer and abb §1.1 go beyond spec §9's table; the plan grounds both. No change.
+- amendment hygiene 🟡 — Task 8's quoted I3 Status cell did not match the file; recorded below under Deviations.
+
+## Probe results
+
+- Claim: `Timestamp::duration_since`, `Label::resolve`, `Written<Directory>::under`, `EvaluationFailure::{UnknownField, WrongFieldType}`, `EvaluationLimit::Staging` and the test `FixedClock` exist. `grep -rnE "fn duration_since|fn resolve|fn under|UnknownField|WrongFieldType|Staging|struct FixedClock" crates/buildl-core/src` → `types/timestamp.rs:50`, `types/label.rs:76`, `types/written.rs:65,80`, `error.rs:133,165,170`, `ports/clock.rs:31`. All present.
+
+## Deviations
+
+- 2026-10-08 — roadmap I3 Status cell read "**in progress** — intent, spec and 8 plans approved 2026-10-06, …", not the quoted "intent and spec approved". Only that cell changes; replaced with "**done**, 2026-10-08 (§4)" as the task intends.
+- 2026-10-08 — Task 8's `$( )` and process-substitution commands are refused by the worktree guard; git queries ran separately and the §4 row was assembled by hand from the same values. Heading and Mermaid diffs ran against HEAD copies saved to scratch.
+- 2026-10-08 — roadmap §4 I3 commit range ends at `178ac1c`, the last commit before this chain's final one; it is updated to the closing commit's hash once that commit exists.
+- 2026-10-08 — four review fixes beyond the plan text (Review findings above).

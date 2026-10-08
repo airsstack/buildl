@@ -583,7 +583,7 @@ Two adjustments to airsl's `confined` preset close the remaining holes:
 1. **Drop `os` and curate the module set.** `os.time`, `os.clock`, and Lua 5.4's entropy-seeded `math.random` are nondeterministic; the declaration policy uses a custom language surface without `os`, and a `ModuleSet` installing `json`, `path`, `regex`, `hash`, `glob` while omitting `time`, `proc`, `env`, `stdio`. airsl lets the host choose both — configuration, not new machinery [1].
 2. **Canonicalise instead of forbidding `pairs`.** Lua table iteration order is unspecified, so the graph is made order-insensitive: keyed by names, sorted at Resolve, action keys order-independent. A `pairs` loop yields a byte-identical graph in any order.
 
-Because declaration is cheap it is also _checkable_: evaluate twice, compare staging-list hashes; a nondeterministic build file fails `buildl check` with the diff.
+Because declaration is cheap it is also _checkable_: evaluate twice and compare the two sorted staging lists by value; a nondeterministic build file fails `buildl check` with the diff — the first position at which the two runs disagree, with what each run declared there. A `pairs` loop does not fail the check, because both lists are sorted before they are compared.
 
 ### 12.2 Execution: isolation is a ladder
 
@@ -645,7 +645,7 @@ Dependency-ordered, with the airsl extension work interleaved:
 
 ## 14. Open questions
 
-- **Label syntax details:** _partially resolved_ — `//dir:target` is adopted, and relative labels are too: a build file may write `:sibling` or a bare `name`, both resolved against the declaring directory, which is what §5's own `deps = { "main.o", "util.o", "//lib:text" }` already mixes. A directory-only `//dir` is rejected rather than read as `//dir:dir`. Whether `subdir` should be implicit via file discovery remains open.
+- **Label syntax details:** _resolved_ — `//dir:target` is adopted, and relative labels are too: a build file may write `:sibling` or a bare `name`, both resolved against the declaring directory, which is what §5's own `deps = { "main.o", "util.o", "//lib:text" }` already mixes. A directory-only `//dir` is rejected rather than read as `//dir:dir`. `subdir` is explicit only, never implicit via file discovery: a build file is evaluated because an evaluated build file named its directory, never because it exists on disk, so the evaluated set is exactly the root plus the closure of `subdir` requests.
 - **Discovery targets** (§10): _partially resolved_ — `b.fetch` (§9.6) settles the most important case: an impure operation made pure by a pinned checksum. The general contract for feeding an arbitrary cached action's JSON output back into declaration (one extra pass vs a fixpoint) remains open.
 - **Per-target grant narrowing:** the wanted set is currently workspace-granular; whether individual targets should carry narrower grants (defense in depth at tier 3+) is open.
 - **`buildl.toml` vs declaration in Lua:** the ceiling must stay in inert TOML (it gates the Lua). How much of `[execution]` belongs there versus in the root build file is taste.

@@ -22,7 +22,7 @@ graph TD
     LUA --> AIRSL["airsl"]
 ```
 
-The consequence the structure exists for: **every flow of the pipeline runs in `buildl-core`'s unit tests against fake ports** — no Lua state, no filesystem, no process spawn, no thread (§8).
+The consequence the structure exists for: **every flow of the pipeline runs in `buildl-core`'s tests against fake ports** — no Lua state, no filesystem, no process spawn, no thread (§8).
 
 ### 1.2 What `buildl-core` may depend on
 
@@ -154,8 +154,10 @@ Every value is a validated newtype or a serializable handoff; field-level detail
 ```rust
 /// Evaluates one build file. The directory queue, `subdir` handling, and the
 /// sorted merge across files are Load logic in `buildl-core`, not the adapter's.
+/// A directory with no build file is `Evaluated::Absent`; whether that is an
+/// error is Load's decision.
 pub trait DeclarationSource {
-    fn evaluate(&self, file: &BuildFile) -> Result<StagedFile>;
+    fn evaluate(&self, file: &BuildFile) -> Result<Evaluated>;
 }
 
 /// Workers write output blobs concurrently.
@@ -188,13 +190,13 @@ pub trait Clock {
 ```
 
 Every fallible port method returns the crate's one `Result`, not an error type of its own:
-`architecture.md` §4 settles the error model as a single structured enum, so `Result<StagedFile>`
-above is `core::result::Result<StagedFile, buildl_core::Error>`. The enum is `#[non_exhaustive]`,
+`architecture.md` §4 settles the error model as a single structured enum, so `Result<Evaluated>`
+above is `core::result::Result<Evaluated, buildl_core::Error>`. The enum is `#[non_exhaustive]`,
 and each phase adds the variants it earns.
 
 ### 5.3 `Pipeline` and the `Ports` bundle
 
-Static dispatch throughout [7]. One trait of associated types carries every port, so `Pipeline` takes a single type parameter instead of one per port.
+Static dispatch throughout [7]. One trait of associated types carries every port, so `Pipeline` takes a single type parameter instead of one per port. The bundle is declared in `buildl-core`'s `ports` module, beside the traits it names, so every trait of the crate lives in one module; a composition root implements it.
 
 ```rust
 pub trait Ports {
@@ -302,11 +304,11 @@ graph BT
     CORE --> ADP --> LUA --> E2E --> CLIT
 ```
 
-The fakes live in `buildl-core` under `#[cfg(test)]`:
+The fakes live in `buildl-core`'s integration tests (`crates/buildl-core/tests/flows/common.rs`), not under `#[cfg(test)]`. They implement the public traits through the public API alone, so whatever a fake does an adapter crate can do too, and the compiler checks that on every test build. A port no flow reaches yet keeps a unit-test fake beside its trait, as `Clock` does:
 
 |Port|Fake|What the test no longer needs|
 |---|---|---|
-|`DeclarationSource`|static declarations per file|airsl, Lua|
+|`DeclarationSource`|a fixed staged file, absence or evaluation failure per directory|airsl, Lua|
 |`ContentStore`, `ActionCache`, `EventLog`|in-memory, with injectable failures|a filesystem|
 |`ExecStrategy`|scripted outcomes per label|process spawning|
 |`Dispatcher`|inline, on the test thread|threads; results are deterministic|
@@ -321,7 +323,7 @@ Flows that run entirely in `buildl-core`'s tests:
 |rebuilt output byte-identical|downstream targets stay `Clean` — early cutoff|
 |wanted program outside the ceiling|`Refusal` before any strategy runs|
 |one input changed|dirty reason is the `KeyComponents` diff|
-|a build file enqueues subdirectories out of order|merged declarations sorted by directory, then declaration order|
+|a build file enqueues subdirectories out of order|merged declarations sorted by directory, then declared name|
 
 ## 9. Publishing
 

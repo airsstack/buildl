@@ -60,6 +60,7 @@ pub trait DeclarationSource {
     ///
     /// # Errors
     ///
-    /// Returns `Error::Evaluation` when the file exists but cannot be evaluated.
+    /// Returns [`Error::Evaluation`](crate::Error::Evaluation) when the file exists but cannot be
+    /// evaluated.
     fn evaluate(&self, file: &BuildFile) -> Result<Evaluated>;
 }
