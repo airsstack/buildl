@@ -53,7 +53,7 @@ The line between the two subgraphs is airsl's boundary. Everything the declarati
 
 Consequences of the split:
 
-- **Declaration is safe on untrusted input.** The declaration engine holds one grant (filesystem read on the workspace, for source globbing) and nothing else.
+- **Declaration is safe on untrusted input.** The declaration engine holds no grant at all. Its one filesystem read, source globbing, is done host-side by `b.sources()` (§5) and confined to the declaring directory.
 - **Parallelism lives where it works.** One Lua state cannot execute in parallel; a Rust worker pool can. Evaluation is the cheap front phase, execution the parallel back phase.
 - **Resource ceilings become a feature.** A build file that loops forever is stopped by airsl's instruction ceiling in the declaration phase, before it can waste anyone's time.
 
@@ -102,6 +102,7 @@ ci      = "manifest"       # honour declarations silently when CI is detected
 [declaration]              # ceilings for the Lua phase — it only declares
 memory       = "16MB"
 instructions = 10_000_000
+walk_entries = 100_000     # directory entries b.sources() may visit per build file
 
 [execution]
 workers  = 0               # 0 = number of cores
@@ -145,7 +146,7 @@ The design decisions in those lines:
 
 - **Labels, not `require`.** Cross-directory references are graph names (`//lib:text`), resolved in Rust. airsl's confined `require` stops at the script's directory, and that is correct here: build files should not load each other's code, they should reference each other's _targets_. `b.subdir("dir")` asks the host to evaluate `dir/build.lua` in its own scope, so every declaration is namespaced by — and attributable to — the directory that made it.
 - **Placeholders expand host-side.** `$in`, `$out`, `$deps` are substituted by the executor at run time, the ninja model [4]. Lua never holds a real artifact path.
-- **`b.sources()` is the declaration phase's only filesystem read**, backed by the workspace-read grant. Results come back sorted (an airsl guarantee), so declaration is deterministic regardless of filesystem order.
+- **`b.sources()` is the declaration phase's only filesystem read**, done host-side rather than through an engine grant. It returns the regular files under the declaring directory that match the pattern, relative to that directory and sorted by the host, so declaration is deterministic regardless of filesystem order. Symlinks are never followed, and a declaring directory that resolves outside the workspace is refused. Every list field accepts one level of nesting, spliced in order, so `inputs = { b.sources("src/*.c"), "go.mod" }` is one flat list.
 - **`b.target` accepts a small closed table**: `rule` or inline `run`, `inputs`, `deps`, `outputs` (default: the target name), `env` (names checked against the ceiling), `network = true` (visible in `plan`, §11), and `always = true` for phony targets. Every field is an action-key component; the surface grows reluctantly.
 - **`b.option(name, { default })` declares a build setting** — an invocation-time parameter with an explicit default, referenced in argv as `$opt:name` and overridden with `--set name=value`. Settings fold into the action key, so differently-parameterised runs cache separately and correctly (§10.2).
 
@@ -203,7 +204,7 @@ A directory queue drives evaluation. Each build file gets a **fresh, disposable 
 ```mermaid
 %% Load phase internals
 flowchart TD
-    Q["Directory queue<br/>seeded with the workspace root"] --> ENG["Fresh airsl engine<br/>confined, read-only grant"]
+    Q["Directory queue<br/>seeded with the workspace root"] --> ENG["Fresh airsl engine<br/>confined, no grant"]
     ENG --> CALLS["buildl module calls<br/>target, rule, subdir"]
     CALLS --> STAGE["Staging list<br/>declarations + provenance"]
     CALLS -. "subdir(dir) enqueues a directory" .-> Q
@@ -580,7 +581,7 @@ Nothing in this section touches Lua. Scale is a pure host-side concern — the t
 
 Two adjustments to airsl's `confined` preset close the remaining holes:
 
-1. **Drop `os` and curate the module set.** `os.time`, `os.clock`, and Lua 5.4's entropy-seeded `math.random` are nondeterministic; the declaration policy uses a custom language surface without `os`, and a `ModuleSet` installing `json`, `path`, `regex`, `hash`, `glob` while omitting `time`, `proc`, `env`, `stdio`. airsl lets the host choose both — configuration, not new machinery [1].
+1. **Drop `os`, curate the module set, and strip what remains.** `os.time`, `os.clock`, and Lua 5.4's entropy-seeded `math.random` are nondeterministic. The declaration policy uses airsl's minimal language surface, which has no `os`, and a `ModuleSet` installing `json`, `path`, `regex`, `hash`, `glob` while omitting `time`, `proc`, `env`, `stdio`. airsl lets the host choose both — configuration, not new machinery [1]. The minimal surface still loads `math` whole, so buildl removes `math.random` and `math.randomseed` itself. It also removes `airsstack.path.absolute`, which reads the process working directory, and `print`, because stdout belongs to the CLI. Last, it replaces `tostring` and `string.format`, because rendering a table or function renders its address, which can differ between runs: a table, function, thread or userdata with no `__tostring` metamethod, rendered by either, is an error, and so is `%p`.
 2. **Canonicalise instead of forbidding `pairs`.** Lua table iteration order is unspecified, so the graph is made order-insensitive: keyed by names, sorted at Resolve, action keys order-independent. A `pairs` loop yields a byte-identical graph in any order.
 
 Because declaration is cheap it is also _checkable_: evaluate twice and compare the two sorted staging lists by value; a nondeterministic build file fails `buildl check` with the diff — the first position at which the two runs disagree, with what each run declared there. A `pairs` loop does not fail the check, because both lists are sorted before they are compared.
@@ -634,7 +635,7 @@ What remains honestly implicit — the kernel version, libc, filesystem semantic
 
 Dependency-ordered, with the airsl extension work interleaved:
 
-1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `run`/`plan`/`graph`/`check`, local cache and cas. Needs only shipped airsl.
+1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `check`/`graph`/`plan`/`build`, local cache and cas. Needs only shipped airsl.
 2. **`query` / `rdeps`** — small work, transforms CI for large repos.
 3. **Local input sandbox (tier 2)** — the correctness discipline everything remote depends on.
 4. **Grant negotiation UX** — wanted set, ceiling intersection, approver. Consumes the airsl extension host's ceiling + `Approver` (buildl is their first consumer; the manifest parser and `ext.on` dispatcher are not needed yet).

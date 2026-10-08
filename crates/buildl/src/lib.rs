@@ -11,15 +11,20 @@
 //!
 //! # Responsibilities
 //!
-//! - The filesystem, process, thread, and clock adapters for the pipeline's
-//!   ports.
-//! - Binding those adapters, together with the Lua adapter from `buildl-lua`,
-//!   to the `buildl-core` pipeline.
+//! - The adapters for every port except `DeclarationSource`: `Manifest`,
+//!   `Digester`, `StatCache`, `ToolResolver`, `ContentStore`, `ActionCache`,
+//!   `EventLog`, `ExecStrategy`, `Dispatcher`, `Approver`, `Clock` and
+//!   `Reporter`.
+//! - Binding those adapters, together with the Lua adapter from `buildl-lua`
+//!   (the `DeclarationSource`), to the `buildl-core` pipeline through
+//!   `LocalPorts`, and exposing the result as the `Workspace` facade.
+//! - Re-exporting `buildl-core`, so the binary reaches core types through this
+//!   crate alone.
 //!
 //! # Non-responsibilities
 //!
 //! - Pipeline logic, which lives in `buildl-core`.
 //! - Lua evaluation, which lives in `buildl-lua`.
 //!
-//! This file holds only module declarations and re-exports, so it carries no
-//! logic to unit-test.
+//! The crate does not implement any of this yet: this file declares no
+//! modules and re-exports nothing, so there is no logic to unit-test.

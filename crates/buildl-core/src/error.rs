@@ -129,8 +129,11 @@ pub enum EvaluationLimit {
     Instructions,
     /// The memory ceiling.
     Memory,
-    /// The cap on how many declarations one file may stage.
+    /// The byte budget on what one file may stage: the in-memory size of each staged record plus
+    /// the byte length of its text, up to the memory ceiling.
     Staging,
+    /// The cap on directory entries the host-side source walk may visit for one build file.
+    Walk,
 }
 
 impl fmt::Display for EvaluationLimit {
@@ -139,6 +142,7 @@ impl fmt::Display for EvaluationLimit {
             Self::Instructions => "instruction ceiling",
             Self::Memory => "memory ceiling",
             Self::Staging => "staging cap",
+            Self::Walk => "walk cap",
         })
     }
 }
@@ -427,6 +431,12 @@ mod tests {
                     limit: EvaluationLimit::Staging,
                 },
                 "staging cap reached",
+            ),
+            (
+                EvaluationFailure::LimitReached {
+                    limit: EvaluationLimit::Walk,
+                },
+                "walk cap reached",
             ),
             (
                 EvaluationFailure::UnknownField { field: field() },

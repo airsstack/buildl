@@ -14,6 +14,14 @@ authors.workspace      = true
 airsl       = { workspace = true }
 # The ports this crate implements.
 buildl-core = { workspace = true }
+# `buildl.sources()` matching, with the glob semantics of airsl's own `glob` module.
+globset     = { workspace = true }
+# `buildl.sources()` traversal of the declaring directory, host-side.
+walkdir     = { workspace = true }
+
+[dev-dependencies]
+# Fixture trees that need a symlink, built at test time rather than checked in.
+tempfile    = { workspace = true }
 
 [lints]
 workspace = true

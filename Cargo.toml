@@ -17,14 +17,14 @@ authors      = ["rstlix0x0 <rstlix.dev@gmail.com>"]
 [workspace.dependencies]
 # The embedded Lua runtime buildl declares its build files on. A dependency of the
 # `buildl-lua` crate ONLY — no other crate may know Lua exists, so an airsl
-# upgrade's blast radius stays one crate deep. The requirement accepts the newest
-# 0.1.x release; airsl 0.1 requires rustc 1.94, which sets this workspace's
-# rust-version. Pulls in mlua/lua54 vendored transitively, so a C compiler is
-# required to build this workspace.
-airsl      = "0.1"
+# upgrade's blast radius stays one crate deep. The floor is the 0.1.x release the
+# adapter is tested against, and the requirement accepts any newer 0.1.x; airsl 0.1
+# requires rustc 1.94, which sets this workspace's rust-version. Pulls in mlua/lua54
+# vendored transitively, so a C compiler is required to build this workspace.
+airsl      = "0.1.4"
 # Serialization for every phase handoff (Vec<Declaration> → TargetGraph → Plan →
 # Vec<ActionOutcome>) and the durable stores. NOTE: all JSON output must leave
-# through the one canonical sorted-key serializer (architecture.md §5.2), built on
+# through the one canonical sorted-key serializer (architecture.md §5 rule 2), built on
 # serde_json — never through serde_json::to_string directly.
 serde      = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
@@ -47,7 +47,8 @@ toml       = { version = "0.8", default-features = false, features = ["parse"] }
 globset    = "0.4"
 walkdir    = "2.5"
 # Exec-dir materialisation for the tier-2 input sandbox and temp-file-then-rename
-# atomic writes in the storage adapters (architecture-building-blocks.md §6).
+# atomic writes in the storage adapters (architecture.md §3.5,
+# architecture-building-blocks.md §6).
 tempfile   = "3.23.0"
 # CLI argument parsing (buildl-cli).
 clap       = { version = "4", features = ["derive"] }
@@ -75,6 +76,10 @@ todo               = "warn"
 dbg_macro          = "deny"
 missing_errors_doc = "warn"
 missing_panics_doc = "warn"
+# A nursery lint that contradicts rustc's `unreachable_pub` above: an item in a
+# private module must be `pub(crate)` for one and `pub` for the other. The rustc
+# lint wins, so crate-internal items are written `pub(crate)`.
+redundant_pub_crate = "allow"
 
 [profile.release]
 lto           = "thin"
