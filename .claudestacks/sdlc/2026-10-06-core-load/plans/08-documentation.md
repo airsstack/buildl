@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-06
 depends-on: [07]
 ---
@@ -897,5 +897,5 @@ roadmap (task 8), and the repository README (task 7) — plus `architecture-buil
 
 - 2026-10-08 — roadmap I3 Status cell read "**in progress** — intent, spec and 8 plans approved 2026-10-06, …", not the quoted "intent and spec approved". Only that cell changes; replaced with "**done**, 2026-10-08 (§4)" as the task intends.
 - 2026-10-08 — Task 8's `$( )` and process-substitution commands are refused by the worktree guard; git queries ran separately and the §4 row was assembled by hand from the same values. Heading and Mermaid diffs ran against HEAD copies saved to scratch.
-- 2026-10-08 — roadmap §4 I3 commit range ends at `178ac1c`, the last commit before this chain's final one; it is updated to the closing commit's hash once that commit exists.
+- 2026-10-08 — roadmap §4 I3 commit range ends at `4192376`, the documentation commit; the status-flip commit that follows it is bookkeeping.
 - 2026-10-08 — four review fixes beyond the plan text (Review findings above).

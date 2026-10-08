@@ -87,7 +87,7 @@ Ground rules for the ladder:
 |I1 workspace|`.claudestacks/sdlc/2026-09-13-workspace-crates/`|`01-workspace-crates` (8 tasks)|`0a8817f` … `3e462d5`|
 |I-guard|`.claudestacks/sdlc/2026-09-18-workspace-guardrails/`|`01-crate-edge-guards` (4 tasks), `02-core-purity-bans` (3 tasks), `03-msrv-ci-job` (2 tasks), `04-doc-amendments` (3 tasks)|`1fa8421` … `a718139`|
 |I2 foundation|`.claudestacks/sdlc/2026-09-18-core-foundation/`|`01-error-model` (2 tasks), `02-label-types` (4 tasks), `03-identity-types` (4 tasks), `04-canonical-json` (4 tasks), `05-clock-port` (1 task), `06-documentation` (6 tasks)|`70184be` … `13cc89c`|
-|I3 Load|`.claudestacks/sdlc/2026-10-06-core-load/`|`01-value-types` (11 tasks), `02-written` (7 tasks), `03-declaration-types` (12 tasks), `04-load-errors` (6 tasks), `05-ports` (2 tasks), `06-load` (11 tasks), `07-pipeline-check` (3 tasks), `08-documentation` (8 tasks)|`1d6593d` … `178ac1c`|
+|I3 Load|`.claudestacks/sdlc/2026-10-06-core-load/`|`01-value-types` (11 tasks), `02-written` (7 tasks), `03-declaration-types` (12 tasks), `04-load-errors` (6 tasks), `05-ports` (2 tasks), `06-load` (11 tasks), `07-pipeline-check` (3 tasks), `08-documentation` (8 tasks)|`1d6593d` … `4192376`|
 
 The plan file's `## Review findings`, `## Probe results` and `## Deviations` sections hold the full execution record. §5 lists the follow-ups from that record that are still open.
 
