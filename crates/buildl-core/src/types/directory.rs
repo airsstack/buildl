@@ -14,6 +14,7 @@ use core::str::FromStr;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, NameKind, Result};
+use crate::types::grammar;
 
 /// A workspace-relative directory path, such as `lib` or `lib/text`.
 ///
@@ -27,9 +28,6 @@ use crate::error::{Error, NameKind, Result};
 pub struct Directory(String);
 
 impl Directory {
-    /// Longest accepted path, in bytes.
-    const MAX_LEN: usize = 1024;
-
     /// The workspace root.
     #[must_use]
     pub const fn root() -> Self {
@@ -45,38 +43,17 @@ impl Directory {
     /// `.`, `-` and `_`.
     pub fn parse(raw: impl Into<String>) -> Result<Self> {
         let raw = raw.into();
-        let invalid = |reason: &'static str| Error::InvalidName {
-            kind: NameKind::Directory,
-            value: raw.clone(),
-            reason,
-        };
-
-        if raw.len() > Self::MAX_LEN {
-            return Err(invalid("must be at most 1024 bytes"));
-        }
         if raw.is_empty() {
             return Ok(Self(raw));
         }
-        if raw.starts_with('/') || raw.ends_with('/') {
-            return Err(invalid("must not start or end with '/'"));
+        match grammar::path(&raw) {
+            Ok(()) => Ok(Self(raw)),
+            Err(reason) => Err(Error::InvalidName {
+                kind: NameKind::Directory,
+                value: raw,
+                reason,
+            }),
         }
-        for segment in raw.split('/') {
-            if segment.is_empty() {
-                return Err(invalid("must not contain an empty path segment"));
-            }
-            if segment == "." || segment == ".." {
-                return Err(invalid("must not contain a '.' or '..' segment"));
-            }
-            if !segment
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
-            {
-                return Err(invalid(
-                    "segments may hold only ASCII letters, digits, '.', '-' and '_'",
-                ));
-            }
-        }
-        Ok(Self(raw))
     }
 
     /// The path as a string slice; empty for the workspace root.

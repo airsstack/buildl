@@ -59,12 +59,39 @@ classDiagram
         directory: Directory
     }
     class Declaration {
-        label: Label
         provenance: Provenance
-        action: ActionTemplate
-        inputs: Vec~InputSpec~
+        item: Declared
+    }
+    class Declared {
+        <<enumeration>>
+        Target
+        Rule
+        Alias
+        Setting
+    }
+    class Target {
+        label: Label
+        role: TargetRole
+        action: Action
+        inputs: Vec~SourcePath~
         deps: Vec~Label~
-        flags: TargetFlags
+        outputs: Vec~OutputName~
+        env: Vec~EnvName~
+        network: NetworkAccess
+        freshness: Freshness
+    }
+    class Rule {
+        label: Label
+        run: Command
+        description: Option~Description~
+    }
+    class Alias {
+        label: Label
+        target: Label
+    }
+    class Setting {
+        name: SettingName
+        default: SettingValue
     }
     class TargetGraph {
         nodes: Vec~Target~
@@ -91,8 +118,13 @@ classDiagram
         stdout: Digest
         stderr: Digest
     }
-    Declaration --> Label
     Declaration --> Provenance
+    Declaration --> Declared
+    Declared --> Target
+    Declared --> Rule
+    Declared --> Alias
+    Declared --> Setting
+    Target --> Label
     TargetGraph --> Declaration : built from
     Plan --> ActionKey
     ActionOutcome --> Digest
@@ -100,10 +132,10 @@ classDiagram
 
 The load-bearing decisions:
 
-- **`Label` is the universal name** (`//dir:name`), parsed and validated once at Resolve; everywhere downstream a target is a `NodeId` (`u32` index into the graph's arenas). Strings appear only at the edges — parsing and reporting.
+- **`Label` is the universal name** (`//dir:name`), resolved and validated once at Load: every name and reference a build file writes — absolute, `:sibling` or bare — becomes an absolute `Label` against the declaring directory before Load hands its declarations on; from Resolve onward a target is a `NodeId` (`u32` index into the graph's arenas). Strings appear only at the edges — parsing and reporting.
 - **`ActionKey` keeps its components.** The key is a digest _of_ a `KeyComponents` struct (command, input digests, dep keys, env values, tool fingerprints, settings, os/arch — the §12.4 ledger as a Rust struct). Keeping the components alongside the digest is what makes `plan`'s "why dirty" reporting a struct diff instead of archaeology.
 - **`Digest` is SHA-256 everywhere** — files, outputs, keys, log blobs — matching the Remote Execution API's digest model [4] so the remote-cache step later is a transport problem, not a re-keying.
-- **`Provenance` is threaded, never reconstructed.** Attached in `declare`, carried through `Declaration` into `Target`, surfaced in every error. No phase ever asks "which file declared this?" — it always already knows.
+- **`Provenance` is threaded, never reconstructed.** Attached in `declare`, carried through `Declaration` into the graph, surfaced in every error. No phase ever asks "which file declared this?" — it always already knows.
 
 ### 2.1 The target state machine
 
@@ -145,9 +177,9 @@ The only crate that speaks Lua is `buildl-lua`, which implements the `Declaratio
 
 Installation: the engine keeps airsl's default `airsstack` root table, the `buildl` `HostModule` populates its own table, and inside `install` it binds that same table to the global `buildl` (design doc §5) — so every build file is evaluated with `buildl` loaded and `airsstack` beside it. `HostModule: Send + Sync` is part of airsl's contract, which is what rules the staging buffer's shape below.
 
-The mechanics of collection: the `buildl` `HostModule`'s closures capture an `Arc<Mutex<Vec<Declaration>>>` staging buffer plus the current file's `Provenance`. `b.target(...)` validates its option table shape _immediately_ (unknown field → error naming file and field, airsl-refusal style) and pushes a `Declaration`. `b.subdir(dir)` pushes onto the directory queue owned by the Load driver — Lua never recurses.
+The mechanics of collection: the `buildl` `HostModule`'s closures capture an `Arc<Mutex<StagedFile>>` staging buffer for the file being evaluated. `b.target(...)` validates its option table shape _immediately_ (an unknown field, or a field of the wrong Lua type → `EvaluationFailure::UnknownField` / `WrongFieldType`, airsl-refusal style) and pushes a staged declaration: every value exactly as written, a `Written<T>` typed by what it must become, numbered with its `DeclarationOrder`. `b.subdir(dir)` pushes a `StagedSubdir` into the same buffer. Both return to `buildl-core` inside the `StagedFile` that `evaluate` hands back; Load attaches the `Provenance` (it built the `BuildFile`, so it already knows which file the result belongs to), validates every value, and resolves the requested directories, rejecting escapes, skipping repeats and queueing the rest — Lua never recurses, and the adapter never sees the queue.
 
-Parallel load: the directory queue is processed by a small pool; each worker owns its engines, staging buffers merge at the end, and the merge sorts by (directory, declaration order) so parallel load yields the identical staging list as serial load. Determinism rule: parallelism must never be observable in any output (§6).
+Parallel load: the directory queue is processed by a small pool; each worker owns its engines, staging buffers merge at the end, and the merge sorts by (directory, declared name, then the whole declaration) so parallel load yields the identical staging list as serial load. The key holds no declaration order: under `pairs` the same file may issue its declarations in a different order on each evaluation. Determinism rule: parallelism must never be observable in any output (§6).
 
 ### 3.2 `graph` — arenas, not pointers
 
@@ -224,7 +256,7 @@ House rules enforcing design-doc §12 at the code level — checkable in review,
    `cargo make guard-core-purity`; the serializer's walk is the second line, not the first.
 3. **Parallelism is never observable.** Parallel load merges sorted (§3.1); parallel hashing writes into pre-indexed slots; the executor's completion _order_ appears only in the log's timestamps, never in any artifact.
 4. **Wall clock is quarantined.** `now()` is read in exactly two places — log event timestamps and durations — via the `Clock` port, whose only real adapter lives in `buildl`. The crate boundary does not enforce this: `std::time` is in scope for every crate. `crates/buildl-core/clippy.toml` bans `Instant`, `SystemTime` and `SystemTimeError` under `disallowed-types`, and `cargo make guard-core-purity` runs that ban inside `cargo make dod` — so it is lint configuration, not grep and not the compiler, that keeps the rule true.
-5. **Double-run checks are CI, not doctrine.** `buildl check` runs declaration twice and diffs staging hashes; the test suite builds a fixture workspace twice and asserts byte-identical `graph.json`, `cache.json`, and cas contents.
+5. **Double-run checks are CI, not doctrine.** `buildl check` runs declaration twice and compares the two sorted staging lists by value; the test suite builds a fixture workspace twice and asserts byte-identical `graph.json`, `cache.json`, and cas contents.
 
 ## 6. Decision records
 
@@ -247,7 +279,7 @@ House rules enforcing design-doc §12 at the code level — checkable in review,
 
 The narrow handoffs are the test surface. Each flow runs first in `buildl-core` against fake ports — no Lua state, filesystem, process, or thread — and again against real adapters in the crate that owns them; the layers are in building blocks §8.
 
-- **`declare`** (`buildl-lua`): fixture build files → assert exact `Vec<Declaration>`; hostile fixtures (huge loops, `pairs` tricks, bad option tables) → assert refusal shape and instruction-ceiling stops.
+- **`declare`** (`buildl-lua`): fixture build files → assert exact `StagedFile`s, the adapter's whole output (turning them into `Vec<Declaration>` is Load's, tested in `buildl-core`); hostile fixtures (huge loops, `pairs` tricks, bad option tables) → assert refusal shape and instruction-ceiling stops.
 - **`graph`**: staging lists (no Lua) → golden `graph.json`; duplicate/unknown/cycle fixtures → assert full provenance in errors.
 - **`plan`**: synthetic graphs + a tempdir tree → dirty sets and reasons; stat-cache hit/miss/mtime-rollback cases.
 - **`exec`**: scripted fake strategies in `buildl-core` → state-machine transitions, keep-going semantics, crash-safety (a failing cache commit leaves no row); tiny compiled helpers (`/bin/sh`-free) against the real `Bare` and `InputSandbox` adapters → output block integrity, a worker killed mid-action leaves no row.

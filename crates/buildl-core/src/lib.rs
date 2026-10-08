@@ -22,14 +22,16 @@
 //! | Module | Holds |
 //! |---|---|
 //! | [`error`] | the one error enum and the crate-wide `Result` alias |
-//! | [`types`] | the validated domain values: names, identities, instants |
+//! | [`types`] | the validated domain values — names, identities, instants, declarations — and the as-written values a build file stages |
 //! | [`json`] | the one canonical serializer every byte of output goes through |
-//! | [`ports`] | the traits through which everything outside this crate is reached |
+//! | [`ports`] | every trait in the crate: the ports through which everything outside it is reached, and the bundle that names one implementation of each |
+//! | [`load`](mod@load) | Load, the first phase: build files to validated, sorted declarations |
+//! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command |
 //!
-//! A later phase of the pipeline gets its own module beside these, named for the phase. Five
-//! rules keep that arrangement navigable as it grows:
+//! Each phase has its own module, named for the phase. Five rules keep that arrangement
+//! navigable:
 //!
-//! 1. No phase module names another. Phases communicate through values, and the pipeline owns
+//! 1. No phase module names another. Phases communicate through values, and [`pipeline`] owns
 //!    the sequence, so a phase that imported the next would be bypassing it.
 //! 2. [`types`] holds no decisions between *different* concepts. A type there may decide things
 //!    about its own kind — [`Timestamp::duration_since`] decides whether two instants of the
@@ -40,22 +42,38 @@
 //!    downstream invents a second spelling of a name that already exists.
 //! 4. [`ports`] never gains a production implementation. A real implementation means doing I/O,
 //!    which this crate does not do; the only implementations here are test fakes.
-//! 5. Every phase module is exercised against in-memory implementations of the ports it uses,
-//!    with its tests in the file under test.
+//! 5. Every phase module is exercised against in-memory implementations of the ports it uses.
+//!    Its pure helpers, which need no port, are tested in the file under test; its flows through
+//!    a port are tested in this crate's integration tests, against fakes built from the public
+//!    API alone, so anything a fake does an adapter crate can do too.
 //!
 //! # Status
 //!
-//! Pre-release. The vocabulary, the error model, the canonical serializer and the clock port
-//! exist; no pipeline phase is implemented yet.
+//! Pre-release. Load is implemented: [`load`](fn@load) walks the workspace's build files
+//! through the [`DeclarationSource`] port and returns their declarations validated and sorted,
+//! and [`Pipeline::check`] runs it twice to catch a build file that declares differently on
+//! each evaluation. Resolve, Plan, Execute and Record are not implemented yet.
 //!
 //! This file holds only module declarations and re-exports, so it carries no logic to
 //! unit-test.
 
 pub mod error;
 pub mod json;
+pub mod load;
+pub mod pipeline;
 pub mod ports;
 pub mod types;
 
-pub use error::{Error, NameKind, Result};
-pub use ports::Clock;
-pub use types::{Digest, Directory, Label, NodeId, Provenance, TargetName, Timestamp};
+pub use error::{
+    ActionFound, DeclarationField, Error, EvaluationFailure, EvaluationLimit, NameKind, Result,
+};
+pub use load::load;
+pub use pipeline::Pipeline;
+pub use ports::{Clock, DeclarationSource, Ports};
+pub use types::{
+    Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
+    Description, Diagnostic, Digest, Directory, EntryName, EnvName, Evaluated, FieldName,
+    Freshness, Label, NetworkAccess, NodeId, OutputName, Provenance, Rule, Setting, SettingName,
+    SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
+    StagedSetting, StagedSubdir, StagedTarget, Target, TargetName, TargetRole, Timestamp, Written,
+};
