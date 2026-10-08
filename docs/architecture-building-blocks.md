@@ -97,7 +97,7 @@ graph TD
 
 ## 4. Components — C4 level 3
 
-Inside the CLI process. Arrows point at the dependency: every adapter depends on `buildl-core`, and no adapter depends on another.
+Inside the CLI process. Arrows point at the dependency: every adapter depends on `buildl-core`, and the one edge between adapter crates is `buildl → buildl-lua`, which the composition root alone may hold.
 
 ```mermaid
 %% C4 level 3 — components inside the CLI process
@@ -281,8 +281,8 @@ The `Clock` port is `architecture.md` §5 rule 4's quarantine of the wall clock.
 ## 7. Dependency rules
 
 1. **`buildl-core` depends on no buildl crate, no airsl, and no I/O API** (§1.2).
-2. **Adapters depend on `buildl-core` only.** `buildl-lua` never imports `buildl`; inside `buildl`, adapter modules never import each other.
-3. **`buildl` is the single composition root** — the only code that names more than one concrete adapter, through `LocalPorts`. This is dependency inversion applied, not violated: the principle constrains the logic, and a composition root is where concrete choices are made [3].
+2. **Adapters depend on `buildl-core`.** `buildl-lua` never depends on `buildl`; inside `buildl`, adapter modules never import each other.
+3. **`buildl` is the single composition root** — the only adapter crate that depends on another adapter crate (`buildl-lua`), and the only code that names more than one concrete adapter, through `LocalPorts`. This is dependency inversion applied, not violated: the principle constrains the logic, and a composition root is where concrete choices are made [3].
 4. **`buildl-cli` reaches core types through `buildl`'s re-exports**, so the binary has one library dependency.
 
 |Rule|Enforced by|

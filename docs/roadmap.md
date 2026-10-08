@@ -98,16 +98,10 @@ Findings an earlier slice recorded but left out of scope, each assigned to the s
 
 |#|Follow-up|Origin|Target|
 |---|---|---|---|
-|3|Refresh the crate-level docs once real modules exist. `buildl-core` and `buildl-lua` are done (§4). Still open: `buildl` and `buildl-cli` — port lists that omit `Manifest`/`Approver`, `Reporter`, `StatCache`/`ToolResolver` and `Dispatcher`; "holds only module declarations and re-exports" in `lib.rs` files that hold neither; `buildl`'s adapter list, which disagrees between its README and `lib.rs`.|I1 review|each crate's first code slice (adapters)|
 |5|The `buildl-cli` `description` says "a thin clap shell", but clap is not yet a dependency.|I1 review|CLI slice|
-|6|Tooling comment accuracy: `Cargo.toml` cites `architecture.md` §5.2, which does not exist; the §6 citation for storage adapters is narrower than the one it replaced; `deny.toml` says every member "is published" and that the `skip` list "freezes" the current state while `skip = []`.|I1 review|unassigned, docs sweep|
-|7|architecture-building-blocks §7 rule 2 ("adapters depend on `buildl-core` only") and §4's lead sentence ("no adapter depends on another") conflict with the `buildl → buildl-lua` edge that the §4 crate table lists.|I1 review|unassigned, docs sweep|
-|8|design §13 names the milestone 1 commands `run`/`plan`/`graph`/`check`; design's command table and `architecture.md` name the full pipeline `build`.|roadmap write-up|unassigned, docs sweep|
 |10|CI's `rustup toolchain install` with no argument needs rustup 1.28 or newer on the runners. This is not yet verified.|I1 review|first CI run on a pushed branch|
 |11|No guard asserts that a phase module in `buildl-core` does not import another. The rule is `architecture.md`'s "no phase invokes the next"; the mechanism would be a golden file of permitted intra-crate module edges, diffed by a `cargo make` task, in the shape of `guard-crate-edges`. I2 shipped no phase module, so the guard would have asserted nothing.|I2 review|I4 Resolve, the first slice with two phase modules|
 |13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs; which directories to skip is known only once `buildl.toml` is parsed.|I-lua spec §6.2|I4 Resolve (the `Manifest` port)|
-|14|Reword `EvaluationLimit::Staging`'s rustdoc ("the cap on how many declarations one file may stage") to the byte budget `buildl-lua` enforces: the in-memory size of each staged record plus its text, up to the memory ceiling.|I-lua spec D3|the next slice that touches `buildl-core`|
-|15|Address-derived text is still nondeterministic: `tostring` or `string.format` (`%s`, `%p`) of a table or function renders an address, and `check`'s double run sees it only when the two addresses differ. Closing it means replacing `tostring` and wrapping `string.format` in the `buildl` module.|I-lua spec D12|unassigned|
 
 ## 6. Process notes
 

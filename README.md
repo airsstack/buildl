@@ -149,7 +149,7 @@ Workspace policy is inherited verbatim from airsl [1]: `unsafe_code = "forbid"`,
 
 Dependency-ordered, from [`design.md` §13](./docs/design.md); progress and the development ladder are tracked in [`roadmap.md`](./docs/roadmap.md). buildl is a **build system first** — the defining capability is answering *"does this need to run at all?"*; task-runner use is a degenerate case the model yields for free.
 
-1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `run`/`plan`/`graph`/`check`, local cache and cas
+1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `check`/`graph`/`plan`/`build`, local cache and cas
 2. **`query` / `rdeps`** — small work, transforms CI for large repos
 3. **Local input sandbox (tier 2)** — the correctness discipline everything remote depends on
 4. **Grant negotiation UX** — wanted set, ceiling intersection, approver

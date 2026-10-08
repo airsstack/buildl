@@ -51,8 +51,8 @@ exceptions = []
 unused-allowed-license = "deny"
 
 [licenses.private]
-# Every workspace member is published to crates.io under Apache-2.0, so its
-# license text is a distribution question and is checked like any other crate.
+# Every workspace member is intended for publication to crates.io under Apache-2.0,
+# so its license text is a distribution question and is checked like any other crate.
 ignore = false
 
 # ---------------------------------------------------------------------------
@@ -61,8 +61,8 @@ ignore = false
 
 [bans]
 # Duplicates are denied rather than warned so a second copy of a crate has to
-# be acknowledged here. The `skip` list below freezes the current state, so a
-# *new* duplicate fails even though the known ones pass.
+# be acknowledged here. The `skip` list below is empty, so every duplicate fails
+# until it is added to that list with a reason.
 multiple-versions = "deny"
 # No `version = "*"` dependencies. The root manifest gives every direct one an
 # explicit version requirement.

@@ -102,6 +102,7 @@ ci      = "manifest"       # honour declarations silently when CI is detected
 [declaration]              # ceilings for the Lua phase — it only declares
 memory       = "16MB"
 instructions = 10_000_000
+walk_entries = 100_000     # directory entries b.sources() may visit per build file
 
 [execution]
 workers  = 0               # 0 = number of cores
@@ -580,7 +581,7 @@ Nothing in this section touches Lua. Scale is a pure host-side concern — the t
 
 Two adjustments to airsl's `confined` preset close the remaining holes:
 
-1. **Drop `os`, curate the module set, and strip what remains.** `os.time`, `os.clock`, and Lua 5.4's entropy-seeded `math.random` are nondeterministic. The declaration policy uses airsl's minimal language surface, which has no `os`, and a `ModuleSet` installing `json`, `path`, `regex`, `hash`, `glob` while omitting `time`, `proc`, `env`, `stdio`. airsl lets the host choose both — configuration, not new machinery [1]. The minimal surface still loads `math` whole, so buildl removes `math.random` and `math.randomseed` itself. It also removes `airsstack.path.absolute`, which reads the process working directory, and `print`, because stdout belongs to the CLI. One source stays open: `tostring` or `string.format` of a table or function renders its address, which can differ between runs, and the double evaluation below catches it only when the two addresses differ.
+1. **Drop `os`, curate the module set, and strip what remains.** `os.time`, `os.clock`, and Lua 5.4's entropy-seeded `math.random` are nondeterministic. The declaration policy uses airsl's minimal language surface, which has no `os`, and a `ModuleSet` installing `json`, `path`, `regex`, `hash`, `glob` while omitting `time`, `proc`, `env`, `stdio`. airsl lets the host choose both — configuration, not new machinery [1]. The minimal surface still loads `math` whole, so buildl removes `math.random` and `math.randomseed` itself. It also removes `airsstack.path.absolute`, which reads the process working directory, and `print`, because stdout belongs to the CLI. Last, it replaces `tostring` and `string.format`, because rendering a table or function renders its address, which can differ between runs: a table, function, thread or userdata with no `__tostring` metamethod, rendered by either, is an error, and so is `%p`.
 2. **Canonicalise instead of forbidding `pairs`.** Lua table iteration order is unspecified, so the graph is made order-insensitive: keyed by names, sorted at Resolve, action keys order-independent. A `pairs` loop yields a byte-identical graph in any order.
 
 Because declaration is cheap it is also _checkable_: evaluate twice and compare the two sorted staging lists by value; a nondeterministic build file fails `buildl check` with the diff — the first position at which the two runs disagree, with what each run declared there. A `pairs` loop does not fail the check, because both lists are sorted before they are compared.
@@ -634,7 +635,7 @@ What remains honestly implicit — the kernel version, libc, filesystem semantic
 
 Dependency-ordered, with the airsl extension work interleaved:
 
-1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `run`/`plan`/`graph`/`check`, local cache and cas. Needs only shipped airsl.
+1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `check`/`graph`/`plan`/`build`, local cache and cas. Needs only shipped airsl.
 2. **`query` / `rdeps`** — small work, transforms CI for large repos.
 3. **Local input sandbox (tier 2)** — the correctness discipline everything remote depends on.
 4. **Grant negotiation UX** — wanted set, ceiling intersection, approver. Consumes the airsl extension host's ceiling + `Approver` (buildl is their first consumer; the manifest parser and `ext.on` dispatcher are not needed yet).

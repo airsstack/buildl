@@ -24,7 +24,7 @@ authors      = ["rstlix0x0 <rstlix.dev@gmail.com>"]
 airsl      = "0.1.4"
 # Serialization for every phase handoff (Vec<Declaration> → TargetGraph → Plan →
 # Vec<ActionOutcome>) and the durable stores. NOTE: all JSON output must leave
-# through the one canonical sorted-key serializer (architecture.md §5.2), built on
+# through the one canonical sorted-key serializer (architecture.md §5 rule 2), built on
 # serde_json — never through serde_json::to_string directly.
 serde      = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
@@ -47,7 +47,8 @@ toml       = { version = "0.8", default-features = false, features = ["parse"] }
 globset    = "0.4"
 walkdir    = "2.5"
 # Exec-dir materialisation for the tier-2 input sandbox and temp-file-then-rename
-# atomic writes in the storage adapters (architecture-building-blocks.md §6).
+# atomic writes in the storage adapters (architecture.md §3.5,
+# architecture-building-blocks.md §6).
 tempfile   = "3.23.0"
 # CLI argument parsing (buildl-cli).
 clap       = { version = "4", features = ["derive"] }
