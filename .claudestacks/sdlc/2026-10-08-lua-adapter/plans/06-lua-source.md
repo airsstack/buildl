@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-08
 depends-on: [05]
 ---
@@ -1031,3 +1031,25 @@ crates/buildl-lua/src/lib.rs      — [modify] declare the modules; re-export th
 - `cargo test -p buildl-lua --doc` reports 2 passed (`DeclarationLimits`, `LuaSource`).
 - `grep -rn dead_code crates/buildl-lua/src` prints nothing.
 - `cargo make dod` and `cargo deny check` both pass.
+
+## Review findings
+
+- unit-test-mandate / reversion guard (🟡) — nothing checked that `DeclarationLimits` reaches the engine. If `.with_limits(limits.resource_limits())` were dropped, airsl's `Policy::confined()` defaults would apply silently (64 MiB and 100 000 000 instructions; airsl-0.1.4 `sandbox/policy.rs` `CONFINED_MEMORY`/`CONFINED_INSTRUCTIONS`) — `crates/buildl-lua/src/engine.rs:37`. **Fixed and verified.** Added `the_supplied_instruction_ceiling_bounds_evaluation`. A 100 000-iteration loop fails with `airsl::Error::InstructionLimit` under a 1 000-instruction ceiling, and returns `"5000050000"` under the default limits. With `.with_limits(...)` removed, `cargo test -p buildl-lua --lib engine::` gave `the_supplied_instruction_ceiling_bounds_evaluation ... FAILED` (`called Result::unwrap_err() on an Ok value: "5000050000"`; 3 passed, 1 failed). After the line was restored, `cargo test -p buildl-lua --lib` gave `test result: ok. 81 passed; 0 failed`.
+- doc-comment-discipline (🔵) — the module doc said, in the present tense, that the composition root fills the limits from the manifest's `[declaration]` table, but no such code exists (spec D10) — `limits.rs:3`. **Fixed**: it now says the composition root "is meant to fill" them.
+- unit-test-mandate (🔵) — no test covered a non-NotFound io error mapping to `Runtime` — `source.rs:93`. **Fixed**: added `a_build_file_that_is_a_directory_is_a_runtime_failure`.
+- unit-test-mandate (🔵) — the test `a_recorded_refusal_is_reported_over_the_eval_result` only exercised a refusal caught by `pcall` — `source.rs:193`. **Fixed**: renamed it to `a_refusal_caught_by_pcall_is_still_reported`, and added `an_uncaught_refusal_is_reported_as_the_recorded_failure`, where an uncaught `buildl.target('app', 1)` gives `WrongFieldType { field: options }`.
+- unit-test-mandate (🔵) — nothing guarded the `Send + Sync` property that spec §3 requires — `source.rs:58`. **Fixed**: `the_source_can_be_shared_across_threads` asserts it at compile time.
+- spec drift (🔵) — the spec §9 layout row gives `classify.rs` the shape `airsl::Error → (EvaluationFailure, Diagnostic)`. The code returns only `EvaluationFailure`, and `source.rs` builds the diagnostic from `error.to_string()`. The behaviour matches §8, but the spec row was never amended — spec §9
+
+Blocking set: none. The reviewer re-ran `cargo make dod` and it exited 0. The reviewer also confirmed that `curated`/`classify`/`limits`/`engine`/`source.rs` and `lib.rs` match the plan's blocks word for word, and that `grep -rn "dead_code\|cfg_attr" crates/buildl-lua/src` prints nothing.
+
+## Probe results
+
+- Task 1's claim that `airsstack.path` is pure path arithmetic except for `absolute` was checked against the airsl 0.1.4 source. `grep -nE 'create_function|"[a-z_]+"|current_dir|std::env|std::fs' ~/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/airsl-0.1.4/src/modules/path.rs` lists the nine installed functions: `join` :79, `dirname` :84, `basename` :89, `stem` :94, `ext` :99, `normalize` :104, `relative_to` :110, `is_absolute` :126 and `absolute` :133. The grep matches no `std::env` or `std::fs`. `is_absolute` is `std::path::Path::new(..).is_absolute()` (:120-124), which is platform grammar and reads no process state. The claim holds.
+- Every other asserted fact was structural or covered by the tasks' own red-green steps. Each task gave `error[E0432]` first, then curated `1 passed`, classify `6 passed`, limits `2 passed`, engine `3 passed` and source `6 passed`.
+- Batch gate: `cargo make dod` gave buildl-lua lib `77 passed`, doctests `2 passed`, and `Build Done in 3.80 seconds`. `grep -rn dead_code crates/buildl-lua/src` printed nothing, and the coder's `cargo deny check` reported `advisories ok, bans ok, licenses ok, sources ok`. After the fix round, the coder's `cargo make dod` gave buildl-lua lib `81 passed` and `Build Done`.
+
+## Deviations
+
+- 2026-10-08 — The lib totals are higher than the plan states: 77 instead of 75 before the fix round, because of plan 05's two added module tests, and 81 after it, because of four added tests (engine 4, source 9). `engine.rs` gained an `engine_with(&DeclarationLimits)` test helper. One test in `source.rs` was renamed. The `limits.rs` module doc wording changed. All of these came from review findings.
+- 2026-10-08 — One coder ran Tasks 1–5 in order, because every task modifies `lib.rs`. The plan's per-task commits were not made; commits are left to the user.

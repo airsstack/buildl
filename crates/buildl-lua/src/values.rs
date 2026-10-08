@@ -11,14 +11,6 @@
 //! Non-responsibilities: validating what the text says. A name's grammar, a label's resolution and
 //! a path's containment are decided after evaluation, not here.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "nothing public reaches this module until `LuaSource` evaluates a build file"
-    )
-)]
-
 use airsl::mlua::{self, Table, Value};
 use buildl_core::{EvaluationFailure, Written};
 

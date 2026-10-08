@@ -9,14 +9,6 @@
 //! Non-responsibilities: reading Lua values and rendering diagnostics, which happen before a record
 //! reaches the buffer.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "nothing public reaches this module until `LuaSource` evaluates a build file"
-    )
-)]
-
 use core::fmt;
 use core::mem::size_of;
 

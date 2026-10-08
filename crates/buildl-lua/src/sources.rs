@@ -11,14 +11,6 @@
 //! Non-responsibilities: turning the paths into inputs. They are returned to Lua as text relative
 //! to the declaring directory, and joined with it after evaluation.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "nothing public reaches this module until `LuaSource` evaluates a build file"
-    )
-)]
-
 use std::fs;
 use std::path::{Path, PathBuf};
 

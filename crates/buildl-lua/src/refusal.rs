@@ -9,14 +9,6 @@
 //!
 //! Non-responsibilities: recording a refusal so it sticks, which the staging buffer does.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "nothing public reaches this module until `LuaSource` evaluates a build file"
-    )
-)]
-
 use buildl_core::{Diagnostic, EvaluationFailure};
 
 /// A primitive call that was refused: the failure's kind, what was wrong, and — once known — the

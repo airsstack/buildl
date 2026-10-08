@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-08
 depends-on: [02, 03, 04]
 ---
@@ -926,3 +926,22 @@ crates/buildl-lua/src/lib.rs        — [modify] declare both modules           
 
 - `cargo test -p buildl-lua --lib primitives::tests` reports 9 passed and `module::tests` 7 passed.
 - `cargo make dod` exits `0`.
+
+## Review findings
+
+- unit-test-mandate / reversion guard (🟡) — no test proved that a `buildl.sources` refusal sticks (spec §6.2, §7.3). If `walk.find` moved outside `guarded`, all 7 module tests still passed — `crates/buildl-lua/src/module.rs:122`. **Fixed and verified.** Added `a_swallowed_sources_refusal_still_fails_the_file_and_stops_later_calls`. With `walk.find` moved outside `guarded`, the test failed (left `"false true"`, right `"false false"`). With the closure restored, `cargo test -p buildl-lua --lib module::tests` gave `test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 50 filtered out`.
+- correctness (🟡) — the staging mutex stayed locked while `work` called the Lua C API. A `__gc` finalizer that re-entered a buildl primitive on the same thread would self-deadlock, and no instruction or memory limit can interrupt that — `module.rs:168`. The reviewer's scratch probe reproduced the re-entry when the code read fresh keys, but not with the 8 real target field names. **Fixed.** `guarded` now uses `try_lock`. `WouldBlock` raises `buildl.<primitive>: buildl primitives cannot be called while another buildl call is in progress` and records no sticky refusal; a poisoned lock is still recovered through `into_inner`. A test, `a_call_while_the_staging_buffer_is_in_use_fails_instead_of_waiting`, holds the lock and asserts the call returns `false` with that message, and that nothing was recorded. That test passes (in the 9 above). It was written after the fix and was never seen failing; without the fix it would block on a same-thread re-lock.
+- unit-test-mandate (🔵) — `assert!(result.is_err())` does not check the raised message. The staged assertion already covers the diagnostic — `module.rs:411`
+- spec drift (🔵) — spec §5.2 says `BuildlModule` holds "the root and the declaring directory". It holds a `Sources` that wraps those two values. They are equivalent, but the spec sentence was never amended — spec §5.2
+
+Blocking set: none. The reviewer re-ran `cargo make dod` and it exited 0. The reviewer also confirmed that the code matches the plan's blocks, that the `redundant_closure_for_method_calls` expectation's reason is correct, and that the readers never reach `__index`, `__len` or `__pairs` (mlua 0.12.1 `pairs` uses `lua_next`).
+
+## Probe results
+
+- Every asserted fact was structural or covered by the tasks' own red-green steps. Task 1 gave `error[E0432]: unresolved imports super::alias, …`, then `test result: ok. 9 passed`. Task 2 gave `error[E0432]: unresolved import super::BuildlModule`, then `test result: ok. 7 passed`.
+- Batch gate: `cargo make dod` gave a buildl-lua lib total of `test result: ok. 57 passed; 0 failed`, and `Build Done in 2.73 seconds`. After the fix round, the coder's `cargo make dod` gave buildl-lua `59 passed` and `Build Done`.
+
+## Deviations
+
+- 2026-10-08 — `module.rs` goes beyond the plan text. `guarded` takes the lock with `try_lock` and raises a runtime error on re-entry instead of blocking. The `run` test helper is split into `evaluate` and `run`, and two tests were added, so the module total is 9 instead of 7. Both changes came from review findings.
+- 2026-10-08 — One coder ran Tasks 1–2 in order, because Task 2 imports Task 1's `primitives`. The plan's per-task commits were not made; commits are left to the user.

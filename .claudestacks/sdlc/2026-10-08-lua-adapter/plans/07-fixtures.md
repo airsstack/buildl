@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-08
 depends-on: [06]
 ---
@@ -793,3 +793,23 @@ crates/buildl-lua/tests/fixtures/workspace/main.c, lib/src/text.c   — [create]
 
 - `cargo test -p buildl-lua --test flows` reports 16 passed.
 - `cargo make dod` exits `0`; `git diff main -- crates/buildl-core` is empty.
+
+## Review findings
+
+- spec §7.3 (🟡) — the budget refusal is built by `exceeded()` and never gets `.about(name)`, so its diagnostic reads `line N: buildl.alias: staging budget … exceeded` without the declared name. The flow test locks that nameless form in — `crates/buildl-lua/src/module.rs:144`, `tests/flows/failures.rs:68`. **Declined.** Spec §7.2 fixes the budget diagnostic as `staging budget of <N> bytes exceeded`, and plan 05 Task 2 (`line 1: buildl.subdir: staging budget of 1 bytes exceeded`) and plan 07 Task 2 both expect the nameless form. §7.3's "once it is known, the declared name" is the general rule, and §7.2 is the specific one.
+- precondition hygiene (🔵) — `a_missing_build_file_is_absent` passed the raw `tempdir().path()`, which is a non-canonical `/var/…` path on macOS. That breaks `LuaSource::new`'s canonical-root precondition — `tests/flows/declarations.rs:124`. **Fixed**: the test now passes `fs::canonicalize` of the path.
+- naming (🔵) — `staging_past_the_memory_ceiling_…` called the staging budget the memory ceiling — `tests/flows/failures.rs:57`. **Fixed**: renamed to `staging_past_the_staging_budget_reaches_the_staging_limit`.
+- test precision (🔵) — the symlink test checked only `Refused`, not the D14 diagnostic — `tests/flows/sandbox.rs:51`. **Fixed**: it now also asserts that the diagnostic contains `resolves outside the workspace` (the wording at `sources.rs:61`).
+- spec drift (🔵) — the spec §11 Fixtures row says "exact `Evaluated` value". Two tests compare less than that: one compares only `target.inputs`, and the other checks only `declarations.len() == 1`. The Lua `assert`s carry the surface check — spec §11
+
+Blocking set: none. The reviewer re-ran `cargo make dod` (exit 0) and `cargo deny check` (all ok). It confirmed that `git add --dry-run crates/buildl-lua/tests` lists all 15 files, including the 5 zero-byte fixtures, and that every spec §11 case is present. After the fix round, `cargo test -p buildl-lua --test flows` gave `test result: ok. 16 passed; 0 failed`, and the coder's `cargo make dod` gave `Build Done`.
+
+## Probe results
+
+- Every asserted fact was structural or covered by the tasks' own red-green steps. `cargo test -p buildl-lua --test flows` gave `error[E0583]` for each new module, then `4`, `13`, `15` and `16 passed`. Every expected diagnostic and value in the plan matched the real output unchanged.
+- Batch gate: `cargo make dod` gave buildl-lua flows `16 passed`, lib `81 passed`, and `Build Done in 3.96 seconds`.
+
+## Deviations
+
+- 2026-10-08 — Three test-only review fixes: a canonicalised tempdir in `declarations.rs`, one test renamed in `failures.rs`, and a diagnostic assertion added in `sandbox.rs`. The test count is unchanged at 16.
+- 2026-10-08 — One coder ran Tasks 1–4 in order, because each task modifies `tests/flows/main.rs`. The plan's per-task commits were not made; commits are left to the user.
