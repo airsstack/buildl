@@ -90,12 +90,15 @@ deny = [
     { crate = "toml", wrappers = ["airsl"], reason = """\
         ABB §1.2: buildl-core must never depend on toml; §6 places buildl.toml parsing in the \
         Manifest adapter inside buildl""" },
-    { crate = "walkdir", wrappers = ["airsl"], reason = """\
-        ABB §1.2: buildl-core does no filesystem traversal""" },
-    { crate = "tempfile", wrappers = ["airsl"], reason = """\
-        ABB §1.2: temp-file-then-rename is a storage-adapter concern""" },
-    { crate = "globset", wrappers = ["airsl"], reason = """\
-        ABB §1.2: b.sources() globbing is a filesystem read, not core logic""" },
+    { crate = "walkdir", wrappers = ["airsl", "buildl-lua"], reason = """\
+        ABB §1.2: buildl-core does no filesystem traversal; buildl-lua walks the declaring \
+        directory for b.sources()""" },
+    { crate = "tempfile", wrappers = ["airsl", "buildl-lua"], reason = """\
+        ABB §1.2: temp-file-then-rename is a storage-adapter concern; buildl-lua uses it only \
+        to build symlink fixtures in its tests""" },
+    { crate = "globset", wrappers = ["airsl", "buildl-lua"], reason = """\
+        ABB §1.2: b.sources() globbing is a filesystem read, not core logic; buildl-lua \
+        matches it host-side""" },
 ]
 skip = []
 skip-tree = []

@@ -99,6 +99,9 @@ version = "0.1.0"
 dependencies = [
  "airsl",
  "buildl-core",
+ "globset",
+ "tempfile",
+ "walkdir",
 ]
 
 [[package]]

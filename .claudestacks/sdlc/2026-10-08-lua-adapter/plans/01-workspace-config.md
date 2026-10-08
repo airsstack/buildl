@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-08
 ---
 
@@ -270,3 +270,22 @@ deny.toml                          — [modify] buildl-lua added to three ban wr
 - `cargo make dod` exits `0`, including `guard-crate-edges` against the updated golden file.
 - `cargo deny check` prints `advisories ok, bans ok, licenses ok, sources ok`.
 - `cargo tree -p buildl-lua --depth 1 --edges normal,dev --prefix none --format '{lib}'` lists `airsl`, `buildl_core`, `globset`, `walkdir`, `tempfile`.
+
+## Review findings
+
+- strict-quality — the `0.1.4` floor has no reversion guard; the lock already pins 0.1.4 and there is no minimal-versions build — `Cargo.toml:24`
+- strict-quality — `redundant_pub_crate` is a workspace-wide `allow`, where airsl uses a per-file `expect`; spec §10 authorises the workspace form — `Cargo.toml:78-81`
+- consistency — the deny reasons spell the API `b.sources()` while the manifest comments spell it `buildl.sources()` — `deny.toml:93-101`
+
+Blocking set: none. The reviewer re-ran `cargo make dod` (exit 0) and `cargo deny check -D unused-wrapper` (`advisories ok, bans ok, licenses ok, sources ok`).
+
+## Probe results
+
+- Claim: `Cargo.lock` already resolves airsl 0.1.4 and holds globset, walkdir and tempfile. Command: `grep -n -A1 'name = "airsl"' Cargo.lock` gave `version = "0.1.4"`; globset is at `Cargo.lock:247`, tempfile at `:702`, walkdir at `:793`. Holds.
+- T1: `cargo tree -p buildl-lua --depth 1 --prefix none | grep airsl` gave `airsl v0.1.4`. Holds.
+- T3 red: `cargo make guard-crate-edges` failed before the golden-file edit; cargo-make exited 105 and the script exited 1, with diff `+globset +walkdir +tempfile`. After the edit it exits 0. Holds.
+- T4 red: `cargo deny check bans` gave three `explicitly banned` errors (globset 0.4.20, tempfile 3.27.0, walkdir 2.5.0) and `bans FAILED`. After the edit, `cargo deny check` gave `advisories ok, bans ok, licenses ok, sources ok`. Holds.
+
+## Deviations
+
+- 2026-10-08 — One coder ran Tasks 1–4 in order instead of one coder per task. The tasks are sequential manifest edits over shared files, so batching them cannot parallelise anything. `cargo make dod` ran once at the end, not after each task. Commits were left to the user and not made per task.

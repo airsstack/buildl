@@ -6,6 +6,9 @@ thiserror
 # buildl-lua
 airsl
 buildl_core
+globset
+walkdir
+tempfile
 # buildl
 buildl_core
 buildl_lua
