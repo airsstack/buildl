@@ -22,7 +22,8 @@
 use core::fmt;
 
 use crate::types::{
-    Declaration, DeclarationOrder, Diagnostic, Directory, FieldName, Provenance, Written,
+    Declaration, DeclarationOrder, Diagnostic, Directory, FieldName, Label, Provenance,
+    SettingName, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -111,6 +112,28 @@ pub enum Error {
         /// The second evaluation's declaration at the first difference; `None` past its end.
         second_run: Option<Box<Declaration>>,
     },
+    /// A label was declared more than once, as any mix of target, rule and alias.
+    #[error("{label} is declared more than once: {}", sites_list(.sites))]
+    DuplicateLabel {
+        /// The label.
+        label: Label,
+        /// The build file of every declaration of it, in the declarations' own order.
+        sites: Vec<Provenance>,
+    },
+    /// A build setting was declared more than once.
+    #[error("setting {name} is declared more than once: {}", sites_list(.sites))]
+    DuplicateSetting {
+        /// The setting.
+        name: SettingName,
+        /// The build file of every declaration of it, in the declarations' own order.
+        sites: Vec<Provenance>,
+    },
+    /// The workspace declares more targets than the graph has ids for.
+    #[error("{count} targets are more than a graph can number")]
+    TooManyTargets {
+        /// How many targets were declared.
+        count: usize,
+    },
 }
 
 /// The suffix naming who required a missing build file.
@@ -119,6 +142,12 @@ fn requested_by_suffix(requested_by: Option<&Provenance>) -> String {
         || " (the workspace root)".to_owned(),
         |provenance| format!(" (requested by {provenance})"),
     )
+}
+
+/// The build files of a duplicated name, separated by commas.
+fn sites_list(sites: &[Provenance]) -> String {
+    let rendered: Vec<String> = sites.iter().map(ToString::to_string).collect();
+    rendered.join(", ")
 }
 
 /// A ceiling an evaluation can reach.
@@ -330,7 +359,8 @@ mod tests {
         ActionFound, DeclarationField, Error, EvaluationFailure, EvaluationLimit, NameKind,
     };
     use crate::types::{
-        DeclarationOrder, Diagnostic, Directory, FieldName, Provenance, TargetName, Written,
+        DeclarationOrder, Diagnostic, Directory, FieldName, Label, Provenance, SettingName,
+        TargetName, Written,
     };
 
     fn lib_file() -> Provenance {
@@ -338,6 +368,47 @@ mod tests {
             PathBuf::from("lib/build.lua"),
             Directory::parse("lib").unwrap(),
         )
+    }
+
+    fn root_file() -> Provenance {
+        Provenance::new(PathBuf::from("build.lua"), Directory::root())
+    }
+
+    fn label(raw: &str) -> Label {
+        Label::parse(raw).unwrap()
+    }
+
+    #[test]
+    fn duplicate_label_names_every_site() {
+        let err = Error::DuplicateLabel {
+            label: label("//:a"),
+            sites: vec![root_file(), root_file()],
+        };
+        assert_eq!(
+            err.to_string(),
+            "//:a is declared more than once: build.lua, build.lua"
+        );
+    }
+
+    #[test]
+    fn duplicate_setting_names_every_site() {
+        let err = Error::DuplicateSetting {
+            name: SettingName::parse("test_filter").unwrap(),
+            sites: vec![root_file(), lib_file()],
+        };
+        assert_eq!(
+            err.to_string(),
+            "setting test_filter is declared more than once: build.lua, lib/build.lua"
+        );
+    }
+
+    #[test]
+    fn too_many_targets_states_the_count() {
+        let err = Error::TooManyTargets { count: 7 };
+        assert_eq!(
+            err.to_string(),
+            "7 targets are more than a graph can number"
+        );
     }
 
     #[test]
