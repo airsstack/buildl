@@ -13,6 +13,9 @@
 //! - [`DeclarationField`] — which field of a declaration an [`Error::InvalidDeclaration`] is
 //!   about.
 //! - [`ActionFound`] — what an [`Error::ActionConflict`] found instead of one action.
+//! - [`DeclaredKind`] — what a label an [`Error::WrongReferenceKind`] is about was declared as.
+//! - [`DeclarationSite`] — a declared label and its build file: the declaration holding a bad
+//!   reference, or one target on a dependency cycle.
 //! - [`Result`] — the crate-wide alias.
 //!
 //! Non-responsibilities: presentation. [`Error`]'s `Display` renders one diagnostic, on one line
@@ -128,6 +131,64 @@ pub enum Error {
         /// The build file of every declaration of it, in the declarations' own order.
         sites: Vec<Provenance>,
     },
+    /// A reference names a label nothing declares.
+    #[error(
+        "{}: {}: {field} {reference} is not declared{}",
+        .site.provenance,
+        .site.label,
+        suggestion_suffix(.suggestion.as_ref())
+    )]
+    UnknownReference {
+        /// The declaration holding the reference, and its build file.
+        site: Box<DeclarationSite>,
+        /// Which field holds it: a dependency, a rule reference or an alias's target.
+        field: DeclarationField,
+        /// The label that was named.
+        reference: Label,
+        /// The nearest declared label the field could have named, if one is near enough.
+        suggestion: Option<Label>,
+    },
+    /// A reference names a declaration of a kind its field cannot name.
+    #[error(
+        "{}: {}: {field} {reference} names {}, declared in {declared_in}",
+        .site.provenance,
+        .site.label,
+        .found.with_article()
+    )]
+    WrongReferenceKind {
+        /// The declaration holding the reference, and its build file.
+        site: Box<DeclarationSite>,
+        /// Which field holds it: a dependency, a rule reference or an alias's target.
+        field: DeclarationField,
+        /// The label that was named.
+        reference: Label,
+        /// What that label was declared as.
+        found: DeclaredKind,
+        /// The build file that declared it.
+        declared_in: Provenance,
+    },
+    /// A command references a build setting nothing declares.
+    #[error(
+        "{}: {}: setting {name} is not declared{}",
+        .site.provenance,
+        .site.label,
+        suggestion_suffix(.suggestion.as_ref())
+    )]
+    UnknownSetting {
+        /// The target or rule whose command holds the reference, and its build file.
+        site: Box<DeclarationSite>,
+        /// The name after `$opt:`, as written.
+        name: String,
+        /// The nearest declared setting, if one is near enough.
+        suggestion: Option<SettingName>,
+    },
+    /// The targets' dependencies form a cycle.
+    #[error("dependency cycle: {}", cycle_path(.path))]
+    DependencyCycle {
+        /// The targets on the cycle, lowest label first; each depends on the next, and the last
+        /// on the first.
+        path: Vec<DeclarationSite>,
+    },
     /// The workspace declares more targets than the graph has ids for.
     #[error("{count} targets are more than a graph can number")]
     TooManyTargets {
@@ -148,6 +209,68 @@ fn requested_by_suffix(requested_by: Option<&Provenance>) -> String {
 fn sites_list(sites: &[Provenance]) -> String {
     let rendered: Vec<String> = sites.iter().map(ToString::to_string).collect();
     rendered.join(", ")
+}
+
+/// The suffix offering the nearest declared name, when there is one.
+fn suggestion_suffix<T: fmt::Display>(suggestion: Option<&T>) -> String {
+    suggestion.map_or_else(String::new, |nearest| format!(" (did you mean {nearest}?)"))
+}
+
+/// A cycle as its labels and build files, closed by repeating the first label.
+fn cycle_path(path: &[DeclarationSite]) -> String {
+    let mut rendered: Vec<String> = path
+        .iter()
+        .map(|site| format!("{} ({})", site.label, site.provenance))
+        .collect();
+    if let Some(first) = path.first() {
+        rendered.push(first.label.to_string());
+    }
+    rendered.join(" -> ")
+}
+
+/// What a label was declared as.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DeclaredKind {
+    /// A build or test target.
+    Target,
+    /// A rule.
+    Rule,
+    /// An alias.
+    Alias,
+}
+
+impl DeclaredKind {
+    /// The kind with its indefinite article, for a sentence.
+    const fn with_article(self) -> &'static str {
+        match self {
+            Self::Target => "a target",
+            Self::Rule => "a rule",
+            Self::Alias => "an alias",
+        }
+    }
+}
+
+impl fmt::Display for DeclaredKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Target => "target",
+            Self::Rule => "rule",
+            Self::Alias => "alias",
+        })
+    }
+}
+
+/// A declared label and the build file that declared it.
+///
+/// Names the declaration an error is about: the one holding a bad reference, or one target on
+/// a dependency cycle.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclarationSite {
+    /// The declared label.
+    pub label: Label,
+    /// The build file that declared it.
+    pub provenance: Provenance,
 }
 
 /// A ceiling an evaluation can reach.
@@ -356,7 +479,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        ActionFound, DeclarationField, Error, EvaluationFailure, EvaluationLimit, NameKind,
+        ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
+        EvaluationLimit, NameKind,
     };
     use crate::types::{
         DeclarationOrder, Diagnostic, Directory, FieldName, Label, Provenance, SettingName,
@@ -374,8 +498,23 @@ mod tests {
         Provenance::new(PathBuf::from("build.lua"), Directory::root())
     }
 
+    fn tools_file() -> Provenance {
+        Provenance::new(
+            PathBuf::from("tools/build.lua"),
+            Directory::parse("tools").unwrap(),
+        )
+    }
+
     fn label(raw: &str) -> Label {
         Label::parse(raw).unwrap()
+    }
+
+    /// The declaration `raw`, declared in the root build file.
+    fn root_site(raw: &str) -> DeclarationSite {
+        DeclarationSite {
+            label: label(raw),
+            provenance: root_file(),
+        }
     }
 
     #[test]
@@ -399,6 +538,117 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "setting test_filter is declared more than once: build.lua, lib/build.lua"
+        );
+    }
+
+    #[test]
+    fn unknown_reference_names_the_site_the_field_and_the_nearest_label() {
+        let err = Error::UnknownReference {
+            site: Box::new(root_site("//:app")),
+            field: DeclarationField::Dep,
+            reference: label("//:mian.o"),
+            suggestion: Some(label("//:main.o")),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app: dep //:mian.o is not declared (did you mean //:main.o?)"
+        );
+    }
+
+    #[test]
+    fn unknown_reference_without_a_near_label_offers_nothing() {
+        let err = Error::UnknownReference {
+            site: Box::new(root_site("//:default")),
+            field: DeclarationField::Target,
+            reference: label("//:nope"),
+            suggestion: None,
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:default: target //:nope is not declared"
+        );
+    }
+
+    #[test]
+    fn wrong_reference_kind_names_what_was_found_and_where() {
+        let err = Error::WrongReferenceKind {
+            site: Box::new(root_site("//:app")),
+            field: DeclarationField::Dep,
+            reference: label("//:cc"),
+            found: DeclaredKind::Rule,
+            declared_in: tools_file(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app: dep //:cc names a rule, declared in tools/build.lua"
+        );
+    }
+
+    #[test]
+    fn every_declared_kind_renders_alone_and_in_a_sentence() {
+        let cases = [
+            (DeclaredKind::Target, "target", "names a target,"),
+            (DeclaredKind::Rule, "rule", "names a rule,"),
+            (DeclaredKind::Alias, "alias", "names an alias,"),
+        ];
+        for (found, alone, in_a_sentence) in cases {
+            assert_eq!(found.to_string(), alone);
+            let err = Error::WrongReferenceKind {
+                site: Box::new(root_site("//:app")),
+                field: DeclarationField::Rule,
+                reference: label("//:x"),
+                found,
+                declared_in: root_file(),
+            };
+            assert!(err.to_string().contains(in_a_sentence), "{err}");
+        }
+    }
+
+    #[test]
+    fn unknown_setting_names_the_site_and_the_nearest_setting() {
+        let err = Error::UnknownSetting {
+            site: Box::new(root_site("//:go_test")),
+            name: "test_fliter".to_owned(),
+            suggestion: Some(SettingName::parse("test_filter").unwrap()),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:go_test: setting test_fliter is not declared \
+             (did you mean test_filter?)"
+        );
+    }
+
+    #[test]
+    fn dependency_cycle_lists_every_target_and_closes_on_the_first() {
+        let err = Error::DependencyCycle {
+            path: vec![
+                DeclarationSite {
+                    label: label("//:a"),
+                    provenance: root_file(),
+                },
+                DeclarationSite {
+                    label: label("//lib:b"),
+                    provenance: lib_file(),
+                },
+            ],
+        };
+        assert_eq!(
+            err.to_string(),
+            "dependency cycle: //:a (build.lua) -> //lib:b (lib/build.lua) -> //:a"
+        );
+    }
+
+    #[test]
+    fn a_cycle_of_one_names_its_target_twice() {
+        let err = Error::DependencyCycle {
+            path: vec![DeclarationSite {
+                label: label("//:a"),
+                provenance: root_file(),
+            }],
+        };
+        assert_eq!(
+            err.to_string(),
+            "dependency cycle: //:a (build.lua) -> //:a"
         );
     }
 

@@ -65,7 +65,8 @@ pub mod ports;
 pub mod types;
 
 pub use error::{
-    ActionFound, DeclarationField, Error, EvaluationFailure, EvaluationLimit, NameKind, Result,
+    ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
+    EvaluationLimit, NameKind, Result,
 };
 pub use load::load;
 pub use pipeline::Pipeline;
