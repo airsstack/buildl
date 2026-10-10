@@ -67,8 +67,8 @@ graph LR
 |**I-guard**|—|Machine-check the three rules the workspace currently honours by convention: the crate edges, `buildl-core`'s freedom from filesystem, process, thread, environment and clock APIs, and the declared `rust-version`|each rule turns the gate red when violated|**done**, 2026-09-21 (§4)|
 |**I3 Load**|`buildl-core`|`Declaration`, `BuildFile`, `StagedFile`, `DeclarationSource`; the `Pipeline` skeleton and `FakePorts`|a fake source's output becomes `Vec<Declaration>`|**done**, 2026-10-08 (§4)|
 |**I-lua**|`buildl-lua`|`DeclarationSource` on airsl; the `buildl` table bound to both `airsstack.buildl` and the `buildl` global (design §5)|`build.lua` fixtures produce exact declarations|**done**, 2026-10-08 (§4)|
-|**I4 Resolve**|`buildl-core`|the `TargetGraph` arena, label resolution, cycle detection, grants (wanted set ∩ ceiling)|the pipeline stops at `graph`|not started|
-|**I5 Plan**|`buildl-core`|the action key, `KeyComponents`, why-dirty; the digest, stat, tool and cache-read ports|the pipeline stops at `plan`|not started|
+|**I4 Resolve**|`buildl-core`|the `TargetGraph` arena, duplicate, unknown-reference and cycle detection; the guard that no phase module imports another|the pipeline stops at `graph`|**in progress**: plans approved, 2026-10-10 (`.claudestacks/sdlc/2026-10-10-core-resolve/`)|
+|**I5 Plan**|`buildl-core`|the action key, `KeyComponents`, why-dirty; grants (wanted set ∩ ceiling); the manifest, digest, stat, tool and cache-read ports|the pipeline stops at `plan`|not started|
 |**I6 Execute + Record**|`buildl-core`|`Schedule`, `Dispatcher`, `ExecStrategy`; cas, cache and log writes; the crash-safety invariant (design §8.5)|a full `build` runs against fakes|not started|
 
 Ground rules for the ladder:
@@ -100,7 +100,7 @@ Findings an earlier slice recorded but left out of scope, each assigned to the s
 |---|---|---|---|
 |5|The `buildl-cli` `description` says "a thin clap shell", but clap is not yet a dependency.|I1 review|CLI slice|
 |11|No guard asserts that a phase module in `buildl-core` does not import another. The rule is `architecture.md`'s "no phase invokes the next"; the mechanism would be a golden file of permitted intra-crate module edges, diffed by a `cargo make` task, in the shape of `guard-crate-edges`. I2 shipped no phase module, so the guard would have asserted nothing.|I2 review|I4 Resolve, the first slice with two phase modules|
-|13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs; which directories to skip is known only once `buildl.toml` is parsed.|I-lua spec §6.2|I4 Resolve (the `Manifest` port)|
+|13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs; which directories to skip is known only once `buildl.toml` is parsed.|I-lua spec §6.2|I5 Plan (the `Manifest` port)|
 
 ## 6. Process notes
 
