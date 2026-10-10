@@ -73,7 +73,8 @@ pub use ports::{Clock, DeclarationSource, Ports};
 pub use types::{
     Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
     Description, Diagnostic, Digest, Directory, EntryName, EnvName, Evaluated, FieldName,
-    Freshness, Label, NetworkAccess, NodeId, OutputName, Provenance, Rule, Setting, SettingName,
-    SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
-    StagedSetting, StagedSubdir, StagedTarget, Target, TargetName, TargetRole, Timestamp, Written,
+    Freshness, Label, NetworkAccess, Node, NodeId, OutputName, Provenance, Rule, Setting,
+    SettingName, SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem,
+    StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target, TargetGraph, TargetName,
+    TargetRole, Timestamp, Written,
 };
