@@ -9,10 +9,15 @@ use std::path::Path;
 
 use buildl_core::{
     DeclarationField, DeclaredKind, EntryName, Error, EvaluationFailure, Pipeline, Provenance,
-    TargetGraph,
+    StagedItem, TargetGraph, TargetRole, Written, json,
 };
 
-use crate::common::{FakeFile, FakePorts, FakeSource, file, rule, setting, target, workspace};
+use crate::common::{
+    FakeFile, FakePorts, FakeSource, alias, file, rule, setting, target, target_with, workspace,
+};
+
+/// The serialized graph of [`fixture`], pinned.
+const GOLDEN: &str = include_str!("golden/graph.json");
 
 fn entry() -> EntryName {
     EntryName::parse("build.lua").unwrap()
@@ -20,6 +25,71 @@ fn entry() -> EntryName {
 
 fn graph(source: FakeSource) -> buildl_core::Result<TargetGraph> {
     Pipeline::<FakePorts>::new(source).graph(&entry())
+}
+
+/// The root file's declarations: a rule, a target using it, a target with dependencies in two
+/// directories, an alias, a test target naming a setting, and the setting.
+fn root_items() -> Vec<StagedItem> {
+    vec![
+        rule(
+            "cc",
+            &["cc", "-c", "$in", "-o", "$out"],
+            Some("compile $in"),
+        ),
+        target_with("main.o", |target| {
+            target.run = None;
+            target.rule = Some(Written::new("cc"));
+            target.inputs = vec![Written::new("main.c")];
+        }),
+        target_with("app", |target| {
+            target.run = Some(["cc", "$deps", "-o", "$out"].map(Written::new).to_vec());
+            target.deps = vec![Written::new("main.o"), Written::new("//lib:text")];
+        }),
+        alias("default", "app"),
+        target_with("app_test", |target| {
+            target.role = TargetRole::Test;
+            target.run = Some(
+                ["$out/app", "--filter=$opt:test_filter"]
+                    .map(Written::new)
+                    .to_vec(),
+            );
+            target.deps = vec![Written::new("default")];
+        }),
+        setting("test_filter"),
+    ]
+}
+
+fn lib_items() -> Vec<StagedItem> {
+    vec![target_with("text", |target| {
+        target.inputs = vec![Written::new("text.c")];
+    })]
+}
+
+fn fixture() -> FakeSource {
+    FakeSource::new(workspace(vec![
+        ("", file(root_items(), &["lib"])),
+        ("lib", file(lib_items(), &[])),
+    ]))
+}
+
+#[test]
+fn a_workspace_resolves_to_the_pinned_graph() {
+    let graph = graph(fixture()).unwrap();
+    assert_eq!(graph.len(), 4);
+    let json = json::canonical::to_string(&graph).unwrap();
+    assert_eq!(json, GOLDEN.trim_end());
+}
+
+#[test]
+fn declaring_in_another_order_yields_the_same_bytes() {
+    let mut reversed = root_items();
+    reversed.reverse();
+    let source = FakeSource::new(workspace(vec![
+        ("", file(reversed, &["lib"])),
+        ("lib", file(lib_items(), &[])),
+    ]));
+    let json = json::canonical::to_string(&graph(source).unwrap()).unwrap();
+    assert_eq!(json, GOLDEN.trim_end());
 }
 
 #[test]

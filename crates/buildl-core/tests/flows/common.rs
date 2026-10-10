@@ -7,8 +7,9 @@ use std::collections::BTreeMap;
 
 use buildl_core::{
     BuildFile, DeclarationOrder, DeclarationSource, Diagnostic, Directory, Error, Evaluated,
-    EvaluationFailure, Freshness, NetworkAccess, Ports, Result, StagedDeclaration, StagedFile,
-    StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, TargetRole, Written,
+    EvaluationFailure, Freshness, NetworkAccess, Ports, Result, StagedAlias, StagedDeclaration,
+    StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, TargetRole,
+    Written,
 };
 
 /// What the fake holds for one directory.
@@ -172,6 +173,15 @@ pub fn rule(name: &str, run: &[&str], description: Option<&str>) -> StagedItem {
         name: Written::new(name),
         run: run.iter().map(|argument| Written::new(*argument)).collect(),
         description: description.map(Written::new),
+    })
+}
+
+/// A `b.alias(name, target)` call.
+#[must_use]
+pub fn alias(name: &str, target: &str) -> StagedItem {
+    StagedItem::Alias(StagedAlias {
+        name: Written::new(name),
+        target: Written::new(target),
     })
 }
 
