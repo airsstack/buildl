@@ -158,6 +158,12 @@ impl Declaration {
     pub const fn item(&self) -> &Declared {
         &self.item
     }
+
+    /// The build file and what it declared, by value.
+    #[must_use]
+    pub fn into_parts(self) -> (Provenance, Declared) {
+        (self.provenance, self.item)
+    }
 }
 
 #[cfg(test)]
@@ -227,6 +233,10 @@ mod tests {
         let declaration = Declaration::new(provenance.clone(), Declared::Target(target()));
         assert_eq!(declaration.provenance(), &provenance);
         assert_eq!(declaration.item(), &Declared::Target(target()));
+        assert_eq!(
+            declaration.into_parts(),
+            (provenance, Declared::Target(target()))
+        );
     }
 
     #[test]
