@@ -21,6 +21,11 @@ const fn is_name_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'.' || byte == b'-' || byte == b'_'
 }
 
+/// Whether `byte` may appear in a key.
+pub(super) const fn is_key_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'
+}
+
 /// A non-empty workspace-relative path: `/`-separated segments of ASCII letters, digits, `.`,
 /// `-` and `_`, none of them empty, `.` or `..`, at most 1024 bytes in all.
 pub(super) fn path(raw: &str) -> Result<(), &'static str> {
@@ -72,10 +77,7 @@ pub(super) fn key(raw: &str) -> Result<(), &'static str> {
     if raw.len() > NAME_MAX_LEN {
         return Err("must be at most 256 bytes");
     }
-    if !raw
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-    {
+    if !raw.bytes().all(is_key_byte) {
         return Err("may hold only ASCII letters, digits, '-' and '_'");
     }
     Ok(())
@@ -91,7 +93,7 @@ pub(super) fn text(raw: &str) -> Result<(), &'static str> {
 
 #[cfg(test)]
 mod tests {
-    use super::{key, name, path, text};
+    use super::{is_key_byte, key, name, path, text};
 
     #[test]
     fn path_accepts_nested_workspace_relative_paths() {
@@ -146,6 +148,21 @@ mod tests {
             key("a.b"),
             Err("may hold only ASCII letters, digits, '-' and '_'")
         );
+    }
+
+    #[test]
+    fn key_bytes_are_ascii_letters_digits_dash_and_underscore() {
+        for byte in *b"aZ09-_" {
+            assert!(is_key_byte(byte), "{:?} is a key byte", char::from(byte));
+        }
+        for byte in *b".:/ $" {
+            assert!(
+                !is_key_byte(byte),
+                "{:?} is not a key byte",
+                char::from(byte)
+            );
+        }
+        assert!(!is_key_byte(0xC3), "a non-ASCII byte is not a key byte");
     }
 
     #[test]
