@@ -29,6 +29,14 @@ mod index;
         reason = "called by the function that builds the graph, which is not written yet"
     )
 )]
+mod references;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "called by the function that builds the graph, which is not written yet"
+    )
+)]
 mod suggest;
 
 #[cfg(test)]
