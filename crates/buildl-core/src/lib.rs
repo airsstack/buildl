@@ -62,6 +62,7 @@ pub mod json;
 pub mod load;
 pub mod pipeline;
 pub mod ports;
+pub mod resolve;
 pub mod types;
 
 pub use error::{
