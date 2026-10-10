@@ -192,7 +192,7 @@ impl TargetGraph {
     }
 }
 
-/// Serializes keyed by label, so that adding a target changes only that target's lines.
+/// Serializes keyed by label, so that adding a target changes only that target's entry.
 ///
 /// Ids are positions in an arena and shift when a target is added; labels do not. There is no
 /// `Deserialize`: a graph is rebuilt from the build files on every run, never read back.
