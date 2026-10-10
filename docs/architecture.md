@@ -93,11 +93,25 @@ classDiagram
         name: SettingName
         default: SettingValue
     }
+    class Node {
+        label: Label
+        provenance: Provenance
+        role: TargetRole
+        run: Command
+        description: Option~Description~
+        inputs: Vec~SourcePath~
+        outputs: Vec~OutputName~
+        env: Vec~EnvName~
+        network: NetworkAccess
+        freshness: Freshness
+    }
     class TargetGraph {
-        nodes: Vec~Target~
+        nodes: Vec~Node~
         edges: Vec~Vec~NodeId~~
         reverse: Vec~Vec~NodeId~~
         by_label: BTreeMap~Label_NodeId~
+        aliases: BTreeMap~Label_NodeId~
+        settings: BTreeMap~SettingName_SettingValue~
     }
     class ActionKey {
         digest: Digest
@@ -126,6 +140,7 @@ classDiagram
     Declared --> Setting
     Target --> Label
     TargetGraph --> Declaration : built from
+    TargetGraph --> Node
     Plan --> ActionKey
     ActionOutcome --> Digest
 ```
@@ -183,7 +198,7 @@ Parallel load: the directory queue is processed by a small pool; each worker own
 
 ### 3.2 `graph` — arenas, not pointers
 
-`TargetGraph` is struct-of-arrays with `u32` node ids: `nodes: Vec<Target>`, `edges: Vec<Vec<NodeId>>` (deps), `reverse: Vec<Vec<NodeId>>`, plus `by_label: BTreeMap<Label, NodeId>`. Petgraph [2] was considered and declined for the core structure — the graph is built once, never mutated, needs exactly toposort/cycle-detection/reachability, and owning the representation keeps it `serde`-serializable as the stable `graph.json` without an adapter layer. (Nothing prevents using petgraph algorithms _over_ this representation later if `query` grows complex.)
+`TargetGraph` is struct-of-arrays with `u32` node ids: `nodes: Vec<Node>`, `edges: Vec<Vec<NodeId>>` (deps, in written order), `reverse: Vec<Vec<NodeId>>`, plus `by_label: BTreeMap<Label, NodeId>`; aliases and build settings sit beside the nodes as two more maps. A `Node` is a target with its rule expanded: it holds the command it runs. Petgraph [2] was considered and declined for the core structure — the graph is built once, never mutated, needs exactly toposort/cycle-detection/reachability, and owning the representation keeps `graph.json` stable: the graph serializes through a hand-written `Serialize` keyed by label, with dependencies as labels and no `NodeId` in the file, so adding a target changes only that target's lines. (Nothing prevents using petgraph algorithms _over_ this representation later if `query` grows complex.)
 
 Cycle detection is iterative DFS (explicit stack — a deep graph must not overflow the call stack; airsl's require-loader made the same choice for the same reason [1]). The error carries the full cycle path as labels with provenance.
 
@@ -290,7 +305,7 @@ The narrow handoffs are the test surface. Each flow runs first in `buildl-core` 
 
 - Whether `ExecDir` materialisation for `InputSandbox` uses symlinks (fast, but visible to tools that `readlink`) or hard links (opaque, but same-filesystem only) — likely per-strategy config with hard links default.
 - Whether the stat cache should be keyed by `(dev, inode)` in addition to path, to survive renames without re-hashing.
-- Where settings (`--set`) validation lives: `manifest` (they're workspace surface) vs `settings` (they're invocation surface) — leaning `settings`, validated against declarations at Resolve.
+- Where settings (`--set`) validation lives: `manifest` (they're workspace surface) vs `settings` (they're invocation surface) — leaning `settings`, validated against declarations at Resolve. Settled so far: a `$opt:name` reference in a command is checked against the declared settings at Resolve. Where `--set` values are validated stays open.
 - Whether `graph.json` is written on every build or only on `buildl graph` — writing always makes `gc` roots simpler; measuring the cost first.
 
 ## References
