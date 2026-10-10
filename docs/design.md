@@ -149,6 +149,8 @@ The design decisions in those lines:
 - **`b.sources()` is the declaration phase's only filesystem read**, done host-side rather than through an engine grant. It returns the regular files under the declaring directory that match the pattern, relative to that directory and sorted by the host, so declaration is deterministic regardless of filesystem order. Symlinks are never followed, and a declaring directory that resolves outside the workspace is refused. Every list field accepts one level of nesting, spliced in order, so `inputs = { b.sources("src/*.c"), "go.mod" }` is one flat list.
 - **`b.target` accepts a small closed table**: `rule` or inline `run`, `inputs`, `deps`, `outputs` (default: the target name), `env` (names checked against the ceiling), `network = true` (visible in `plan`, §11), and `always = true` for phony targets. Every field is an action-key component; the surface grows reluctantly.
 - **`b.option(name, { default })` declares a build setting** — an invocation-time parameter with an explicit default, referenced in argv as `$opt:name` and overridden with `--set name=value`. Settings fold into the action key, so differently-parameterised runs cache separately and correctly (§10.2).
+- **`b.alias(name, target)` gives a target a second name.** An alias names a target, never another alias or a rule. A dependency may name an alias, and resolves to the target behind it.
+- **A list keeps the order it was written in.** `deps`, `inputs`, `outputs` and `env` reach the graph in written order with repeats dropped, so `$deps` and `$in` expand in that order. Reordering a list changes the command, and with it the action key.
 
 ## 6. Grant negotiation: the DAG is the request
 
@@ -214,7 +216,7 @@ Every staged declaration carries provenance (the file that made it), which later
 
 ### 8.2 Resolve
 
-Pure in-memory Rust: intern names namespaced by directory, resolve labels, then three validations that each fail with provenance — duplicates (both declaration sites named), unknown references (with a did-you-mean from the interned set), and cycles (the whole cycle path reported, not just its existence). Output: the DAG, including the reverse edges and per-node dependency counters the executor needs.
+Pure in-memory Rust: intern names namespaced by directory, resolve labels, then three validations that each fail with provenance — duplicates (both declaration sites named), unknown references (with a did-you-mean from the interned set), and cycles (the whole cycle path reported, not just its existence). Output: the DAG, including the reverse edges. A node's dependency count is the length of its edge list; the counters that change during a build belong to the scheduler (§8.4).
 
 ### 8.3 Plan: the action key
 
@@ -582,7 +584,7 @@ Nothing in this section touches Lua. Scale is a pure host-side concern — the t
 Two adjustments to airsl's `confined` preset close the remaining holes:
 
 1. **Drop `os`, curate the module set, and strip what remains.** `os.time`, `os.clock`, and Lua 5.4's entropy-seeded `math.random` are nondeterministic. The declaration policy uses airsl's minimal language surface, which has no `os`, and a `ModuleSet` installing `json`, `path`, `regex`, `hash`, `glob` while omitting `time`, `proc`, `env`, `stdio`. airsl lets the host choose both — configuration, not new machinery [1]. The minimal surface still loads `math` whole, so buildl removes `math.random` and `math.randomseed` itself. It also removes `airsstack.path.absolute`, which reads the process working directory, and `print`, because stdout belongs to the CLI. Last, it replaces `tostring` and `string.format`, because rendering a table or function renders its address, which can differ between runs: a table, function, thread or userdata with no `__tostring` metamethod, rendered by either, is an error, and so is `%p`.
-2. **Canonicalise instead of forbidding `pairs`.** Lua table iteration order is unspecified, so the graph is made order-insensitive: keyed by names, sorted at Resolve, action keys order-independent. A `pairs` loop yields a byte-identical graph in any order.
+2. **Canonicalise instead of forbidding `pairs`.** Lua table iteration order is unspecified, so the graph is made insensitive to the order declarations are issued in: keyed by names, numbered in label order at Resolve. A `pairs` loop that issues declarations yields a byte-identical graph in any order. The order inside one list is different: it is part of the command and of the action key, and a list whose order varies between two evaluations fails `buildl check`.
 
 Because declaration is cheap it is also _checkable_: evaluate twice and compare the two sorted staging lists by value; a nondeterministic build file fails `buildl check` with the diff — the first position at which the two runs disagree, with what each run declared there. A `pairs` loop does not fail the check, because both lists are sorted before they are compared.
 

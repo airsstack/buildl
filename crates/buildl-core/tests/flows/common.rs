@@ -7,8 +7,9 @@ use std::collections::BTreeMap;
 
 use buildl_core::{
     BuildFile, DeclarationOrder, DeclarationSource, Diagnostic, Directory, Error, Evaluated,
-    EvaluationFailure, Freshness, NetworkAccess, Ports, Result, StagedDeclaration, StagedFile,
-    StagedItem, StagedSetting, StagedSubdir, StagedTarget, TargetRole, Written,
+    EvaluationFailure, Freshness, NetworkAccess, Ports, Result, StagedAlias, StagedDeclaration,
+    StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, TargetRole,
+    Written,
 };
 
 /// What the fake holds for one directory.
@@ -141,17 +142,46 @@ pub fn file(items: Vec<StagedItem>, subdirs: &[&str]) -> FakeFile {
 /// A `b.target(name, { run = { "cc" }, deps = deps })` call.
 #[must_use]
 pub fn target(name: &str, deps: &[&str]) -> StagedItem {
-    StagedItem::Target(StagedTarget {
+    target_with(name, |target| {
+        target.deps = deps.iter().map(|dep| Written::new(*dep)).collect();
+    })
+}
+
+/// A `b.target(name, { run = { "cc" } })` call, after `change` is applied to it.
+#[must_use]
+pub fn target_with(name: &str, change: impl FnOnce(&mut StagedTarget)) -> StagedItem {
+    let mut target = StagedTarget {
         name: Written::new(name),
         role: TargetRole::Build,
         rule: None,
         run: Some(vec![Written::new("cc")]),
         inputs: Vec::new(),
-        deps: deps.iter().map(|dep| Written::new(*dep)).collect(),
+        deps: Vec::new(),
         outputs: None,
         env: Vec::new(),
         network: NetworkAccess::Sealed,
         freshness: Freshness::Cached,
+    };
+    change(&mut target);
+    StagedItem::Target(target)
+}
+
+/// A `b.rule(name, { run = run, desc = description })` call.
+#[must_use]
+pub fn rule(name: &str, run: &[&str], description: Option<&str>) -> StagedItem {
+    StagedItem::Rule(StagedRule {
+        name: Written::new(name),
+        run: run.iter().map(|argument| Written::new(*argument)).collect(),
+        description: description.map(Written::new),
+    })
+}
+
+/// A `b.alias(name, target)` call.
+#[must_use]
+pub fn alias(name: &str, target: &str) -> StagedItem {
+    StagedItem::Alias(StagedAlias {
+        name: Written::new(name),
+        target: Written::new(target),
     })
 }
 

@@ -342,11 +342,14 @@ mod tests {
         }
     }
 
-    fn convert_target_in(directory: &str, target: StagedTarget) -> crate::Result<Declaration> {
+    fn convert_target_in(
+        directory: &str,
+        target: StagedTarget,
+    ) -> crate::error::Result<Declaration> {
         convert(declare(StagedItem::Target(target)), &file_in(directory))
     }
 
-    fn invalid_field(result: crate::Result<Declaration>) -> DeclarationField {
+    fn invalid_field(result: crate::error::Result<Declaration>) -> DeclarationField {
         match result.unwrap_err() {
             Error::InvalidDeclaration { field, order, .. } => {
                 assert_eq!(order, DeclarationOrder::new(4));

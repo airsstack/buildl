@@ -22,10 +22,11 @@
 //! | Module | Holds |
 //! |---|---|
 //! | [`error`] | the one error enum and the crate-wide `Result` alias |
-//! | [`types`] | the validated domain values — names, identities, instants, declarations — and the as-written values a build file stages |
+//! | [`types`] | the validated domain values — names, identities, instants, declarations, the target graph — and the as-written values a build file stages |
 //! | [`json`] | the one canonical serializer every byte of output goes through |
 //! | [`ports`] | every trait in the crate: the ports through which everything outside it is reached, and the bundle that names one implementation of each |
 //! | [`load`](mod@load) | Load, the first phase: build files to validated, sorted declarations |
+//! | [`resolve`](mod@resolve) | Resolve, the second phase: declarations to the target graph |
 //! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command |
 //!
 //! Each phase has its own module, named for the phase. Five rules keep that arrangement
@@ -52,7 +53,10 @@
 //! Pre-release. Load is implemented: [`load`](fn@load) walks the workspace's build files
 //! through the [`DeclarationSource`] port and returns their declarations validated and sorted,
 //! and [`Pipeline::check`] runs it twice to catch a build file that declares differently on
-//! each evaluation. Resolve, Plan, Execute and Record are not implemented yet.
+//! each evaluation. Resolve is implemented: [`resolve`](fn@resolve) turns those declarations
+//! into a [`TargetGraph`], refusing a name declared twice, a reference that names nothing or the
+//! wrong kind of thing, and a dependency cycle; [`Pipeline::graph`] runs both phases. Plan,
+//! Execute and Record are not implemented yet.
 //!
 //! This file holds only module declarations and re-exports, so it carries no logic to
 //! unit-test.
@@ -62,18 +66,22 @@ pub mod json;
 pub mod load;
 pub mod pipeline;
 pub mod ports;
+pub mod resolve;
 pub mod types;
 
 pub use error::{
-    ActionFound, DeclarationField, Error, EvaluationFailure, EvaluationLimit, NameKind, Result,
+    ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
+    EvaluationLimit, NameKind, Result,
 };
 pub use load::load;
 pub use pipeline::Pipeline;
 pub use ports::{Clock, DeclarationSource, Ports};
+pub use resolve::resolve;
 pub use types::{
     Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
     Description, Diagnostic, Digest, Directory, EntryName, EnvName, Evaluated, FieldName,
-    Freshness, Label, NetworkAccess, NodeId, OutputName, Provenance, Rule, Setting, SettingName,
-    SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
-    StagedSetting, StagedSubdir, StagedTarget, Target, TargetName, TargetRole, Timestamp, Written,
+    Freshness, Label, NetworkAccess, Node, NodeId, OutputName, Provenance, Rule, Setting,
+    SettingName, SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem,
+    StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target, TargetGraph, TargetName,
+    TargetRole, Timestamp, Written,
 };

@@ -22,6 +22,7 @@
 //! - [`Written`] — text exactly as a build file wrote it, typed by what it is meant to become.
 //! - [`Declaration`] and its parts — what a build file declared, validated.
 //! - [`BuildFile`], [`Evaluated`] and the staged values — what crosses the build-file port.
+//! - [`TargetGraph`] and [`Node`] — the runnable targets and the dependencies between them.
 //!
 //! Non-responsibilities: decisions between different concepts. A type here validates and renders
 //! itself, and may combine values of its own kind; logic that needs two different concepts to
@@ -47,6 +48,7 @@ pub mod output_name;
 pub mod provenance;
 pub mod setting;
 pub mod source_path;
+pub mod target_graph;
 pub mod target_name;
 pub mod timestamp;
 pub mod written;
@@ -73,6 +75,7 @@ pub use output_name::OutputName;
 pub use provenance::Provenance;
 pub use setting::{SettingName, SettingValue};
 pub use source_path::SourcePath;
+pub use target_graph::{Node, TargetGraph};
 pub use target_name::TargetName;
 pub use timestamp::Timestamp;
 pub use written::Written;

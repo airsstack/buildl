@@ -3,10 +3,12 @@
 //! Its own file because a command is nothing but its arguments: the two types are read and
 //! changed together, and a command's only rule beyond its arguments' is that it has one.
 //!
-//! Responsibilities: [`Argument`] and [`Command`], their constructors, and their rendering.
+//! Responsibilities: [`Argument`] and [`Command`], their constructors, their rendering, and
+//! finding the build settings an argument refers to.
 //!
 //! Non-responsibilities: placeholder expansion. `$in`, `$out`, `$deps` and `$opt:name` stay text
-//! here; the executor expands them when the action runs.
+//! here; the executor expands them when the action runs. Whether a setting an argument refers to
+//! is declared belongs to the phase that builds the graph.
 
 use core::fmt;
 use core::str::FromStr;
@@ -15,6 +17,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, NameKind, Result};
 use crate::types::grammar;
+
+/// The text that starts a reference to a build setting.
+const SETTING_MARKER: &str = "$opt:";
 
 /// One element of a command's argument vector, such as `cc` or `$in`.
 ///
@@ -46,6 +51,39 @@ impl Argument {
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// The build-setting names this argument refers to, in the order they appear.
+    ///
+    /// A reference is `$opt:` followed by a name: the longest run of ASCII letters, digits, `-`
+    /// and `_`. An `$opt:` with no such character after it is not a reference and stays text.
+    /// A name is returned as written, so it may be longer than a setting name can be.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use buildl_core::Argument;
+    ///
+    /// let argument = Argument::parse("--run=$opt:test_filter")?;
+    /// assert_eq!(argument.setting_references(), ["test_filter"]);
+    /// # Ok::<(), buildl_core::Error>(())
+    /// ```
+    #[must_use]
+    pub fn setting_references(&self) -> Vec<&str> {
+        let mut references = Vec::new();
+        let mut rest = self.0.as_str();
+        while let Some((_, after)) = rest.split_once(SETTING_MARKER) {
+            let end = after
+                .bytes()
+                .position(|byte| !grammar::is_key_byte(byte))
+                .unwrap_or(after.len());
+            let (name, tail) = after.split_at(end);
+            if !name.is_empty() {
+                references.push(name);
+            }
+            rest = tail;
+        }
+        references
     }
 }
 
@@ -159,6 +197,42 @@ mod tests {
         assert_eq!(value.to_string(), "$out");
         assert_eq!(value.as_str(), "$out");
         assert!(serde_json::from_str::<Argument>(r#""a\u0000b""#).is_err());
+    }
+
+    fn references(raw: &str) -> Vec<String> {
+        Argument::parse(raw)
+            .unwrap()
+            .setting_references()
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    #[test]
+    fn setting_references_are_found_in_order() {
+        assert_eq!(references("$opt:test_filter"), ["test_filter"]);
+        assert_eq!(references("--run=$opt:a.$opt:b-c"), ["a", "b-c"]);
+        assert_eq!(references("$opt:A9_x/tail"), ["A9_x"]);
+        assert_eq!(references("$opt:a$opt:b"), ["a", "b"]);
+    }
+
+    #[test]
+    fn text_that_names_no_setting_is_not_a_reference() {
+        for raw in ["$opt:", "$opt:.x", "$option", "opt:x", "$in", "", "$opt"] {
+            assert!(references(raw).is_empty(), "{raw:?} holds no reference");
+        }
+    }
+
+    #[test]
+    fn a_marker_with_no_name_does_not_hide_a_later_reference() {
+        assert_eq!(references("$opt:.$opt:x"), ["x"]);
+        assert_eq!(references("$opt:$opt:x"), ["x"]);
+    }
+
+    #[test]
+    fn a_reference_longer_than_a_setting_name_is_returned_whole() {
+        let name = "a".repeat(257);
+        assert_eq!(references(&format!("$opt:{name}")), [name]);
     }
 
     #[test]

@@ -8,4 +8,5 @@
 pub mod common;
 
 mod check;
+mod graph;
 mod load;

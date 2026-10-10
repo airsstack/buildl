@@ -67,8 +67,8 @@ graph LR
 |**I-guard**|—|Machine-check the three rules the workspace currently honours by convention: the crate edges, `buildl-core`'s freedom from filesystem, process, thread, environment and clock APIs, and the declared `rust-version`|each rule turns the gate red when violated|**done**, 2026-09-21 (§4)|
 |**I3 Load**|`buildl-core`|`Declaration`, `BuildFile`, `StagedFile`, `DeclarationSource`; the `Pipeline` skeleton and `FakePorts`|a fake source's output becomes `Vec<Declaration>`|**done**, 2026-10-08 (§4)|
 |**I-lua**|`buildl-lua`|`DeclarationSource` on airsl; the `buildl` table bound to both `airsstack.buildl` and the `buildl` global (design §5)|`build.lua` fixtures produce exact declarations|**done**, 2026-10-08 (§4)|
-|**I4 Resolve**|`buildl-core`|the `TargetGraph` arena, label resolution, cycle detection, grants (wanted set ∩ ceiling)|the pipeline stops at `graph`|not started|
-|**I5 Plan**|`buildl-core`|the action key, `KeyComponents`, why-dirty; the digest, stat, tool and cache-read ports|the pipeline stops at `plan`|not started|
+|**I4 Resolve**|`buildl-core`|the `TargetGraph` arena, duplicate, unknown-reference and cycle detection; the guard that no phase module imports another|the pipeline stops at `graph`|**done**, 2026-10-10 (§4)|
+|**I5 Plan**|`buildl-core`|the action key, `KeyComponents`, why-dirty; grants (wanted set ∩ ceiling); the manifest, digest, stat, tool and cache-read ports|the pipeline stops at `plan`|not started|
 |**I6 Execute + Record**|`buildl-core`|`Schedule`, `Dispatcher`, `ExecStrategy`; cas, cache and log writes; the crash-safety invariant (design §8.5)|a full `build` runs against fakes|not started|
 
 Ground rules for the ladder:
@@ -89,6 +89,7 @@ Ground rules for the ladder:
 |I2 foundation|`.claudestacks/sdlc/2026-09-18-core-foundation/`|`01-error-model` (2 tasks), `02-label-types` (4 tasks), `03-identity-types` (4 tasks), `04-canonical-json` (4 tasks), `05-clock-port` (1 task), `06-documentation` (6 tasks)|`70184be` … `13cc89c`|
 |I3 Load|`.claudestacks/sdlc/2026-10-06-core-load/`|`01-value-types` (11 tasks), `02-written` (7 tasks), `03-declaration-types` (12 tasks), `04-load-errors` (6 tasks), `05-ports` (2 tasks), `06-load` (11 tasks), `07-pipeline-check` (3 tasks), `08-documentation` (8 tasks)|`1d6593d` … `4192376`|
 |I-lua|`.claudestacks/sdlc/2026-10-08-lua-adapter/`|`01-workspace-config` (4 tasks), `02-staging` (1 task), `03-value-readers` (2 tasks), `04-sources-walk` (1 task), `05-buildl-module` (2 tasks), `06-lua-source` (5 tasks), `07-fixtures` (4 tasks), `08-documentation` (4 tasks)|`27f7976` … `5e83952`|
+|I4 Resolve|`.claudestacks/sdlc/2026-10-10-core-resolve/`|`01-graph-types` (1 task), `02-setting-references` (2 tasks), `03-resolve-errors` (2 tasks), `04-suggest` (1 task), `05-cycle` (1 task), `06-resolve` (4 tasks), `07-pipeline-graph` (2 tasks), `08-module-edge-guard` (1 task), `09-documentation` (4 tasks)|`46a8164` … `c8b84e8`|
 
 The plan file's `## Review findings`, `## Probe results` and `## Deviations` sections hold the full execution record. §5 lists the follow-ups from that record that are still open.
 
@@ -99,8 +100,7 @@ Findings an earlier slice recorded but left out of scope, each assigned to the s
 |#|Follow-up|Origin|Target|
 |---|---|---|---|
 |5|The `buildl-cli` `description` says "a thin clap shell", but clap is not yet a dependency.|I1 review|CLI slice|
-|11|No guard asserts that a phase module in `buildl-core` does not import another. The rule is `architecture.md`'s "no phase invokes the next"; the mechanism would be a golden file of permitted intra-crate module edges, diffed by a `cargo make` task, in the shape of `guard-crate-edges`. I2 shipped no phase module, so the guard would have asserted nothing.|I2 review|I4 Resolve, the first slice with two phase modules|
-|13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs; which directories to skip is known only once `buildl.toml` is parsed.|I-lua spec §6.2|I4 Resolve (the `Manifest` port)|
+|13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs; which directories to skip is known only once `buildl.toml` is parsed.|I-lua spec §6.2|I5 Plan (the `Manifest` port)|
 
 ## 6. Process notes
 
