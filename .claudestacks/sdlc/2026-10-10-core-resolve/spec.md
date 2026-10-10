@@ -279,7 +279,7 @@ The flag texts and the `provenance` object are the ones `Declaration` already se
 (`crates/buildl-core/src/types/declaration.rs:242-245`). A target's label is its key and is not
 repeated in its body. `deps` lists the labels of `edges[i]` in the order the build file wrote them, and
 `env`, `inputs` and `outputs` are in written order too (D3); object keys are in text order. `reverse` and `by_label` are not written: both are derivable.
-No `NodeId` appears, so adding a target changes only that target's lines and the `deps` of whatever
+No `NodeId` appears, so adding a target changes only that target's entry and the `deps` of whatever
 names it.
 
 ### 3.4 `Argument::setting_references`
@@ -490,9 +490,12 @@ A `cargo make` task `guard-module-edges`, in the shape of `guard-crate-edges`
 (`Makefile.toml:121-144`), added to the `clippy` task's dependencies (`Makefile.toml:60`). It:
 
 1. fails if any line under `crates/buildl-core/src` matches `crate::\{|super::super`, or any line of
-   a `src/*/mod.rs` matches `super::`, naming the lines. These spellings import across modules
-   without the `crate::<module>` text step 2 reads: in a module's `mod.rs`, `super` is the crate root.
-   None is in use (P7, P9);
+   a `src/*/mod.rs` matches `super::`, or any line that is not a comment matches `crate::[A-Z]`,
+   naming the lines. These spellings import across modules without the `crate::<module>` text step 2
+   reads: in a module's `mod.rs`, `super` is the crate root, and `crate::<Item>` names an item through
+   the crate root's re-export. The first two are not in use (P7, P9). The third had two uses, both
+   `crate::Result` in the tests of `load/traversal.rs`, rewritten as `crate::error::Result` when the
+   guard landed;
 2. lists the edges, with `LC_ALL=C` so the order is the same on every host:
 
    ```sh
@@ -526,6 +529,14 @@ golden file is edited, so an import from one phase module into another, written 
 1 and 2 cover, cannot land unseen. Every phase module is a directory, so step 1's `mod.rs` rule covers
 each of them. One spelling stays outside the guard: a top-level `super::` in a single-file module.
 `error.rs` is the only such module today, and it is not a phase.
+
+**Amended 2026-10-10, while plan `08` ran.** Step 1's third pattern, `crate::[A-Z]`, was added after
+the plan's review showed the guard as first specified missing an import: with
+`use crate::Pipeline;` in a file under `src/resolve/`, `cargo make guard-module-edges` exited `0`,
+because step 2 reads only lowercase module paths. With the third pattern the same file fails the
+task, which prints `crates/buildl-core/src/resolve/zz_probe.rs:2:use crate::Pipeline;`; a doc line
+holding `` [`Label`](crate::Label) `` alone passes. A phase's own root re-export (`crate::load`,
+`crate::resolve`) is lowercase and shares its module's name, so step 2 lists it as that module's edge.
 
 ## 8. Module layout
 
@@ -601,7 +612,7 @@ Flows in `tests/flows/graph.rs`, through `Pipeline::<FakePorts>::graph` and `Fak
 |`docs/design.md` §8.2|the dependency count is the length of a node's edge list; the counters belong to the scheduler|
 |`docs/architecture-building-blocks.md` §7|the rules table gains the module-edge guard|
 |`docs/roadmap.md`|the I4 row and §4 on completion; follow-up #11 closed. Grants and follow-up #13 already sit under I5 (`docs/roadmap.md:70-71`, `:103`), edited when this chain's intent was written|
-|`README.md`|no change: its only passage on dependencies, aliases and placeholders (`README.md:60-68`) states no list order and no alias rule|
+|`README.md`|the status paragraph (`README.md:7`) names Resolve as implemented and the Lua adapter as landed. Nothing else changes: its only passage on dependencies, aliases and placeholders (`README.md:60-68`) states no list order and no alias rule. Amended 2026-10-10: this row first read "no change", which left the status paragraph saying Resolve was not implemented|
 
 Mermaid stays Mermaid, and every section cross-reference survives.
 

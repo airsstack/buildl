@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-10
 depends-on: [07]
 ---
@@ -8,7 +8,7 @@ depends-on: [07]
 
 **Goal:** The gate fails when `buildl-core` gains a module-to-module import that the golden file does not list.
 
-**Architecture:** A `cargo make` task in the shape of `guard-crate-edges`: it lists which top-level module of `buildl-core` imports which, by reading the text `crate::<module>` on lines that are not comments, and diffs the list against `crates/expected-module-edges.txt`. A new edge, such as one phase importing another, turns the gate red until someone edits the golden file. Two spellings cross modules without that text, so the task refuses them outright: a grouped `crate::{…}`, and `super::` climbing to the crate root (twice from a nested file, once from a module's own `mod.rs`). The task hangs off `clippy`, like the other two guards, so `cargo make dod` runs it.
+**Architecture:** A `cargo make` task in the shape of `guard-crate-edges`: it lists which top-level module of `buildl-core` imports which, by reading the text `crate::<module>` on lines that are not comments, and diffs the list against `crates/expected-module-edges.txt`. A new edge, such as one phase importing another, turns the gate red until someone edits the golden file. Three spellings cross modules without that text, so the task refuses them outright: a grouped `crate::{…}`, `super::` climbing to the crate root (twice from a nested file, once from a module's own `mod.rs`), and `crate::<Item>`, an item named through the crate root's re-export. The task hangs off `clippy`, like the other two guards, so `cargo make dod` runs it.
 
 **Tech Stack:** `cargo-make`, POSIX shell, TOML. No new dependency.
 
@@ -42,8 +42,9 @@ All work happens in the worktree, on its branch, never on `main`. Commits follow
 ## File structure
 
 ```
-Makefile.toml                       — [modify] guard-module-edges, added to clippy's dependencies
-crates/expected-module-edges.txt    — [create] the golden list of module edges
+Makefile.toml                              — [modify] guard-module-edges, added to clippy's dependencies
+crates/expected-module-edges.txt           — [create] the golden list of module edges
+crates/buildl-core/src/load/traversal.rs   — [modify] two `crate::Result` in the tests, spelled through the module
 ```
 
 ### Task 1 — Guard `buildl-core`'s module edges
@@ -51,6 +52,7 @@ crates/expected-module-edges.txt    — [create] the golden list of module edges
 **Files:**
 - Modify `Makefile.toml`
 - Create `crates/expected-module-edges.txt`
+- Modify `crates/buildl-core/src/load/traversal.rs`
 
 **Steps:**
 
@@ -67,10 +69,11 @@ crates/expected-module-edges.txt    — [create] the golden list of module edges
    # first. A committed list of the imports that exist turns a new one into a diff
    # someone has to approve.
    #
-   # The listing reads the text `crate::<module>` on lines that are not comments. Two
-   # spellings cross modules without that text, so both are refused outright: a
-   # grouped `crate::{...}`, and `super::` climbing to the crate root — twice from a
-   # nested file, once from a module's own mod.rs.
+   # The listing reads the text `crate::<module>` on lines that are not comments.
+   # Three spellings cross modules without that text, so each is refused outright: a
+   # grouped `crate::{...}`; `super::` climbing to the crate root — twice from a
+   # nested file, once from a module's own mod.rs; and `crate::<Item>`, an item named
+   # through the crate root's re-export, which hides the module it lives in.
    script_runner = "@shell"
    script = '''
    src="crates/buildl-core/src"
@@ -87,6 +90,12 @@ crates/expected-module-edges.txt    — [create] the golden list of module edges
 
    if grep -n 'super::' "${src}"/*/mod.rs; then
        echo "guard: super:: in a module's mod.rs names the crate root" >&2
+       echo "       write each one as crate::<module>::<item>" >&2
+       exit 1
+   fi
+
+   if grep -rnE 'crate::[A-Z]' "${src}" | grep -vE '^[^:]*:[0-9]+:[[:space:]]*//'; then
+       echo "guard: the lines above name an item through the crate root, which hides its module" >&2
        echo "       write each one as crate::<module>::<item>" >&2
        exit 1
    fi
@@ -116,6 +125,8 @@ crates/expected-module-edges.txt    — [create] the golden list of module edges
    ```toml
    [tasks.guard-core-purity]
    ```
+
+   The third check refuses the two `crate::Result` in the tests of `crates/buildl-core/src/load/traversal.rs`. Write both as `crate::error::Result`, then run `cargo fmt --all`: the longer signature wraps.
 
 3. Run it and confirm it fails, listing the sixteen edges the tree has:
 
@@ -211,7 +222,7 @@ crates/expected-module-edges.txt    — [create] the golden list of module edges
 11. Commit:
 
    ```
-   $ git add Makefile.toml crates/expected-module-edges.txt
+   $ git add Makefile.toml crates/expected-module-edges.txt crates/buildl-core/src/load/traversal.rs
    $ git commit -m "ci(repo): guard buildl-core's module edges"
    ```
 
@@ -224,4 +235,36 @@ crates/expected-module-edges.txt    — [create] the golden list of module edges
   `resolve -> load`.
 - With `use crate::load::load;` in a file under `crates/buildl-core/src/resolve/`,
   `cargo make clippy` exits non-zero (step 8 above); the file is gone afterwards:
-  `git status --short crates/buildl-core` prints nothing before the commit.
+  `git status --short crates/buildl-core` prints only `load/traversal.rs` before the commit.
+
+## Review findings
+
+One reviewer pass over the task, 2026-10-10, on the guard as first specified. Verdict: spec compliant, no drift, blocking set empty. The reviewer re-ran the gate: `cargo fmt --all -- --check` exit 0; `cargo make dod` exit 0, with `guard-module-edges` running as the third dependency of `clippy`; `cargo deny check` exit 0. The script and the golden file were `diff`-identical to this plan's blocks, and the reviewer recounted the 16 edges from the tree.
+
+- risk, fixed and verified — an import through a crate-root re-export passed the guard: `use crate::Pipeline;` in a file under `src/resolve/` left `cargo make guard-module-edges` at exit 0, because the listing reads only `crate::[a-z_]+`. The author chose to tighten the guard in this run. A third check now refuses `crate::[A-Z]` on a line that is not a comment. Shown by `cargo make guard-module-edges` with `use crate::Pipeline;` in `crates/buildl-core/src/resolve/zz_probe.rs`, which printed `crates/buildl-core/src/resolve/zz_probe.rs:2:use crate::Pipeline;`, then `guard: the lines above name an item through the crate root, which hides its module`, and exited 1; with only the doc line `` //! Probe. [`Label`](crate::Label) in a comment is ignored. `` in that file it ended `[cargo-make] INFO - Build Done in 0.34 seconds.` After the fix `cargo make dod` exited 0 and `cargo deny check` printed `advisories ok, bans ok, licenses ok, sources ok` — `Makefile.toml:179`
+- risk, fixed with the one above — the comment said two spellings cross modules unread "so both are refused outright", which the crate-root re-export made false. It now names three — `Makefile.toml:154`
+- spec text, fixed with the one above — "One spelling stays outside the guard" was false while the crate-root re-export passed. The spec's §7.1 step 1 gains the third pattern and §7 gains a dated amendment; the sentence is true again — spec §7.2
+- nit — "puts both in front of anyone about to commit": three guards hang off `clippy` now. Not fixed — `Makefile.toml:57`
+- nit — `[a-z_]+` stops at a digit, so a module named `v2` or `sha256` would be listed truncated and its self-edge not filtered. No such module exists. Not fixed — `Makefile.toml:191`
+- nit — `if grep ...; then` reads grep's error exit (2) as "no match", and the listing pipeline has no pipefail, so a read error passes that step silently. The final diff still catches it for any module with golden edges. Not fixed — `Makefile.toml:167`
+- nit — nothing fails if `guard-module-edges` is dropped from `clippy`'s dependencies or the script is weakened; the two older guards stand the same way. Not fixed — `Makefile.toml:60`
+- unverified — the same output on Linux was not shown: no Linux host was at hand. Nothing in the script is platform-specific by reading, and `LC_ALL=C` is exported before the glob and the sort. CI's Ubuntu job is the first Linux run — `Makefile.toml:165`
+
+## Probe results
+
+No separate probe was run before the task. The task's own steps are the probes, and each matched the plan:
+
+- step 3, empty golden — `cargo make guard-module-edges` — failed (cargo-make exit 105), listing the 16 `+` edges of step 4 and the two guard message lines
+- step 5, golden written — same command — exit 0, `[cargo-make] INFO - Running Task: guard-module-edges`
+- step 8, `use crate::load::load;` in `crates/buildl-core/src/resolve/zz_probe.rs` — `cargo make clippy` — stopped at the guard (exit 105) with `+resolve -> load`
+
+One probe came out against the plan and the spec, run by the reviewer:
+
+- **against the plan** — claim: an import from one module into another, in any spelling the guard does not refuse, shows up as an edge. `use crate::Pipeline;` in a file under `src/resolve/` — `cargo make guard-module-edges` — exit 0, no edge listed. Closed by the third check above.
+
+## Deviations
+
+- 2026-10-10 — the guard refuses a third spelling, `crate::<Item>`, which the plan as approved did not have. The review showed the gap, the author chose to close it in this run, and this plan's architecture line, script block, file list, step 2 and commit step were amended to match, as was the spec's §7. The change was made on the main thread, not by a fresh implementer.
+- 2026-10-10 — `crates/buildl-core/src/load/traversal.rs` joined the task's files: its tests held the only two code uses of `crate::<Item>` (`crate::Result`), now `crate::error::Result`. `load -> error` was already in the golden file, which did not change.
+- 2026-10-10 — the task's commit step was not run during execution. The commit was made afterwards, at the author's request, with the fix folded into the task's one commit.
+- 2026-10-10 — the plan ran while plan `07`, which it depends on, was built and reviewed but not yet marked `done`. Plans `06` to `09` were executed as one requested run.

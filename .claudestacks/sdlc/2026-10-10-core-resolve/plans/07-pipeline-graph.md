@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-10
 depends-on: [06]
 ---
@@ -637,3 +637,26 @@ crates/buildl-core/tests/flows/golden/graph.json  — [create] the pinned serial
 - Every row of spec §9's flows table has a passing flow in `tests/flows/graph.rs`.
 - The golden file holds no number: every reference in it is a label.
 - `Pipeline::check` is unchanged, and its four flows still pass.
+
+## Review findings
+
+One reviewer pass over both tasks, 2026-10-10. Verdict: spec compliant, no drift, blocking set empty. The reviewer re-ran the gate: `cargo fmt --all -- --check` exit 0; `cargo make dod` exit 0 (`buildl-core` unit 215 passed, flows 21, doctests 4); `cargo deny check` exit 0 (`advisories ok, bans ok, licenses ok, sources ok`). The golden file, the fixture and the six failure flows are `diff`-identical to this plan's blocks. No finding was fixed: each sits in text this plan prescribes.
+
+- risk — the single load (spec D8, and the doc sentence "this command loads once") has no guard: `resolve(self.check(entry)?)` in place of the body passes all eight graph flows, because every one uses `FakeSource::new`. A flow over `FakeSource::with_second_run` asserting that `graph` returns `Ok` would catch it. Neither this plan nor the spec's §9 calls for that flow — `crates/buildl-core/src/pipeline/driver.rs:68`
+- nit — the `# Errors` list reads as complete and leaves out `Error::TooManyTargets`, which `resolve`'s own doc lists — `crates/buildl-core/src/pipeline/driver.rs:65`
+- nit — only the root file is permuted; `lib_items()` holds one declaration, so "each file's declarations in another order" is met trivially for `lib`. Load's sort absorbs the permutation before Resolve, so the flow pins order independence through Load; Resolve's own rests on the unit test in `resolve/assembly.rs` — `crates/buildl-core/tests/flows/graph.rs:84`
+- nit — the test name says the Load error is "unchanged", but the match drops `diagnostic` with `..`; only `provenance` and `failure` are asserted — `crates/buildl-core/tests/flows/graph.rs:216`
+
+## Probe results
+
+No separate probe was run. Every fact a task asserts about existing code is put under test by the task's own cycle, and every run matched the plan:
+
+- task 1 red — `cargo test -p buildl-core --test flows graph` — ``error[E0599]: no method named `graph` found for struct `Pipeline<P>` in the current scope``
+- task 1 green — same command — `test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out`
+- task 2 red, with the placeholder golden `{}` — same command — `test result: FAILED. 6 passed; 2 failed; 0 ignored; 0 measured; 13 filtered out`. The serialized graph the two failures printed matched this plan's golden text before the golden was written.
+- task 2 green — same command — `test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 13 filtered out`
+
+## Deviations
+
+- 2026-10-10 — no task's commit step was run during execution. The commit is the author's to make; each task's files were left in the working tree.
+- 2026-10-10 — the plan ran while plan `06`, which it depends on, was built and reviewed but not yet marked `done`. Plans `06` to `09` were executed as one requested run.

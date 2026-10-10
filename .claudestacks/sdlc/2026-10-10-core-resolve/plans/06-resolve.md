@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-10
 depends-on: [01, 02, 03, 04, 05]
 ---
@@ -1885,3 +1885,46 @@ crates/buildl-core/src/lib.rs                   — [modify] re-export resolve (
   `$opt:` checked without a user. Both are tested in `resolve/assembly.rs`, where that order is
   decided.
 - The same declarations in reverse order resolve to an equal graph.
+
+## Review findings
+
+Two reviewer passes, 2026-10-10: one over tasks 1 to 3 at the plan's checkpoint, one over task 4. Both verdicts: spec compliant with amendments, blocking set empty. Each pass re-ran the gate: `cargo fmt --all -- --check` exit 0; `cargo make dod` exit 0; `cargo deny check` exit 0 (`advisories ok, bans ok, licenses ok, sources ok`). `buildl-core` after task 3: unit 194 passed, flows 13, doctests 3. After task 4: unit 215 passed, flows 13, doctests 4. `grep -rn 'dead_code' crates/buildl-core/src` prints nothing. Every file matches this plan's code blocks. No finding was fixed: each sits in text this plan prescribes.
+
+Tasks 1 to 3:
+
+- nit — the header says "three test modules need the same builders"; two use the file after task 3, three after task 4. A count in prose — `crates/buildl-core/src/resolve/fixtures.rs:3`
+- nit — the file has no `mod tests` and matches none of the guideline's five listed exemptions; the spec's §8 authorises it as a test-only file — `crates/buildl-core/src/resolve/fixtures.rs:3`
+- nit — `target_item`'s doc says "before `change` is applied", but the function applies `change` before it returns; `target_with` says "after" for the same behaviour — `crates/buildl-core/src/resolve/fixtures.rs:56`
+- nit — "The four kinds a build file can declare" is true of `Declared` today, and is a variant count in prose — `crates/buildl-core/src/resolve/index.rs:22`
+- nit — `alias_target`'s doc says "names another alias"; the arm also covers an alias that names itself — `crates/buildl-core/src/resolve/references.rs:113`
+- nit — the test helper `unknown` drops `UnknownReference::reference` with `..`, so no test in the file fails if that field is filled wrongly; task 4's assembly tests assert it — `crates/buildl-core/src/resolve/references.rs:260`
+- nit — "a target of either role": the fixtures build `TargetRole::Build` only, so the test-role half of the `Dep` and `Target` cells is not exercised. The code has no branch on the role — spec §4.3, §9
+- amendment hygiene — "the within-declaration order" and "a rule's `$opt:` checked without a user" are tested in `resolve/assembly.rs` (`:389`, `:420`, `:433`), not in `resolve/references.rs` as the spec's §9 row says. This plan's verification summary records the move; the spec's row is not amended — spec §9
+
+Task 4:
+
+- risk — the copy-through of `role`, `network` and `freshness` is unguarded: the fixtures build only `Build`, `Sealed` and `Cached`, so a constant in place of any of the three passes every unit and flow test. Plan `07`'s golden adds a `Test` role; nothing uses `NetworkAccess::Declared` or `Freshness::Always`. The code is correct as delivered — `crates/buildl-core/src/resolve/assembly.rs:144`
+- nit — the rustdoc says "Every dependency becomes an edge, in the order it was written", while `node` drops a repeated id (spec §4.4, D3); the public doc leaves the repeats rule out — `crates/buildl-core/src/resolve/assembly.rs:22`
+- nit — `node_id(position: usize, count: usize)` takes two adjacent values of one type; a swapped call compiles and only misreports the count. Private, one call site — `crates/buildl-core/src/resolve/assembly.rs:108`
+- nit — `a_position_within_u32_is_an_id` computes `last + 1` with `last == u32::MAX as usize`, which overflows `usize` on a 32-bit target, while its sibling at `:533` is gated on `target_pointer_width = "64"`. CI is 64-bit only — `crates/buildl-core/src/resolve/assembly.rs:530`
+- nit — "evaluating build files ... which the phase before this one does" disagrees with `load/mod.rs:8`, which gives evaluation to the `DeclarationSource` port — `crates/buildl-core/src/resolve/mod.rs:7`
+- nit — the crate doc says "Resolve, Plan, Execute and Record are not implemented yet" beside `pub use resolve::resolve`, and the module table has no `resolve` row. Plan `09` task 1 replaces that line — `crates/buildl-core/src/lib.rs:55`
+
+## Probe results
+
+No separate probe was run. Every fact a task asserts about existing code is put under test by the task's own cycle, and every run matched the plan:
+
+- task 1 red — `cargo test -p buildl-core --lib types::declaration` — ``error[E0599]: no method named `into_parts` found for struct `Declaration` in the current scope``
+- task 1 green — same command — `test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 169 filtered out`
+- task 2 red — `cargo test -p buildl-core --lib resolve::index` — ``error[E0432]: unresolved imports `super::Item`, `super::index` ``
+- task 2 green — same command — `test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 173 filtered out`
+- task 3 red — `cargo test -p buildl-core --lib resolve::references` — ``error[E0432]: unresolved imports `super::Holder`, `super::alias_target`, `super::dependency`, `super::rule`, `super::settings` ``
+- task 3 green — same command — `test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 182 filtered out`
+- task 4 red — `cargo test -p buildl-core --lib resolve::assembly` — ``error[E0432]: unresolved imports `super::node_id`, `super::resolve`, `super::without_repeats` `` and ``error[E0432]: unresolved import `assembly::resolve` ``
+- task 4 green — same command — `test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 194 filtered out`
+- task 4 — `cargo test -p buildl-core --lib resolve` — `test result: ok. 63 passed; 0 failed; 0 ignored; 0 measured; 152 filtered out`
+
+## Deviations
+
+- 2026-10-10 — no task's commit step was run during execution. The commit is the author's to make; each task's files were left in the working tree.
+- 2026-10-10 — the checkpoint after task 3 was reviewed but not held for the author. Plans `06` to `09` were executed as one requested run, so task 4 started once the checkpoint review named an empty blocking set.
