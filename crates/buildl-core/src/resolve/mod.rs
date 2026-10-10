@@ -2,42 +2,20 @@
 //!
 //! Its own directory because it is a phase, and each phase has one home that names no other.
 //!
-//! Responsibilities: the parts the phase is assembled from. Nothing is exported yet.
+//! Responsibilities: [`resolve`].
 //!
-//! This file holds only module declarations, so it carries no logic to unit-test.
+//! Non-responsibilities: evaluating build files and validating one declaration on its own,
+//! which the phase before this one does; and anything about whether a target needs to run.
+//!
+//! This file holds only module declarations and re-exports, so it carries no logic to unit-test.
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "called by the function that builds the graph, which is not written yet"
-    )
-)]
+pub mod assembly;
 mod cycle;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "called by the function that builds the graph, which is not written yet"
-    )
-)]
 mod index;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "called by the function that builds the graph, which is not written yet"
-    )
-)]
 mod references;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "called by the function that builds the graph, which is not written yet"
-    )
-)]
 mod suggest;
 
 #[cfg(test)]
 mod fixtures;
+
+pub use assembly::resolve;

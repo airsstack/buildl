@@ -72,6 +72,7 @@ pub use error::{
 pub use load::load;
 pub use pipeline::Pipeline;
 pub use ports::{Clock, DeclarationSource, Ports};
+pub use resolve::resolve;
 pub use types::{
     Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
     Description, Diagnostic, Digest, Directory, EntryName, EnvName, Evaluated, FieldName,

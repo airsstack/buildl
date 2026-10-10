@@ -51,7 +51,7 @@ pub struct Node {
 /// The targets of a workspace and the dependencies between them.
 ///
 /// Nodes are numbered in [`Label`] order, so a [`NodeId`] does not depend on the order build
-/// files were evaluated in. A graph is built by the phase that resolves declarations, which
+/// files were evaluated in. A graph is obtained from [`resolve`](fn@crate::resolve), which
 /// guarantees that its dependencies form no cycle and that every edge names a node of the same
 /// graph.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,13 +71,6 @@ impl TargetGraph {
     /// label index are derived here. The caller guarantees the rest: `nodes` is in label order,
     /// every edge and alias names a node of `nodes`, no list repeats an id, and the edges form
     /// no cycle.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "called by the phase that builds the graph, which is not written yet"
-        )
-    )]
     pub(crate) fn new(
         nodes: Vec<Node>,
         edges: Vec<Vec<NodeId>>,
