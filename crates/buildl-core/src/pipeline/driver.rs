@@ -1,9 +1,9 @@
 //! The pipeline's driver: one bundle of ports, and one method per command.
 //!
 //! Its own file because the driver owns the sequence of phases, and the sequence grows by one
-//! method per command as later phases arrive. Today it runs Load.
+//! method per command as later phases arrive. Today it runs Load and Resolve.
 //!
-//! Responsibilities: [`Pipeline`] and [`Pipeline::check`].
+//! Responsibilities: [`Pipeline`], [`Pipeline::check`] and [`Pipeline::graph`].
 //!
 //! Non-responsibilities: the phases' own logic, which each phase's module holds.
 
@@ -13,7 +13,8 @@ use core::fmt;
 use crate::error::{Error, Result};
 use crate::load::{declaration_order, load};
 use crate::ports::Ports;
-use crate::types::{Declaration, EntryName};
+use crate::resolve::resolve;
+use crate::types::{Declaration, EntryName, TargetGraph};
 
 /// The pipeline over one chosen implementation of each port.
 pub struct Pipeline<P: Ports> {
@@ -52,6 +53,20 @@ impl<P: Ports> Pipeline<P> {
         let first = load(&self.source, entry)?;
         let second = load(&self.source, entry)?;
         first_difference(&first, &second).map_or(Ok(first), Err)
+    }
+
+    /// Loads the workspace once and resolves its declarations into the target graph.
+    ///
+    /// The double evaluation that catches a nondeterministic build file is [`Pipeline::check`]'s;
+    /// this command loads once.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever the load returns, and otherwise whatever [`resolve`] returns: a name
+    /// declared more than once, a reference that names nothing or the wrong kind of thing, or a
+    /// dependency cycle.
+    pub fn graph(&self, entry: &EntryName) -> Result<TargetGraph> {
+        resolve(load(&self.source, entry)?)
     }
 }
 
