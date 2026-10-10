@@ -13,4 +13,12 @@
         reason = "called by the function that builds the graph, which is not written yet"
     )
 )]
+mod cycle;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "called by the function that builds the graph, which is not written yet"
+    )
+)]
 mod suggest;
