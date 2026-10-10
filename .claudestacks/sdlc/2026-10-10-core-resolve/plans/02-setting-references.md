@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-10
 ---
 
@@ -323,3 +323,23 @@ crates/buildl-core/src/types/argument.rs   — [modify] Argument::setting_refere
 - The four new `types::argument` tests cover every row of spec §3.4's table and a run of 257
   bytes.
 - `grammar::key` still rejects what it rejected before: its existing test is unchanged and passes.
+
+## Review findings
+
+One reviewer pass over both tasks' files, 2026-10-10. Verdict: spec compliant, blocking set empty. The reviewer re-ran the gate: `cargo fmt --all -- --check` exit 0; `cargo make dod` exit 0; `cargo deny check` exit 0 (`advisories ok, bans ok, licenses ok, sources ok`). Every code block of both tasks is in the tree as written.
+
+- nit — `split_at(end)` panics off a character boundary and is safe only because `grammar::is_key_byte` accepts ASCII bytes alone; that reason is stated nowhere in the source, and no test puts a multi-byte character straight after a name. Correct today. Not fixed — `crates/buildl-core/src/types/argument.rs:80`
+- nit — the module doc still says the module holds "the four shared grammars" and that "each function only says why a candidate is rejected"; `is_key_byte` is now handed to a sibling and returns `bool`. This plan prescribed no doc edit there. Not fixed — `crates/buildl-core/src/types/grammar.rs:8`
+
+## Probe results
+
+No separate probe was run. Every fact the tasks assert about existing code is put under test by their own cycles, and all four runs matched the plan:
+
+- task 1 red — `cargo test -p buildl-core --lib types::grammar` — ``error[E0432]: unresolved import `super::is_key_byte` ``
+- task 1 green — `cargo test -p buildl-core --lib types::grammar` — `test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 139 filtered out`
+- task 2 red — `cargo test -p buildl-core --lib types::argument` — ``error[E0599]: no method named `setting_references` found for struct `Argument` in the current scope``
+- task 2 green — `cargo test -p buildl-core --lib types::argument` — `test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 139 filtered out`
+
+## Deviations
+
+- 2026-10-10 — neither task's commit step was run during execution. The commit is the author's to make; each task's file was left in the working tree.

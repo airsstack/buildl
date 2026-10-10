@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-10
 ---
 
@@ -556,3 +556,22 @@ crates/buildl-core/src/lib.rs                  — [modify] re-export Node and T
 - `cargo test -p buildl-core --lib types::target_graph` runs seven tests, all passing.
 - The JSON test pins the exact bytes of a three-target graph whose labels `//a:z` and `//a-b:x`
   sort one way as labels and the other way as text, and the output holds no number.
+
+## Review findings
+
+One reviewer pass over the task's three files, 2026-10-10. Verdict: spec compliant, blocking set empty. The reviewer re-ran the gate: `cargo fmt --all -- --check` exit 0; `cargo make dod` exit 0 (`buildl-core` unit 144 passed, flows 13); `cargo deny check` exit 0 (`advisories ok, bans ok, licenses ok, sources ok`). It compared `types/target_graph.rs` with this plan's steps 5 and 7 byte for byte: 14655 bytes each.
+
+- nit — the module doc lists "the four types able to appear as a map key"; `SettingName` is now a fifth, keying the serialized `settings` map. The guarantee holds, the list is stale. Not fixed: the file is outside this plan — `crates/buildl-core/src/json/canonical.rs:27`
+- nit — the `Serialize` doc says adding a target "changes only that target's lines"; the canonical form is one line, so "entry" is the accurate word. Not fixed: the text is this plan's and spec §3.3's — `crates/buildl-core/src/types/target_graph.rs:202`
+- nit — a breach of `new`'s documented preconditions is absorbed silently (an out-of-range dependency is skipped in `reverse` and dropped from the JSON; `zip` truncates on a length mismatch). By design per spec §3.2; no test pins those paths. Left for the review of the plan that adds the caller — `crates/buildl-core/src/types/target_graph.rs:87`
+
+## Probe results
+
+No separate probe was run. Every fact the task asserts about existing code is put under test by the task's own cycle, and both runs matched the plan:
+
+- red — `cargo test -p buildl-core --lib types::target_graph` — `error[E0432]: unresolved imports super::Node, super::TargetGraph` and `error[E0432]: unresolved imports target_graph::Node, target_graph::TargetGraph`
+- green — `cargo test -p buildl-core --lib types::target_graph` — `test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 137 filtered out`
+
+## Deviations
+
+- 2026-10-10 — step 10 (the commit) was not run during execution. The commit is the author's to make; the task's three files were left in the working tree.

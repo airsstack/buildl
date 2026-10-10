@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-10
 depends-on: [04]
 ---
@@ -299,3 +299,22 @@ crates/buildl-core/src/resolve/cycle.rs   — [create] find, its state type, uni
 - The tests cover a cycle of one, of two and of several; a cycle reached through a tail; a
   diamond that is not a cycle; the choice between two cycles; and a chain of 100 000 nodes, open
   and closed.
+
+## Review findings
+
+One reviewer pass over the task's two files, 2026-10-10. Verdict: spec compliant, blocking set empty. The reviewer re-ran the gate: `cargo fmt --all -- --check` exit 0; `cargo make dod` exit 0 (`buildl-core` unit 173 passed, flows 13); `cargo deny check` exit 0 (`advisories ok, bans ok, licenses ok, sources ok`). Both files match this plan's code blocks.
+
+- nit — at exactly 2^32 nodes, the most a graph may hold, `(0_u32..).take(len)` computes the successor of `u32::MAX` while yielding the last id: a panic with overflow checks on, an unused wrap in release. Read from std's `RangeFrom::next`, not run (the case needs 2^32 edge lists). Not fixed — `crates/buildl-core/src/resolve/cycle.rs:37`
+- nit — `a_cycle_of_two_is_reported_from_its_lowest_id` passes with or without the rotation, because root 0 is searched first and the cycle is already `[0, 1]`; only `a_cycle_reached_through_a_tail_leaves_the_tail_out` guards the rotation. The name claims more than the test proves. Not fixed — `crates/buildl-core/src/resolve/cycle.rs:123`
+
+## Probe results
+
+No separate probe was run. Every fact the task asserts about existing code is put under test by the task's own cycle, and both runs matched the plan:
+
+- red — `cargo test -p buildl-core --lib resolve::cycle` — ``error[E0432]: unresolved import `super::find` ``
+- green — `cargo test -p buildl-core --lib resolve::cycle` — `test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 165 filtered out`
+
+## Deviations
+
+- 2026-10-10 — the task's commit step was not run during execution. The commit is the author's to make; the task's two files were left in the working tree.
+- 2026-10-10 — the plan ran while plan `04`, which it depends on, was built and reviewed but not yet marked `done`. Plans `01` to `05` were executed as one requested run.

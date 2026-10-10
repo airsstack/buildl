@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-10
 ---
 
@@ -243,3 +243,24 @@ crates/buildl-core/src/lib.rs               — [modify] pub mod resolve;
 - `cargo make dod` and `cargo deny check` exit `0`.
 - The tests pin the distance of known pairs, the limit at its edge, the one-edit floor for a short
   name, ties resolved the same way in either candidate order, and the empty candidate set.
+
+## Review findings
+
+One reviewer pass over the task's three files, 2026-10-10. Verdict: spec compliant, blocking set empty. The reviewer re-ran the gate: `cargo fmt --all -- --check` exit 0; `cargo make dod` exit 0; `cargo deny check` exit 0 (`advisories ok, bans ok, licenses ok, sources ok`). The three files match this plan's code blocks.
+
+- risk — the tie-break "by `T`'s own order, not by its text" (spec §4.3) is unguarded: every test uses `String`, whose order is its text, so a ranking by rendered text would also pass. `Label` orders differently from its text. The code is correct. Not fixed: the same point was raised and declined when the plan set was reviewed — `crates/buildl-core/src/resolve/suggest.rs:95`
+- nit — "Nothing is exported yet." is a statement about time in a module doc. Plan `06` rewrites the file. Not fixed — `crates/buildl-core/src/resolve/mod.rs:5`
+- nit — "and never less than one edit" reads as a floor on the distance; the code floors the allowance, and a distance of 0 passes the filter. The sentence is what is off, not the code. Not fixed — `crates/buildl-core/src/resolve/suggest.rs:16`
+- nit — no test separates a limit taken from `wanted`'s length from one taken from the candidate's; `nearest("abcdef", ["abcdefxyz"])` would. Not fixed — `crates/buildl-core/src/resolve/suggest.rs:24`
+- nit — one `Vec` allocated per row and one `String` per candidate, on the failure path only. Not fixed — `crates/buildl-core/src/resolve/suggest.rs:40`
+
+## Probe results
+
+No separate probe was run. Every fact the task asserts about existing code is put under test by the task's own cycle, and both runs matched the plan:
+
+- red — `cargo test -p buildl-core --lib resolve::suggest` — ``error[E0432]: unresolved imports `super::distance`, `super::nearest` ``
+- green — `cargo test -p buildl-core --lib resolve::suggest` — `test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 159 filtered out`
+
+## Deviations
+
+- 2026-10-10 — the task's commit step was not run during execution. The commit is the author's to make; the task's three files were left in the working tree.

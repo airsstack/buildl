@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-10
 ---
 
@@ -621,3 +621,24 @@ crates/buildl-core/src/lib.rs     — [modify] re-export DeclaredKind and Declar
   `TooManyTargets`: its test uses a count of 7, because the spec row's count does not fit a 32-bit
   `usize`. The format string is the same.
 - `cargo clippy` raises no `result_large_err`: the three reference errors box their site.
+
+## Review findings
+
+One reviewer pass over both tasks' files, 2026-10-10. Verdict: spec compliant, blocking set empty. The reviewer re-ran the gate: `cargo fmt --all -- --check` exit 0; `cargo make dod` exit 0; `cargo deny check` exit 0 (`advisories ok, bans ok, licenses ok, sources ok`). Every code block of both tasks is in the tree as written, and each message matches spec §5 as amended.
+
+- nit — the `field: DeclarationField` doc names three cases ("a dependency, a rule reference or an alias's target") while the type admits all twelve variants; only the future constructor holds the limit. Spec §5 fixes the field's type. Not fixed — `crates/buildl-core/src/error.rs:145`, `:163`
+- nit — `cycle_path` over an empty `path` renders `dependency cycle: ` with a trailing space; `DependencyCycle::path` is a public `Vec` whose doc does not say non-empty, and no test pins the case. Unreachable until Resolve constructs the error. Not fixed — `crates/buildl-core/src/error.rs:220`
+- nit — nothing fails today if the `DeclarationSite`/`DeclaredKind` re-export is reverted: both stay reachable as `buildl_core::error::…`, and no test or doc link names the root path. The flow tests of plan `07` are what will guard it. Not fixed — `crates/buildl-core/src/lib.rs:67`
+
+## Probe results
+
+No separate probe was run. Every fact the tasks assert about existing code is put under test by their own cycles, and all four runs matched the plan:
+
+- task 1 red — `cargo test -p buildl-core --lib error::tests` — ``error[E0599]: no variant named `DuplicateLabel` found for enum `error::Error` ``, the same for `DuplicateSetting` and `TooManyTargets`; `could not compile buildl-core (lib test) due to 3 previous errors`
+- task 1 green — `cargo test -p buildl-core --lib error::tests` — `test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 138 filtered out`
+- task 2 red — `cargo test -p buildl-core --lib error::tests` — E0432 unresolved imports `super::DeclarationSite`, `super::DeclaredKind`; E0599 no variant `UnknownReference`, `WrongReferenceKind`, `UnknownSetting`, `DependencyCycle`; `could not compile buildl-core (lib test) due to 8 previous errors`
+- task 2 green — `cargo test -p buildl-core --lib error::tests` — `test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 138 filtered out`
+
+## Deviations
+
+- 2026-10-10 — neither task's commit step was run during execution. The commit is the author's to make; each task's files were left in the working tree.

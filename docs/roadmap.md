@@ -67,7 +67,7 @@ graph LR
 |**I-guard**|—|Machine-check the three rules the workspace currently honours by convention: the crate edges, `buildl-core`'s freedom from filesystem, process, thread, environment and clock APIs, and the declared `rust-version`|each rule turns the gate red when violated|**done**, 2026-09-21 (§4)|
 |**I3 Load**|`buildl-core`|`Declaration`, `BuildFile`, `StagedFile`, `DeclarationSource`; the `Pipeline` skeleton and `FakePorts`|a fake source's output becomes `Vec<Declaration>`|**done**, 2026-10-08 (§4)|
 |**I-lua**|`buildl-lua`|`DeclarationSource` on airsl; the `buildl` table bound to both `airsstack.buildl` and the `buildl` global (design §5)|`build.lua` fixtures produce exact declarations|**done**, 2026-10-08 (§4)|
-|**I4 Resolve**|`buildl-core`|the `TargetGraph` arena, duplicate, unknown-reference and cycle detection; the guard that no phase module imports another|the pipeline stops at `graph`|**in progress**: plans approved, 2026-10-10 (`.claudestacks/sdlc/2026-10-10-core-resolve/`)|
+|**I4 Resolve**|`buildl-core`|the `TargetGraph` arena, duplicate, unknown-reference and cycle detection; the guard that no phase module imports another|the pipeline stops at `graph`|**in progress**: plans `01`–`05` of nine done, 2026-10-10 (`.claudestacks/sdlc/2026-10-10-core-resolve/`)|
 |**I5 Plan**|`buildl-core`|the action key, `KeyComponents`, why-dirty; grants (wanted set ∩ ceiling); the manifest, digest, stat, tool and cache-read ports|the pipeline stops at `plan`|not started|
 |**I6 Execute + Record**|`buildl-core`|`Schedule`, `Dispatcher`, `ExecStrategy`; cas, cache and log writes; the crash-safety invariant (design §8.5)|a full `build` runs against fakes|not started|
 
