@@ -19,11 +19,15 @@ world, and the logic of every phase. Concrete implementations of the ports live 
 | Load | `load` walks the build files from the workspace root along their `subdir` requests and returns every declaration validated and sorted; `Pipeline::check`, over one `Ports` bundle, runs it twice and fails when the two runs differ |
 | Graph | `TargetGraph` — the runnable targets as `Node`s numbered in label order, their dependencies as edges in written order, with aliases and build settings beside them; it serializes keyed by label, with no id in the output |
 | Resolve | `resolve` turns declarations into a `TargetGraph`, refusing a name declared twice, a reference that names nothing or the wrong kind of thing, an undeclared `$opt:` setting, and a dependency cycle; `Pipeline::graph` runs Load once, then Resolve |
-| Errors | one structured enum with a `Result` alias; callers branch on fields, never on message text; Load's errors name the build file and, where there is one, the declaration and field; Resolve's name every declaration involved |
+| Keys | `ActionKey` — the SHA-256 of a target's `KeyComponents`: its command, input digests, output names, environment values, tool fingerprint, settings, network access and platform, with what each dependency produced — and `CacheRow`, what the last build of a target recorded |
+| Authority | `Ceiling` — what a workspace allows — `WantedSet` and `Want` — what a build asks for — and `Workspace`, what the manifest says |
+| Plan ports | `Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver` and `ActionCache`, held with `DeclarationSource` in one `PortSet` |
+| Plan | `plan` refuses a build whose wants exceed the ceiling, keys every target, and returns a `Plan`: a `Verdict` per target — clean, dirty with the components that differ, or conditional on a dependency's output — and the wanted set; `Pipeline::plan` runs Load once, Resolve, then Plan |
+| Errors | one structured enum with a `Result` alias; callers branch on fields, never on message text; Load's errors name the build file and, where there is one, the declaration and field; Resolve's name every declaration involved; Plan's name the target and build file behind a refused want, a missing tool or a missing input, and the port behind an adapter's own failure |
 | Serialization | one canonical JSON serializer: object keys sorted at every level, finite floating-point values refused |
 
-**Status:** pre-release. Load and Resolve, the first two pipeline phases, are implemented and
-tested against in-memory ports; Plan, Execute and Record are not implemented yet.
+**Status:** pre-release. Load, Resolve and Plan, the first three pipeline phases, are
+implemented and tested against in-memory ports; Execute and Record are not implemented yet.
 
 ## License
 

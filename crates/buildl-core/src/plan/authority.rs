@@ -1,0 +1,421 @@
+//! Authority: what a graph's targets want, and whether the workspace's ceiling allows it.
+//!
+//! Its own file because this is the check that runs before anything else is asked of the
+//! machine: a build that wants more than its workspace allows is refused here, with nothing
+//! hashed, looked up or read.
+//!
+//! Responsibilities: [`Sites`], [`sites`] and [`check`].
+//!
+//! Non-responsibilities: what a ceiling is, which is the manifest's to say, and finding the
+//! programs a build may run.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use crate::error::{DeclarationSite, Error, Result};
+use crate::plan::tools::programs;
+use crate::types::{
+    Directory, EnvName, NetworkAccess, Node, Program, SourcePath, TargetGraph, Want, WantedSet,
+    Workspace,
+};
+
+/// Everything a graph's targets want, each with the lowest-labelled target wanting it.
+///
+/// Each map is in the order of its keys, which is the order its wants are checked and later
+/// asked for in.
+#[derive(Debug)]
+pub(crate) struct Sites<'g> {
+    /// The programs commands name.
+    pub(crate) programs: BTreeMap<Program, &'g Node>,
+    /// The environment variables targets read.
+    pub(crate) env: BTreeMap<&'g EnvName, &'g Node>,
+    /// The workspace files targets read.
+    pub(crate) inputs: BTreeMap<&'g SourcePath, &'g Node>,
+}
+
+/// Collects what `graph`'s targets want.
+pub(crate) fn sites(graph: &TargetGraph) -> Sites<'_> {
+    let mut env = BTreeMap::new();
+    let mut inputs = BTreeMap::new();
+    for node in graph.nodes() {
+        for name in &node.env {
+            env.entry(name).or_insert(node);
+        }
+        for path in &node.inputs {
+            inputs.entry(path).or_insert(node);
+        }
+    }
+    Sites {
+        programs: programs(graph),
+        env,
+        inputs,
+    }
+}
+
+/// Checks every want against `workspace`'s ceiling and returns what the build wants.
+///
+/// The directories a build writes into are the workspace's own two, `out` and `state`. A target
+/// declared to reach the network is listed in the result and compared with nothing: a ceiling
+/// has no entry for the network.
+///
+/// # Errors
+///
+/// Returns [`Error::Refused`] for the first want outside the ceiling. Programs are checked
+/// first, then environment variables, then inputs, then the directories written into; within
+/// each kind the lowest want first. The refusal names the lowest-labelled target wanting it,
+/// except for a directory, which no target declares.
+pub(crate) fn check(
+    graph: &TargetGraph,
+    sites: &Sites<'_>,
+    workspace: &Workspace,
+) -> Result<WantedSet> {
+    let ceiling = &workspace.ceiling;
+    let refused = |want: Want, node: Option<&Node>| Error::Refused {
+        want,
+        site: node.map(|node| Box::new(DeclarationSite::from(node))),
+        ceiling: Box::new(ceiling.clone()),
+    };
+
+    let outside = sites
+        .programs
+        .iter()
+        .find(|(program, _)| !ceiling.run.contains(*program));
+    if let Some((program, node)) = outside {
+        return Err(refused(Want::Program(program.clone()), Some(node)));
+    }
+
+    let outside = sites
+        .env
+        .iter()
+        .find(|(name, _)| !ceiling.env.contains(**name));
+    if let Some((name, node)) = outside {
+        return Err(refused(Want::Env((*name).clone()), Some(node)));
+    }
+
+    let outside = sites
+        .inputs
+        .iter()
+        .find(|(path, _)| !ceiling.read.iter().any(|allowed| holds(allowed, path)));
+    if let Some((path, node)) = outside {
+        return Err(refused(Want::Read((*path).clone()), Some(node)));
+    }
+
+    let write = BTreeSet::from([workspace.out.clone(), workspace.state.clone()]);
+    let outside = write.iter().find(|directory| {
+        !ceiling
+            .write
+            .iter()
+            .any(|allowed| allowed.contains(directory))
+    });
+    if let Some(directory) = outside {
+        return Err(refused(Want::Write(directory.clone()), None));
+    }
+
+    Ok(WantedSet {
+        programs: sites.programs.keys().cloned().collect(),
+        env: sites.env.keys().map(|name| (*name).clone()).collect(),
+        write,
+        network: graph
+            .nodes()
+            .iter()
+            .filter(|node| node.network == NetworkAccess::Declared)
+            .map(|node| node.label.clone())
+            .collect(),
+    })
+}
+
+/// Whether the file `path` lies in `directory` or below it.
+fn holds(directory: &Directory, path: &SourcePath) -> bool {
+    directory.is_root()
+        || path
+            .as_str()
+            .strip_prefix(directory.as_str())
+            .is_some_and(|rest| rest.starts_with('/'))
+}
+
+#[cfg(test)]
+mod tests {
+    #![expect(
+        clippy::unwrap_used,
+        reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
+    )]
+
+    use std::collections::BTreeSet;
+    use std::path::Path;
+
+    use super::{check, holds, sites};
+    use crate::error::{DeclarationSite, Error};
+    use crate::plan::fixtures::{command, dir, env_name, graph, label, node, path, program};
+    use crate::types::{
+        Ceiling, Directory, NetworkAccess, Node, TargetGraph, Want, WantedSet, Workspace,
+    };
+
+    /// A workspace writing to `out` and `.buildl`, whose ceiling allows `cc` and `ld`, `HOME`
+    /// and `PATH`, reads under `src` and `lib`, and writes to its own two directories.
+    fn workspace() -> Workspace {
+        Workspace {
+            out: dir("out"),
+            state: dir(".buildl"),
+            ceiling: Ceiling {
+                run: BTreeSet::from([program("cc"), program("ld")]),
+                env: BTreeSet::from([env_name("HOME"), env_name("PATH")]),
+                read: BTreeSet::from([dir("src"), dir("lib")]),
+                write: BTreeSet::from([dir("out"), dir(".buildl")]),
+            },
+        }
+    }
+
+    /// `//:app` linking with `ld`, reading `PATH` and `src/main.c`.
+    fn app() -> Node {
+        node("//:app", |node| {
+            node.run = command(&["ld", "$in"]);
+            node.env = vec![env_name("PATH")];
+            node.inputs = vec![path("src/main.c")];
+        })
+    }
+
+    /// `//lib:text` compiling with `cc`, reading `HOME`, `PATH` and `lib/text.c`, on the network.
+    fn text() -> Node {
+        node("//lib:text", |node| {
+            node.env = vec![env_name("PATH"), env_name("HOME")];
+            node.inputs = vec![path("lib/text.c")];
+            node.network = NetworkAccess::Declared;
+        })
+    }
+
+    fn checked(graph: &TargetGraph, workspace: &Workspace) -> crate::error::Result<WantedSet> {
+        check(graph, &sites(graph), workspace)
+    }
+
+    /// What `graph` is refused under `workspace`: the want, and the label and build file named.
+    fn refusal(graph: &TargetGraph, workspace: &Workspace) -> (Want, Option<(String, String)>) {
+        match checked(graph, workspace).unwrap_err() {
+            Error::Refused {
+                want,
+                site,
+                ceiling,
+            } => {
+                assert_eq!(*ceiling, workspace.ceiling);
+                let named = site.map(|site| {
+                    let DeclarationSite { label, provenance } = *site;
+                    (label.to_string(), provenance.to_string())
+                });
+                (want, named)
+            }
+            other => unreachable!("expected Refused, got {other:?}"),
+        }
+    }
+
+    fn named(label: &str, file: &str) -> (String, String) {
+        (label.to_owned(), file.to_owned())
+    }
+
+    #[test]
+    fn sites_name_the_lowest_labelled_target_for_each_want() {
+        let graph = graph(vec![app(), text()], &[&[], &[]]);
+        let sites = sites(&graph);
+        let programs: Vec<(&str, String)> = sites
+            .programs
+            .iter()
+            .map(|(program, node)| (program.as_str(), node.label.to_string()))
+            .collect();
+        let env: Vec<(&str, String)> = sites
+            .env
+            .iter()
+            .map(|(name, node)| (name.as_str(), node.label.to_string()))
+            .collect();
+        let inputs: Vec<(&str, &Path)> = sites
+            .inputs
+            .iter()
+            .map(|(path, node)| (path.as_str(), node.provenance.file()))
+            .collect();
+        assert_eq!(
+            programs,
+            [("cc", "//lib:text".to_owned()), ("ld", "//:app".to_owned())]
+        );
+        assert_eq!(
+            env,
+            [
+                ("HOME", "//lib:text".to_owned()),
+                ("PATH", "//:app".to_owned())
+            ]
+        );
+        assert_eq!(
+            inputs,
+            [
+                ("lib/text.c", Path::new("lib/build.lua")),
+                ("src/main.c", Path::new("build.lua")),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_build_inside_the_ceiling_reports_what_it_wants() {
+        let graph = graph(vec![app(), text()], &[&[], &[]]);
+        assert_eq!(
+            checked(&graph, &workspace()).unwrap(),
+            WantedSet {
+                programs: BTreeSet::from([program("cc"), program("ld")]),
+                env: BTreeSet::from([env_name("HOME"), env_name("PATH")]),
+                write: BTreeSet::from([dir("out"), dir(".buildl")]),
+                network: BTreeSet::from([label("//lib:text")]),
+            }
+        );
+    }
+
+    #[test]
+    fn a_program_outside_the_ceiling_is_refused_with_its_site() {
+        let mut workspace = workspace();
+        workspace.ceiling.run = BTreeSet::from([program("ld")]);
+        let graph = graph(vec![app(), text()], &[&[], &[]]);
+        assert_eq!(
+            refusal(&graph, &workspace),
+            (
+                Want::Program(program("cc")),
+                Some(named("//lib:text", "lib/build.lua"))
+            )
+        );
+    }
+
+    #[test]
+    fn a_variable_outside_the_ceiling_is_refused_with_its_site() {
+        let mut workspace = workspace();
+        workspace.ceiling.env = BTreeSet::from([env_name("PATH")]);
+        let graph = graph(vec![app(), text()], &[&[], &[]]);
+        assert_eq!(
+            refusal(&graph, &workspace),
+            (
+                Want::Env(env_name("HOME")),
+                Some(named("//lib:text", "lib/build.lua"))
+            )
+        );
+    }
+
+    #[test]
+    fn an_input_outside_the_ceiling_is_refused_with_its_site() {
+        let mut workspace = workspace();
+        workspace.ceiling.read = BTreeSet::from([dir("lib")]);
+        let graph = graph(vec![app(), text()], &[&[], &[]]);
+        assert_eq!(
+            refusal(&graph, &workspace),
+            (
+                Want::Read(path("src/main.c")),
+                Some(named("//:app", "build.lua"))
+            )
+        );
+    }
+
+    #[test]
+    fn a_directory_written_outside_the_ceiling_is_refused_without_a_site() {
+        let graph = graph(vec![app()], &[&[]]);
+        let mut no_out = workspace();
+        no_out.ceiling.write = BTreeSet::from([dir(".buildl")]);
+        assert_eq!(refusal(&graph, &no_out), (Want::Write(dir("out")), None));
+        let mut no_state = workspace();
+        no_state.ceiling.write = BTreeSet::from([dir("out")]);
+        assert_eq!(
+            refusal(&graph, &no_state),
+            (Want::Write(dir(".buildl")), None)
+        );
+    }
+
+    #[test]
+    fn kinds_are_checked_in_a_fixed_order() {
+        let graph = graph(vec![app(), text()], &[&[], &[]]);
+        let mut workspace = workspace();
+        workspace.ceiling = Ceiling {
+            run: BTreeSet::new(),
+            env: BTreeSet::new(),
+            read: BTreeSet::new(),
+            write: BTreeSet::new(),
+        };
+        assert_eq!(refusal(&graph, &workspace).0, Want::Program(program("cc")));
+        workspace.ceiling.run = BTreeSet::from([program("cc"), program("ld")]);
+        assert_eq!(refusal(&graph, &workspace).0, Want::Env(env_name("HOME")));
+        workspace.ceiling.env = BTreeSet::from([env_name("HOME"), env_name("PATH")]);
+        assert_eq!(
+            refusal(&graph, &workspace).0,
+            Want::Read(path("lib/text.c"))
+        );
+        workspace.ceiling.read = BTreeSet::from([Directory::root()]);
+        assert_eq!(refusal(&graph, &workspace).0, Want::Write(dir(".buildl")));
+        workspace.ceiling.write = BTreeSet::from([Directory::root()]);
+        assert!(checked(&graph, &workspace).is_ok());
+    }
+
+    #[test]
+    fn the_lowest_labelled_target_wanting_a_thing_is_the_one_named() {
+        let graph = graph(
+            vec![
+                node("//:a", |node| node.run = command(&["docker", "build"])),
+                node("//:b", |node| node.run = command(&["docker", "push"])),
+            ],
+            &[&[], &[]],
+        );
+        assert_eq!(
+            refusal(&graph, &workspace()),
+            (
+                Want::Program(program("docker")),
+                Some(named("//:a", "build.lua"))
+            )
+        );
+    }
+
+    #[test]
+    fn an_empty_ceiling_refuses_even_a_build_that_asks_for_nothing_but_its_own_directories() {
+        let mut workspace = workspace();
+        workspace.ceiling = Ceiling {
+            run: BTreeSet::new(),
+            env: BTreeSet::new(),
+            read: BTreeSet::new(),
+            write: BTreeSet::new(),
+        };
+        let graph = graph(
+            vec![node("//:gen", |node| node.run = command(&["$out/gen"]))],
+            &[&[]],
+        );
+        assert_eq!(
+            refusal(&graph, &workspace),
+            (Want::Write(dir(".buildl")), None)
+        );
+    }
+
+    #[test]
+    fn an_input_is_held_by_its_directory_and_not_by_one_sharing_a_prefix() {
+        assert!(holds(&dir("lib"), &path("lib/x")));
+        assert!(holds(&dir("lib"), &path("lib/text/x")));
+        assert!(!holds(&dir("lib"), &path("lib2/x")));
+        assert!(!holds(&dir("lib/text"), &path("lib/x")));
+        assert!(!holds(&dir("lib"), &path("lib")));
+        assert!(holds(&Directory::root(), &path("anything/at/all")));
+        assert!(holds(&Directory::root(), &path("top")));
+    }
+
+    #[test]
+    fn an_input_under_a_directory_sharing_a_prefix_with_an_allowed_one_is_refused() {
+        let graph = graph(
+            vec![node("//lib2:x", |node| node.inputs = vec![path("lib2/x")])],
+            &[&[]],
+        );
+        assert_eq!(
+            refusal(&graph, &workspace()),
+            (
+                Want::Read(path("lib2/x")),
+                Some(named("//lib2:x", "lib2/build.lua"))
+            )
+        );
+    }
+
+    #[test]
+    fn a_directory_is_allowed_by_an_entry_at_or_above_it() {
+        let graph = graph(vec![app()], &[&[]]);
+        let mut workspace = workspace();
+        workspace.out = dir("build/out");
+        workspace.ceiling.write = BTreeSet::from([dir("build"), dir(".buildl")]);
+        assert!(checked(&graph, &workspace).is_ok());
+        workspace.ceiling.write = BTreeSet::from([dir("build/out/deep"), dir(".buildl")]);
+        assert_eq!(
+            refusal(&graph, &workspace),
+            (Want::Write(dir("build/out")), None)
+        );
+    }
+}

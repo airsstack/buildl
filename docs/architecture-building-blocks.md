@@ -107,7 +107,7 @@ graph TD
     LUA["[Component: crate] buildl-lua<br/>implements DeclarationSource<br/>airsl Engine per build file<br/>buildl HostModule bound as a global"]
     subgraph CORE["[Component: crate] buildl-core — no I/O, no Lua, no threads"]
         DATA["domain data<br/>Label, Digest, NodeId, Provenance<br/>Declaration, TargetGraph, Plan<br/>KeyComponents, ActionKey<br/>ActionOutcome, OutcomeClass"]
-        PORTS["ports — traits<br/>DeclarationSource, Manifest<br/>Digester, StatCache, ToolResolver<br/>ContentStore, ActionCache, EventLog<br/>ExecStrategy, Dispatcher<br/>Approver, Clock, Reporter"]
+        PORTS["ports — traits<br/>DeclarationSource, Manifest, Host<br/>Digester, StatCache, ToolResolver<br/>ContentStore, ActionCache, EventLog<br/>ExecStrategy, Dispatcher<br/>Approver, Clock, Reporter"]
         LOGIC["pure logic<br/>load, resolve, plan, grants<br/>Schedule, record<br/>canonical JSON"]
     end
     AIRSL["[External crate] airsl<br/>Engine, Policy, HostModule"]
@@ -146,7 +146,7 @@ Every value is a validated newtype or a serializable handoff; field-level detail
 |Time|`Timestamp` — nanoseconds since the Unix epoch, the current one obtained only through the `Clock` port|
 |Phase handoffs|`Declaration`, `TargetGraph`, `Plan`, `ActionOutcome`|
 |Incrementality|`KeyComponents`, `ActionKey`|
-|Authority|`Ceiling`, `WantedSet`, `Grants`|
+|Authority|`Ceiling`, `WantedSet`, `Want`, `Workspace`, `Grants`|
 |Classification|`OutcomeClass` (`#[non_exhaustive]`, `architecture.md` §4)|
 
 ### 5.2 Ports
@@ -158,6 +158,36 @@ Every value is a validated newtype or a serializable handoff; field-level detail
 /// error is Load's decision.
 pub trait DeclarationSource {
     fn evaluate(&self, file: &BuildFile) -> Result<Evaluated>;
+}
+
+/// What the workspace's manifest says: its output and state directories, its ceiling.
+pub trait Manifest {
+    fn workspace(&self) -> Result<Workspace>;
+}
+
+/// The machine actions run on. `Ok(None)` is an unset variable.
+pub trait Host {
+    fn platform(&self) -> Platform;
+    fn env(&self, name: &EnvName) -> Result<Option<EnvValue>>;
+}
+
+/// Metadata is asked of every input; digests only of those whose metadata changed,
+/// all in one call so an adapter may hash in parallel.
+pub trait Digester {
+    fn stat(&self, path: &SourcePath) -> Result<Option<FileStat>>;
+    fn digest(&self, paths: &[SourcePath]) -> Result<Vec<Digest>>;
+}
+
+/// Stores entries. Whether one may be reused is Plan's decision, not the cache's.
+pub trait StatCache {
+    fn entry(&self, path: &SourcePath) -> Option<StatEntry>;
+    fn record(&mut self, path: SourcePath, entry: StatEntry);
+    fn commit(&mut self) -> Result<()>;
+}
+
+/// `Ok(None)` is a program that cannot be found.
+pub trait ToolResolver {
+    fn fingerprint(&self, program: &Program) -> Result<Option<Digest>>;
 }
 
 /// Workers write output blobs concurrently.
@@ -201,15 +231,23 @@ Static dispatch throughout [7]. One trait of associated types carries every port
 ```rust
 pub trait Ports {
     type Source: DeclarationSource;
-    type Cas: ContentStore;
+    type Manifest: Manifest;
+    type Host: Host;
+    type Digester: Digester;
+    type StatCache: StatCache;
+    type Tools: ToolResolver;
     type Cache: ActionCache;
+    type Cas: ContentStore;
     type Log: EventLog;
     type Strategy: ExecStrategy;
     type Clock: Clock;
-    // Manifest, Digester, StatCache, ToolResolver, Dispatcher, Approver, Reporter
+    // Dispatcher, Approver, Reporter
 }
 
-pub struct Pipeline<P: Ports> { /* one field per port */ }
+/// One instance of each port the bundle names, with a public field per port.
+pub struct PortSet<P: Ports> { pub source: P::Source, pub manifest: P::Manifest, /* ... */ }
+
+pub struct Pipeline<P: Ports> { /* ports: PortSet<P> */ }
 
 // in `buildl`:
 pub type LocalPipeline = Pipeline<LocalPorts>;
@@ -227,6 +265,11 @@ classDiagram
     class Ports {
         <<trait>>
         Source: DeclarationSource
+        Manifest: Manifest
+        Host: Host
+        Digester: Digester
+        StatCache: StatCache
+        Tools: ToolResolver
         Cas: ContentStore
         Cache: ActionCache
         Log: EventLog
@@ -252,7 +295,7 @@ classDiagram
 |---|---|---|
 |load|workspace root → `Vec<Declaration>` (queue, `subdir`, sorted merge)|`DeclarationSource`|
 |resolve|`Vec<Declaration>` → `TargetGraph` (validations, cycle detection)|—|
-|plan|`TargetGraph` → `Plan` (key assembly, dirty reasons)|`Digester`, `StatCache`, `ToolResolver`, `ActionCache`|
+|plan|`TargetGraph` and setting overrides → `Plan` (ceiling check, key assembly, a verdict per target)|`Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver`, `ActionCache`|
 |grants|wanted set ∩ ceiling → grants or refusal|`Manifest`, `Approver`|
 |`Schedule`|pure state machine: `ready()`, `complete(node, class)`|— (driven through `Dispatcher`)|
 |record|`ActionOutcome` → cas, then row, then log|`ContentStore`, `ActionCache`, `EventLog`, `Clock`|
@@ -263,7 +306,8 @@ classDiagram
 |Port|`buildl-core` uses it for|v1 adapter|Crate|
 |---|---|---|---|
 |`DeclarationSource`|Load — one build file at a time|airsl engine per file, `buildl` module table|`buildl-lua`|
-|`Manifest`|ceiling, declaration limits, settings|`buildl.toml` reader|`buildl`|
+|`Manifest`|the ceiling and the workspace's output and state directories; declaration limits, settings|`buildl.toml` reader|`buildl`|
+|`Host`|the platform in every key, and the values of the env names targets read|the running machine's OS, architecture and environment|`buildl`|
 |`Digester`|input content hashes|filesystem + rayon|`buildl`|
 |`StatCache`|reusing digests on unchanged mtime + size|`.buildl/statcache.json`|`buildl`|
 |`ToolResolver`|tool fingerprints in the key|`PATH` lookup + fingerprint|`buildl`|
@@ -310,6 +354,11 @@ The fakes live in `buildl-core`'s integration tests (`crates/buildl-core/tests/f
 |Port|Fake|What the test no longer needs|
 |---|---|---|
 |`DeclarationSource`|a fixed staged file, absence or evaluation failure per directory|airsl, Lua|
+|`Manifest`|one fixed workspace and ceiling|a `buildl.toml`|
+|`Host`|a fixed platform and fixed variables, some of which it can be told to fail on|the real environment|
+|`Digester`|files held as bytes with their metadata, counting every call|a filesystem|
+|`StatCache`|in-memory, counting commits|a filesystem|
+|`ToolResolver`|fixed fingerprints, recording every lookup|a `PATH`|
 |`ContentStore`, `ActionCache`, `EventLog`|in-memory, with injectable failures|a filesystem|
 |`ExecStrategy`|scripted outcomes per label|process spawning|
 |`Dispatcher`|inline, on the test thread|threads; results are deterministic|

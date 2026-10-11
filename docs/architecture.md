@@ -121,9 +121,15 @@ classDiagram
         sha256: 32_bytes
     }
     class Plan {
-        dirty: Vec~NodeId~
-        reasons: BTreeMap~NodeId_DirtyReason~
+        labels: Vec~Label~
+        verdicts: Vec~Verdict~
         wanted: WantedSet
+    }
+    class Verdict {
+        <<enumeration>>
+        Clean
+        Dirty
+        Conditional
     }
     class ActionOutcome {
         node: NodeId
@@ -141,14 +147,15 @@ classDiagram
     Target --> Label
     TargetGraph --> Declaration : built from
     TargetGraph --> Node
-    Plan --> ActionKey
+    Plan --> Verdict
+    Verdict --> ActionKey
     ActionOutcome --> Digest
 ```
 
 The load-bearing decisions:
 
 - **`Label` is the universal name** (`//dir:name`), resolved and validated once at Load: every name and reference a build file writes — absolute, `:sibling` or bare — becomes an absolute `Label` against the declaring directory before Load hands its declarations on; from Resolve onward a target is a `NodeId` (`u32` index into the graph's arenas). Strings appear only at the edges — parsing and reporting.
-- **`ActionKey` keeps its components.** The key is a digest _of_ a `KeyComponents` struct (command, input digests, dep keys, env values, tool fingerprints, settings, os/arch — the §12.4 ledger as a Rust struct). Keeping the components alongside the digest is what makes `plan`'s "why dirty" reporting a struct diff instead of archaeology.
+- **`ActionKey` keeps its components.** The key is a digest _of_ a `KeyComponents` struct (command, input digests, each dependency's output digests, env values, the tool's fingerprint, settings, network access, os/arch — the §12.4 ledger as a Rust struct). Keeping the components alongside the digest is what makes `plan`'s "why dirty" reporting a struct diff instead of archaeology.
 - **`Digest` is SHA-256 everywhere** — files, outputs, keys, log blobs — matching the Remote Execution API's digest model [4] so the remote-cache step later is a transport problem, not a re-keying.
 - **`Provenance` is threaded, never reconstructed.** Attached in `declare`, carried through `Declaration` into the graph, surfaced in every error. No phase ever asks "which file declared this?" — it always already knows.
 
@@ -182,7 +189,7 @@ Each phase's logic lives in `buildl-core` and reaches I/O only through ports; th
 |---|---|---|---|
 |§3.1 `declare`|directory queue, `subdir`, sorted merge|`DeclarationSource`|`buildl-lua`|
 |§3.2 `graph`|resolve, validations, cycle detection|—|—|
-|§3.3 `plan`|key assembly, dirty set, ceiling check|`Digester`, `StatCache`, `ToolResolver`, `ActionCache`, `Manifest`|`buildl`|
+|§3.3 `plan`|ceiling check, key assembly, a verdict per target|`Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver`, `ActionCache`|`buildl`|
 |§3.4 `exec`|`Schedule` state machine|`Dispatcher`, `ExecStrategy`, `ContentStore`, `Reporter`|`buildl`|
 |§3.5 `store`|record ordering: cas, row, log|`ContentStore`, `ActionCache`, `EventLog`, `Clock`|`buildl`|
 
@@ -204,11 +211,13 @@ Cycle detection is iterative DFS (explicit stack — a deep graph must not overf
 
 ### 3.3 `plan` — keys and the stat cache
 
-Bottom-up over a toposort. Per node: assemble `KeyComponents`, hash inputs through the stat cache, fold dep keys (already computed — toposort guarantees it), digest the canonical serialization of the components.
+The ceiling check comes first: every program, env name, declared input and output root is compared with the manifest's ceiling, and nothing is hashed or looked up until it passes. Then, once per graph: one fingerprint per distinct program (`ToolResolver`), one digest per distinct input (`Digester`, through the stat cache), the platform and one value per env name (`Host`). Each node's own components are assembled from those.
 
-The stat cache is a `BTreeMap<PathBuf, StatEntry { mtime, size, digest }>` loaded from `.buildl/statcache.json`; a hit on (mtime, size) reuses the digest, a miss re-hashes and updates — ninja's mtime discipline with content-hash truth underneath [3]. File hashing fans out with rayon's parallel iterators [5] — files are independent, the work is chunkable, and rayon's pool is confined to the `Digester` adapter in `buildl` (decision record §6).
+Verdicts are decided bottom-up over a topological order, computed with a queue rather than by recursion. A node whose dependencies are all clean has a finished key — its own components plus what each dependency's cache row says it produced — digested from the canonical serialization of the components and compared with the key in the node's own row: equal is `Clean`, different is `Dirty` with the components that differ. A node with a dependency that is not clean cannot finish its key, because that dependency's output does not exist yet: it is `Dirty` when something already known differs and `Conditional` otherwise, running only if the dependency produces something other than what was recorded. Its unfinished key holds everything the ports supplied, so the executor finishes it from the graph and its dependencies' new rows.
 
-Output: `Plan { dirty, reasons, wanted }` — and the ceiling check runs here, so a `Plan` that would exceed the ceiling is an `Err`, not a plan.
+The stat cache holds, per input path, a `StatEntry { stat: FileStat { modified, size }, digest }`, loaded by its adapter from `.buildl/statcache.json`; an entry whose `FileStat` equals the file's current one reuses the digest, anything else re-hashes and records — ninja's mtime discipline with content-hash truth underneath [3]. The reuse rule is Plan's, tested against fakes, and the adapter only stores; Plan commits the cache once when it recorded something and not at all otherwise. File hashing fans out with rayon's parallel iterators [5] — files are independent, the work is chunkable, and rayon's pool is confined to the `Digester` adapter in `buildl` (decision record §6).
+
+Output: a `Plan` — one `Verdict` per node, and the `WantedSet` — and a build that would exceed the ceiling is an `Err`, not a plan.
 
 ### 3.4 `exec` — the scheduler
 
@@ -233,7 +242,7 @@ Output capture: piped stdout/stderr read by two threads per action into buffers,
 
 ### 3.5 `store` — cas, action cache, log
 
-The cas is `.buildl/cas/ab/cdef...` (two-char shard dirs). Every write is temp-file-then-rename within the same filesystem — atomic, the `fs.atomic_write` discipline [1]. `out/` entries are hard links into the cas (copy fallback for filesystems that refuse). The action cache is a `BTreeMap<Label, CacheRow { key: Digest, outputs: Vec<Digest>, stdout, stderr }>` serialized as sorted-key JSON; rewritten atomically once per build, rows updated in memory as outcomes land — write ordering enforces the §8.5 invariant: **cas first, row after, log always**. `log.jsonl` is append-only, one sorted-key JSON object per outcome, output blobs referenced by digest rather than inlined.
+The cas is `.buildl/cas/ab/cdef...` (two-char shard dirs). Every write is temp-file-then-rename within the same filesystem — atomic, the `fs.atomic_write` discipline [1]. `out/` entries are hard links into the cas (copy fallback for filesystems that refuse). The action cache is a `BTreeMap<Label, CacheRow { key: ActionKey, outputs: Vec<Digest>, stdout, stderr }>` — the whole key, components included, so the next plan can name the component that changed — serialized as sorted-key JSON; rewritten atomically once per build, rows updated in memory as outcomes land — write ordering enforces the §8.5 invariant: **cas first, row after, log always**. `log.jsonl` is append-only, one sorted-key JSON object per outcome, output blobs referenced by digest rather than inlined.
 
 `gc` walks roots (current `graph.json` outputs + cache rows) and unlinks unreferenced cas entries — refcounting deferred; mark-and-sweep is enough at v1 scale.
 
@@ -305,7 +314,7 @@ The narrow handoffs are the test surface. Each flow runs first in `buildl-core` 
 
 - Whether `ExecDir` materialisation for `InputSandbox` uses symlinks (fast, but visible to tools that `readlink`) or hard links (opaque, but same-filesystem only) — likely per-strategy config with hard links default.
 - Whether the stat cache should be keyed by `(dev, inode)` in addition to path, to survive renames without re-hashing.
-- Where settings (`--set`) validation lives: `manifest` (they're workspace surface) vs `settings` (they're invocation surface) — leaning `settings`, validated against declarations at Resolve. Settled so far: a `$opt:name` reference in a command is checked against the declared settings at Resolve. Where `--set` values are validated stays open.
+- Settled: where settings validation lives. A `$opt:name` reference in a command is checked against the declared settings at Resolve; a `--set` override is checked against them at Plan, the first phase an invocation value reaches, and one naming no declared setting fails the plan.
 - Whether `graph.json` is written on every build or only on `buildl graph` — writing always makes `gc` roots simpler; measuring the cost first.
 
 ## References

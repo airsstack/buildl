@@ -9,7 +9,7 @@ use std::path::Path;
 
 use buildl_core::{EntryName, Error, Pipeline};
 
-use crate::common::{FakePorts, FakeSource, file, setting, target, workspace};
+use crate::common::{FakePorts, FakeSource, file, ports, setting, target, workspace};
 
 fn entry() -> EntryName {
     EntryName::parse("build.lua").unwrap()
@@ -21,7 +21,7 @@ fn check_returns_the_sorted_declarations_of_a_deterministic_workspace() {
         ("", file(vec![target("b", &[]), target("a", &[])], &["lib"])),
         ("lib", file(vec![target("text", &[])], &[])),
     ]));
-    let pipeline = Pipeline::<FakePorts>::new(source);
+    let pipeline = Pipeline::<FakePorts>::new(ports(source));
     let declarations = pipeline.check(&entry()).unwrap();
     let names: Vec<&str> = declarations.iter().map(|d| d.item().name()).collect();
     assert_eq!(names, ["a", "b", "text"]);
@@ -43,7 +43,7 @@ fn a_pairs_shuffled_second_evaluation_passes_check() {
             &[],
         ),
     )]);
-    let pipeline = Pipeline::<FakePorts>::new(FakeSource::with_second_run(first, second));
+    let pipeline = Pipeline::<FakePorts>::new(ports(FakeSource::with_second_run(first, second)));
     assert_eq!(pipeline.check(&entry()).unwrap().len(), 3);
 }
 
@@ -57,7 +57,7 @@ fn a_second_evaluation_that_declares_more_fails_check_naming_the_file() {
         ("", file(vec![target("app", &[])], &["lib"])),
         ("lib", file(vec![target("extra", &[])], &[])),
     ]);
-    let pipeline = Pipeline::<FakePorts>::new(FakeSource::with_second_run(first, second));
+    let pipeline = Pipeline::<FakePorts>::new(ports(FakeSource::with_second_run(first, second)));
     match pipeline.check(&entry()).unwrap_err() {
         Error::Nondeterministic {
             provenance,
@@ -82,7 +82,7 @@ fn a_root_declaration_is_named_over_a_subdirectory_one_it_sorts_before() {
         ("", file(vec![setting("r")], &["app"])),
         ("app", file(vec![setting("x")], &[])),
     ]);
-    let pipeline = Pipeline::<FakePorts>::new(FakeSource::with_second_run(first, second));
+    let pipeline = Pipeline::<FakePorts>::new(ports(FakeSource::with_second_run(first, second)));
     match pipeline.check(&entry()).unwrap_err() {
         Error::Nondeterministic {
             provenance,

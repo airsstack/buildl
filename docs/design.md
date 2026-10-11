@@ -147,14 +147,14 @@ The design decisions in those lines:
 - **Labels, not `require`.** Cross-directory references are graph names (`//lib:text`), resolved in Rust. airsl's confined `require` stops at the script's directory, and that is correct here: build files should not load each other's code, they should reference each other's _targets_. `b.subdir("dir")` asks the host to evaluate `dir/build.lua` in its own scope, so every declaration is namespaced by — and attributable to — the directory that made it.
 - **Placeholders expand host-side.** `$in`, `$out`, `$deps` are substituted by the executor at run time, the ninja model [4]. Lua never holds a real artifact path.
 - **`b.sources()` is the declaration phase's only filesystem read**, done host-side rather than through an engine grant. It returns the regular files under the declaring directory that match the pattern, relative to that directory and sorted by the host, so declaration is deterministic regardless of filesystem order. Symlinks are never followed, and a declaring directory that resolves outside the workspace is refused. Every list field accepts one level of nesting, spliced in order, so `inputs = { b.sources("src/*.c"), "go.mod" }` is one flat list.
-- **`b.target` accepts a small closed table**: `rule` or inline `run`, `inputs`, `deps`, `outputs` (default: the target name), `env` (names checked against the ceiling), `network = true` (visible in `plan`, §11), and `always = true` for phony targets. Every field is an action-key component; the surface grows reluctantly.
+- **`b.target` accepts a small closed table**: `rule` or inline `run`, `inputs`, `deps`, `outputs` (default: the target name), `env` (names checked against the ceiling), `network = true` (visible in `plan`, §11), and `always = true` for phony targets. Every field but `always` is an action-key component; the surface grows reluctantly.
 - **`b.option(name, { default })` declares a build setting** — an invocation-time parameter with an explicit default, referenced in argv as `$opt:name` and overridden with `--set name=value`. Settings fold into the action key, so differently-parameterised runs cache separately and correctly (§10.2).
 - **`b.alias(name, target)` gives a target a second name.** An alias names a target, never another alias or a rule. A dependency may name an alias, and resolves to the target behind it.
-- **A list keeps the order it was written in.** `deps`, `inputs`, `outputs` and `env` reach the graph in written order with repeats dropped, so `$deps` and `$in` expand in that order. Reordering a list changes the command, and with it the action key.
+- **A list keeps the order it was written in.** `deps`, `inputs`, `outputs` and `env` reach the graph in written order with repeats dropped, so `$deps` and `$in` expand in that order. Reordering `deps`, `inputs` or `outputs` changes the action key. Reordering `env` does not: an environment is a set of variables, and the key holds each one by name.
 
 ## 6. Grant negotiation: the DAG is the request
 
-buildl needs no per-file capability manifest, because the build's authority is **derived, not requested**. After Resolve, the host walks the DAG and computes the _wanted set_ — every program in every `run`, every env name, every output root. That set flows through the same negotiation pipeline airsl's extension system defines [1]:
+buildl needs no per-file capability manifest, because the build's authority is **derived, not requested**. After Resolve, the host walks the DAG and computes what the build wants — every program in every `run`, every env name, every declared input, every output root — and checks each against its list in the ceiling: `proc.run`, `env.read`, `fs.read`, `fs.write`. The _wanted set_ a plan reports lists the programs, the env names, the output roots and the targets declaring `network = true`; the inputs stay in the graph, where each target declares them. That set flows through the same negotiation pipeline airsl's extension system defines [1]:
 
 ```mermaid
 %% Grant negotiation
@@ -194,7 +194,7 @@ flowchart TD
 Three workflow rules adopted deliberately:
 
 1. **`plan` explains itself.** Dirtiness is hash-based, so "why did this rebuild" has a mechanical answer; it is surfaced from day one.
-2. **Load and Resolve always run.** The graph is never cached across edits — only artifacts are. Build files are themselves inputs whose hashes invalidate their own targets, ninja's discipline [4].
+2. **Load and Resolve always run.** The graph is never cached across edits — only artifacts are. A build file reaches a key through what it declares, not through its own hash: every field of a target that changes what its action produces is a key component (§8.3), so an edit that changes a target rebuilds it and an edit that changes nothing rebuilds nothing.
 3. **The log is an artifact.** `log.jsonl` records one sorted-key JSON object per action: target, command, hashes, duration, cache hit or miss.
 
 ## 8. Internal workflows
@@ -227,14 +227,15 @@ The core incremental mechanism, deliberately aligned with the Remote Execution A
 graph TD
     CMD["Command<br/>argv template"] --> KEY["Action key<br/>sha256 of all four"]
     IN["Input hashes<br/>via the stat cache"] --> KEY
-    DEP["Dep action keys<br/>propagation built in"] --> KEY
+    DEP["Dep output hashes<br/>early cutoff built in"] --> KEY
     ENV["Env values<br/>granted names only"] --> KEY
     KEY --> CMP{"equals cached key?"}
     CMP -- yes --> CLEAN["Clean — served from cache"]
     CMP -- no --> DIRTY["Dirty — plus the reason why"]
+    CMP -- "a dep is not clean" --> COND["Conditional — runs only if<br/>that dep's output changes"]
 ```
 
-Because dep _keys_ fold into the hash, dirtiness propagates downstream with no separate marking pass. Two internals matter at scale: a **stat cache** (mtime + size unchanged since the last run means the recorded content hash is reused — the trick behind ninja-class no-op builds [4]), and parallel hashing, since files are independent. The mismatching component of the key is retained per dirty target — that is the entire implementation of `plan`'s explanations. The wanted-set ∩ ceiling check (§6) also runs here, so refusals precede execution.
+A key folds what each dependency _produced_ — the name and hash of each of its outputs — not the dependency's own key, so a dependency rebuilt to the same bytes leaves everything downstream clean (early cutoff, §8.5). A dirty dependency's new output does not exist at plan time, so a target whose only open question is that output is neither clean nor dirty but _conditional_: it runs only if the dependency produces something other than what the last build recorded. Two internals matter at scale: a **stat cache** (mtime + size unchanged since the last run means the recorded content hash is reused — the trick behind ninja-class no-op builds [4]), and parallel hashing, since files are independent. The mismatching component of the key is retained per dirty target — that is the entire implementation of `plan`'s explanations. The wanted-set ∩ ceiling check (§6) also runs here, so refusals precede execution.
 
 ### 8.4 Execute: the scheduler loop
 
@@ -584,7 +585,7 @@ Nothing in this section touches Lua. Scale is a pure host-side concern — the t
 Two adjustments to airsl's `confined` preset close the remaining holes:
 
 1. **Drop `os`, curate the module set, and strip what remains.** `os.time`, `os.clock`, and Lua 5.4's entropy-seeded `math.random` are nondeterministic. The declaration policy uses airsl's minimal language surface, which has no `os`, and a `ModuleSet` installing `json`, `path`, `regex`, `hash`, `glob` while omitting `time`, `proc`, `env`, `stdio`. airsl lets the host choose both — configuration, not new machinery [1]. The minimal surface still loads `math` whole, so buildl removes `math.random` and `math.randomseed` itself. It also removes `airsstack.path.absolute`, which reads the process working directory, and `print`, because stdout belongs to the CLI. Last, it replaces `tostring` and `string.format`, because rendering a table or function renders its address, which can differ between runs: a table, function, thread or userdata with no `__tostring` metamethod, rendered by either, is an error, and so is `%p`.
-2. **Canonicalise instead of forbidding `pairs`.** Lua table iteration order is unspecified, so the graph is made insensitive to the order declarations are issued in: keyed by names, numbered in label order at Resolve. A `pairs` loop that issues declarations yields a byte-identical graph in any order. The order inside one list is different: it is part of the command and of the action key, and a list whose order varies between two evaluations fails `buildl check`.
+2. **Canonicalise instead of forbidding `pairs`.** Lua table iteration order is unspecified, so the graph is made insensitive to the order declarations are issued in: keyed by names, numbered in label order at Resolve. A `pairs` loop that issues declarations yields a byte-identical graph in any order. The order inside one list is different: it reaches the graph as written and, for `deps`, `inputs` and `outputs`, the action key (§5), and a list whose order varies between two evaluations fails `buildl check`.
 
 Because declaration is cheap it is also _checkable_: evaluate twice and compare the two sorted staging lists by value; a nondeterministic build file fails `buildl check` with the diff — the first position at which the two runs disagree, with what each run declared there. A `pairs` loop does not fail the check, because both lists are sorted before they are compared.
 
@@ -619,13 +620,13 @@ The governing principle: **every behavioral difference between two builds must b
 |Input class|Made explicit by|
 |---|---|
 |Source files|`inputs`, content-hashed via the stat cache (§8.3)|
-|Products of other targets|`deps` — their action keys fold in|
+|Products of other targets|`deps` — the hashes of their outputs fold in (§8.3)|
 |Environment variables|granted names only; values in the key (§8.3)|
 |Tools|fingerprint (level 1) or toolchain target (level 3, §9.6)|
 |Host OS and CPU architecture|an `os/arch` pair in every action key — a mac and a Linux machine must never share entries|
 |Network|absent by default (tier 3); `b.fetch` re-admits it behind a checksum; `network = true` is a plan-visible declaration|
 |Time, locale, timezone|pinned by the sandbox: `SOURCE_DATE_EPOCH`, `LC_ALL=C`, `TZ=UTC` [3]|
-|Build-file logic itself|build files are inputs; declaration is sandboxed, `os`-free, and double-run checkable (§12.1)|
+|Build-file logic itself|a build file reaches a key through the fields it declares, not through its own hash (§7); declaration is sandboxed, `os`-free, and double-run checkable (§12.1)|
 
 What remains honestly implicit — the kernel version, libc, filesystem semantics, CPU microarchitecture as it affects codegen — is exactly the set that tier 4 (containers) and `verify` exist to contain. The ledger is finite and named; "surprise" is defined as any behavior difference not in it, and every such surprise is a bug in buildl, not in the user's build.
 

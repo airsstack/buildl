@@ -3,7 +3,8 @@
 //! Its own file because a label's directory half has its own grammar, independent of the name
 //! half it is paired with. Parsing it once here means the label never re-checks it.
 //!
-//! Responsibilities: [`Directory`], its [`Directory::parse`] constructor, and its rendering.
+//! Responsibilities: [`Directory`], its [`Directory::parse`] constructor, its rendering, and
+//! whether one directory lies inside another.
 //!
 //! Non-responsibilities: the filesystem. A `Directory` is a name, and nothing here asks whether
 //! the directory exists — that question belongs to a storage adapter.
@@ -66,6 +67,20 @@ impl Directory {
     #[must_use]
     pub const fn is_root(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// Whether `other` is this directory or lies below it.
+    ///
+    /// The workspace root contains every directory. A shared prefix is not containment: `lib`
+    /// does not contain `lib2`.
+    #[must_use]
+    pub fn contains(&self, other: &Self) -> bool {
+        self.is_root()
+            || self == other
+            || other
+                .0
+                .strip_prefix(self.0.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
     }
 }
 
@@ -141,6 +156,39 @@ mod tests {
         assert_eq!(root, Directory::root());
         assert_eq!(root.as_str(), "");
         assert!(!Directory::parse("lib").unwrap().is_root());
+    }
+
+    #[test]
+    fn contains_itself_and_everything_below_it() {
+        let lib = Directory::parse("lib").unwrap();
+        assert!(lib.contains(&lib));
+        assert!(lib.contains(&Directory::parse("lib/text").unwrap()));
+        assert!(lib.contains(&Directory::parse("lib/text/deep").unwrap()));
+    }
+
+    #[test]
+    fn does_not_contain_what_is_above_or_beside_it() {
+        let text = Directory::parse("lib/text").unwrap();
+        let lib = Directory::parse("lib").unwrap();
+        assert!(!text.contains(&lib));
+        assert!(!text.contains(&Directory::parse("lib/other").unwrap()));
+        assert!(!lib.contains(&Directory::root()));
+    }
+
+    #[test]
+    fn a_shared_prefix_is_not_containment() {
+        let lib = Directory::parse("lib").unwrap();
+        assert!(!lib.contains(&Directory::parse("lib2").unwrap()));
+        assert!(!lib.contains(&Directory::parse("lib2/text").unwrap()));
+        assert!(!lib.contains(&Directory::parse("li").unwrap()));
+    }
+
+    #[test]
+    fn the_root_contains_every_directory() {
+        let root = Directory::root();
+        assert!(root.contains(&root));
+        assert!(root.contains(&Directory::parse("lib").unwrap()));
+        assert!(root.contains(&Directory::parse("lib/text").unwrap()));
     }
 
     #[test]

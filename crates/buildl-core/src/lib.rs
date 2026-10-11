@@ -22,11 +22,12 @@
 //! | Module | Holds |
 //! |---|---|
 //! | [`error`] | the one error enum and the crate-wide `Result` alias |
-//! | [`types`] | the validated domain values — names, identities, instants, declarations, the target graph — and the as-written values a build file stages |
+//! | [`types`] | the validated domain values — names, identities, instants, declarations, the target graph, action keys, cache rows, the ceiling, the plan — and the as-written values a build file stages |
 //! | [`json`] | the one canonical serializer every byte of output goes through |
-//! | [`ports`] | every trait in the crate: the ports through which everything outside it is reached, and the bundle that names one implementation of each |
+//! | [`ports`] | every trait in the crate: the ports through which everything outside it is reached, and the bundle that names one implementation of each, with the set that holds one instance of each |
 //! | [`load`](mod@load) | Load, the first phase: build files to validated, sorted declarations |
 //! | [`resolve`](mod@resolve) | Resolve, the second phase: declarations to the target graph |
+//! | [`plan`](mod@plan) | Plan, the third phase: the target graph to a verdict per target, with what the build wants |
 //! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command |
 //!
 //! Each phase has its own module, named for the phase. Five rules keep that arrangement
@@ -55,8 +56,12 @@
 //! and [`Pipeline::check`] runs it twice to catch a build file that declares differently on
 //! each evaluation. Resolve is implemented: [`resolve`](fn@resolve) turns those declarations
 //! into a [`TargetGraph`], refusing a name declared twice, a reference that names nothing or the
-//! wrong kind of thing, and a dependency cycle; [`Pipeline::graph`] runs both phases. Plan,
-//! Execute and Record are not implemented yet.
+//! wrong kind of thing, and a dependency cycle; [`Pipeline::graph`] runs both phases. Plan is
+//! implemented: [`plan`](fn@plan) refuses a build that wants more than its workspace's
+//! [`Ceiling`] allows, gives every target an [`ActionKey`] from what the ports report, and
+//! compares it with the key the target's last build recorded, so each target is clean, dirty
+//! with a reason, or conditional on a dependency's output; [`Pipeline::plan`] runs all three
+//! phases. Execute and Record are not implemented yet.
 //!
 //! This file holds only module declarations and re-exports, so it carries no logic to
 //! unit-test.
@@ -65,23 +70,31 @@ pub mod error;
 pub mod json;
 pub mod load;
 pub mod pipeline;
+pub mod plan;
 pub mod ports;
 pub mod resolve;
 pub mod types;
 
 pub use error::{
     ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
-    EvaluationLimit, NameKind, Result,
+    EvaluationLimit, NameKind, PortName, Result,
 };
 pub use load::load;
 pub use pipeline::Pipeline;
-pub use ports::{Clock, DeclarationSource, Ports};
+pub use plan::plan;
+pub use ports::{
+    ActionCache, Clock, DeclarationSource, Digester, Host, Manifest, PortSet, Ports, StatCache,
+    ToolResolver,
+};
 pub use resolve::resolve;
 pub use types::{
-    Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
-    Description, Diagnostic, Digest, Directory, EntryName, EnvName, Evaluated, FieldName,
-    Freshness, Label, NetworkAccess, Node, NodeId, OutputName, Provenance, Rule, Setting,
+    Action, ActionKey, Alias, Argument, BuildFile, CacheRow, Ceiling, Command, Declaration,
+    DeclarationOrder, Declared, DepProducts, Description, Diagnostic, Difference, Digest,
+    Directory, DirtyReason, EntryName, EnvName, EnvValue, Evaluated, FieldName, FileStat,
+    Freshness, InputDigest, KeyComponents, Label, NetworkAccess, Node, NodeId, OutputName,
+    OwnComponents, Plan, PlannedKey, Platform, Produced, Program, Provenance, Rule, Setting,
     SettingName, SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem,
-    StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target, TargetGraph, TargetName,
-    TargetRole, Timestamp, Written,
+    StagedRule, StagedSetting, StagedSubdir, StagedTarget, StatEntry, Target, TargetGraph,
+    TargetName, TargetRole, Timestamp, ToolIdentity, Unfinished, Verdict, Want, WantedSet,
+    Workspace, Written,
 };
