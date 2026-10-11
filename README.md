@@ -4,7 +4,7 @@
 
 The positioning in one sentence: Lua where Starlark sits in Bazel [5], ninja's execution discipline underneath [4], and airsl's capability model as the trust layer neither of them has.
 
-> **Status: design settled, implementation under way.** `buildl-core` ships the validated domain vocabulary, the one error enum, the canonical JSON serializer, the `Clock` and `DeclarationSource` ports, and the first two pipeline phases — Load and Resolve, with `check` and `graph`, whose flows run against in-memory fakes; Plan, Execute and Record are not implemented yet. `buildl-lua` evaluates build files on airsl, and no command composes it with the pipeline yet. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
+> **Status: design settled, implementation under way.** `buildl-core` ships the validated domain vocabulary, the one error enum, the canonical JSON serializer, the `Clock` and `DeclarationSource` ports with the six ports Plan reads, and the first three pipeline phases — Load, Resolve and Plan, with `check`, `graph` and `plan`, whose flows run against in-memory fakes; Execute and Record are not implemented yet. `buildl-lua` evaluates build files on airsl, and no command composes it with the pipeline yet. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
 
 ---
 
@@ -88,14 +88,14 @@ The core incremental mechanism, deliberately aligned with the Remote Execution A
 graph TD
     CMD["Command<br/>argv template"] --> KEY["Action key<br/>sha256 of all four"]
     IN["Input hashes<br/>via the stat cache"] --> KEY
-    DEP["Dep action keys<br/>propagation built in"] --> KEY
+    DEP["Dep output hashes<br/>early cutoff built in"] --> KEY
     ENV["Env values<br/>granted names only"] --> KEY
     KEY --> CMP{"equals cached key?"}
     CMP -- yes --> CLEAN["Clean — served from cache"]
     CMP -- no --> DIRTY["Dirty — plus the reason why"]
 ```
 
-Because dep *keys* fold into the hash, dirtiness propagates downstream with no separate marking pass, and the mismatching component is retained per dirty target — that is the entire implementation of `buildl plan`'s explanations. Outputs land in a content-addressed store before the cache row is written, so an interrupted build simply continues on the next run: no "corrupt cache, run clean" state is representable, and failures are never cached.
+A key folds what each dependency *produced*, not the dependency's own key, so a dependency rebuilt to the same bytes leaves everything downstream clean, and a target downstream of a dirty one is *conditional*: it runs only if that output changes. The mismatching component is retained per dirty target — that is the entire implementation of `buildl plan`'s explanations. Outputs land in a content-addressed store before the cache row is written, so an interrupted build simply continues on the next run: no "corrupt cache, run clean" state is representable, and failures are never cached.
 
 Execution isolation is a ladder, set in `buildl.toml` with per-target overrides:
 

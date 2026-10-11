@@ -25,7 +25,7 @@ Section cross-references between the docs (e.g. "design §8.5", "§12.4 ledger")
 
 **Pipeline:** Load → Resolve → Plan → Execute → Record. Phases communicate through serializable values (`Vec<Declaration>` → `TargetGraph` → `Plan` → `Vec<ActionOutcome>`), never by calling each other; each CLI command (`check`/`graph`/`plan`/`build`) is the pipeline truncated at a handoff.
 
-**Incrementality:** the action key — SHA-256 over command, input hashes, dep action keys, env values, tool fingerprints, settings, os/arch. Dep *keys* fold into the hash so dirtiness propagates with no marking pass; `KeyComponents` is kept beside the digest so `plan` explains dirtiness as a struct diff. Crash-safety invariant: **cas first, cache row after, log always** — failures are never cached.
+**Incrementality:** the action key — SHA-256 over command, input hashes, each dependency's output hashes, env values, tool fingerprints, settings, os/arch. A key folds what a dependency *produced*, not the dependency's key, so a dependency rebuilt to the same bytes leaves downstream targets clean (early cutoff), and a target downstream of a dirty one is *conditional* until that output is known; `KeyComponents` is kept beside the digest so `plan` explains dirtiness as a struct diff. Crash-safety invariant: **cas first, cache row after, log always** — failures are never cached.
 
 **Structural rules (architecture-building-blocks.md §7):**
 - airsl is a dependency of the `buildl-lua` crate only; no other crate knows Lua exists.
