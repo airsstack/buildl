@@ -3,7 +3,7 @@
 //! Its own file because the driver owns the sequence of phases, and the sequence grows by one
 //! method per command as later phases arrive. Today it runs Load and Resolve.
 //!
-//! Responsibilities: [`Pipeline`], [`Pipeline::check`] and [`Pipeline::graph`].
+//! Responsibilities: [`Pipeline`], its ports, [`Pipeline::check`] and [`Pipeline::graph`].
 //!
 //! Non-responsibilities: the phases' own logic, which each phase's module holds.
 
@@ -12,22 +12,22 @@ use core::fmt;
 
 use crate::error::{Error, Result};
 use crate::load::{declaration_order, load};
-use crate::ports::Ports;
+use crate::ports::{PortSet, Ports};
 use crate::resolve::resolve;
 use crate::types::{Declaration, EntryName, TargetGraph};
 
 /// The pipeline over one chosen implementation of each port.
 pub struct Pipeline<P: Ports> {
-    source: P::Source,
+    ports: PortSet<P>,
 }
 
 impl<P: Ports> fmt::Debug for Pipeline<P>
 where
-    P::Source: fmt::Debug,
+    PortSet<P>: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Pipeline")
-            .field("source", &self.source)
+            .field("ports", &self.ports)
             .finish()
     }
 }
@@ -35,8 +35,20 @@ where
 impl<P: Ports> Pipeline<P> {
     /// Assembles a pipeline from its ports.
     #[must_use]
-    pub const fn new(source: P::Source) -> Self {
-        Self { source }
+    pub const fn new(ports: PortSet<P>) -> Self {
+        Self { ports }
+    }
+
+    /// The ports this pipeline runs over.
+    #[must_use]
+    pub const fn ports(&self) -> &PortSet<P> {
+        &self.ports
+    }
+
+    /// The ports this pipeline runs over, for a caller that changes one between two commands.
+    #[must_use]
+    pub const fn ports_mut(&mut self) -> &mut PortSet<P> {
+        &mut self.ports
     }
 
     /// Loads the workspace twice and returns its declarations when both loads agree.
@@ -50,8 +62,8 @@ impl<P: Ports> Pipeline<P> {
     /// Returns whatever either load returns, and [`Error::Nondeterministic`] when the two loads
     /// declare different things.
     pub fn check(&self, entry: &EntryName) -> Result<Vec<Declaration>> {
-        let first = load(&self.source, entry)?;
-        let second = load(&self.source, entry)?;
+        let first = load(&self.ports.source, entry)?;
+        let second = load(&self.ports.source, entry)?;
         first_difference(&first, &second).map_or(Ok(first), Err)
     }
 
@@ -66,7 +78,7 @@ impl<P: Ports> Pipeline<P> {
     /// declared more than once, a reference that names nothing or the wrong kind of thing, or a
     /// dependency cycle.
     pub fn graph(&self, entry: &EntryName) -> Result<TargetGraph> {
-        resolve(load(&self.source, entry)?)
+        resolve(load(&self.ports.source, entry)?)
     }
 }
 

@@ -71,17 +71,23 @@ pub mod types;
 
 pub use error::{
     ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
-    EvaluationLimit, NameKind, Result,
+    EvaluationLimit, NameKind, PortName, Result,
 };
 pub use load::load;
 pub use pipeline::Pipeline;
-pub use ports::{Clock, DeclarationSource, Ports};
+pub use ports::{
+    ActionCache, Clock, DeclarationSource, Digester, Host, Manifest, PortSet, Ports, StatCache,
+    ToolResolver,
+};
 pub use resolve::resolve;
 pub use types::{
-    Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
-    Description, Diagnostic, Digest, Directory, EntryName, EnvName, Evaluated, FieldName,
-    Freshness, Label, NetworkAccess, Node, NodeId, OutputName, Provenance, Rule, Setting,
+    Action, ActionKey, Alias, Argument, BuildFile, CacheRow, Ceiling, Command, Declaration,
+    DeclarationOrder, Declared, DepProducts, Description, Diagnostic, Difference, Digest,
+    Directory, DirtyReason, EntryName, EnvName, EnvValue, Evaluated, FieldName, FileStat,
+    Freshness, InputDigest, KeyComponents, Label, NetworkAccess, Node, NodeId, OutputName,
+    OwnComponents, Plan, PlannedKey, Platform, Produced, Program, Provenance, Rule, Setting,
     SettingName, SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem,
-    StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target, TargetGraph, TargetName,
-    TargetRole, Timestamp, Written,
+    StagedRule, StagedSetting, StagedSubdir, StagedTarget, StatEntry, Target, TargetGraph,
+    TargetName, TargetRole, Timestamp, ToolIdentity, Unfinished, Verdict, Want, WantedSet,
+    Workspace, Written,
 };

@@ -16,6 +16,7 @@
 //! - [`DeclaredKind`] — what a label an [`Error::WrongReferenceKind`] is about was declared as.
 //! - [`DeclarationSite`] — a declared label and its build file: the declaration holding a bad
 //!   reference, or one target on a dependency cycle.
+//! - [`PortName`] — which port an [`Error::Adapter`] came through.
 //! - [`Result`] — the crate-wide alias.
 //!
 //! Non-responsibilities: presentation. [`Error`]'s `Display` renders one diagnostic, on one line
@@ -25,8 +26,8 @@
 use core::fmt;
 
 use crate::types::{
-    Declaration, DeclarationOrder, Diagnostic, Directory, FieldName, Label, Provenance,
-    SettingName, Written,
+    Ceiling, Declaration, DeclarationOrder, Diagnostic, Directory, FieldName, Label, Node, Program,
+    Provenance, SettingName, SourcePath, Want, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -195,6 +196,55 @@ pub enum Error {
         /// How many targets were declared.
         count: usize,
     },
+    /// A build wants something its workspace's ceiling does not allow.
+    #[error("{}", refusal(.want, .site.as_deref(), .ceiling))]
+    Refused {
+        /// What was wanted.
+        want: Want,
+        /// The lowest-labelled target wanting it, and its build file; `None` for a directory
+        /// the build writes into, which the workspace names and no target declares.
+        site: Option<Box<DeclarationSite>>,
+        /// What the workspace allows.
+        ceiling: Box<Ceiling>,
+    },
+    /// A command names a program that cannot be found.
+    #[error(
+        "{}: {}: program {program} was not found",
+        .site.provenance,
+        .site.label
+    )]
+    MissingTool {
+        /// The lowest-labelled target whose command names the program, and its build file.
+        site: Box<DeclarationSite>,
+        /// The program.
+        program: Program,
+    },
+    /// A target reads a workspace file that does not exist.
+    #[error(
+        "{}: {}: input {path} does not exist",
+        .site.provenance,
+        .site.label
+    )]
+    MissingInput {
+        /// The lowest-labelled target declaring the input, and its build file.
+        site: Box<DeclarationSite>,
+        /// The file.
+        path: SourcePath,
+    },
+    /// A setting was given a value for this run, but nothing declares it.
+    #[error("setting {name} is overridden but not declared")]
+    UnknownOverride {
+        /// The setting that was named.
+        name: SettingName,
+    },
+    /// An adapter could not do what a port asked of it.
+    #[error("{port}: {diagnostic}")]
+    Adapter {
+        /// The port whose adapter failed.
+        port: PortName,
+        /// The adapter's message, for display only.
+        diagnostic: Diagnostic,
+    },
 }
 
 /// The suffix naming who required a missing build file.
@@ -226,6 +276,55 @@ fn cycle_path(path: &[DeclarationSite]) -> String {
         rendered.push(first.label.to_string());
     }
     rendered.join(" -> ")
+}
+
+/// A refusal as one sentence: who wanted what, and what the ceiling allows of that kind.
+fn refusal(want: &Want, site: Option<&DeclarationSite>, ceiling: &Ceiling) -> String {
+    let (wanted, list, allowed) = match want {
+        Want::Program(program) => (
+            format!("program {program}"),
+            "proc.run",
+            allowed_list(&ceiling.run),
+        ),
+        Want::Env(name) => (
+            format!("environment variable {name}"),
+            "env.read",
+            allowed_list(&ceiling.env),
+        ),
+        Want::Read(path) => (
+            format!("input {path}"),
+            "fs.read",
+            allowed_list(ceiling.read.iter().map(directory_text)),
+        ),
+        Want::Write(directory) => (
+            format!("directory {}", directory_text(directory)),
+            "fs.write",
+            allowed_list(ceiling.write.iter().map(directory_text)),
+        ),
+    };
+    let holder = site.map_or_else(String::new, |site| {
+        format!("{}: {}: ", site.provenance, site.label)
+    });
+    format!("{holder}{wanted} is outside the ceiling ({list} allows: {allowed})")
+}
+
+/// The entries of one ceiling list, separated by commas; `nothing` for an empty list.
+fn allowed_list<T: fmt::Display>(entries: impl IntoIterator<Item = T>) -> String {
+    let rendered: Vec<String> = entries.into_iter().map(|entry| entry.to_string()).collect();
+    if rendered.is_empty() {
+        "nothing".to_owned()
+    } else {
+        rendered.join(", ")
+    }
+}
+
+/// A directory as a refusal shows it: the workspace root, whose text is empty, as `.`.
+fn directory_text(directory: &Directory) -> &str {
+    if directory.is_root() {
+        "."
+    } else {
+        directory.as_str()
+    }
 }
 
 /// What a label was declared as.
@@ -271,6 +370,46 @@ pub struct DeclarationSite {
     pub label: Label,
     /// The build file that declared it.
     pub provenance: Provenance,
+}
+
+impl From<&Node> for DeclarationSite {
+    /// The site of a graph node: its label, and the build file that declared it.
+    fn from(node: &Node) -> Self {
+        Self {
+            label: node.label.clone(),
+            provenance: node.provenance.clone(),
+        }
+    }
+}
+
+/// Which port an [`Error::Adapter`] came through.
+///
+/// Non-exhaustive for the same reason [`Error`] is: a new port is not a breaking change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum PortName {
+    /// The workspace manifest.
+    Manifest,
+    /// The machine actions run on.
+    Host,
+    /// File metadata and content digests.
+    Digester,
+    /// The recorded digests of files already hashed.
+    StatCache,
+    /// The programs commands name.
+    ToolResolver,
+}
+
+impl fmt::Display for PortName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Manifest => "manifest",
+            Self::Host => "host",
+            Self::Digester => "digester",
+            Self::StatCache => "stat cache",
+            Self::ToolResolver => "tool resolver",
+        })
+    }
 }
 
 /// A ceiling an evaluation can reach.
@@ -446,6 +585,12 @@ pub enum NameKind {
     EntryName,
     /// A field name in a declaration's option table.
     FieldName,
+    /// The name of a program a command runs.
+    Program,
+    /// An environment variable's value.
+    EnvValue,
+    /// A host platform: an operating system and an architecture.
+    Platform,
 }
 
 impl fmt::Display for NameKind {
@@ -465,6 +610,9 @@ impl fmt::Display for NameKind {
             Self::SettingValue => "setting value",
             Self::EntryName => "entry file name",
             Self::FieldName => "field name",
+            Self::Program => "program",
+            Self::EnvValue => "environment variable value",
+            Self::Platform => "platform",
         })
     }
 }
@@ -476,15 +624,17 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::BTreeSet;
     use std::path::PathBuf;
 
     use super::{
         ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
-        EvaluationLimit, NameKind,
+        EvaluationLimit, NameKind, PortName,
     };
     use crate::types::{
-        DeclarationOrder, Diagnostic, Directory, FieldName, Label, Provenance, SettingName,
-        TargetName, Written,
+        Argument, Ceiling, Command, DeclarationOrder, Diagnostic, Directory, EnvName, FieldName,
+        Freshness, Label, NetworkAccess, Node, OutputName, Program, Provenance, SettingName,
+        SourcePath, TargetName, TargetRole, Want, Written,
     };
 
     fn lib_file() -> Provenance {
@@ -662,6 +812,188 @@ mod tests {
     }
 
     #[test]
+    fn a_site_is_a_nodes_label_and_its_build_file() {
+        let node = Node {
+            label: label("//lib:text"),
+            provenance: lib_file(),
+            role: TargetRole::Build,
+            run: Command::new(vec![Argument::parse("cc").unwrap()]).unwrap(),
+            description: None,
+            inputs: Vec::new(),
+            outputs: vec![OutputName::parse("text").unwrap()],
+            env: Vec::new(),
+            network: NetworkAccess::Sealed,
+            freshness: Freshness::Cached,
+        };
+        assert_eq!(
+            DeclarationSite::from(&node),
+            DeclarationSite {
+                label: label("//lib:text"),
+                provenance: lib_file(),
+            }
+        );
+    }
+
+    #[test]
+    fn missing_tool_names_the_site_and_the_program() {
+        let err = Error::MissingTool {
+            site: Box::new(root_site("//:app")),
+            program: Program::parse("cc").unwrap(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app: program cc was not found"
+        );
+    }
+
+    #[test]
+    fn missing_input_names_the_site_and_the_path() {
+        let err = Error::MissingInput {
+            site: Box::new(root_site("//:app")),
+            path: SourcePath::parse("src/main.c").unwrap(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app: input src/main.c does not exist"
+        );
+    }
+
+    /// A ceiling allowing `cc` and `ld`, `HOME` and `PATH`, reads under `src`, and no write.
+    fn ceiling() -> Ceiling {
+        Ceiling {
+            run: ["cc", "ld"]
+                .into_iter()
+                .map(|raw| Program::parse(raw).unwrap())
+                .collect(),
+            env: ["PATH", "HOME"]
+                .into_iter()
+                .map(|raw| EnvName::parse(raw).unwrap())
+                .collect(),
+            read: BTreeSet::from([Directory::parse("src").unwrap()]),
+            write: BTreeSet::new(),
+        }
+    }
+
+    #[test]
+    fn a_refused_program_names_the_site_and_what_may_run() {
+        let err = Error::Refused {
+            want: Want::Program(Program::parse("docker").unwrap()),
+            site: Some(Box::new(root_site("//:image"))),
+            ceiling: Box::new(ceiling()),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:image: program docker is outside the ceiling (proc.run allows: cc, ld)"
+        );
+    }
+
+    #[test]
+    fn a_refused_variable_names_the_site_and_what_may_be_read() {
+        let err = Error::Refused {
+            want: Want::Env(EnvName::parse("AWS_SECRET").unwrap()),
+            site: Some(Box::new(root_site("//:app"))),
+            ceiling: Box::new(ceiling()),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app: environment variable AWS_SECRET is outside the ceiling \
+             (env.read allows: HOME, PATH)"
+        );
+    }
+
+    #[test]
+    fn a_refused_input_names_the_site_and_where_inputs_may_lie() {
+        let err = Error::Refused {
+            want: Want::Read(SourcePath::parse("lib/key.pem").unwrap()),
+            site: Some(Box::new(DeclarationSite {
+                label: label("//lib:text"),
+                provenance: lib_file(),
+            })),
+            ceiling: Box::new(ceiling()),
+        };
+        assert_eq!(
+            err.to_string(),
+            "lib/build.lua: //lib:text: input lib/key.pem is outside the ceiling \
+             (fs.read allows: src)"
+        );
+    }
+
+    #[test]
+    fn a_refused_directory_has_no_site_and_an_empty_list_allows_nothing() {
+        let err = Error::Refused {
+            want: Want::Write(Directory::parse("out").unwrap()),
+            site: None,
+            ceiling: Box::new(ceiling()),
+        };
+        assert_eq!(
+            err.to_string(),
+            "directory out is outside the ceiling (fs.write allows: nothing)"
+        );
+    }
+
+    #[test]
+    fn the_workspace_root_renders_as_a_dot_in_a_refusal() {
+        let mut allows_root = ceiling();
+        allows_root.read = BTreeSet::from([Directory::root(), Directory::parse("src").unwrap()]);
+        allows_root.write = BTreeSet::from([Directory::parse("out").unwrap()]);
+        let read = Error::Refused {
+            want: Want::Read(SourcePath::parse("lib/key.pem").unwrap()),
+            site: Some(Box::new(root_site("//:app"))),
+            ceiling: Box::new(allows_root.clone()),
+        };
+        assert_eq!(
+            read.to_string(),
+            "build.lua: //:app: input lib/key.pem is outside the ceiling (fs.read allows: ., src)"
+        );
+        let write = Error::Refused {
+            want: Want::Write(Directory::root()),
+            site: None,
+            ceiling: Box::new(allows_root),
+        };
+        assert_eq!(
+            write.to_string(),
+            "directory . is outside the ceiling (fs.write allows: out)"
+        );
+    }
+
+    #[test]
+    fn unknown_override_names_the_setting() {
+        let err = Error::UnknownOverride {
+            name: SettingName::parse("test_fliter").unwrap(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "setting test_fliter is overridden but not declared"
+        );
+    }
+
+    #[test]
+    fn adapter_names_the_port_before_the_adapters_own_message() {
+        let err = Error::Adapter {
+            port: PortName::StatCache,
+            diagnostic: Diagnostic::new("statcache.json: permission denied"),
+        };
+        assert_eq!(
+            err.to_string(),
+            "stat cache: statcache.json: permission denied"
+        );
+    }
+
+    #[test]
+    fn every_port_name_renders_a_human_phrase() {
+        let cases = [
+            (PortName::Manifest, "manifest"),
+            (PortName::Host, "host"),
+            (PortName::Digester, "digester"),
+            (PortName::StatCache, "stat cache"),
+            (PortName::ToolResolver, "tool resolver"),
+        ];
+        for (port, rendered) in cases {
+            assert_eq!(port.to_string(), rendered);
+        }
+    }
+
+    #[test]
     fn name_kind_renders_a_human_phrase() {
         assert_eq!(NameKind::Directory.to_string(), "directory");
         assert_eq!(NameKind::TargetName.to_string(), "target name");
@@ -677,6 +1009,9 @@ mod tests {
         assert_eq!(NameKind::SettingValue.to_string(), "setting value");
         assert_eq!(NameKind::EntryName.to_string(), "entry file name");
         assert_eq!(NameKind::FieldName.to_string(), "field name");
+        assert_eq!(NameKind::Program.to_string(), "program");
+        assert_eq!(NameKind::EnvValue.to_string(), "environment variable value");
+        assert_eq!(NameKind::Platform.to_string(), "platform");
     }
 
     #[test]

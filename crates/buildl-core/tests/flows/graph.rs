@@ -13,7 +13,8 @@ use buildl_core::{
 };
 
 use crate::common::{
-    FakeFile, FakePorts, FakeSource, alias, file, rule, setting, target, target_with, workspace,
+    FakeFile, FakePorts, FakeSource, alias, file, ports, rule, setting, target, target_with,
+    workspace,
 };
 
 /// The serialized graph of [`fixture`], pinned.
@@ -24,7 +25,7 @@ fn entry() -> EntryName {
 }
 
 fn graph(source: FakeSource) -> buildl_core::Result<TargetGraph> {
-    Pipeline::<FakePorts>::new(source).graph(&entry())
+    Pipeline::<FakePorts>::new(ports(source)).graph(&entry())
 }
 
 /// The root file's declarations: a rule, a target using it, a target with dependencies in two

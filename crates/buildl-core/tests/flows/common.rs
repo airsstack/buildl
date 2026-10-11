@@ -3,13 +3,15 @@
 //! Everything here uses only `buildl_core`'s public API, exactly as an adapter crate would.
 
 use std::cell::{Cell, RefCell};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
-    BuildFile, DeclarationOrder, DeclarationSource, Diagnostic, Directory, Error, Evaluated,
-    EvaluationFailure, Freshness, NetworkAccess, Ports, Result, StagedAlias, StagedDeclaration,
-    StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, TargetRole,
-    Written,
+    ActionCache, BuildFile, CacheRow, Ceiling, DeclarationOrder, DeclarationSource, Diagnostic,
+    Digest, Digester, Directory, EnvName, EnvValue, Error, Evaluated, EvaluationFailure, FileStat,
+    Freshness, Host, Label, Manifest, NetworkAccess, Platform, PortName, PortSet, Ports, Program,
+    Result, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
+    StagedSetting, StagedSubdir, StagedTarget, StatCache, StatEntry, TargetRole, ToolResolver,
+    Workspace, Written,
 };
 
 /// What the fake holds for one directory.
@@ -93,12 +95,232 @@ impl DeclarationSource for FakeSource {
     }
 }
 
-/// The bundle choosing [`FakeSource`].
+/// A manifest holding one workspace.
+#[derive(Debug, Clone)]
+pub struct FakeManifest {
+    /// What the manifest says.
+    pub workspace: Workspace,
+}
+
+impl Manifest for FakeManifest {
+    fn workspace(&self) -> Result<Workspace> {
+        Ok(self.workspace.clone())
+    }
+}
+
+/// A machine with a fixed platform and a fixed environment.
+#[derive(Debug, Clone)]
+pub struct FakeHost {
+    /// The platform it reports.
+    pub platform: Platform,
+    /// The variables that are set.
+    pub variables: BTreeMap<EnvName, EnvValue>,
+    /// The variables whose value it fails to report.
+    pub unreportable: BTreeSet<EnvName>,
+}
+
+impl Host for FakeHost {
+    fn platform(&self) -> Platform {
+        self.platform.clone()
+    }
+
+    fn env(&self, name: &EnvName) -> Result<Option<EnvValue>> {
+        if self.unreportable.contains(name) {
+            return Err(Error::Adapter {
+                port: PortName::Host,
+                diagnostic: Diagnostic::new(format!("{name} does not hold valid text")),
+            });
+        }
+        Ok(self.variables.get(name).cloned())
+    }
+}
+
+/// One file a [`FakeDigester`] holds.
+#[derive(Debug, Clone)]
+pub struct FakeContent {
+    /// The file's bytes.
+    pub bytes: Vec<u8>,
+    /// The metadata reported for it.
+    pub stat: FileStat,
+}
+
+/// Workspace files held in memory, counting every call made to it.
+#[derive(Debug, Default)]
+pub struct FakeDigester {
+    /// The files that exist.
+    pub files: BTreeMap<SourcePath, FakeContent>,
+    stat_calls: Cell<u32>,
+    digest_calls: Cell<u32>,
+    digested: RefCell<Vec<SourcePath>>,
+}
+
+impl FakeDigester {
+    /// How many times metadata was asked for.
+    #[must_use]
+    pub const fn stat_calls(&self) -> u32 {
+        self.stat_calls.get()
+    }
+
+    /// How many times digests were asked for.
+    #[must_use]
+    pub const fn digest_calls(&self) -> u32 {
+        self.digest_calls.get()
+    }
+
+    /// Every path a digest was asked for, in the order asked.
+    #[must_use]
+    pub fn digested(&self) -> Vec<SourcePath> {
+        self.digested.borrow().clone()
+    }
+}
+
+impl Digester for FakeDigester {
+    fn stat(&self, path: &SourcePath) -> Result<Option<FileStat>> {
+        self.stat_calls.set(self.stat_calls.get() + 1);
+        Ok(self.files.get(path).map(|file| file.stat))
+    }
+
+    fn digest(&self, paths: &[SourcePath]) -> Result<Vec<Digest>> {
+        self.digest_calls.set(self.digest_calls.get() + 1);
+        self.digested.borrow_mut().extend_from_slice(paths);
+        Ok(paths
+            .iter()
+            .map(|path| {
+                self.files
+                    .get(path)
+                    .map_or_else(|| Digest::of(b""), |file| Digest::of(&file.bytes))
+            })
+            .collect())
+    }
+}
+
+/// A stat cache held in memory, counting how often it was committed.
+#[derive(Debug, Default)]
+pub struct FakeStatCache {
+    /// What is recorded.
+    pub entries: BTreeMap<SourcePath, StatEntry>,
+    commits: u32,
+}
+
+impl FakeStatCache {
+    /// How many times the entries were committed.
+    #[must_use]
+    pub const fn commits(&self) -> u32 {
+        self.commits
+    }
+}
+
+impl StatCache for FakeStatCache {
+    fn entry(&self, path: &SourcePath) -> Option<StatEntry> {
+        self.entries.get(path).copied()
+    }
+
+    fn record(&mut self, path: SourcePath, entry: StatEntry) {
+        self.entries.insert(path, entry);
+    }
+
+    fn commit(&mut self) -> Result<()> {
+        self.commits += 1;
+        Ok(())
+    }
+}
+
+/// Programs with fixed fingerprints, recording every lookup.
+#[derive(Debug, Default)]
+pub struct FakeTools {
+    /// The programs that can be found.
+    pub fingerprints: BTreeMap<Program, Digest>,
+    lookups: RefCell<Vec<Program>>,
+}
+
+impl FakeTools {
+    /// Every program looked up, in the order asked.
+    #[must_use]
+    pub fn lookups(&self) -> Vec<Program> {
+        self.lookups.borrow().clone()
+    }
+}
+
+impl ToolResolver for FakeTools {
+    fn fingerprint(&self, program: &Program) -> Result<Option<Digest>> {
+        self.lookups.borrow_mut().push(program.clone());
+        Ok(self.fingerprints.get(program).copied())
+    }
+}
+
+/// The rows of a previous build, held in memory.
+#[derive(Debug, Default)]
+pub struct FakeCache {
+    /// The rows.
+    pub rows: BTreeMap<Label, CacheRow>,
+}
+
+impl ActionCache for FakeCache {
+    fn row(&self, label: &Label) -> Option<&CacheRow> {
+        self.rows.get(label)
+    }
+}
+
+/// The bundle choosing the fakes of this file.
 #[derive(Debug)]
 pub struct FakePorts;
 
 impl Ports for FakePorts {
     type Source = FakeSource;
+    type Manifest = FakeManifest;
+    type Host = FakeHost;
+    type Digester = FakeDigester;
+    type StatCache = FakeStatCache;
+    type Tools = FakeTools;
+    type Cache = FakeCache;
+}
+
+/// A workspace that writes to `out` and `.buildl`, under a ceiling allowing `cc` to run, any
+/// workspace file to be read, and those two directories to be written.
+#[must_use]
+pub fn open_workspace() -> Workspace {
+    Workspace {
+        out: dir("out"),
+        state: dir(".buildl"),
+        ceiling: Ceiling {
+            run: BTreeSet::from([program("cc")]),
+            env: BTreeSet::new(),
+            read: BTreeSet::from([Directory::root()]),
+            write: BTreeSet::from([dir("out"), dir(".buildl")]),
+        },
+    }
+}
+
+/// Every port around `source`: an [`open_workspace`], a `linux/x86_64` machine with no variable
+/// set, no workspace file, nothing recorded, no program and no row.
+#[must_use]
+pub fn ports(source: FakeSource) -> PortSet<FakePorts> {
+    PortSet {
+        source,
+        manifest: FakeManifest {
+            workspace: open_workspace(),
+        },
+        host: FakeHost {
+            platform: Platform::parse("linux/x86_64")
+                .unwrap_or_else(|error| unreachable!("fixture platform: {error}")),
+            variables: BTreeMap::new(),
+            unreportable: BTreeSet::new(),
+        },
+        digester: FakeDigester::default(),
+        stat_cache: FakeStatCache::default(),
+        tools: FakeTools::default(),
+        cache: FakeCache::default(),
+    }
+}
+
+/// A program from known-valid text.
+///
+/// # Panics
+///
+/// Panics when `raw` is not a valid program name; a test fixture is wrong then.
+#[must_use]
+pub fn program(raw: &str) -> Program {
+    Program::parse(raw).unwrap_or_else(|error| unreachable!("fixture program: {error}"))
 }
 
 /// A directory from known-valid text.
