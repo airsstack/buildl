@@ -68,7 +68,7 @@ graph LR
 |**I3 Load**|`buildl-core`|`Declaration`, `BuildFile`, `StagedFile`, `DeclarationSource`; the `Pipeline` skeleton and `FakePorts`|a fake source's output becomes `Vec<Declaration>`|**done**, 2026-10-08 (§4)|
 |**I-lua**|`buildl-lua`|`DeclarationSource` on airsl; the `buildl` table bound to both `airsstack.buildl` and the `buildl` global (design §5)|`build.lua` fixtures produce exact declarations|**done**, 2026-10-08 (§4)|
 |**I4 Resolve**|`buildl-core`|the `TargetGraph` arena, duplicate, unknown-reference and cycle detection; the guard that no phase module imports another|the pipeline stops at `graph`|**done**, 2026-10-10 (§4)|
-|**I5 Plan**|`buildl-core`|the action key, `KeyComponents`, why-dirty; grants (wanted set ∩ ceiling); the manifest, digest, stat, tool and cache-read ports|the pipeline stops at `plan`|not started|
+|**I5 Plan**|`buildl-core`|the action key, `KeyComponents`, why-dirty; the wanted set ∩ ceiling as a plan-time refusal; setting overrides; the manifest, digest, stat, tool and cache-read ports|the pipeline stops at `plan`|**in progress** — intent approved 2026-10-10, spec and 11 plans approved 2026-10-11 (`.claudestacks/sdlc/2026-10-10-core-plan/`)|
 |**I6 Execute + Record**|`buildl-core`|`Schedule`, `Dispatcher`, `ExecStrategy`; cas, cache and log writes; the crash-safety invariant (design §8.5)|a full `build` runs against fakes|not started|
 
 Ground rules for the ladder:
@@ -100,7 +100,7 @@ Findings an earlier slice recorded but left out of scope, each assigned to the s
 |#|Follow-up|Origin|Target|
 |---|---|---|---|
 |5|The `buildl-cli` `description` says "a thin clap shell", but clap is not yet a dependency.|I1 review|CLI slice|
-|13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs; which directories to skip is known only once `buildl.toml` is parsed.|I-lua spec §6.2|I5 Plan (the `Manifest` port)|
+|13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs; which directories to skip is known only once `buildl.toml` is parsed. Split in the I5 intent: I5 makes the workspace's output directories known to `buildl-core` through the `Manifest` port; the change to `buildl-lua`'s walk follows where a manifest is first read.|I-lua spec §6.2|I5 Plan (the `Manifest` port), then the `buildl` adapters slice (the walk)|
 
 ## 6. Process notes
 
