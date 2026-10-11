@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn equal_keys_have_no_difference() {
-        assert!(own_differences(&full()).is_empty());
+        assert_eq!(own_differences(&full()), []);
     }
 
     #[test]
@@ -338,7 +338,7 @@ mod tests {
         let previous = recorded();
         let mut unknown = same_deps(&previous);
         unknown[0].1 = None;
-        assert!(dep_differences(&unknown).is_empty());
+        assert_eq!(dep_differences(&unknown), []);
 
         unknown.push((label("//lib:new"), None));
         assert_eq!(
@@ -412,7 +412,7 @@ mod tests {
         let now = BTreeMap::from([("a", 1), ("b", 2), ("d", 4)]);
         let then = BTreeMap::from([("b", 3), ("c", 3), ("d", 4)]);
         assert_eq!(changed(&now, &then), ["a", "b", "c"]);
-        assert!(changed(&now, &now).is_empty());
+        assert_eq!(changed(&now, &now), Vec::<&str>::new());
     }
 
     #[test]

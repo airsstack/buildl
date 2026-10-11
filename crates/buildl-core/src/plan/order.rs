@@ -53,7 +53,7 @@ mod tests {
 
     #[test]
     fn an_empty_graph_has_an_empty_order() {
-        assert!(topological(&graph(Vec::new(), &[])).is_empty());
+        assert_eq!(topological(&graph(Vec::new(), &[])), []);
     }
 
     #[test]

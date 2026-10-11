@@ -1613,3 +1613,4 @@ No finding was fixed: none is in the blocking set. The two reversion guards of t
 ## Deviations
 
 - 2026-10-11 — the commit steps were not run. The work was left in the working tree, uncommitted, because committing is the author's act in this run. Nothing else departed from the plan.
+- 2026-10-11 — after the pull request's first CI run, one test assertion departs from the plan's text: `assert!(ports.tools.lookups().is_empty())` in `tests/flows/plan.rs` became `assert_eq!(ports.tools.lookups(), [])`. Rust 1.99, which the pull request's CI installed while the plan was written and run on 1.98, adds clippy's `assert_is_empty`, and the gate failed on it there. The assertions check the same thing and now show the value when they fail. `cargo make dod` on 1.99 after the change: exit `0`, `[cargo-make] INFO - Build Done in 29.17 seconds.`

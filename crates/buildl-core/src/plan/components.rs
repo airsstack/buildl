@@ -201,7 +201,7 @@ mod tests {
         let names = [env_name("PATH")];
         let gathered = gathered(&paths, &names, &[Some("/bin")]);
         let components = own(&node("//:app", |_| {}), &gathered);
-        assert!(components.inputs.is_empty());
+        assert_eq!(components.inputs, []);
         assert!(components.env.is_empty());
         assert!(components.settings.is_empty());
         assert_eq!(components.network, NetworkAccess::Sealed);

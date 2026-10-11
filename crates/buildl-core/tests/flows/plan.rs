@@ -532,7 +532,7 @@ fn a_program_outside_the_ceiling_is_refused_before_anything_is_read() {
     let ports = pipeline.ports();
     assert_eq!(ports.digester.stat_calls(), 0);
     assert_eq!(ports.digester.digest_calls(), 0);
-    assert!(ports.tools.lookups().is_empty());
+    assert_eq!(ports.tools.lookups(), []);
     assert_eq!(ports.stat_cache.commits(), 0);
 }
 

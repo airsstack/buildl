@@ -235,7 +235,7 @@ mod tests {
             hashed(&pending, &reply).unwrap(),
             [(&a, entry(1, 10, "a")), (&c, entry(3, 30, "c"))]
         );
-        assert!(hashed(&[], &[]).unwrap().is_empty());
+        assert_eq!(hashed(&[], &[]).unwrap(), []);
     }
 
     #[test]
