@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [02, 07]
 ---
@@ -686,3 +686,28 @@ crates/buildl-core/src/plan/mod.rs          — [modify] declare the two modules
   a command naming no program, and only the settings the command names; the order a node lists
   its variables in does not change them.
 - `crates/expected-module-edges.txt` is unchanged.
+
+## Review findings
+
+One reviewer pass over the plan's whole diff, 2026-10-11. Verdict: compliant with the plan and the spec, blocking set empty. The reviewer's own gate run: `cargo make dod` exit `0` (`[cargo-make] INFO - Build Done in 5.43 seconds.`), `cargo deny check` exit `0` (`advisories ok, bans ok, licenses ok, sources ok`).
+
+- correctness (risk) — `own` drops silently whatever `gathered` lacks, and the key that results equals the key of a target that never declared it: an input with no digest is left out, a program with no fingerprint gives `tool: None`. Unreachable through the function plan `10` writes, which fails on a missing input or tool before `own` runs; nothing in the types enforces that — `plan/components.rs:43`, `own`
+- unit-test-mandate (risk) — the three fallback sentences of `own`'s doc have no test: turning "taken as unset" into "left out" leaves all four tests green — `plan/components.rs:40`
+- doc accuracy (nit) — "the answers of five ports" miscounts: `Gathered` has five fields fed by four ports, and the settings come from the graph and the overrides. The sentence is the plan's own text — `plan/components.rs:3`
+- doc accuracy (nit) — the test helper `gathered`'s doc describes one call's arguments, which the helper takes as parameters — `plan/components.rs:94`
+- naming (nit) — the struct `Read` reads as the `std::io::Read` trait — `plan/inputs.rs:16`
+- style (nit) — the error text renders "1 digests were returned for 2 files"; the spec pins no wording and the test pins this one — `plan/inputs.rs:72`
+
+No finding was fixed: none is in the blocking set.
+
+## Probe results
+
+- **A value `gathered` lacks leaves no trace in the key.** The reviewer's probe on a scratch copy: a node declaring `src/a.c` and `src/b.c`, with only `a.c` gathered, got the same key digest (`af82c006…`) as a node declaring `a.c` alone. Not against the plan, which states the fallbacks in `own`'s doc; recorded as the first finding above.
+- **The fallbacks are not pinned.** The reviewer mutated "taken as unset" into "left out" on the scratch copy: `4 passed` of 4. Not against the plan: it claims no test for the fallbacks.
+- **The two tasks leave the tree the plan was written from.** `diff -rq <prototype snapshot after plan 08>/crates crates` names only `error.rs`, `ports/port_set.rs` and `types/action_key.rs`, the three files plans `02`, `05` and `06` record as departing from their text. Not against the plan.
+- Each task's red step was run before its green one: `cargo test -p buildl-core --lib plan::inputs` → `error[E0432]` naming `Read`, `Split`, `hashed`, `reusable` and `split`, then `6 passed; 0 failed`; `plan::components` → ``error[E0432]: unresolved imports `super::Gathered`, `super::own` ``, then `4 passed; 0 failed`.
+
+## Deviations
+
+- 2026-10-11 — the commit steps were not run. The work was left in the working tree, uncommitted, because committing is the author's act in this run.
+- 2026-10-11 — each quoted `filtered out` figure came out one higher than the plan's (`284`, `290`): plan `06`'s fix added one unit test to the crate. The `passed` figures match.

@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [05]
 ---
@@ -1231,3 +1231,25 @@ crates/expected-module-edges.txt           — [modify] two edges from plan
   ceiling of `lib`.
 - `crates/expected-module-edges.txt` gains exactly `plan -> error` and `plan -> types`.
 - No file under `plan/` names `crate::load`, `crate::resolve` or `crate::ports`.
+
+## Review findings
+
+One reviewer pass over the plan's whole diff, 2026-10-11. Verdict: compliant with the plan and the spec, blocking set empty. The reviewer's own gate run: `cargo make dod` exit `0` (`[cargo-make] INFO - Build Done in 6.93 seconds.`), `cargo deny check` exit `0` (`advisories ok, bans ok, licenses ok, sources ok`).
+
+- unit-test-mandate (risk) — no test pins that a shared input is reported at its lowest-labelled target: replacing `inputs.entry(path).or_insert(node)` with `inputs.insert(path, node)` leaves every test green. The code is right today; a case where two targets declare one input would guard it (spec §9, D16) — `plan/authority.rs`, `sites`, the inputs loop
+- doc accuracy (nit) — the module doc's "runs before anything else is asked of the machine ... nothing hashed, looked up or read" describes a caller that is not in the tree until plan `10`, and spec §5.1 reads the manifest first — `plan/authority.rs`, module doc
+- strong-types (nit) — `check` takes `graph` and `sites` with nothing tying one to the other — `plan/authority.rs`, `check`
+- unit-test-mandate (nit) — the no-test note names none of the mandate's five exemption categories; the wording is the crate's convention, as in `resolve/fixtures.rs` — `plan/fixtures.rs`, module doc
+
+No finding was fixed: none is in the blocking set.
+
+## Probe results
+
+- **Every test of `plan/` fails when the behaviour it names is broken, but one.** The reviewer mutated a scratch copy of the crate eight times and ran the `plan::` unit tests each time: baseline `29 passed`; seven mutations each failed at least one test; the inputs-site mutation above passed with `29 passed`. Not against the plan: the plan claims no test for that case.
+- **The three tasks leave the tree the plan was written from.** `diff -rq <prototype snapshot after plan 07>/crates crates` names only `error.rs`, `ports/port_set.rs` and `types/action_key.rs`, the three files plans `02`, `05` and `06` record as departing from their text. Not against the plan.
+- Each task's red step was run before its green one: `cargo test -p buildl-core --lib plan::settings` → ``error[E0432]: unresolved imports `super::effective`, `super::referenced` ``, then `7 passed; 0 failed`; `plan::tools` → ``error[E0432]: unresolved imports `super::program_of`, `super::programs` ``, then `4 passed; 0 failed`; `plan::authority` → ``error[E0432]: unresolved imports `super::check`, `super::holds`, `super::sites` ``, then `12 passed; 0 failed`.
+
+## Deviations
+
+- 2026-10-11 — the commit steps were not run. The work was left in the working tree, uncommitted, because committing is the author's act in this run.
+- 2026-10-11 — each quoted `filtered out` figure came out one higher than the plan's (`261`, `268`, `272`): plan `06`'s fix added one unit test to the crate. The `passed` figures match.

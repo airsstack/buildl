@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [04, 08]
 ---
@@ -1652,3 +1652,29 @@ crates/buildl-core/src/plan/mod.rs          — [modify] declare the three modul
   downstream of a dirty target everything is conditional; a dependency rebuilt to the same output
   leaves its dependents clean, and one rebuilt to another output dirties its dependent.
 - `crates/expected-module-edges.txt` is unchanged.
+
+## Review findings
+
+One reviewer pass over the plan's whole diff, 2026-10-11. Verdict: compliant with the plan and the spec, blocking set empty; `decide` and `all` match spec §5.6 row for row. The reviewer's own gate run: `cargo make dod` exit `0` (`[cargo-make] INFO - Build Done in 4.92 seconds.`), `cargo deny check` exit `0` (`advisories ok, bans ok, licenses ok, sources ok`).
+
+- missing guard (risk) — `all` returns `Ok` with fewer verdicts when `own` is short or `order` leaves a node out, and the verdicts that remain shift position; `Plan::new` compares no lengths. Unreachable while the function plan `10` writes passes one component set per node and `topological(graph)`; nothing enforces either — `plan/verdict.rs`, `all`
+- spec coverage (risk) — spec §9's "together, in the stated order" is not pinned for `InputOrder`: emitting it after `Outputs` leaves every test green. One case that reorders the inputs and changes the outputs would pin it — `plan/difference.rs`, tests
+- doc accuracy (nit) — "the list is empty exactly when the two keys are equal" holds only while no input path or dependency label repeats. No graph has such repeats, so it is a matter of the sentence only — `plan/difference.rs`, `between`
+- performance (nit) — `between` runs before the `Always` check, so an always-run target with a row pays for a comparison whose result is dropped — `plan/verdict.rs`, `decide`
+- strong-types (nit) — `dep.products.clone().unwrap_or_default()` is a fallback the finished branch can never take — `plan/verdict.rs`, `decide`
+
+No finding was fixed: none is in the blocking set.
+
+## Probe results
+
+- **Each rule of spec §5.6 is pinned by a test.** The reviewer mutated a scratch copy: `Always` swapped with `NeverBuilt` → 1 test fails; the conditional guard made always true → 1 test fails; a dependency's products taken from its row whether or not it is clean → 2 tests fail; the order's queue popped from the back → 2 tests fail. Baseline `cargo test -p buildl-core --lib plan::` → `67 passed; 0 failed`. Not against the plan.
+- **A node missing from `order` shortens the result silently.** The reviewer's probe on the four-node chain with node 1 left out of `order`: `graph.len()=4 verdicts.len()=3`, and `verdicts[1]` is `//:solo`'s. Not against the plan, which makes `all`'s caller responsible; recorded as the first finding above.
+- **The place of `InputOrder` in the stated order is not pinned.** The reviewer's reversion emitting `InputOrder` after `Outputs`: exit `0`, `67 passed; 0 failed`. Against the plan's verification summary, which says the eleven differences are reported in the stated order: ten of the eleven positions are pinned.
+- **A repeated input path gives a dirty verdict with no difference.** The reviewer's probe with one path written twice: `between = []`, `decide = Dirty { reason: Changed([]) }`. Not reachable: `Node::inputs` holds no repeats.
+- **The three tasks leave the tree the plan was written from.** `diff -rq <prototype snapshot after plan 09>/crates crates` names only `error.rs`, `ports/port_set.rs` and `types/action_key.rs`, the three files plans `02`, `05` and `06` record as departing from their text. Not against the plan.
+- Each task's red step was run before its green one: `cargo test -p buildl-core --lib plan::order` → ``error[E0432]: unresolved import `super::topological` ``, then `5 passed; 0 failed`; `plan::difference` → ``error[E0432]: unresolved imports `super::Known`, `super::between`, `super::changed`, `super::reordered` ``, then `9 passed; 0 failed`; `plan::verdict` → ``error[E0432]: unresolved imports `super::Dependency`, `super::all`, `super::decide` ``, then `14 passed; 0 failed`.
+
+## Deviations
+
+- 2026-10-11 — the commit steps were not run. The work was left in the working tree, uncommitted, because committing is the author's act in this run.
+- 2026-10-11 — each quoted `filtered out` figure came out one higher than the plan's (`294`, `299`, `308`): plan `06`'s fix added one unit test to the crate. The `passed` figures match.

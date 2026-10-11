@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [10]
 ---
@@ -831,3 +831,39 @@ docs/roadmap.md                        — [modify] the I5 row, the completed-in
 - The building blocks list `Host` and `PortSet`, and still describe `Grants` and `Approver`.
 - The roadmap shows I5 Plan done and carries follow-ups #13 to #17.
 - Every `mermaid` block is still a `mermaid` block.
+
+## Review findings
+
+One reviewer pass over the plan's whole diff, 2026-10-11. Verdict: compliant with the plan and the spec, blocking set empty; all 37 replacements are in their files as the plan gives them, and no document contradicts the key rule, the verdicts, where overrides and inputs are checked, the six ports, `PortSet` or the cache row. The reviewer's own gate run: `cargo make dod` exit `0` (`[cargo-make] INFO - Build Done in 5.31 seconds.`), `cargo deny check` exit `0` (`advisories ok, bans ok, licenses ok, sources ok`).
+
+- doc accuracy (risk) — "gives every target an [`ActionKey`]" overstates: a target downstream of a dependency that is not clean gets an unfinished key, its own components and what it awaits, and no `ActionKey`. The same in the crate README's Plan row, "keys every target". Both are the plan's own text — `crates/buildl-core/src/lib.rs`, status paragraph; `crates/buildl-core/README.md`, Plan row
+- doc accuracy (nit) — "Plan's name the target and build file behind a refused want": a refused `fs.write` directory has no site — `crates/buildl-core/README.md`, Errors row
+- doc accuracy (nit) — the component list leaves out output names and network access, and says "tool fingerprints" where a key holds at most one tool — `CLAUDE.md`, Incrementality
+- consistency (nit) — the action-key diagram has no conditional branch, while design §8.3's gained one and the paragraph below it names the verdict — `README.md`
+- doc accuracy (nit) — the list of what `ActionKey` keeps leaves out output names — `docs/architecture.md` §2
+- doc accuracy (nit) — the verdicts paragraph leaves out the two rules tried first, always-run and never-built, and "compared with the key in the node's own row" presumes a row — `docs/architecture.md` §3.3
+- consistency (nit) — the `plan` bullet, "synthetic graphs + a tempdir tree → dirty sets and reasons", now disagrees with §3.3; the plan does not name this bullet — `docs/architecture.md` §7
+- consistency (nit) — §5.2's new signatures use `Platform`, `EnvValue`, `Program`, `FileStat` and `StatEntry`, which neither §5.1 nor architecture §2 names — `docs/architecture-building-blocks.md` §5.1
+- consistency (nit) — the code block lists `Cache` before `Cas`, the Mermaid class the other way round — `docs/architecture-building-blocks.md` §5.3
+- doc accuracy (nit) — the fakes table gives the `ActionCache` fake "injectable failures", and the flows table says `Refusal` where the error built is `Error::Refused`; the plan names neither row — `docs/architecture-building-blocks.md` §8
+
+No finding was fixed: none is in the blocking set.
+
+## Probe results
+
+No throwaway test was written: the plan changes documents and doc comments, and the checks are the plan's own commands, each run on the tree all six tasks leave.
+
+- **No document says a key folds a dependency's key.** `grep -rn -i -e 'dep action keys' -e 'dep _keys_' -e 'dep \*keys\*' -e 'dep keys' -e 'their action keys' docs README.md CLAUDE.md` → no output, exit `1`. Not against the plan.
+- **Early cutoff is stated where the plan says.** `grep -c -i 'early cutoff' docs/design.md README.md CLAUDE.md` → `docs/design.md:3`, `README.md:1`, `CLAUDE.md:1`. Not against the plan.
+- **Every diagram is still Mermaid.** `grep -c '```mermaid' docs/design.md docs/architecture.md docs/architecture-building-blocks.md README.md` → `13`, `3`, `7`, `3`. Not against the plan.
+- **The line numbers the plan quotes hold.** `docs/architecture.md`: `128` `class Verdict`, `150` `Plan --> Verdict`, `151` `Verdict --> ActionKey`. `docs/architecture-building-blocks.md`: `235` `type Host: Host;`, `248` `pub struct PortSet`, `269` `Host: Host`; `Grants` and `Approver` counted `5`. `docs/design.md`: `grep -c -e 'Dep output hashes' -e 'the hashes of their outputs fold in'` → `2`. Not against the plan.
+- **The roadmap's checks hold.** `grep -c -e '^|14|' -e '^|15|' -e '^|16|' -e '^|17|' docs/roadmap.md` → `4`; ``grep -c -e 'I5 Plan (the `Manifest` port)' docs/roadmap.md`` → `0`, exit `1`; `grep -c -e '^|I5 Plan|' docs/roadmap.md` → `1`. Not against the plan.
+- **The crate doc's links resolve.** The gate's rustdoc step ran with `-D warnings` and passed. Not against the plan.
+- **The plan's premise about the roadmap's I5 row did not hold.** Task 6 was written when the row's last cell read as the chain's intent step left it; by the time it ran, accepting plans `01` to `06` had changed that cell to "in progress …". The instruction is stated by position, everything after ``|the pipeline stops at `plan`|``, so it applied unchanged.
+
+## Deviations
+
+- 2026-10-11 — the commit steps were not run. The work was left in the working tree, uncommitted, because committing is the author's act in this run.
+- 2026-10-11 — tasks 2 to 6 ran at the same time, one per file, and task 1 after them; the plan lists them in order. Their files are disjoint. Task 5's three cross-file checks were therefore run again once every task had finished; the figures under Probe results are from that run.
+- 2026-10-11 — task 6 step 2: the second command, `git log -n 1 --format=%h`, was not run. The chain's last commit does not exist while plans `07` to `11` are uncommitted, so the §4 row of `docs/roadmap.md` reads `` `05dbe53` … `LAST` ``, with the literal `LAST` to be replaced by the hash of the commit that precedes the roadmap's own, when the author commits. `05dbe53` is what the first command prints.
+- 2026-10-11 — on the author's acceptance the work of plans `07` to `11` was committed as three commits, not one per task: `d6bf0fa` holds everything under `crates/` (plans `07` to `10` and this plan's task 1), `4f130d5` the design documents, the README and `CLAUDE.md` (tasks 2 to 5), and the commit after it the roadmap with the chain's records. `LAST` in the roadmap's §4 row was replaced by `4f130d5`, the commit that precedes the roadmap's own.

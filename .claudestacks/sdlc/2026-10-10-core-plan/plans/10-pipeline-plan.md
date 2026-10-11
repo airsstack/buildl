@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [06, 09]
 ---
@@ -1576,3 +1576,40 @@ crates/expected-module-edges.txt                — [modify] two edges
   `pipeline -> plan`, `plan -> error`, `plan -> ports`, `plan -> types`. It holds no edge between
   `plan` and `load` or `resolve`.
 - No `expect(dead_code)` remains under `crates/buildl-core/src/plan/` or on `Plan::new`.
+
+## Review findings
+
+Two reviewer passes, 2026-10-11, one at each checkpoint the plan marks: task 1 alone, then tasks 2 and 3. Both verdicts: compliant with the plan and the spec, blocking set empty. The reviewer's own gate runs: after task 1, `cargo make dod` exit `0` (`[cargo-make] INFO - Build Done in 5.29 seconds.`) and `cargo deny check` exit `0` (`advisories ok, bans ok, licenses ok, sources ok`); after task 3, `cargo make dod` exit `0` (`[cargo-make] INFO - Build Done in 5.63 seconds.`) and `cargo deny check` exit `0` (`advisories ok, bans ok, licenses ok, sources ok`).
+
+Task 1:
+
+- reversion guard (risk) — nothing pins that `Pipeline::plan` runs Load once: with a second `load` added, every flow still passes. One `assert_eq!(pipeline.ports().source.evaluated(), [dir("")])` in a flow would pin it (spec §6) — `pipeline/driver.rs`, `Pipeline::plan`
+- reversion guard (risk) — nothing pins that `Host` is not asked before the ceiling check: with `platform` and `environment` moved above `check`, all plan flows pass. A later edit could read a variable the workspace forbids before refusing the plan, and no test would notice. Putting `AWS_SECRET` in `host.unreportable` in the refused-variable flow would pin it (spec §5.1) — `plan/assembly.rs`, `plan`
+- unit-test-mandate (risk) — `plan/assembly.rs` has no test module, on a "covered by the flows" note, and the three functions that call a port (`fingerprints`, `digests`, `environment`) have no colocated test. Spec §8 and §9 and the crate's fifth module rule put their tests in the flows, which is where task 2 pins them; the guideline lists both shapes as rejected, and the choice between the two is the author's — `plan/assembly.rs`, `plan/tools.rs`, `plan/inputs.rs`, `plan/components.rs`
+- doc accuracy (nit) — the `# Errors` sections of `plan` and `Pipeline::plan` list neither `Error::CanonicalJson` nor the `Error::Adapter` that Plan raises itself for a digester reply of the wrong length — `plan/assembly.rs`, `pipeline/driver.rs`
+- reversion guard (nit) — manifest-before-overrides is not pinned: swapping the two lines passes every flow, because the fake manifest cannot fail — `plan/assembly.rs`, `plan`
+- doc accuracy (nit) — "implement every port the same way": the crate exports eight port traits and the fakes implement seven; `Clock` has none — `tests/flows/main.rs:5`
+- spec drift (nit) — spec §8's row for `plan/components.rs` says steps 6 and 7; half of step 6, `ports.host.platform()`, is called from `plan/assembly.rs`, as task 1 step 10 prescribes
+
+Tasks 2 and 3:
+
+- reversion guard (nit) — the always-runs flow plans twice over identical port state, so its second round re-asserts the first — `tests/flows/plan.rs`, `a_target_that_always_runs_is_dirty_on_every_plan_and_its_dependent_conditional`
+- reversion guard (nit) — "unchanged" is asserted for `provenance` and `failure`; `diagnostic` is skipped by `..` — `tests/flows/plan.rs`, `a_build_file_that_fails_to_evaluate_is_the_load_error_unchanged`
+- spec accuracy (note) — spec §3.2 and §3.4 say the golden file pins shapes it does not hold: a non-empty `deps`, a non-null `env` value, a dirty verdict with an unfinished key, an `Always` or `NeverBuilt` reason. Unit tests pin them; the spec sentence overstates the file
+
+No finding was fixed: none is in the blocking set. The two reversion guards of task 1 were left open, because tasks 2 and 3 were delivered as the plan gives them.
+
+## Probe results
+
+- **Nothing is asked before the ceiling check passes.** The reviewer's probe of a refused plan on a scratch copy: `stat=0 digest=0 lookups=[] commits=0 entries=0`. Not against the plan.
+- **The stat cache spares the digester.** Three plans in a row: `digest_calls=1 digested=4 commits=1` throughout; a missing input after an edit leaves both counts unchanged. Not against the plan.
+- **`Pipeline::plan` loads once.** `evaluated after one plan: [Directory("")]`. Not against the plan; the behaviour holds and is not pinned by a flow, as the first finding says.
+- **Each flow of tasks 2 and 3 fails when the behaviour it names is broken.** Seven mutations on a scratch copy, seven caught; baseline `19 passed; 0 failed`. Among them the plan's own task 2 step 4: with the overrides checked after the ceiling, `several_faults` fails with `build.lua: //:image: program docker is outside the ceiling (proc.run allows: cc)`.
+- **The golden file is what the fixture serializes to.** Re-derived independently with Python's `hashlib`: the tool fingerprint is `sha256("cc 14.2")`, `main.c`'s digest is that of its edited content, both finished keys' digests equal the SHA-256 of their canonical components, and the file is canonical. Not against the plan.
+- **The plan-level verification summary holds.** `crates/expected-module-edges.txt` holds 20 lines with no edge between `plan` and `load` or `resolve`; `grep -rn dead_code crates/buildl-core/src/` prints nothing; `crates/buildl-core/Cargo.toml`, the root `Cargo.toml` and `Cargo.lock` are unchanged; spec §9's 17 flow rows are covered by 19 flows.
+- **The three tasks leave the tree the plan was written from.** `diff -rq <prototype snapshot after plan 10>/crates crates` names only `error.rs`, `ports/port_set.rs` and `types/action_key.rs`, the three files plans `02`, `05` and `06` record as departing from their text. Not against the plan.
+- The red steps were run before the green ones: task 1, `cargo test -p buildl-core --test flows plan` → exit `101`, `E0599` no method named `plan`, then `6 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out`; task 2, `18 passed; 0 failed`, and during its temporary change `0 passed; 1 failed`, with `plan/assembly.rs` afterwards byte-identical to the copy taken before (`cmp` exit `0`); task 3, `cargo test -p buildl-core --test flows plan::a_built_workspace` → exit `101`, `right: "{}"`, then `19 passed; 0 failed; 0 ignored; 0 measured; 21 filtered out`.
+
+## Deviations
+
+- 2026-10-11 — the commit steps were not run. The work was left in the working tree, uncommitted, because committing is the author's act in this run. Nothing else departed from the plan.
