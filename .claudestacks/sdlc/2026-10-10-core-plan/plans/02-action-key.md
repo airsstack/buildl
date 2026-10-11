@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [01]
 ---
@@ -709,3 +709,26 @@ crates/buildl-core/src/lib.rs               — [modify] re-export the eight typ
 - A `CacheRow` exists only with exactly one digest per declared output, and pairs names with
   digests in declared order.
 - No type in either file implements `Deserialize`.
+
+## Review findings
+
+One reviewer pass over the plan's whole diff, 2026-10-11. Verdict: compliant with the plan, blocking set empty. The reviewer's own gate run: `cargo make dod` exit `0` (`[cargo-make] INFO - Build Done in 5.50 seconds.`), `cargo deny check` exit `0` (`advisories ok, bans ok, licenses ok, sources ok`).
+
+- doc accuracy (risk, not blocking) — the module doc says "a target is rebuilt exactly when its key differs from the one its last build recorded"; a target declared `always` is rebuilt under an unchanged key, and a target never built or downstream of a dirty one is decided without that comparison. The code is right, the sentence is the plan's own text. **Fixed** after the review, on the author's word: the doc now says a key that differs from the recorded one is what marks a target for rebuilding, which claims nothing about `always` targets or unfinished keys. `grep -rn 'rebuilt exactly when' crates` → no output, exit `1` — `types/action_key.rs:3`
+- canonical docs (nit) — `ActionKey::new`'s `# Errors` names `Error::CanonicalJson` only; the serializer it calls also documents `Error::FloatRejected`, unreachable for these field types — `types/action_key.rs:142`
+- strong-types (nit) — `CacheRow` has a fallible constructor and no doctest; matches the crate's practice and the plan's text — `types/cache_row.rs:18`
+- strong-types (nit) — `CacheRow::new` returns `Option`, so a caller cannot say which count was wrong; spec §3.3 fixes this signature — `types/cache_row.rs:27`
+- doc accuracy (nit, outside the diff) — "the four types able to appear as a map key" was already short by `SettingName` and is now short by `EnvName` too; both serialize as strings, so behaviour is sound — `json/canonical.rs:27`
+
+One finding was fixed, the doc accuracy one; none was in the blocking set.
+
+## Probe results
+
+No throwaway test was written. Every claim the tasks make about existing code was settled by the task's own red-green cycle, each of which printed the failure and the pass the plan quotes.
+
+- The two tasks leave the tree the plan was written from — `diff -r crates <prototype snapshot after plan 02>/crates` — no output, exit `0`. Not against the plan.
+
+## Deviations
+
+- 2026-10-11 — the commit step of both tasks was not run. The work was left in the working tree, uncommitted, because committing is the author's act in this run.
+- 2026-10-11 — the first paragraph of `types/action_key.rs`'s module doc departs from task 1 step 5's block: "a target is rebuilt exactly when its key differs from the one its last build recorded" became "a key that differs from the one a target's last build recorded is what marks that target for rebuilding". The old sentence was false for a target declared `always`. No later plan of the chain quotes it.

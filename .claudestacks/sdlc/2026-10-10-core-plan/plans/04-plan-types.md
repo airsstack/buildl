@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [02, 03]
 ---
@@ -601,3 +601,25 @@ crates/buildl-core/src/lib.rs          — [modify] re-export the six types
   that name something.
 - `Plan` answers `label` and `verdict` by id, and `None` for an id past its end.
 - `Plan` implements `Serialize` and not `Deserialize`.
+
+## Review findings
+
+One reviewer pass over the plan's whole diff, 2026-10-11. Verdict: compliant with the plan, blocking set empty. The reviewer's own gate run: `cargo make dod` exit `0` (`[cargo-make] INFO - Build Done in 5.06 seconds.`), `cargo deny check` exit `0` (`advisories ok, bans ok, licenses ok, sources ok`).
+
+- strong-types (risk, not blocking) — `Plan::new` takes `labels` and `verdicts` unchecked, so "one label and one verdict per node" rests on the caller; on a mismatch `len()` counts verdicts, `label()` indexes labels and serialization truncates silently. Unreachable today: the constructor is `pub(crate)` and only tests call it. Becomes live when plan `10` adds the first caller — `types/plan.rs:122`
+- correctness (risk, not blocking) — `unfinished_view` drops an awaited id that names no node of the plan, so a written plan would under-report what a target waits on; no test covers that arm. Unreachable today for the same reason — `types/plan.rs:197`
+- doc accuracy (nit) — the module doc names "the `plan` command" and "the executor", neither of which exists in the workspace yet; follows the crate's precedent — `types/plan.rs:5`
+- doc discipline (nit) — the `expect` reason "which is not written yet" narrates future work; it is true and expires by itself once a caller lands — `types/plan.rs:119`
+- reversion-guard (nit) — nothing fails if a `Deserialize` is added to `Plan`, which the plan's summary rules out — `types/plan.rs:240`
+
+No finding was fixed: none is in the blocking set.
+
+## Probe results
+
+No throwaway test was written. Every claim the task makes about existing code was settled by its own red-green cycle, which printed the failure and the pass the plan quotes.
+
+- The task leaves the tree the plan was written from — `diff -r crates <prototype snapshot after plan 04>/crates` — no output, exit `0`. Not against the plan.
+
+## Deviations
+
+- 2026-10-11 — the commit step was not run. The work was left in the working tree, uncommitted, because committing is the author's act in this run. Nothing else departed from the plan.

@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [02, 03, 05]
 ---
@@ -1156,3 +1156,29 @@ crates/buildl-core/tests/flows/graph.rs         — [modify] one Pipeline::new c
 - `crates/buildl-core/src` holds no `impl` of any port outside a doc example and `ports/clock.rs`'s
   test module.
 - `crates/expected-module-edges.txt` is unchanged.
+
+## Review findings
+
+One reviewer pass over the plan's whole diff, 2026-10-11. Verdict: compliant with the plan, blocking set empty. The reviewer's own gate run: `cargo make dod` exit `0` (`[cargo-make] INFO - Build Done in 5.54 seconds.`; 260 unit tests, 21 flows and 6 doctests in `buildl-core`), `cargo deny check` exit `0` (`advisories ok, bans ok, licenses ok, sources ok`).
+
+- public Debug (risk, not blocking) — `#[derive(Debug)]` on `PortSet<P: Ports>` requires `P: Debug` of the bundle marker as well as of each port, and `Pipeline<P>: Debug` inherits that through its `PortSet<P>: fmt::Debug` bound. Before this plan a pipeline was `Debug` when `P::Source` was. Nothing in the tree breaks (`FakePorts` derives `Debug`) and nothing in the tree would catch it. **Fixed and verified** after the review, on the author's choice: the derive is replaced by an `impl` written by hand and bounded on the seven port types, with a unit test whose bundle type is not `Debug`. `cargo test -p buildl-core --lib ports::port_set` → `test ports::port_set::tests::debug_renders_every_port_without_the_bundle_being_debug ... ok`, `test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 260 filtered out`; before the fix the same test failed to build with ``error[E0277]: `UndebuggableBundle` doesn't implement `Debug` `` — `ports/port_set.rs`, `pipeline/driver.rs:24`
+- plan premise (nit) — the plan's fourth gate fact, "`#[derive(Debug)]` on `PortSet<P>` bounds each field's type, so it needs no hand-written `impl`", leaves out the `P: Debug` bound the derive also adds — this file, "Context an implementer needs"
+- doc accuracy (nit) — the bundle's doc example implements `digest` as `Vec::new()` for any `paths`, against the contract `digester.rs` states ("in the order given") — `ports/bundle.rs:72`
+- doc accuracy (nit) — the module doc says a digest "is asked only of the inputs whose metadata changed", which is the caller's policy and leaves out an input with no recorded entry — `ports/digester.rs:4`
+- doc invariant (nit) — "decided before this port is asked anything" is an invariant on a caller that does not exist yet, and `FakeHost` records no call, so no flow can assert it for `Host` — `ports/host.rs:9`, `ports/tool_resolver.rs:9`
+- unit-test-mandate (nit) — the no-test note "only a type definition" names none of the mandate's five exemption categories; follows spec §9 and the crate's precedent — `ports/port_set.rs:11`
+- reversion-guard (nit) — `Pipeline::ports` and `ports_mut` have no caller until plan `10`'s flows land — `pipeline/driver.rs:44`
+- fake correctness (nit) — `FakeDigester::digest` answers a path it holds no file for with `Digest::of(b"")`, not an error, so a caller that digests an absent file passes unless a flow inspects `digested()` — `tests/flows/common.rs:183`
+
+One finding was fixed, the public `Debug` one; none was in the blocking set.
+
+## Probe results
+
+- **Against the plan.** Claim (gate fact 4): deriving `Debug` on `PortSet<P>` bounds each field's type only. Probe, run by the reviewer: a throwaway crate depending on `buildl-core` with a bundle marker `NothingPorts` that does not implement `Debug`, whose seven ports all do, formatting a `Pipeline<NothingPorts>` with `{:?}`. Output: ``error[E0277]: `NothingPorts` doesn't implement `Debug` ``, pointing at `ports/port_set.rs:19` and `pipeline/driver.rs:26`. The derive bounds the type parameter too.
+- The five tasks leave the tree the plan was written from — `diff -r crates <prototype snapshot after plan 06>/crates` printed only the one import line recorded in plan `05`'s Deviations. Not against the plan.
+- Tasks 4 and 5 printed the failures and the passes the plan quotes: six `error[E0437]` then `21 passed … 0 filtered out` and `1 passed … 5 filtered out`; ``error[E0432]: unresolved import `buildl_core::PortSet` `` then `21 passed … 0 filtered out`.
+
+## Deviations
+
+- 2026-10-11 — the commit step of every task was not run. The work was left in the working tree, uncommitted, because committing is the author's act in this run.
+- 2026-10-11 — `ports/port_set.rs` departs from task 5 step 9's block and from gate fact 4 of "Context an implementer needs": `PortSet` no longer derives `Debug`. It implements it by hand, bounded on `P::Source`, `P::Manifest`, `P::Host`, `P::Digester`, `P::StatCache`, `P::Tools` and `P::Cache`, so a pipeline is `Debug` when its ports are, whether or not the bundle type is. The file gains a test module and loses its no-test note. The author chose this over keeping the derive and documenting the extra bound. The gate ran green on the result: `cargo make dod` exit `0` (`[cargo-make] INFO - Build Done in 14.09 seconds.`), `cargo deny check` exit `0`. No later plan of the chain edits that file.

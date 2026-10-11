@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [01, 02]
 ---
@@ -203,3 +203,25 @@ crates/buildl-core/src/lib.rs               — [modify] re-export the four type
   from the crate root.
 - `types/authority.rs` and `types/workspace.rs` hold no function and no `impl` block.
 - No type named `Grants` exists.
+
+## Review findings
+
+One reviewer pass over the plan's whole diff, 2026-10-11. Verdict: compliant with the plan, blocking set empty. The reviewer's own gate run: `cargo make dod` exit `0` (`[cargo-make] INFO - Build Done in 5.11 seconds.`), `cargo deny check` exit `0` (`advisories ok, bans ok, licenses ok, sources ok`).
+
+- doc accuracy (nit) — "it belongs to the phase that plans" names a phase with no module in the tree until plan `07` lands — `types/authority.rs:10`
+- doc accuracy (nit) — "reading a manifest, which is a port's" names a port that does not exist until plan `06` lands — `types/workspace.rs:9`
+- doc counts (nit) — "Four lists" is a count an edit can invalidate, and "each empty unless the workspace says otherwise" states a default nothing in this crate establishes — `types/authority.rs:22`
+- unit-test-mandate (nit) — the no-test note "holds only type definitions" names none of the mandate's five exemption categories; the files hold no `fn` and no `impl`, and the wording is the crate's convention — `types/authority.rs:12`, `types/workspace.rs:11`
+- reversion-guard (note, not a finding) — until plan `04` lands nothing pins `WantedSet`'s `Serialize` derive or its four key names, and nothing fails if the four names drop out of the crate-root list
+
+No finding was fixed: none is in the blocking set.
+
+## Probe results
+
+No throwaway test was written. The task holds type definitions only; the gate's build and rustdoc steps are what check its claims about existing types.
+
+- The task leaves the tree the plan was written from — `diff -r crates <prototype snapshot after plan 03>/crates` — no output, exit `0`. Not against the plan.
+
+## Deviations
+
+- 2026-10-11 — the commit step was not run. The work was left in the working tree, uncommitted, because committing is the author's act in this run. Nothing else departed from the plan.

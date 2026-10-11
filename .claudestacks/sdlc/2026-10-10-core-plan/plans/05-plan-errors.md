@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [03]
 ---
@@ -655,3 +655,23 @@ crates/buildl-core/src/lib.rs     — [modify] re-export PortName
 - `PortName` renders `manifest`, `host`, `digester`, `stat cache` and `tool resolver`.
 - `DeclarationSite::from(&node)` is the node's label and build file.
 - No existing variant changed shape.
+
+## Review findings
+
+One reviewer pass over the plan's whole diff, 2026-10-11. Verdict: compliant with the plan, blocking set empty, nothing at bug or risk tier. The reviewer's own gate run: `cargo make dod` exit `0` (`[cargo-make] INFO - Build Done in 5.16 seconds.`), `cargo deny check` exit `0` (`advisories ok, bans ok, licenses ok, sources ok`).
+
+- reversion-guard (nit) — nothing fails today if the `PortName` re-export is dropped; plan `06`'s doc links to `crate::PortName::…` close this under the gate's rustdoc step — `lib.rs:74`
+- plan conformance (nit) — `use std::collections::BTreeSet;` sits beside `use std::path::PathBuf;` in the test module, not directly above the `crate::types` import as task 3 step 1's block shows; no behaviour change — `error.rs:627`
+
+No finding was fixed: none is in the blocking set.
+
+## Probe results
+
+No throwaway test was written. Every claim the tasks make about existing code was settled by the task's own red-green cycle, each of which printed the failure and the pass the plan quotes.
+
+- The three tasks leave the tree the plan was written from, but for one import line — `diff -r crates <prototype snapshot after plan 05>/crates` printed only the placement of `use std::collections::BTreeSet;` in `error.rs`'s test module (line 627 in the tree, line 633 in the prototype). Against the plan's text in that one line; see Deviations.
+
+## Deviations
+
+- 2026-10-11 — task 3 step 1: the coder placed `use std::collections::BTreeSet;` with the test module's other `std` import instead of between the `super` and `crate::types` imports, and reported no deviation. Kept: it groups the `std` imports the way the rest of the file does, the gate is green, and no later plan of the chain edits that import block (`grep -l 'Argument, Ceiling, Command, DeclarationOrder' plans/*.md` names this plan only).
+- 2026-10-11 — the commit step of every task was not run. The work was left in the working tree, uncommitted, because committing is the author's act in this run.

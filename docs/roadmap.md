@@ -68,7 +68,7 @@ graph LR
 |**I3 Load**|`buildl-core`|`Declaration`, `BuildFile`, `StagedFile`, `DeclarationSource`; the `Pipeline` skeleton and `FakePorts`|a fake source's output becomes `Vec<Declaration>`|**done**, 2026-10-08 (§4)|
 |**I-lua**|`buildl-lua`|`DeclarationSource` on airsl; the `buildl` table bound to both `airsstack.buildl` and the `buildl` global (design §5)|`build.lua` fixtures produce exact declarations|**done**, 2026-10-08 (§4)|
 |**I4 Resolve**|`buildl-core`|the `TargetGraph` arena, duplicate, unknown-reference and cycle detection; the guard that no phase module imports another|the pipeline stops at `graph`|**done**, 2026-10-10 (§4)|
-|**I5 Plan**|`buildl-core`|the action key, `KeyComponents`, why-dirty; the wanted set ∩ ceiling as a plan-time refusal; setting overrides; the manifest, digest, stat, tool and cache-read ports|the pipeline stops at `plan`|**in progress** — intent approved 2026-10-10, spec and 11 plans approved 2026-10-11 (`.claudestacks/sdlc/2026-10-10-core-plan/`)|
+|**I5 Plan**|`buildl-core`|the action key, `KeyComponents`, why-dirty; the wanted set ∩ ceiling as a plan-time refusal; setting overrides; the manifest, digest, stat, tool and cache-read ports|the pipeline stops at `plan`|**in progress** — intent approved 2026-10-10, spec and 11 plans approved 2026-10-11, plans 01–06 of 11 done 2026-10-11 (`.claudestacks/sdlc/2026-10-10-core-plan/`)|
 |**I6 Execute + Record**|`buildl-core`|`Schedule`, `Dispatcher`, `ExecStrategy`; cas, cache and log writes; the crash-safety invariant (design §8.5)|a full `build` runs against fakes|not started|
 
 Ground rules for the ladder:

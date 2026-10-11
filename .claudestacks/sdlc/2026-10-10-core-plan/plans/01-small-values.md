@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 ---
 
@@ -1045,3 +1045,25 @@ crates/buildl-core/src/lib.rs               — [modify] re-export the five new 
 - `Directory::contains` holds for itself, for anything below it and for the root, and fails for
   an ancestor, a sibling and a directory that only shares a prefix.
 - `crates/buildl-core/Cargo.toml` is unchanged.
+
+## Review findings
+
+One reviewer pass over the plan's whole diff, 2026-10-11. Verdict: compliant with the plan, blocking set empty. The reviewer's own gate run: `cargo make dod` exit `0` (`[cargo-make] INFO - Build Done in 6.03 seconds.`), `cargo deny check` exit `0` (`advisories ok, bans ok, licenses ok, sources ok`).
+
+- strong-types (risk, not blocking) — `EnvValue`, `Platform` and `Program::parse` carry no doctest; the guideline asks one happy-path and one error-path doctest per new newtype. Matches the plan and every existing name type in the crate; left as is, a crate-wide decision — `types/env_value.rs:25`, `types/platform.rs:59`, `types/program.rs:47`
+- reversion-guard (nit) — nothing fails if `EnvValue`, `Platform`, `FileStat` or `StatEntry` is dropped from the crate-root re-export list; later plans of this chain consume them — `lib.rs:82`
+- unit-test-mandate (nit) — the no-test note in `file_stat.rs` names none of the mandate's five exemption categories; wording follows `ports/declaration_source.rs` and spec §9 — `types/file_stat.rs:12`
+- message accuracy (nit) — `linux/x86/64` is rejected with the character-set reason, not the "joined by '/'" reason; the rejection is correct and the plan's own test pins it — `types/platform.rs:45`
+- doc accuracy (nit) — module docs say values arrive "through a port" and belong to "the phase that plans", neither of which exists until later plans of this chain land — `types/program.rs:9`, `types/env_value.rs:8`, `types/platform.rs:8`, `types/file_stat.rs:9`
+
+No finding was fixed: none is in the blocking set.
+
+## Probe results
+
+No throwaway test was written. Every claim the tasks make about existing code was settled by the task's own red-green cycle, each of which printed the failure and the pass the plan quotes (task 5 has no cycle: two type definitions, no logic).
+
+- The six tasks leave the tree the plan was written from — `diff -r crates <prototype snapshot after plan 01>/crates` — no output, exit `0`. Not against the plan.
+
+## Deviations
+
+- 2026-10-11 — the commit step of every task was not run. The six tasks were left in the working tree as one uncommitted change, because committing is the author's act in this run. Nothing else departed from the plan.
