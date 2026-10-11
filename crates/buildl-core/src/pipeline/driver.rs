@@ -1,20 +1,23 @@
 //! The pipeline's driver: one bundle of ports, and one method per command.
 //!
 //! Its own file because the driver owns the sequence of phases, and the sequence grows by one
-//! method per command as later phases arrive. Today it runs Load and Resolve.
+//! method per command as later phases arrive. Today it runs Load, Resolve and Plan.
 //!
-//! Responsibilities: [`Pipeline`], its ports, [`Pipeline::check`] and [`Pipeline::graph`].
+//! Responsibilities: [`Pipeline`], its ports, [`Pipeline::check`], [`Pipeline::graph`] and
+//! [`Pipeline::plan`].
 //!
 //! Non-responsibilities: the phases' own logic, which each phase's module holds.
 
 use core::cmp::min_by;
 use core::fmt;
+use std::collections::BTreeMap;
 
 use crate::error::{Error, Result};
 use crate::load::{declaration_order, load};
+use crate::plan::plan;
 use crate::ports::{PortSet, Ports};
 use crate::resolve::resolve;
-use crate::types::{Declaration, EntryName, TargetGraph};
+use crate::types::{Declaration, EntryName, Plan, SettingName, SettingValue, TargetGraph};
 
 /// The pipeline over one chosen implementation of each port.
 pub struct Pipeline<P: Ports> {
@@ -79,6 +82,25 @@ impl<P: Ports> Pipeline<P> {
     /// dependency cycle.
     pub fn graph(&self, entry: &EntryName) -> Result<TargetGraph> {
         resolve(load(&self.ports.source, entry)?)
+    }
+
+    /// Loads the workspace once, resolves it, and plans a build of the graph.
+    ///
+    /// `overrides` gives values to build settings for this run. Takes `&mut self` because a plan
+    /// records the digest of every file it had to hash.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever the load returns, then whatever [`resolve`] returns, and otherwise
+    /// whatever [`plan`](fn@plan) returns: an override naming no setting, a want outside the
+    /// workspace's ceiling, a program or an input that cannot be found, or a port's own failure.
+    pub fn plan(
+        &mut self,
+        entry: &EntryName,
+        overrides: &BTreeMap<SettingName, SettingValue>,
+    ) -> Result<Plan> {
+        let graph = resolve(load(&self.ports.source, entry)?)?;
+        plan(&graph, overrides, &mut self.ports)
     }
 }
 

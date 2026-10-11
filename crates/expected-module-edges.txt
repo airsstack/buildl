@@ -5,9 +5,13 @@ load -> ports
 load -> types
 pipeline -> error
 pipeline -> load
+pipeline -> plan
 pipeline -> ports
 pipeline -> resolve
 pipeline -> types
+plan -> error
+plan -> ports
+plan -> types
 ports -> error
 ports -> types
 resolve -> error

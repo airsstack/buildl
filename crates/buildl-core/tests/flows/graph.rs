@@ -66,7 +66,7 @@ fn lib_items() -> Vec<StagedItem> {
     })]
 }
 
-fn fixture() -> FakeSource {
+pub(crate) fn fixture() -> FakeSource {
     FakeSource::new(workspace(vec![
         ("", file(root_items(), &["lib"])),
         ("lib", file(lib_items(), &[])),

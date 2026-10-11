@@ -102,7 +102,8 @@ pub enum Verdict {
 
 /// What a build of a workspace would do: one verdict per target, and what the build wants.
 ///
-/// Its verdicts are addressed by the [`NodeId`]s of the graph it was made from.
+/// A plan is obtained from [`plan`](fn@crate::plan). Its verdicts are addressed by the
+/// [`NodeId`]s of the graph it was made from.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     labels: Vec<Label>,
@@ -112,13 +113,6 @@ pub struct Plan {
 
 impl Plan {
     /// Assembles a plan from one label and one verdict per node, both in id order.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "called by the phase that plans, which is not written yet"
-        )
-    )]
     pub(crate) const fn new(labels: Vec<Label>, verdicts: Vec<Verdict>, wanted: WantedSet) -> Self {
         Self {
             labels,
