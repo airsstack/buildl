@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-11
 depends-on: [01]
 ---
