@@ -29,7 +29,7 @@ pub struct OutcomeEvent {
     /// The target's command, with every placeholder expanded.
     pub command: Command,
     /// The digest of the key the target was built or found cached under; `None` for a target
-    /// that was skipped, whose key was never finished.
+    /// that was skipped, whether or not a key had been finished for it.
     pub key: Option<Digest>,
     /// When a worker began the action; `None` for a target no worker began.
     pub started: Option<Timestamp>,

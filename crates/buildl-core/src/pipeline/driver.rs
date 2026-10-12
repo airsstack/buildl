@@ -1,10 +1,11 @@
 //! The pipeline's driver: one bundle of ports, and one method per command.
 //!
-//! Its own file because the driver owns the sequence of phases, and the sequence grows by one
-//! method per command as later phases arrive. Today it runs Load, Resolve and Plan.
+//! Its own file because the driver owns the sequence of phases: one method per command, each
+//! running the phases up to the one the command stops at. It runs Load, Resolve, Plan and
+//! Execute.
 //!
-//! Responsibilities: [`Pipeline`], its ports, [`Pipeline::check`], [`Pipeline::graph`] and
-//! [`Pipeline::plan`].
+//! Responsibilities: [`Pipeline`], its ports, [`Pipeline::check`], [`Pipeline::graph`],
+//! [`Pipeline::plan`] and [`Pipeline::build`].
 //!
 //! Non-responsibilities: the phases' own logic, which each phase's module holds.
 
@@ -13,11 +14,14 @@ use core::fmt;
 use std::collections::BTreeMap;
 
 use crate::error::{Error, Result};
+use crate::execute::execute;
 use crate::load::{declaration_order, load};
 use crate::plan::plan;
 use crate::ports::{PortSet, Ports};
 use crate::resolve::resolve;
-use crate::types::{Declaration, EntryName, Plan, SettingName, SettingValue, TargetGraph};
+use crate::types::{
+    ActionOutcome, Declaration, EntryName, OnFailure, Plan, SettingName, SettingValue, TargetGraph,
+};
 
 /// The pipeline over one chosen implementation of each port.
 pub struct Pipeline<P: Ports> {
@@ -101,6 +105,29 @@ impl<P: Ports> Pipeline<P> {
     ) -> Result<Plan> {
         let graph = resolve(load(&self.ports.source, entry)?)?;
         plan(&graph, overrides, &mut self.ports)
+    }
+
+    /// Loads the workspace once, resolves it, plans a build of the graph, and builds it.
+    ///
+    /// `overrides` gives values to build settings for this run, and `on_failure` says what a
+    /// failed action does to the rest of the build. The outcomes are one per target, in id
+    /// order; a target that failed or was skipped is an outcome, not an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever the load returns, then whatever [`resolve`] returns, then whatever
+    /// [`plan`](fn@plan) returns, and otherwise whatever [`execute`](fn@execute) returns: two
+    /// outputs that would be written to one place, a command that names no program or one
+    /// outside the workspace's ceiling once it is expanded, or a port's own failure.
+    pub fn build(
+        &mut self,
+        entry: &EntryName,
+        overrides: &BTreeMap<SettingName, SettingValue>,
+        on_failure: OnFailure,
+    ) -> Result<Vec<ActionOutcome>> {
+        let graph = resolve(load(&self.ports.source, entry)?)?;
+        let plan = plan(&graph, overrides, &mut self.ports)?;
+        execute(&graph, &plan, on_failure, &mut self.ports)
     }
 }
 
