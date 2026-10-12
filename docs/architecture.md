@@ -132,11 +132,12 @@ classDiagram
         Conditional
     }
     class ActionOutcome {
-        node: NodeId
+        label: Label
         class: OutcomeClass
-        outputs: Vec~Digest~
-        stdout: Digest
-        stderr: Digest
+        diagnostic: Option~Diagnostic~
+        outputs: Vec~Produced~
+        stdout: Option~Digest~
+        stderr: Option~Digest~
     }
     Declaration --> Provenance
     Declaration --> Declared
@@ -166,20 +167,18 @@ Each node in an executing build moves through exactly these states — this enum
 ```mermaid
 %% Target states during execution
 stateDiagram-v2
-    [*] --> Clean : plan says key matches
-    [*] --> Pending : dirty, deps not ready
-    Pending --> Ready : dep counter hits zero
-    Ready --> Running : worker picks up
-    Running --> Built : exit 0, outputs landed
-    Running --> Failed : action / infra failure
-    Pending --> Skipped : upstream failed
-    Clean --> [*]
-    Built --> [*]
+    [*] --> Pending : every target, whatever its verdict
+    Pending --> Started : dep counter hits zero
+    Started --> Succeeded : cached, or built and recorded
+    Started --> Failed : action / infra failure
+    Started --> Skipped : the build stopped before a worker began it
+    Pending --> Skipped : upstream failed, or the build stopped
+    Succeeded --> [*]
     Failed --> [*]
     Skipped --> [*]
 ```
 
-`Clean` and `Skipped` are terminal without ever running — the two states a task runner cannot represent, and the reason the summary line can say `1 failed, 2 skipped, 2 built, 9 cached`.
+A started target is _settled_ before it runs: its key is finished from what its dependencies' rows now hold, and when the target is not declared `always`, that key equals the one its last build recorded, and every digest the row holds is still in the cas, it succeeds as cached without running. So a target becomes cached when it is settled, not only when the plan called it clean: a conditional target (§3.3) gets its answer here, and a clean one whose output left the cas runs again. `Succeeded` covers cached and built, and the outcome's class tells them apart (§4). A cached target and a skipped one never run — the two results a task runner cannot represent, and the reason the summary line can say `1 failed, 2 skipped, 2 built, 9 cached`.
 
 ## 3. Phase implementations
 
@@ -190,8 +189,7 @@ Each phase's logic lives in `buildl-core` and reaches I/O only through ports; th
 |§3.1 `declare`|directory queue, `subdir`, sorted merge|`DeclarationSource`|`buildl-lua`|
 |§3.2 `graph`|resolve, validations, cycle detection|—|—|
 |§3.3 `plan`|ceiling check, key assembly, a verdict per target|`Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver`, `ActionCache`|`buildl`|
-|§3.4 `exec`|`Schedule` state machine|`Dispatcher`, `ExecStrategy`, `ContentStore`, `Reporter`|`buildl`|
-|§3.5 `store`|record ordering: cas, row, log|`ContentStore`, `ActionCache`, `EventLog`, `Clock`|`buildl`|
+|§3.4 `exec` and §3.5 `store` — one phase module, `execute`|output layout, placeholder expansion, the program check, the `Schedule` state machine, cached or run, record ordering: cas, row, log|`Manifest`, `Dispatcher`, `ExecStrategy`, `ContentStore`, `ActionCache`, `EventLog`, `Clock`|`buildl`|
 
 ### 3.1 `declare` — the airsl boundary
 
@@ -221,7 +219,9 @@ Output: a `Plan` — one `Verdict` per node, and the `WantedSet` — and a build
 
 ### 3.4 `exec` — the scheduler
 
-Two halves. The scheduling logic is `Schedule`, a pure state machine in `buildl-core`: it owns the state array (§2.1) and one dependency counter per node, hands out ready `NodeId`s, and on `complete(node, class)` marks dependents ready or skipped. Its caller is the only writer, so the counters are plain integers — single-writer bookkeeping, so no lock ordering to reason about. Parallelism is the `Dispatcher` port. Its v1 adapter in `buildl` uses plain threads, no async runtime (decision record §6): a ready queue (`std::sync::mpsc` channel) and N worker threads that receive a `NodeId`, run the action through the strategy (below), and send an `ActionOutcome` back on a results channel. Tests drive `Schedule` through an inline dispatcher on one thread.
+Two halves. The scheduling logic is `Schedule`, a pure state machine in `buildl-core`: it owns the state array (§2.1) and one dependency counter per node, hands out the `NodeId`s that became ready, and on `complete(node, finish)` starts dependents or skips them. Its caller is the only writer, so the counters are plain integers — single-writer bookkeeping, so no lock ordering to reason about. Parallelism is the `Dispatcher` port, one method: `dispatch(work, step)`. `work` runs one task and may run on any thread, several at once; `step` runs on the calling thread, first with nothing and then with each result, and returns the tasks that became ready. The port is generic over the task and the result, so it knows nothing of builds. Its v1 adapter in `buildl` uses plain threads, no async runtime (decision record §6): a ready queue (`std::sync::mpsc` channel) and N worker threads that receive a task, run it through `work`, and send the result back on a results channel. Tests drive the same two closures through an inline dispatcher on one thread.
+
+What runs where follows the record ordering (§3.5). A worker prepares the exec dir, runs the action through the strategy (below), stores what the action printed, and stores its outputs in the cas. The calling thread links the outputs into `out/`, writes the cache row, appends the log event and releases dependents. Stopping after a failure is a flag `step` sets and `work` reads before it begins an action: the dispatcher runs every task it was given, so a task handed over before the failure comes back not begun, and its target is skipped.
 
 Execution strategies are one trait, the design doc's isolation ladder (§12.2) as code:
 
@@ -233,35 +233,43 @@ pub trait ExecStrategy: Send + Sync {
     fn prepare(&self, action: &ReadyAction) -> Result<Self::Dir>;
     /// Spawn and wait, capturing output. No shell, ever.
     fn run(&self, dir: &Self::Dir, action: &ReadyAction) -> Result<RawOutcome>;
+    /// Store what the action left at each declared output: one entry per output,
+    /// `None` where nothing is there.
+    fn collect<C: ContentStore>(
+        &self,
+        dir: &Self::Dir,
+        action: &ReadyAction,
+        cas: &C,
+    ) -> Result<Vec<Option<Digest>>>;
 }
 ```
 
-The trait is a `buildl-core` port, and `buildl` ships the v1 adapters: `Bare` (tier 1: workspace cwd, granted env only) and `InputSandbox` (tier 2: temp dir, symlinked declared inputs). `OsSandbox` and `Container` are later impls of the same trait — the trait is in v1 so the ladder is a seam, not a refactor.
+The trait is a `buildl-core` port, and `buildl` ships the v1 adapters: `Bare` (tier 1: workspace cwd, granted env only) and `InputSandbox` (tier 2: temp dir, symlinked declared inputs). `OsSandbox` and `Container` are later impls of the same trait — the trait is in v1 so the ladder is a seam, not a refactor. A `ReadyAction` holds its command already expanded to workspace-relative paths (design doc §8.5), so a strategy only makes those paths true in its exec dir. `collect` is the strategy's because it alone knows that dir, and an output never passes through `buildl-core` as bytes. `run` returns a `RawOutcome`: how the action ended — an exit status, or a timeout — and what it printed.
 
 Output capture: piped stdout/stderr read by two threads per action into buffers, blobs written to the cas, digests recorded on the outcome. Printing is owned by a single reporter on the scheduler side (block per completed action; TTY status line) — workers never touch the terminal.
 
 ### 3.5 `store` — cas, action cache, log
 
-The cas is `.buildl/cas/ab/cdef...` (two-char shard dirs). Every write is temp-file-then-rename within the same filesystem — atomic, the `fs.atomic_write` discipline [1]. `out/` entries are hard links into the cas (copy fallback for filesystems that refuse). The action cache is a `BTreeMap<Label, CacheRow { key: ActionKey, outputs: Vec<Digest>, stdout, stderr }>` — the whole key, components included, so the next plan can name the component that changed — serialized as sorted-key JSON; rewritten atomically once per build, rows updated in memory as outcomes land — write ordering enforces the §8.5 invariant: **cas first, row after, log always**. `log.jsonl` is append-only, one sorted-key JSON object per outcome, output blobs referenced by digest rather than inlined.
+The cas is `.buildl/cas/ab/cdef...` (two-char shard dirs). Every write is temp-file-then-rename within the same filesystem — atomic, the `fs.atomic_write` discipline [1]. `out/` entries are hard links into the cas (copy fallback for filesystems that refuse). The action cache is a `BTreeMap<Label, CacheRow { key: ActionKey, outputs: Vec<Digest>, stdout, stderr }>` — the whole key, components included, so the next plan can name the component that changed — serialized as sorted-key JSON. A row is written through `ActionCache::record`, one write per target, and is durable when that call returns: a dependent keys on its dependency's row, so the row must be safe before the dependent starts, and a write that fails leaves no row. Write ordering enforces the §8.5 invariant: **cas first, row after, log always**. `log.jsonl` is append-only, one sorted-key JSON object per outcome, output blobs referenced by digest rather than inlined.
 
 `gc` walks roots (current `graph.json` outputs + cache rows) and unlinks unreferenced cas entries — refcounting deferred; mark-and-sweep is enough at v1 scale.
 
 ## 4. Error architecture
 
-One `thiserror` enum in `buildl-core`, airsl-style: structured fields, no message parsing anywhere [1]. The design doc's three failure classes (§8.7) are a `#[non_exhaustive]` enum carried _on_ errors and outcomes, not inferred from them:
+One `thiserror` enum in `buildl-core`, airsl-style: structured fields, no message parsing anywhere [1]. The design doc's failure classes (§8.7) are carried, not inferred. An action failure and an infrastructure failure are variants of a `#[non_exhaustive]` enum every outcome holds; a policy refusal is an error, `Error::Refused`, raised before any action runs, so no outcome carries one:
 
 ```rust
 pub enum OutcomeClass {
-    Built,
     Cached,
+    Built,
     ActionFailure { status: i32 },          // the build did its job
-    InfraFailure { kind: InfraKind },       // missing tool, sandbox, timeout
-    Refusal { wanted: Wanted, ceiling: CeilingRef },  // plan-time only
-    Skipped { because: NodeId },
+    OutputMissing { name: OutputName },     // exit 0, a declared output absent
+    InfraFailure { kind: InfraKind },       // Prepare, Run, TimedOut, Store
+    Skipped { because: Label },
 }
 ```
 
-Classification is structural at the site that knows (spawn error vs non-zero exit vs timeout flag), never downstream. The CLI maps classes to exit codes; `log.jsonl` carries the class verbatim. Every error that can name a target carries `Label + Provenance`; the display impl renders airsl-refusal-shaped messages — what was wanted, what was granted or found, where it was declared.
+`OutputMissing` is the build revealing a fault, like `ActionFailure`: the action exited zero and left nothing at an output it declared. `Skipped` names the failed target by `Label`, so no `NodeId` reaches the log. Classification is structural at the site that knows (spawn error vs non-zero exit vs timeout flag), never downstream. The CLI maps classes to exit codes; `log.jsonl` carries the class verbatim. Every error that can name a target carries `Label + Provenance`; the display impl renders airsl-refusal-shaped messages — what was wanted, what was granted or found, where it was declared.
 
 ## 5. Determinism engineering rules
 
@@ -306,7 +314,7 @@ The narrow handoffs are the test surface. Each flow runs first in `buildl-core` 
 - **`declare`** (`buildl-lua`): fixture build files → assert exact `StagedFile`s, the adapter's whole output (turning them into `Vec<Declaration>` is Load's, tested in `buildl-core`); hostile fixtures (huge loops, `pairs` tricks, bad option tables) → assert refusal shape and instruction-ceiling stops.
 - **`graph`**: staging lists (no Lua) → golden `graph.json`; duplicate/unknown/cycle fixtures → assert full provenance in errors.
 - **`plan`**: synthetic graphs + a tempdir tree → dirty sets and reasons; stat-cache hit/miss/mtime-rollback cases.
-- **`exec`**: scripted fake strategies in `buildl-core` → state-machine transitions, keep-going semantics, crash-safety (a failing cache commit leaves no row); tiny compiled helpers (`/bin/sh`-free) against the real `Bare` and `InputSandbox` adapters → output block integrity, a worker killed mid-action leaves no row.
+- **`exec`**: scripted fake strategies in `buildl-core` → state-machine transitions, keep-going semantics, crash-safety (a failing cache write leaves no row); tiny compiled helpers (`/bin/sh`-free) against the real `Bare` and `InputSandbox` adapters → output block integrity, a worker killed mid-action leaves no row.
 - **End-to-end**: a fixture workspace built twice — second run all-cached and byte-identical state (§5.5); then one file touched — assert exactly the expected dirty closure rebuilds.
 - **The airsl repo as dogfood** (design doc §13): buildl's own gate eventually runs under buildl.
 

@@ -22,12 +22,13 @@
 //! | Module | Holds |
 //! |---|---|
 //! | [`error`] | the one error enum and the crate-wide `Result` alias |
-//! | [`types`] | the validated domain values — names, identities, instants, declarations, the target graph, action keys, cache rows, the ceiling, the plan — and the as-written values a build file stages |
+//! | [`types`] | the validated domain values — names, identities, instants, declarations, the target graph, action keys, cache rows, the ceiling, the plan, ready actions, outcomes, log events — and the as-written values a build file stages |
 //! | [`json`] | the one canonical serializer every byte of output goes through |
 //! | [`ports`] | every trait in the crate: the ports through which everything outside it is reached, and the bundle that names one implementation of each, with the set that holds one instance of each |
 //! | [`load`](mod@load) | Load, the first phase: build files to validated, sorted declarations |
 //! | [`resolve`](mod@resolve) | Resolve, the second phase: declarations to the target graph |
 //! | [`plan`](mod@plan) | Plan, the third phase: the target graph to a verdict per target, with what the build wants |
+//! | [`execute`](mod@execute) | Execute and Record, the last phase: a plan to one outcome per target, each result recorded as the last step of its action |
 //! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command |
 //!
 //! Each phase has its own module, named for the phase. Five rules keep that arrangement
@@ -61,12 +62,21 @@
 //! [`Ceiling`] allows, gives every target an [`ActionKey`] from what the ports report, and
 //! compares it with the key the target's last build recorded, so each target is clean, dirty
 //! with a reason, or conditional on a dependency's output; [`Pipeline::plan`] runs all three
-//! phases. Execute and Record are not implemented yet.
+//! phases. Execute and Record are implemented: [`execute`](fn@execute) gives every output a
+//! path under the workspace's output directory, expands every command and holds its program to
+//! the [`Ceiling`] before anything runs, then runs the plan through the [`Dispatcher`] port. A
+//! target whose finished key equals the one its last build recorded, with every recorded output
+//! still in the [`ContentStore`], is cached; any other runs through the [`ExecStrategy`] port.
+//! Recording is the last step of each action — its outputs into the content store, then its
+//! [`CacheRow`], then one [`OutcomeEvent`] in the [`EventLog`] — so a failure leaves no row.
+//! [`Pipeline::build`] runs all four phases and returns one [`ActionOutcome`] per target; what
+//! a failure does to the rest of the build is the caller's [`OnFailure`].
 //!
 //! This file holds only module declarations and re-exports, so it carries no logic to
 //! unit-test.
 
 pub mod error;
+pub mod execute;
 pub mod json;
 pub mod load;
 pub mod pipeline;
@@ -79,22 +89,23 @@ pub use error::{
     ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
     EvaluationLimit, NameKind, PortName, Result,
 };
+pub use execute::execute;
 pub use load::load;
 pub use pipeline::Pipeline;
 pub use plan::plan;
 pub use ports::{
-    ActionCache, Clock, DeclarationSource, Digester, Host, Manifest, PortSet, Ports, StatCache,
-    ToolResolver,
+    ActionCache, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
+    ExecStrategy, Host, Manifest, PortSet, Ports, StatCache, ToolResolver,
 };
 pub use resolve::resolve;
 pub use types::{
-    Action, ActionKey, Alias, Argument, BuildFile, CacheRow, Ceiling, Command, Declaration,
-    DeclarationOrder, Declared, DepProducts, Description, Diagnostic, Difference, Digest,
-    Directory, DirtyReason, EntryName, EnvName, EnvValue, Evaluated, FieldName, FileStat,
-    Freshness, InputDigest, KeyComponents, Label, NetworkAccess, Node, NodeId, OutputName,
-    OwnComponents, Plan, PlannedKey, Platform, Produced, Program, Provenance, Rule, Setting,
-    SettingName, SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem,
-    StagedRule, StagedSetting, StagedSubdir, StagedTarget, StatEntry, Target, TargetGraph,
-    TargetName, TargetRole, Timestamp, ToolIdentity, Unfinished, Verdict, Want, WantedSet,
-    Workspace, Written,
+    Action, ActionKey, ActionOutcome, Alias, Argument, BuildFile, CacheRow, Ceiling, Command,
+    Declaration, DeclarationOrder, Declared, DepProducts, Description, Diagnostic, Difference,
+    Digest, Directory, DirtyReason, EntryName, EnvName, EnvValue, Evaluated, Exit, FieldName,
+    FileStat, Freshness, InfraKind, InputDigest, KeyComponents, Label, NetworkAccess, Node, NodeId,
+    OnFailure, OutcomeClass, OutcomeEvent, OutputName, OutputPath, OwnComponents, Plan, PlannedKey,
+    Platform, Produced, Program, Provenance, RawOutcome, ReadyAction, Rule, Setting, SettingName,
+    SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
+    StagedSetting, StagedSubdir, StagedTarget, StatEntry, Summary, Target, TargetGraph, TargetName,
+    TargetRole, Timestamp, ToolIdentity, Unfinished, Verdict, Want, WantedSet, Workspace, Written,
 };

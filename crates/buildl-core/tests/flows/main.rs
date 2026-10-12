@@ -6,6 +6,7 @@
 
 pub mod common;
 
+mod build;
 mod check;
 mod graph;
 mod load;

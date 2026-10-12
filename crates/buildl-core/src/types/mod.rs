@@ -32,6 +32,13 @@
 //! - [`Ceiling`], [`WantedSet`] and [`Want`] — what a workspace allows, and what a build wants.
 //! - [`Workspace`] — what a workspace's manifest tells the pipeline.
 //! - [`Plan`], [`Verdict`] and their parts — what a build would do with each target, and why.
+//! - [`OutputPath`] — where one output of one target lives in the workspace.
+//! - [`ReadyAction`] — one action as an execution strategy is handed it; [`RawOutcome`] and
+//!   [`Exit`] — what the strategy reports back.
+//! - [`OnFailure`] — what a build does with the rest of its targets once one has failed.
+//! - [`ActionOutcome`], [`OutcomeClass`] and [`InfraKind`] — how the build of one target ended;
+//!   [`Summary`] — the count of a build's outcomes.
+//! - [`OutcomeEvent`] — one line of the build log: an outcome, with when and under which key.
 //!
 //! Non-responsibilities: decisions between different concepts. A type here validates and renders
 //! itself, and may combine values of its own kind; logic that needs two different concepts to
@@ -58,11 +65,17 @@ pub mod field_name;
 pub mod file_stat;
 pub mod label;
 pub mod node_id;
+pub mod on_failure;
+pub mod outcome;
+pub mod outcome_event;
 pub mod output_name;
+pub mod output_path;
 pub mod plan;
 pub mod platform;
 pub mod program;
 pub mod provenance;
+pub mod raw_outcome;
+pub mod ready_action;
 pub mod setting;
 pub mod source_path;
 pub mod target_graph;
@@ -96,11 +109,17 @@ pub use field_name::FieldName;
 pub use file_stat::{FileStat, StatEntry};
 pub use label::Label;
 pub use node_id::NodeId;
+pub use on_failure::OnFailure;
+pub use outcome::{ActionOutcome, InfraKind, OutcomeClass, Summary};
+pub use outcome_event::OutcomeEvent;
 pub use output_name::OutputName;
+pub use output_path::OutputPath;
 pub use plan::{Difference, DirtyReason, Plan, PlannedKey, Unfinished, Verdict};
 pub use platform::Platform;
 pub use program::Program;
 pub use provenance::Provenance;
+pub use raw_outcome::{Exit, RawOutcome};
+pub use ready_action::ReadyAction;
 pub use setting::{SettingName, SettingValue};
 pub use source_path::SourcePath;
 pub use target_graph::{Node, TargetGraph};

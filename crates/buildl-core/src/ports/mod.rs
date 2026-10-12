@@ -14,7 +14,11 @@
 //! - [`Digester`] — a file's metadata and content digest.
 //! - [`StatCache`] — the digests of files already hashed.
 //! - [`ToolResolver`] — what identifies the program a command names.
-//! - [`ActionCache`] — what the previous build recorded for a target.
+//! - [`ActionCache`] — what a build recorded for a target, read and written.
+//! - [`ContentStore`] — what actions produce, held by content and placed in the workspace.
+//! - [`EventLog`] — the record of how each target of a build ended.
+//! - [`ExecStrategy`] — running one action in a directory of its own.
+//! - [`Dispatcher`] — having several tasks worked on at once.
 //! - [`Ports`] — the bundle naming one implementation of each port, so a pipeline takes one type
 //!   parameter instead of one per port.
 //! - [`PortSet`] — one instance of each port a bundle names, so a pipeline is built from one
@@ -28,8 +32,12 @@
 pub mod action_cache;
 pub mod bundle;
 pub mod clock;
+pub mod content_store;
 pub mod declaration_source;
 pub mod digester;
+pub mod dispatcher;
+pub mod event_log;
+pub mod exec_strategy;
 pub mod host;
 pub mod manifest;
 pub mod port_set;
@@ -39,8 +47,12 @@ pub mod tool_resolver;
 pub use action_cache::ActionCache;
 pub use bundle::Ports;
 pub use clock::Clock;
+pub use content_store::ContentStore;
 pub use declaration_source::DeclarationSource;
 pub use digester::Digester;
+pub use dispatcher::Dispatcher;
+pub use event_log::EventLog;
+pub use exec_strategy::ExecStrategy;
 pub use host::Host;
 pub use manifest::Manifest;
 pub use port_set::PortSet;

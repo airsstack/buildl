@@ -179,9 +179,11 @@ mod tests {
         ActionKey::new(KeyComponents { own, deps }).unwrap()
     }
 
-    /// The row of a build under `key` whose one output had the content `content`.
+    /// The row of a build under `key` whose one output had the content `content`, and whose
+    /// action printed nothing.
     fn row(key: ActionKey, content: &str) -> CacheRow {
-        CacheRow::new(key, vec![Digest::of(content.as_bytes())]).unwrap()
+        let nothing = Digest::of(b"");
+        CacheRow::new(key, vec![Digest::of(content.as_bytes())], nothing, nothing).unwrap()
     }
 
     fn clean<'a>(id: u32, label: &'a Label, name: &str, content: &str) -> Dependency<'a> {

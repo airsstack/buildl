@@ -3,15 +3,18 @@
 //! Everything here uses only `buildl_core`'s public API, exactly as an adapter crate would.
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use buildl_core::{
-    ActionCache, BuildFile, CacheRow, Ceiling, DeclarationOrder, DeclarationSource, Diagnostic,
-    Digest, Digester, Directory, EnvName, EnvValue, Error, Evaluated, EvaluationFailure, FileStat,
-    Freshness, Host, Label, Manifest, NetworkAccess, Platform, PortName, PortSet, Ports, Program,
-    Result, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
-    StagedSetting, StagedSubdir, StagedTarget, StatCache, StatEntry, TargetRole, ToolResolver,
-    Workspace, Written,
+    ActionCache, BuildFile, CacheRow, Ceiling, Clock, ContentStore, DeclarationOrder,
+    DeclarationSource, Diagnostic, Digest, Digester, Directory, Dispatcher, EnvName, EnvValue,
+    Error, Evaluated, EvaluationFailure, EventLog, ExecStrategy, Exit, FileStat, Freshness, Host,
+    Label, Manifest, NetworkAccess, OutcomeEvent, OutputPath, Platform, PortName, PortSet, Ports,
+    Program, RawOutcome, ReadyAction, Result, SourcePath, StagedAlias, StagedDeclaration,
+    StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, StatCache,
+    StatEntry, TargetRole, Timestamp, ToolResolver, Workspace, Written,
 };
 
 /// What the fake holds for one directory.
@@ -248,16 +251,416 @@ impl ToolResolver for FakeTools {
     }
 }
 
-/// The rows of a previous build, held in memory.
+/// The rows of a previous build and of this one, held in memory.
 #[derive(Debug, Default)]
 pub struct FakeCache {
     /// The rows.
     pub rows: BTreeMap<Label, CacheRow>,
+    /// The targets whose row it fails to record.
+    pub failing: BTreeSet<Label>,
+    recorded: Vec<Label>,
+}
+
+impl FakeCache {
+    /// Every target a row was recorded for, in the order recorded.
+    #[must_use]
+    pub fn recorded(&self) -> Vec<Label> {
+        self.recorded.clone()
+    }
 }
 
 impl ActionCache for FakeCache {
     fn row(&self, label: &Label) -> Option<&CacheRow> {
         self.rows.get(label)
+    }
+
+    fn record(&mut self, label: Label, row: CacheRow) -> Result<()> {
+        if self.failing.contains(&label) {
+            return Err(Error::Adapter {
+                port: PortName::ActionCache,
+                diagnostic: Diagnostic::new(format!("{label} cannot be recorded")),
+            });
+        }
+        self.recorded.push(label.clone());
+        self.rows.insert(label, row);
+        Ok(())
+    }
+}
+
+/// What a [`FakeCas`] holds, behind its lock.
+#[derive(Debug, Default)]
+struct CasState {
+    blobs: BTreeMap<Digest, Vec<u8>>,
+    placed: BTreeMap<OutputPath, Digest>,
+    placements: Vec<(OutputPath, Digest)>,
+    unstorable: BTreeSet<Vec<u8>>,
+    unplaceable: BTreeSet<OutputPath>,
+}
+
+/// A content store held in memory, with the workspace paths content was placed at.
+///
+/// Actions store what they produce from the threads they run on, so everything it holds sits
+/// behind one lock and every method takes `&self`.
+#[derive(Debug, Default)]
+pub struct FakeCas {
+    state: Mutex<CasState>,
+}
+
+impl FakeCas {
+    fn state(&self) -> MutexGuard<'_, CasState> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The content held under `digest`, if any.
+    #[must_use]
+    pub fn blob(&self, digest: &Digest) -> Option<Vec<u8>> {
+        self.state().blobs.get(digest).cloned()
+    }
+
+    /// The digest of everything held.
+    #[must_use]
+    pub fn digests(&self) -> BTreeSet<Digest> {
+        self.state().blobs.keys().copied().collect()
+    }
+
+    /// What is at each workspace path now: the digest last placed there.
+    #[must_use]
+    pub fn placed(&self) -> BTreeMap<OutputPath, Digest> {
+        self.state().placed.clone()
+    }
+
+    /// Every placement that succeeded, in the order made.
+    #[must_use]
+    pub fn placements(&self) -> Vec<(OutputPath, Digest)> {
+        self.state().placements.clone()
+    }
+
+    /// Drops the content held under `digest`, as a store that was cleaned would.
+    pub fn forget(&self, digest: &Digest) {
+        self.state().blobs.remove(digest);
+    }
+
+    /// Makes every later attempt to place content at `path` fail.
+    pub fn fail_place(&self, path: OutputPath) {
+        self.state().unplaceable.insert(path);
+    }
+
+    /// Makes every later attempt to store exactly `bytes` fail.
+    pub fn fail_put(&self, bytes: Vec<u8>) {
+        self.state().unstorable.insert(bytes);
+    }
+}
+
+impl ContentStore for FakeCas {
+    fn put(&self, bytes: &[u8]) -> Result<Digest> {
+        let mut state = self.state();
+        if state.unstorable.contains(bytes) {
+            return Err(Error::Adapter {
+                port: PortName::ContentStore,
+                diagnostic: Diagnostic::new("the content cannot be stored"),
+            });
+        }
+        let digest = Digest::of(bytes);
+        state.blobs.insert(digest, bytes.to_vec());
+        drop(state);
+        Ok(digest)
+    }
+
+    fn contains(&self, digest: &Digest) -> bool {
+        self.state().blobs.contains_key(digest)
+    }
+
+    fn place(&self, digest: &Digest, at: &OutputPath) -> Result<()> {
+        let mut state = self.state();
+        if !state.blobs.contains_key(digest) {
+            return Err(Error::Adapter {
+                port: PortName::ContentStore,
+                diagnostic: Diagnostic::new(format!("{digest} is not held")),
+            });
+        }
+        if state.unplaceable.contains(at) {
+            return Err(Error::Adapter {
+                port: PortName::ContentStore,
+                diagnostic: Diagnostic::new(format!("{at} cannot be written")),
+            });
+        }
+        state.placed.insert(at.clone(), *digest);
+        state.placements.push((at.clone(), *digest));
+        drop(state);
+        Ok(())
+    }
+}
+
+/// A build log held in memory.
+#[derive(Debug, Default)]
+pub struct FakeLog {
+    /// Every event appended, in order.
+    pub events: Vec<OutcomeEvent>,
+    /// Whether appending fails.
+    pub broken: bool,
+}
+
+impl EventLog for FakeLog {
+    fn append(&mut self, event: &OutcomeEvent) -> Result<()> {
+        if self.broken {
+            return Err(Error::Adapter {
+                port: PortName::EventLog,
+                diagnostic: Diagnostic::new("the log cannot be written"),
+            });
+        }
+        self.events.push(event.clone());
+        Ok(())
+    }
+}
+
+/// A clock that moves one nanosecond each time it is read: the first read is `1`, the next `2`.
+///
+/// Actions read it from the threads they run on, so the count is atomic.
+#[derive(Debug, Default)]
+pub struct FakeClock {
+    reads: AtomicU64,
+}
+
+impl FakeClock {
+    /// How many times the clock was read.
+    #[must_use]
+    pub fn reads(&self) -> u64 {
+        self.reads.load(Ordering::SeqCst)
+    }
+}
+
+impl Clock for FakeClock {
+    fn now(&self) -> Timestamp {
+        Timestamp::from_unix_nanos(self.reads.fetch_add(1, Ordering::SeqCst) + 1)
+    }
+}
+
+/// How a scripted action goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ends {
+    /// The command runs and exits with this status.
+    Exits(i32),
+    /// The command runs longer than it is allowed to.
+    TimesOut,
+    /// No directory can be made to run it in.
+    PrepareFails,
+    /// The command cannot be started.
+    RunFails,
+    /// The command exits with zero, and then its outputs cannot be read.
+    CollectFails,
+    /// The command exits with zero, and the strategy then answers for one output too few.
+    CollectShort,
+}
+
+impl Default for Ends {
+    fn default() -> Self {
+        Self::Exits(0)
+    }
+}
+
+/// What a scripted action leaves at one of its output paths.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Content {
+    /// A file holding these bytes.
+    Holds(Vec<u8>),
+    /// Nothing.
+    Missing,
+}
+
+/// How the action of one target behaves, where that differs from an unscripted one.
+///
+/// An unscripted action exits with zero, prints its label and a newline to standard output and
+/// nothing to standard error, and leaves at each output path text made of its label, the path
+/// and the digest of each of its inputs — so the output changes exactly when an input does.
+#[derive(Debug, Clone, Default)]
+pub struct Script {
+    /// How the action goes.
+    pub ends: Ends,
+    /// What it writes to standard output; `None` for what an unscripted action writes.
+    pub stdout: Option<Vec<u8>>,
+    /// What it writes to standard error; `None` for nothing.
+    pub stderr: Option<Vec<u8>>,
+    /// What it leaves at an output path; a path not named holds what an unscripted action
+    /// leaves there.
+    pub outputs: BTreeMap<OutputPath, Content>,
+}
+
+/// The directory a [`FakeStrategy`] runs an action in: nothing, since nothing is run.
+#[derive(Debug)]
+pub struct FakeDir;
+
+/// A strategy that runs nothing: each action ends, prints and produces what its script says.
+///
+/// Actions are run from several threads, so what it records sits behind locks.
+#[derive(Debug, Default)]
+pub struct FakeStrategy {
+    /// The workspace files an action can read, as the digester holds them.
+    pub files: BTreeMap<SourcePath, Vec<u8>>,
+    /// The targets whose action is scripted.
+    pub scripts: BTreeMap<Label, Script>,
+    handed: Mutex<Vec<ReadyAction>>,
+    ran: Mutex<Vec<Label>>,
+}
+
+impl FakeStrategy {
+    /// Every action a directory was asked for, in the order asked.
+    #[must_use]
+    pub fn handed(&self) -> Vec<ReadyAction> {
+        self.handed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The target of every action that was run, in the order run.
+    #[must_use]
+    pub fn ran(&self) -> Vec<Label> {
+        self.ran
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// How many times the action of `label` was run.
+    #[must_use]
+    pub fn runs(&self, label: &Label) -> usize {
+        self.ran().iter().filter(|ran| *ran == label).count()
+    }
+
+    fn script(&self, label: &Label) -> Script {
+        self.scripts.get(label).cloned().unwrap_or_default()
+    }
+
+    /// What an unscripted action leaves at `path`.
+    fn unscripted(&self, action: &ReadyAction, path: &OutputPath) -> Vec<u8> {
+        let inputs: Vec<String> = action
+            .inputs
+            .iter()
+            .map(|input| {
+                let bytes = self.files.get(input).map_or(&[][..], Vec::as_slice);
+                format!(" {input}={}", Digest::of(bytes))
+            })
+            .collect();
+        format!("{} {path}{}", action.label, inputs.concat()).into_bytes()
+    }
+}
+
+/// The failure of a [`FakeStrategy`] for the action of `label`.
+fn strategy_failure(label: &Label, what: &str) -> Error {
+    Error::Adapter {
+        port: PortName::ExecStrategy,
+        diagnostic: Diagnostic::new(format!("{label}: {what}")),
+    }
+}
+
+impl ExecStrategy for FakeStrategy {
+    type Dir = FakeDir;
+
+    fn prepare(&self, action: &ReadyAction) -> Result<FakeDir> {
+        self.handed
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(action.clone());
+        if self.script(&action.label).ends == Ends::PrepareFails {
+            return Err(strategy_failure(&action.label, "no directory to run in"));
+        }
+        Ok(FakeDir)
+    }
+
+    fn run(&self, _dir: &FakeDir, action: &ReadyAction) -> Result<RawOutcome> {
+        self.ran
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(action.label.clone());
+        let script = self.script(&action.label);
+        let exit = match script.ends {
+            Ends::RunFails => {
+                return Err(strategy_failure(
+                    &action.label,
+                    "the command cannot be started",
+                ));
+            }
+            Ends::TimesOut => Exit::TimedOut,
+            Ends::Exits(status) => Exit::Exited(status),
+            Ends::PrepareFails | Ends::CollectFails | Ends::CollectShort => Exit::Exited(0),
+        };
+        Ok(RawOutcome {
+            exit,
+            stdout: script
+                .stdout
+                .unwrap_or_else(|| format!("{}\n", action.label).into_bytes()),
+            stderr: script.stderr.unwrap_or_default(),
+        })
+    }
+
+    fn collect<C: ContentStore>(
+        &self,
+        _dir: &FakeDir,
+        action: &ReadyAction,
+        cas: &C,
+    ) -> Result<Vec<Option<Digest>>> {
+        let script = self.script(&action.label);
+        if script.ends == Ends::CollectFails {
+            return Err(strategy_failure(
+                &action.label,
+                "the outputs cannot be read",
+            ));
+        }
+        let mut entries = Vec::new();
+        for path in &action.outputs {
+            let content = script
+                .outputs
+                .get(path)
+                .cloned()
+                .unwrap_or_else(|| Content::Holds(self.unscripted(action, path)));
+            entries.push(match content {
+                Content::Holds(bytes) => Some(cas.put(&bytes)?),
+                Content::Missing => None,
+            });
+        }
+        if script.ends == Ends::CollectShort {
+            entries.pop();
+        }
+        Ok(entries)
+    }
+}
+
+/// Which waiting task a [`FakeDispatcher`] takes next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Order {
+    /// The one that has waited longest.
+    #[default]
+    OldestFirst,
+    /// The one handed over last.
+    NewestFirst,
+}
+
+/// A dispatcher that runs every task on the calling thread, one at a time.
+#[derive(Debug, Default)]
+pub struct FakeDispatcher {
+    /// Which waiting task is taken next.
+    pub order: Order,
+}
+
+impl Dispatcher for FakeDispatcher {
+    fn dispatch<T, R, W, S>(&mut self, work: W, mut step: S) -> Result<()>
+    where
+        T: Send,
+        R: Send,
+        W: Fn(T) -> R + Sync,
+        S: FnMut(Option<R>) -> Vec<T>,
+    {
+        let mut waiting: VecDeque<T> = step(None).into();
+        loop {
+            let next = match self.order {
+                Order::OldestFirst => waiting.pop_front(),
+                Order::NewestFirst => waiting.pop_back(),
+            };
+            let Some(task) = next else {
+                return Ok(());
+            };
+            waiting.extend(step(Some(work(task))));
+        }
     }
 }
 
@@ -273,6 +676,11 @@ impl Ports for FakePorts {
     type StatCache = FakeStatCache;
     type Tools = FakeTools;
     type Cache = FakeCache;
+    type Cas = FakeCas;
+    type Log = FakeLog;
+    type Strategy = FakeStrategy;
+    type Dispatcher = FakeDispatcher;
+    type Clock = FakeClock;
 }
 
 /// A workspace that writes to `out` and `.buildl`, under a ceiling allowing `cc` to run, any
@@ -291,8 +699,12 @@ pub fn open_workspace() -> Workspace {
     }
 }
 
-/// Every port around `source`: an [`open_workspace`], a `linux/x86_64` machine with no variable
-/// set, no workspace file, nothing recorded, no program and no row.
+/// Every port around `source`, each holding nothing.
+///
+/// An [`open_workspace`]; a `linux/x86_64` machine with no variable set; no workspace file,
+/// nothing recorded, no program and no row; an empty content store and an empty log; a strategy
+/// with no script; a dispatcher taking the oldest task first; and a clock that has not been
+/// read.
 #[must_use]
 pub fn ports(source: FakeSource) -> PortSet<FakePorts> {
     PortSet {
@@ -310,6 +722,11 @@ pub fn ports(source: FakeSource) -> PortSet<FakePorts> {
         stat_cache: FakeStatCache::default(),
         tools: FakeTools::default(),
         cache: FakeCache::default(),
+        cas: FakeCas::default(),
+        log: FakeLog::default(),
+        strategy: FakeStrategy::default(),
+        dispatcher: FakeDispatcher::default(),
+        clock: FakeClock::default(),
     }
 }
 
@@ -423,4 +840,445 @@ pub fn workspace(files: Vec<(&str, FakeFile)>) -> BTreeMap<Directory, FakeFile> 
         .into_iter()
         .map(|(directory, file)| (dir(directory), file))
         .collect()
+}
+
+/// The fakes held to the contracts of the ports they stand in for: a flow is only as good as
+/// the fake it runs against.
+#[cfg(test)]
+mod tests {
+    #![expect(
+        clippy::unwrap_used,
+        reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
+    )]
+
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    use buildl_core::{
+        ActionCache, ActionKey, ActionOutcome, Argument, CacheRow, Clock, Command, ContentStore,
+        Digest, Directory, Dispatcher, Error, EventLog, ExecStrategy, Exit, KeyComponents, Label,
+        NetworkAccess, OutcomeClass, OutcomeEvent, OutputName, OutputPath, OwnComponents, Platform,
+        PortName, Provenance, ReadyAction, SourcePath, Timestamp,
+    };
+
+    use super::{
+        Content, Ends, FakeCache, FakeCas, FakeClock, FakeDispatcher, FakeLog, FakeStrategy, Order,
+        Script, dir,
+    };
+
+    fn label(raw: &str) -> Label {
+        Label::parse(raw).unwrap()
+    }
+
+    fn path(raw: &str) -> SourcePath {
+        SourcePath::parse(raw).unwrap()
+    }
+
+    /// The action of a target that runs `cc` over `inputs` and declares `outputs`.
+    fn action(raw: &str, inputs: &[&str], outputs: &[&str]) -> ReadyAction {
+        ReadyAction {
+            label: label(raw),
+            command: Command::new(vec![Argument::parse("cc").unwrap()]).unwrap(),
+            env: BTreeMap::new(),
+            inputs: inputs.iter().map(|input| path(input)).collect(),
+            deps: Vec::new(),
+            outputs: outputs.iter().map(|name| out_path(raw, name)).collect(),
+            network: NetworkAccess::Sealed,
+        }
+    }
+
+    /// A strategy holding one script, for `//:app`.
+    fn scripted(script: Script) -> FakeStrategy {
+        FakeStrategy {
+            scripts: BTreeMap::from([(label("//:app"), script)]),
+            ..FakeStrategy::default()
+        }
+    }
+
+    /// Where the output `name` of the target `raw` lives, under `out`.
+    fn out_path(raw: &str, name: &str) -> OutputPath {
+        OutputPath::of(&dir("out"), &label(raw), &OutputName::parse(name).unwrap())
+    }
+
+    /// The event of a target declared in the root build file that was found cached.
+    fn event(raw: &str) -> OutcomeEvent {
+        OutcomeEvent {
+            at: Timestamp::from_unix_nanos(1),
+            provenance: Provenance::new(PathBuf::from("build.lua"), Directory::root()),
+            command: Command::new(vec![Argument::parse("cc").unwrap()]).unwrap(),
+            key: None,
+            started: None,
+            finished: None,
+            outcome: ActionOutcome {
+                label: label(raw),
+                class: OutcomeClass::Cached,
+                diagnostic: None,
+                outputs: Vec::new(),
+                stdout: None,
+                stderr: None,
+            },
+        }
+    }
+
+    /// A row for a target that ran `cc` and produced one output, `app`, holding `content`.
+    fn row(content: &str) -> CacheRow {
+        let key = ActionKey::new(KeyComponents {
+            own: OwnComponents {
+                command: Command::new(vec![Argument::parse("cc").unwrap()]).unwrap(),
+                inputs: Vec::new(),
+                outputs: vec![OutputName::parse("app").unwrap()],
+                env: BTreeMap::new(),
+                tool: None,
+                settings: BTreeMap::new(),
+                network: NetworkAccess::Sealed,
+                platform: Platform::parse("linux/x86_64").unwrap(),
+            },
+            deps: Vec::new(),
+        })
+        .unwrap();
+        let nothing = Digest::of(b"");
+        CacheRow::new(key, vec![Digest::of(content.as_bytes())], nothing, nothing).unwrap()
+    }
+
+    #[test]
+    fn a_recorded_row_is_the_one_read_back() {
+        let mut cache = FakeCache::default();
+        assert_eq!(cache.row(&label("//:app")), None);
+
+        cache.record(label("//:app"), row("first")).unwrap();
+        cache.record(label("//:app"), row("second")).unwrap();
+
+        assert_eq!(cache.row(&label("//:app")), Some(&row("second")));
+        assert_eq!(cache.recorded(), [label("//:app"), label("//:app")]);
+    }
+
+    #[test]
+    fn a_row_that_cannot_be_recorded_leaves_what_was_there() {
+        let mut cache = FakeCache::default();
+        cache.record(label("//:app"), row("first")).unwrap();
+        cache.failing.insert(label("//:app"));
+
+        let error = cache.record(label("//:app"), row("second")).unwrap_err();
+
+        assert_eq!(error.to_string(), "action cache: //:app cannot be recorded");
+        match error {
+            Error::Adapter { port, .. } => assert_eq!(port, PortName::ActionCache),
+            other => unreachable!("expected Adapter, got {other:?}"),
+        }
+        assert_eq!(cache.row(&label("//:app")), Some(&row("first")));
+        assert_eq!(cache.recorded(), [label("//:app")]);
+    }
+
+    #[test]
+    fn stored_content_is_held_under_its_digest() {
+        let cas = FakeCas::default();
+
+        let digest = cas.put(b"app").unwrap();
+
+        assert_eq!(digest, Digest::of(b"app"));
+        assert_eq!(cas.put(b"app").unwrap(), digest, "storing it again");
+        assert!(cas.contains(&digest));
+        assert!(!cas.contains(&Digest::of(b"other")));
+        assert_eq!(cas.blob(&digest), Some(b"app".to_vec()));
+        assert_eq!(cas.digests(), BTreeSet::from([digest]));
+    }
+
+    #[test]
+    fn content_it_is_told_to_refuse_is_not_stored() {
+        let cas = FakeCas::default();
+        cas.fail_put(b"app".to_vec());
+
+        let error = cas.put(b"app").unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "content store: the content cannot be stored"
+        );
+        assert!(cas.digests().is_empty());
+        assert!(cas.put(b"other").is_ok());
+    }
+
+    #[test]
+    fn placed_content_becomes_the_file_at_its_path() {
+        let cas = FakeCas::default();
+        let first = cas.put(b"first").unwrap();
+        let second = cas.put(b"second").unwrap();
+        let app = out_path("//:app", "app");
+
+        cas.place(&first, &app).unwrap();
+        cas.place(&second, &app).unwrap();
+
+        assert_eq!(cas.placed(), BTreeMap::from([(app.clone(), second)]));
+        assert_eq!(cas.placements(), [(app.clone(), first), (app, second)]);
+    }
+
+    #[test]
+    fn content_that_is_not_held_cannot_be_placed() {
+        let cas = FakeCas::default();
+        let app = out_path("//:app", "app");
+        let digest = cas.put(b"app").unwrap();
+        cas.forget(&digest);
+
+        let error = cas.place(&digest, &app).unwrap_err();
+
+        assert!(!cas.contains(&digest));
+        assert_eq!(
+            error.to_string(),
+            format!("content store: {digest} is not held")
+        );
+        assert!(cas.placed().is_empty());
+    }
+
+    #[test]
+    fn a_path_it_is_told_to_fail_on_is_not_written() {
+        let cas = FakeCas::default();
+        let app = out_path("//:app", "app");
+        let map = out_path("//:app", "app.map");
+        let digest = cas.put(b"app").unwrap();
+        cas.fail_place(app.clone());
+
+        let error = cas.place(&digest, &app).unwrap_err();
+        cas.place(&digest, &map).unwrap();
+
+        assert_eq!(
+            error.to_string(),
+            "content store: out/app cannot be written"
+        );
+        match error {
+            Error::Adapter { port, .. } => assert_eq!(port, PortName::ContentStore),
+            other => unreachable!("expected Adapter, got {other:?}"),
+        }
+        assert_eq!(cas.placements(), [(map, digest)]);
+    }
+
+    #[test]
+    fn a_log_keeps_every_event_until_it_is_broken() {
+        let mut log = FakeLog::default();
+        log.append(&event("//:a")).unwrap();
+        log.append(&event("//:b")).unwrap();
+        assert_eq!(log.events, [event("//:a"), event("//:b")]);
+
+        log.broken = true;
+        let error = log.append(&event("//:c")).unwrap_err();
+
+        assert_eq!(error.to_string(), "event log: the log cannot be written");
+        assert_eq!(log.events.len(), 2);
+    }
+
+    #[test]
+    fn every_read_of_the_clock_is_one_tick_later() {
+        let clock = FakeClock::default();
+        assert_eq!(clock.reads(), 0);
+
+        assert_eq!(clock.now(), Timestamp::from_unix_nanos(1));
+        assert_eq!(clock.now(), Timestamp::from_unix_nanos(2));
+
+        assert_eq!(clock.reads(), 2);
+    }
+
+    #[test]
+    fn an_unscripted_action_succeeds_prints_its_label_and_leaves_every_output() {
+        let strategy = FakeStrategy::default();
+        let cas = FakeCas::default();
+        let app = action("//:app", &[], &["app", "app.map"]);
+
+        let dir = strategy.prepare(&app).unwrap();
+        let ran = strategy.run(&dir, &app).unwrap();
+        let collected = strategy.collect(&dir, &app, &cas).unwrap();
+
+        assert_eq!(ran.exit, Exit::Exited(0));
+        assert_eq!(ran.stdout, b"//:app\n");
+        assert_eq!(ran.stderr, b"");
+        let binary = Digest::of(b"//:app out/app");
+        let map = Digest::of(b"//:app out/app.map");
+        assert_eq!(collected, [Some(binary), Some(map)]);
+        assert_eq!(cas.digests(), BTreeSet::from([binary, map]));
+        assert_eq!(strategy.handed(), [app]);
+        assert_eq!(strategy.ran(), [label("//:app")]);
+        assert_eq!(strategy.runs(&label("//:app")), 1);
+        assert_eq!(strategy.runs(&label("//:other")), 0);
+    }
+
+    #[test]
+    fn an_unscripted_output_changes_exactly_when_an_input_does() {
+        let cas = FakeCas::default();
+        let app = action("//:app", &["src/a.c", "src/b.c"], &["app"]);
+        let produce = |a: &str| {
+            let strategy = FakeStrategy {
+                files: BTreeMap::from([(path("src/a.c"), a.as_bytes().to_vec())]),
+                ..FakeStrategy::default()
+            };
+            let dir = strategy.prepare(&app).unwrap();
+            strategy.collect(&dir, &app, &cas).unwrap()
+        };
+
+        let first = produce("one");
+
+        assert_eq!(produce("one"), first);
+        assert_ne!(produce("two"), first);
+        let text = format!(
+            "//:app out/app src/a.c={} src/b.c={}",
+            Digest::of(b"one"),
+            Digest::of(b"")
+        );
+        assert_eq!(first, [Some(Digest::of(text.as_bytes()))]);
+    }
+
+    #[test]
+    fn a_scripted_action_ends_and_prints_as_its_script_says() {
+        let app = action("//:app", &[], &["app"]);
+        let failing = scripted(Script {
+            ends: Ends::Exits(3),
+            stdout: Some(b"compiling".to_vec()),
+            stderr: Some(b"no such file".to_vec()),
+            ..Script::default()
+        });
+        let slow = scripted(Script {
+            ends: Ends::TimesOut,
+            ..Script::default()
+        });
+
+        let failed = failing.run(&failing.prepare(&app).unwrap(), &app).unwrap();
+        let timed_out = slow.run(&slow.prepare(&app).unwrap(), &app).unwrap();
+
+        assert_eq!(failed.exit, Exit::Exited(3));
+        assert_eq!(failed.stdout, b"compiling");
+        assert_eq!(failed.stderr, b"no such file");
+        assert_eq!(timed_out.exit, Exit::TimedOut);
+        assert_eq!(timed_out.stdout, b"//:app\n");
+    }
+
+    #[test]
+    fn a_strategy_fails_at_the_step_its_script_names() {
+        let cas = FakeCas::default();
+        let app = action("//:app", &[], &["app"]);
+        let with = |ends: Ends| {
+            scripted(Script {
+                ends,
+                ..Script::default()
+            })
+        };
+
+        let no_dir = with(Ends::PrepareFails);
+        let error = no_dir.prepare(&app).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "exec strategy: //:app: no directory to run in"
+        );
+        match error {
+            Error::Adapter { port, .. } => assert_eq!(port, PortName::ExecStrategy),
+            other => unreachable!("expected Adapter, got {other:?}"),
+        }
+        assert_eq!(no_dir.handed(), std::slice::from_ref(&app));
+        assert_eq!(no_dir.runs(&label("//:app")), 0);
+
+        let no_start = with(Ends::RunFails);
+        let dir = no_start.prepare(&app).unwrap();
+        assert_eq!(
+            no_start.run(&dir, &app).unwrap_err().to_string(),
+            "exec strategy: //:app: the command cannot be started"
+        );
+        assert_eq!(no_start.runs(&label("//:app")), 1);
+
+        let unreadable = with(Ends::CollectFails);
+        let dir = unreadable.prepare(&app).unwrap();
+        assert_eq!(unreadable.run(&dir, &app).unwrap().exit, Exit::Exited(0));
+        assert_eq!(
+            unreadable
+                .collect(&dir, &app, &cas)
+                .unwrap_err()
+                .to_string(),
+            "exec strategy: //:app: the outputs cannot be read"
+        );
+        assert!(cas.digests().is_empty());
+    }
+
+    #[test]
+    fn scripted_outputs_are_stored_a_missing_one_is_not_and_a_short_reply_drops_the_last() {
+        let cas = FakeCas::default();
+        let app = action("//:app", &[], &["app", "app.map"]);
+        let outputs = BTreeMap::from([
+            (
+                out_path("//:app", "app"),
+                Content::Holds(b"binary".to_vec()),
+            ),
+            (out_path("//:app", "app.map"), Content::Missing),
+        ]);
+        let partial = scripted(Script {
+            outputs: outputs.clone(),
+            ..Script::default()
+        });
+        let short = scripted(Script {
+            ends: Ends::CollectShort,
+            outputs,
+            ..Script::default()
+        });
+
+        let dir = partial.prepare(&app).unwrap();
+        assert_eq!(
+            partial.collect(&dir, &app, &cas).unwrap(),
+            [Some(Digest::of(b"binary")), None]
+        );
+        assert_eq!(cas.digests(), BTreeSet::from([Digest::of(b"binary")]));
+
+        let dir = short.prepare(&app).unwrap();
+        assert_eq!(short.run(&dir, &app).unwrap().exit, Exit::Exited(0));
+        assert_eq!(
+            short.collect(&dir, &app, &cas).unwrap(),
+            [Some(Digest::of(b"binary"))]
+        );
+    }
+
+    #[test]
+    fn an_output_the_store_refuses_fails_the_collection_as_the_stores_error() {
+        let cas = FakeCas::default();
+        cas.fail_put(b"//:app out/app".to_vec());
+        let strategy = FakeStrategy::default();
+        let app = action("//:app", &[], &["app"]);
+
+        let dir = strategy.prepare(&app).unwrap();
+        let error = strategy.collect(&dir, &app, &cas).unwrap_err();
+
+        match error {
+            Error::Adapter { port, .. } => assert_eq!(port, PortName::ContentStore),
+            other => unreachable!("expected Adapter, got {other:?}"),
+        }
+    }
+
+    /// Dispatches three tasks, the first of which yields a fourth, and returns the results in
+    /// the order `step` received them. Both closures borrow locals, as a build's closures do.
+    fn dispatched(order: Order) -> Vec<u32> {
+        let worked = AtomicU32::new(0);
+        let mut results = Vec::new();
+        let mut dispatcher = FakeDispatcher { order };
+
+        dispatcher
+            .dispatch(
+                |task: u32| {
+                    worked.fetch_add(1, Ordering::SeqCst);
+                    task * 10
+                },
+                |result| {
+                    result.map_or_else(
+                        || vec![1, 2, 3],
+                        |result| {
+                            results.push(result);
+                            if result == 10 { vec![4] } else { Vec::new() }
+                        },
+                    )
+                },
+            )
+            .unwrap();
+
+        assert_eq!(worked.load(Ordering::SeqCst), 4, "every task is run");
+        results
+    }
+
+    #[test]
+    fn tasks_run_one_at_a_time_oldest_first_unless_told_otherwise() {
+        assert_eq!(FakeDispatcher::default().order, Order::OldestFirst);
+        assert_eq!(dispatched(Order::OldestFirst), [10, 20, 30, 40]);
+        assert_eq!(dispatched(Order::NewestFirst), [30, 20, 10, 40]);
+    }
 }

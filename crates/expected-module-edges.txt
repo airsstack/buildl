@@ -1,9 +1,13 @@
 error -> types
+execute -> error
+execute -> ports
+execute -> types
 json -> error
 load -> error
 load -> ports
 load -> types
 pipeline -> error
+pipeline -> execute
 pipeline -> load
 pipeline -> plan
 pipeline -> ports

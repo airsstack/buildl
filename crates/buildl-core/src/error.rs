@@ -26,8 +26,8 @@
 use core::fmt;
 
 use crate::types::{
-    Ceiling, Declaration, DeclarationOrder, Diagnostic, Directory, FieldName, Label, Node, Program,
-    Provenance, SettingName, SourcePath, Want, Written,
+    Ceiling, Declaration, DeclarationOrder, Diagnostic, Directory, FieldName, Label, Node,
+    OutputPath, Program, Provenance, SettingName, SourcePath, Want, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -237,6 +237,37 @@ pub enum Error {
         /// The setting that was named.
         name: SettingName,
     },
+    /// A plan was handed over with a graph it was not made from.
+    #[error("the plan was not made from this graph")]
+    ForeignPlan,
+    /// Two outputs would be written to one place: the same path, or a path that another output
+    /// needs as a directory.
+    #[error(
+        "{path}: {} ({}) and {} ({}) cannot both write here",
+        .first.label,
+        .first.provenance,
+        .second.label,
+        .second.provenance
+    )]
+    OutputConflict {
+        /// The shorter of the two paths: the one both outputs need.
+        path: OutputPath,
+        /// The lower-labelled of the two targets, and its build file.
+        first: Box<DeclarationSite>,
+        /// The other target, and its build file; the same target when it declares both outputs.
+        second: Box<DeclarationSite>,
+    },
+    /// A command names no program once its placeholders are expanded: it expanded to no
+    /// argument, or its first argument is empty or still holds a `$`.
+    #[error(
+        "{}: {}: the command names no program once expanded",
+        .site.provenance,
+        .site.label
+    )]
+    NoProgram {
+        /// The target whose command it is, and its build file.
+        site: Box<DeclarationSite>,
+    },
     /// An adapter could not do what a port asked of it.
     #[error("{port}: {diagnostic}")]
     Adapter {
@@ -398,6 +429,16 @@ pub enum PortName {
     StatCache,
     /// The programs commands name.
     ToolResolver,
+    /// The recorded results of earlier builds.
+    ActionCache,
+    /// The store of content by digest: outputs, and what actions printed.
+    ContentStore,
+    /// The build log.
+    EventLog,
+    /// What runs an action.
+    ExecStrategy,
+    /// What hands actions to workers.
+    Dispatcher,
 }
 
 impl fmt::Display for PortName {
@@ -408,6 +449,11 @@ impl fmt::Display for PortName {
             Self::Digester => "digester",
             Self::StatCache => "stat cache",
             Self::ToolResolver => "tool resolver",
+            Self::ActionCache => "action cache",
+            Self::ContentStore => "content store",
+            Self::EventLog => "event log",
+            Self::ExecStrategy => "exec strategy",
+            Self::Dispatcher => "dispatcher",
         })
     }
 }
@@ -633,8 +679,8 @@ mod tests {
     };
     use crate::types::{
         Argument, Ceiling, Command, DeclarationOrder, Diagnostic, Directory, EnvName, FieldName,
-        Freshness, Label, NetworkAccess, Node, OutputName, Program, Provenance, SettingName,
-        SourcePath, TargetName, TargetRole, Want, Written,
+        Freshness, Label, NetworkAccess, Node, OutputName, OutputPath, Program, Provenance,
+        SettingName, SourcePath, TargetName, TargetRole, Want, Written,
     };
 
     fn lib_file() -> Provenance {
@@ -968,6 +1014,80 @@ mod tests {
     }
 
     #[test]
+    fn a_foreign_plan_says_the_plan_does_not_belong_to_the_graph() {
+        assert_eq!(
+            Error::ForeignPlan.to_string(),
+            "the plan was not made from this graph"
+        );
+    }
+
+    #[test]
+    fn an_output_conflict_names_the_path_and_both_targets_with_their_files() {
+        let err = Error::OutputConflict {
+            path: OutputPath::of(
+                &Directory::parse("out").unwrap(),
+                &label("//:lib"),
+                &OutputName::parse("lib").unwrap(),
+            ),
+            first: Box::new(root_site("//:lib")),
+            second: Box::new(DeclarationSite {
+                label: label("//lib:text"),
+                provenance: lib_file(),
+            }),
+        };
+        assert_eq!(
+            err.to_string(),
+            "out/lib: //:lib (build.lua) and //lib:text (lib/build.lua) cannot both write here"
+        );
+    }
+
+    #[test]
+    fn an_output_conflict_inside_one_target_names_that_target_twice() {
+        let err = Error::OutputConflict {
+            path: OutputPath::of(
+                &Directory::parse("out").unwrap(),
+                &label("//:app"),
+                &OutputName::parse("app").unwrap(),
+            ),
+            first: Box::new(root_site("//:app")),
+            second: Box::new(root_site("//:app")),
+        };
+        assert_eq!(
+            err.to_string(),
+            "out/app: //:app (build.lua) and //:app (build.lua) cannot both write here"
+        );
+    }
+
+    #[test]
+    fn no_program_names_the_site_of_the_command() {
+        let err = Error::NoProgram {
+            site: Box::new(root_site("//:app")),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app: the command names no program once expanded"
+        );
+    }
+
+    #[test]
+    fn a_program_a_command_names_only_once_expanded_is_refused_like_any_other() {
+        let err = Error::Refused {
+            want: Want::Program(Program::parse("out/app").unwrap()),
+            site: Some(Box::new(root_site("//:app_test"))),
+            ceiling: Box::new(Ceiling {
+                run: BTreeSet::from([Program::parse("cc").unwrap()]),
+                env: BTreeSet::new(),
+                read: BTreeSet::new(),
+                write: BTreeSet::new(),
+            }),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app_test: program out/app is outside the ceiling (proc.run allows: cc)"
+        );
+    }
+
+    #[test]
     fn adapter_names_the_port_before_the_adapters_own_message() {
         let err = Error::Adapter {
             port: PortName::StatCache,
@@ -987,6 +1107,11 @@ mod tests {
             (PortName::Digester, "digester"),
             (PortName::StatCache, "stat cache"),
             (PortName::ToolResolver, "tool resolver"),
+            (PortName::ActionCache, "action cache"),
+            (PortName::ContentStore, "content store"),
+            (PortName::EventLog, "event log"),
+            (PortName::ExecStrategy, "exec strategy"),
+            (PortName::Dispatcher, "dispatcher"),
         ];
         for (port, rendered) in cases {
             assert_eq!(port.to_string(), rendered);

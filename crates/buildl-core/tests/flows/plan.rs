@@ -112,7 +112,7 @@ const fn own_of(verdict: &Verdict) -> &OwnComponents {
 
 /// Records one target as built, as an executor would: under the key `plan` holds for it, finished
 /// with what its dependencies' rows say they produced, with every output's content derived from
-/// `version`.
+/// `version`, for an action that printed nothing.
 fn record(
     pipeline: &mut Pipeline<FakePorts>,
     graph: &TargetGraph,
@@ -141,7 +141,8 @@ fn record(
         .map(|name| Digest::of(format!("{label} {name} {version}").as_bytes()))
         .collect();
     let key = ActionKey::new(KeyComponents { own, deps }).unwrap();
-    let row = CacheRow::new(key, outputs).unwrap();
+    let nothing = Digest::of(b"");
+    let row = CacheRow::new(key, outputs, nothing, nothing).unwrap();
     pipeline.ports_mut().cache.rows.insert(label, row);
 }
 
