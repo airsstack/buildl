@@ -108,6 +108,7 @@ Findings an earlier slice recorded but left out of scope, each assigned to the s
 |19|A rule's `desc` is not expanded: nothing shows one yet.|I6 spec §11|the slice that adds the `Reporter` port|
 |20|An output that is a directory tree cannot be stored: `ExecStrategy::collect` answers one digest per declared output. Design §9.2 and §9.6 declare such outputs (`--outdir $out`, `tar … -C $out`) without the stamp file §9.2 prescribes.|I6 spec §11|the `buildl` adapters slice|
 |21|`[execution]`'s `timeout`, `workers` and `strategy` are not in `Workspace`, so the adapters that need them have no port to read them from.|I6 spec §11|the `buildl` adapters slice|
+|22|`execute` gathers the outcomes it has and drops a target left without one, so a `Dispatcher` that loses a task answers `Ok` with fewer outcomes than targets. Decide whether that is an error of the build when the first real dispatcher is written.|I6 plan `09` review|the `buildl` adapters slice|
 
 ## 6. Process notes
 
