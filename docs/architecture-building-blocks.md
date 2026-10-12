@@ -145,9 +145,10 @@ Every value is a validated newtype or a serializable handoff; field-level detail
 |Content|`Digest` — the single SHA-256 type for files, outputs, keys, and log blobs|
 |Time|`Timestamp` — nanoseconds since the Unix epoch, the current one obtained only through the `Clock` port|
 |Phase handoffs|`Declaration`, `TargetGraph`, `Plan`, `ActionOutcome`|
+|Execution handoffs|`OutputPath` — where one output lives under `out/` — `ReadyAction` — one action with its command expanded — `RawOutcome` and `Exit` — how a run ended and what it printed — `OutcomeEvent` — one line of the log — `OnFailure`, `Summary`|
 |Incrementality|`KeyComponents`, `ActionKey`|
 |Authority|`Ceiling`, `WantedSet`, `Want`, `Workspace`, `Grants`|
-|Classification|`OutcomeClass` (`#[non_exhaustive]`, `architecture.md` §4)|
+|Classification|`OutcomeClass` and `InfraKind` (`#[non_exhaustive]`, `architecture.md` §4)|
 
 ### 5.2 Ports
 
@@ -190,17 +191,19 @@ pub trait ToolResolver {
     fn fingerprint(&self, program: &Program) -> Result<Option<Digest>>;
 }
 
-/// Workers write output blobs concurrently.
+/// Workers write output blobs concurrently. `place` makes a stored blob the file at
+/// an output's path, replacing what is there.
 pub trait ContentStore: Send + Sync {
     fn put(&self, bytes: &[u8]) -> Result<Digest>;
     fn contains(&self, digest: &Digest) -> bool;
+    fn place(&self, digest: &Digest, at: &OutputPath) -> Result<()>;
 }
 
-/// The scheduler side is the single writer.
+/// The scheduler side is the single writer. A row is durable once `record` returns
+/// `Ok`; after `Err` the cache holds what it held before the call.
 pub trait ActionCache {
     fn row(&self, label: &Label) -> Option<&CacheRow>;
-    fn upsert(&mut self, label: Label, row: CacheRow);
-    fn commit(&mut self) -> Result<()>;
+    fn record(&mut self, label: Label, row: CacheRow) -> Result<()>;
 }
 
 pub trait EventLog {
@@ -212,6 +215,25 @@ pub trait ExecStrategy: Send + Sync {
     type Dir;
     fn prepare(&self, action: &ReadyAction) -> Result<Self::Dir>;
     fn run(&self, dir: &Self::Dir, action: &ReadyAction) -> Result<RawOutcome>;
+    /// One entry per declared output, in order: its digest once stored in `cas`,
+    /// `None` when the action left nothing there.
+    fn collect<C: ContentStore>(
+        &self,
+        dir: &Self::Dir,
+        action: &ReadyAction,
+        cas: &C,
+    ) -> Result<Vec<Option<Digest>>>;
+}
+
+/// `work` runs one task, on any thread. `step` runs on the calling thread, first with
+/// `None` and then with each result, and returns the tasks that became ready.
+pub trait Dispatcher {
+    fn dispatch<T, R, W, S>(&mut self, work: W, step: S) -> Result<()>
+    where
+        T: Send,
+        R: Send,
+        W: Fn(T) -> R + Sync,
+        S: FnMut(Option<R>) -> Vec<T>;
 }
 
 pub trait Clock {
@@ -240,8 +262,9 @@ pub trait Ports {
     type Cas: ContentStore;
     type Log: EventLog;
     type Strategy: ExecStrategy;
-    type Clock: Clock;
-    // Dispatcher, Approver, Reporter
+    type Dispatcher: Dispatcher;
+    type Clock: Clock + Sync;   // a worker reads the clock
+    // Approver, Reporter
 }
 
 /// One instance of each port the bundle names, with a public field per port.
@@ -274,7 +297,8 @@ classDiagram
         Cache: ActionCache
         Log: EventLog
         Strategy: ExecStrategy
-        Clock: Clock
+        Dispatcher: Dispatcher
+        Clock: Clock + Sync
     }
     class LocalPorts {
         crate buildl
@@ -297,8 +321,7 @@ classDiagram
 |resolve|`Vec<Declaration>` → `TargetGraph` (validations, cycle detection)|—|
 |plan|`TargetGraph` and setting overrides → `Plan` (ceiling check, key assembly, a verdict per target)|`Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver`, `ActionCache`|
 |grants|wanted set ∩ ceiling → grants or refusal|`Manifest`, `Approver`|
-|`Schedule`|pure state machine: `ready()`, `complete(node, class)`|— (driven through `Dispatcher`)|
-|record|`ActionOutcome` → cas, then row, then log|`ContentStore`, `ActionCache`, `EventLog`, `Clock`|
+|execute|`TargetGraph`, `Plan` and the failure policy → `Vec<ActionOutcome>` (output layout, placeholder expansion, the program check, the `Schedule` state machine, cached or run, then cas, row, log)|`Manifest`, `Dispatcher`, `ExecStrategy`, `ContentStore`, `ActionCache`, `EventLog`, `Clock`|
 |canonical JSON|value → sorted-key bytes|—|
 
 ## 6. Port catalog
@@ -311,8 +334,8 @@ classDiagram
 |`Digester`|input content hashes|filesystem + rayon|`buildl`|
 |`StatCache`|reusing digests on unchanged mtime + size|`.buildl/statcache.json`|`buildl`|
 |`ToolResolver`|tool fingerprints in the key|`PATH` lookup + fingerprint|`buildl`|
-|`ContentStore`|the cas|`.buildl/cas/ab/…`, temp file then rename|`buildl`|
-|`ActionCache`|cache rows|`.buildl/cache.json`|`buildl`|
+|`ContentStore`|the cas: storing a blob, asking whether one is held, and making a stored output the file at its path under `out/`|`.buildl/cas/ab/…`, temp file then rename; hard links into `out/`|`buildl`|
+|`ActionCache`|cache rows: reading the last build's, and recording one durably for each target that was built|`.buildl/cache.json`|`buildl`|
 |`EventLog`|one event per outcome|`.buildl/log.jsonl`|`buildl`|
 |`ExecStrategy`|running one action|`Bare` (tier 1), `InputSandbox` (tier 2)|`buildl`|
 |`Dispatcher`|running ready actions in parallel|std threads + `mpsc`|`buildl`|
@@ -349,7 +372,7 @@ graph BT
     CORE --> ADP --> LUA --> E2E --> CLIT
 ```
 
-The fakes live in `buildl-core`'s integration tests (`crates/buildl-core/tests/flows/common.rs`), not under `#[cfg(test)]`. They implement the public traits through the public API alone, so whatever a fake does an adapter crate can do too, and the compiler checks that on every test build. A port no flow reaches yet keeps a unit-test fake beside its trait, as `Clock` does:
+The fakes live in `buildl-core`'s integration tests (`crates/buildl-core/tests/flows/common.rs`), not under `#[cfg(test)]`. They implement the public traits through the public API alone, so whatever a fake does an adapter crate can do too, and the compiler checks that on every test build. A port no flow reaches yet keeps a unit-test fake beside its trait; `Clock` still has the one it had before a build read it:
 
 |Port|Fake|What the test no longer needs|
 |---|---|---|
@@ -359,19 +382,21 @@ The fakes live in `buildl-core`'s integration tests (`crates/buildl-core/tests/f
 |`Digester`|files held as bytes with their metadata, counting every call|a filesystem|
 |`StatCache`|in-memory, counting commits|a filesystem|
 |`ToolResolver`|fixed fingerprints, recording every lookup|a `PATH`|
-|`ContentStore`, `ActionCache`, `EventLog`|in-memory, with injectable failures|a filesystem|
-|`ExecStrategy`|scripted outcomes per label|process spawning|
-|`Dispatcher`|inline, on the test thread|threads; results are deterministic|
-|`Clock`|fixed|wall-clock time|
+|`ContentStore`|blobs and placed paths held in memory; digests it can be told to forget, paths and content it can be told to fail on|a filesystem|
+|`ActionCache`|rows held in memory, with labels it can be told to fail on|a filesystem|
+|`EventLog`|the events appended, and whether to fail|a filesystem|
+|`ExecStrategy`|scripted per label: how the action exits, what it prints, what each output holds or that it is missing|process spawning|
+|`Dispatcher`|inline, on the test thread, taking the oldest or the newest waiting task first|threads; results are deterministic|
+|`Clock`|a counter, one tick per read|wall-clock time|
 
 Flows that run entirely in `buildl-core`'s tests:
 
 |Scenario|Assertion|
 |---|---|
 |`//:a` fails under `--keep-going`|summary `1 failed, 2 skipped, 2 built`|
-|cas write succeeds, cache commit fails|no row for the target — the crash-safety invariant (design §8.5)|
+|cas write succeeds, cache write fails|no row for the target — the crash-safety invariant (design §8.5)|
 |rebuilt output byte-identical|downstream targets stay `Clean` — early cutoff|
-|wanted program outside the ceiling|`Refusal` before any strategy runs|
+|wanted program outside the ceiling|an `Error::Refused` before any strategy runs — an error of the build, not an outcome class|
 |one input changed|dirty reason is the `KeyComponents` diff|
 |a build file enqueues subdirectories out of order|merged declarations sorted by directory, then declared name|
 

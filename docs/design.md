@@ -73,10 +73,12 @@ myproject/
     cache.json         # action cache: target -> action key -> output digests
     cas/<sha256>       # content-addressed artifact store
     log.jsonl          # one JSON event per action
-  out/                 # named outputs, linked from the cas
+  out/                 # named outputs, linked from the cas: out/<directory>/<name>
 ```
 
 All metadata files use airsl's sorted-key JSON encoding, so they are byte-stable across runs and diff cleanly in review. The `cas` + action-cache pairing deliberately matches the model of the Remote Execution API, where a content-addressed store is keyed by SHA-256 digests and an action cache maps action keys to results [6][7] — see §10.
+
+An output lives at `out/<directory>/<name>`: the directory of its target's label, then the output's name, so `//lib:text` writes `out/lib/text` and `//:app` writes `out/app`. Two targets may not claim one path, and no target may claim a path another needs as a directory: either is an error before anything runs.
 
 ## 4. The workspace manifest: `buildl.toml`
 
@@ -139,13 +141,13 @@ b.target("app", {
 })
 
 b.alias("default", "app")
-b.test("app_test", { deps = { "app" }, run = { "$out/app", "--self-test" } })
+b.test("app_test", { deps = { "app" }, run = { "$deps", "--self-test" } })
 ```
 
 The design decisions in those lines:
 
 - **Labels, not `require`.** Cross-directory references are graph names (`//lib:text`), resolved in Rust. airsl's confined `require` stops at the script's directory, and that is correct here: build files should not load each other's code, they should reference each other's _targets_. `b.subdir("dir")` asks the host to evaluate `dir/build.lua` in its own scope, so every declaration is namespaced by — and attributable to — the directory that made it.
-- **Placeholders expand host-side.** `$in`, `$out`, `$deps` are substituted by the executor at run time, the ninja model [4]. Lua never holds a real artifact path.
+- **Placeholders expand host-side.** `$in`, `$out` and `$deps` are substituted by the executor, the ninja model [4]. Each is a list of paths: the target's inputs, its own outputs, and every output of its dependencies. An argument that is exactly one placeholder becomes one argument per path, and none when the list is empty; inside other text the paths are joined by one space. So `{ "$deps", "--self-test" }` above runs `out/app --self-test`. A placeholder is `$` and the longest run of letters after it: `$input` is plain text, and `$out/app` is the outputs followed by `/app`. Every command is expanded before any action runs. Lua never holds a real artifact path.
 - **`b.sources()` is the declaration phase's only filesystem read**, done host-side rather than through an engine grant. It returns the regular files under the declaring directory that match the pattern, relative to that directory and sorted by the host, so declaration is deterministic regardless of filesystem order. Symlinks are never followed, and a declaring directory that resolves outside the workspace is refused. Every list field accepts one level of nesting, spliced in order, so `inputs = { b.sources("src/*.c"), "go.mod" }` is one flat list.
 - **`b.target` accepts a small closed table**: `rule` or inline `run`, `inputs`, `deps`, `outputs` (default: the target name), `env` (names checked against the ceiling), `network = true` (visible in `plan`, §11), and `always = true` for phony targets. Every field but `always` is an action-key component; the surface grows reluctantly.
 - **`b.option(name, { default })` declares a build setting** — an invocation-time parameter with an explicit default, referenced in argv as `$opt:name` and overridden with `--set name=value`. Settings fold into the action key, so differently-parameterised runs cache separately and correctly (§10.2).
@@ -259,7 +261,7 @@ On failure, either stop scheduling new work (default) or continue with everythin
 %% Action lifecycle inside a worker
 stateDiagram-v2
     [*] --> Expand : take target from queue
-    Expand : Expand placeholders — real paths
+    Expand : Expand placeholders — workspace-relative paths
     Spawn : Spawn process — granted env, no shell
     Temp : Outputs to temp — never in place
     Cas : Hash into cas — then link into out/
@@ -272,6 +274,8 @@ stateDiagram-v2
 ```
 
 The ordering is the consistency story: **a cache row is written only after its outputs exist in the cas.** An interrupted build means some finished work is remembered and unfinished work is not; the next run re-plans and continues. No "corrupt cache, run clean" state is representable. The hash-into-cas step also yields early cutoff: a byte-identical rebuilt output leaves downstream action keys unchanged, so dependents stay clean.
+
+Placeholders expand to workspace-relative paths — `lib/a.c`, `out/lib/text` — the same in every isolation tier (§12.2), so a command is one text whichever tier runs it. Each tier makes those paths true in the directory it runs the action in.
 
 ### 8.6 Watch mode
 
@@ -299,7 +303,9 @@ Events invalidate stat-cache entries for the touched paths. A changed build defi
 |---|---|---|
 |Action failure|the build did its job by revealing it|compile error, test failure|
 |Infrastructure failure|the builder is sick|missing tool, sandbox error, timeout|
-|Policy refusal|the plan wants more than the ceiling|ungranted program or path|
+|Policy refusal|the build wants more than the ceiling|ungranted program or path, a program a command names only once its placeholders are expanded|
+
+A policy refusal precedes execution in every case. Every command is expanded, and its program held to `proc.run`, before the first action starts, so a refusal is an error of the whole build and never the result of one action.
 
 Each class maps to a distinct process exit code, so CI distinguishes "fix your code" from "fix your builder" without parsing text.
 
