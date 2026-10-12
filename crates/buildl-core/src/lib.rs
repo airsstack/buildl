@@ -83,18 +83,18 @@ pub use load::load;
 pub use pipeline::Pipeline;
 pub use plan::plan;
 pub use ports::{
-    ActionCache, Clock, DeclarationSource, Digester, Host, Manifest, PortSet, Ports, StatCache,
-    ToolResolver,
+    ActionCache, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
+    ExecStrategy, Host, Manifest, PortSet, Ports, StatCache, ToolResolver,
 };
 pub use resolve::resolve;
 pub use types::{
-    Action, ActionKey, Alias, Argument, BuildFile, CacheRow, Ceiling, Command, Declaration,
-    DeclarationOrder, Declared, DepProducts, Description, Diagnostic, Difference, Digest,
-    Directory, DirtyReason, EntryName, EnvName, EnvValue, Evaluated, FieldName, FileStat,
-    Freshness, InputDigest, KeyComponents, Label, NetworkAccess, Node, NodeId, OutputName,
-    OwnComponents, Plan, PlannedKey, Platform, Produced, Program, Provenance, Rule, Setting,
-    SettingName, SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem,
-    StagedRule, StagedSetting, StagedSubdir, StagedTarget, StatEntry, Target, TargetGraph,
-    TargetName, TargetRole, Timestamp, ToolIdentity, Unfinished, Verdict, Want, WantedSet,
-    Workspace, Written,
+    Action, ActionKey, ActionOutcome, Alias, Argument, BuildFile, CacheRow, Ceiling, Command,
+    Declaration, DeclarationOrder, Declared, DepProducts, Description, Diagnostic, Difference,
+    Digest, Directory, DirtyReason, EntryName, EnvName, EnvValue, Evaluated, Exit, FieldName,
+    FileStat, Freshness, InfraKind, InputDigest, KeyComponents, Label, NetworkAccess, Node, NodeId,
+    OnFailure, OutcomeClass, OutcomeEvent, OutputName, OutputPath, OwnComponents, Plan, PlannedKey,
+    Platform, Produced, Program, Provenance, RawOutcome, ReadyAction, Rule, Setting, SettingName,
+    SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
+    StagedSetting, StagedSubdir, StagedTarget, StatEntry, Summary, Target, TargetGraph, TargetName,
+    TargetRole, Timestamp, ToolIdentity, Unfinished, Verdict, Want, WantedSet, Workspace, Written,
 };

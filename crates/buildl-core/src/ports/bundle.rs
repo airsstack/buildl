@@ -12,7 +12,8 @@
 //! This file holds only a trait definition, so it carries no logic to unit-test.
 
 use crate::ports::{
-    ActionCache, DeclarationSource, Digester, Host, Manifest, StatCache, ToolResolver,
+    ActionCache, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
+    ExecStrategy, Host, Manifest, StatCache, ToolResolver,
 };
 
 /// One implementation of each port, chosen together.
@@ -25,13 +26,23 @@ use crate::ports::{
 /// use std::collections::BTreeSet;
 ///
 /// use buildl_core::{
-///     ActionCache, BuildFile, CacheRow, Ceiling, DeclarationSource, Digest, Digester, Directory,
-///     EnvName, EnvValue, Evaluated, FileStat, Host, Label, Manifest, Platform, Ports, Program,
-///     Result, SourcePath, StatCache, StatEntry, ToolResolver, Workspace,
+///     ActionCache, BuildFile, CacheRow, Ceiling, Clock, ContentStore, DeclarationSource,
+///     Diagnostic, Digest, Digester, Directory, Dispatcher, EnvName, EnvValue, Error, Evaluated,
+///     EventLog, ExecStrategy, FileStat, Host, Label, Manifest, OutcomeEvent, OutputPath,
+///     Platform, PortName, Ports, Program, RawOutcome, ReadyAction, Result, SourcePath,
+///     StatCache, StatEntry, Timestamp, ToolResolver, Workspace,
 /// };
 ///
 /// /// Every port at once, each answering that there is nothing.
 /// struct Nothing;
+///
+/// /// The failure of a port that has nothing to work with.
+/// fn nothing(port: PortName) -> Error {
+///     Error::Adapter {
+///         port,
+///         diagnostic: Diagnostic::new("there is nothing here"),
+///     }
+/// }
 ///
 /// impl DeclarationSource for Nothing {
 ///     fn evaluate(&self, _file: &BuildFile) -> Result<Evaluated> {
@@ -96,6 +107,74 @@ use crate::ports::{
 ///     fn row(&self, _label: &Label) -> Option<&CacheRow> {
 ///         None
 ///     }
+///
+///     fn record(&mut self, _label: Label, _row: CacheRow) -> Result<()> {
+///         Err(nothing(PortName::ActionCache))
+///     }
+/// }
+///
+/// impl ContentStore for Nothing {
+///     fn put(&self, _bytes: &[u8]) -> Result<Digest> {
+///         Err(nothing(PortName::ContentStore))
+///     }
+///
+///     fn contains(&self, _digest: &Digest) -> bool {
+///         false
+///     }
+///
+///     fn place(&self, _digest: &Digest, _at: &OutputPath) -> Result<()> {
+///         Err(nothing(PortName::ContentStore))
+///     }
+/// }
+///
+/// impl EventLog for Nothing {
+///     fn append(&mut self, _event: &OutcomeEvent) -> Result<()> {
+///         Err(nothing(PortName::EventLog))
+///     }
+/// }
+///
+/// impl ExecStrategy for Nothing {
+///     type Dir = ();
+///
+///     fn prepare(&self, _action: &ReadyAction) -> Result<()> {
+///         Err(nothing(PortName::ExecStrategy))
+///     }
+///
+///     fn run(&self, _dir: &(), _action: &ReadyAction) -> Result<RawOutcome> {
+///         Err(nothing(PortName::ExecStrategy))
+///     }
+///
+///     fn collect<C: ContentStore>(
+///         &self,
+///         _dir: &(),
+///         _action: &ReadyAction,
+///         _cas: &C,
+///     ) -> Result<Vec<Option<Digest>>> {
+///         Err(nothing(PortName::ExecStrategy))
+///     }
+/// }
+///
+/// /// Runs every task on the calling thread, one at a time.
+/// impl Dispatcher for Nothing {
+///     fn dispatch<T, R, W, S>(&mut self, work: W, mut step: S) -> Result<()>
+///     where
+///         T: Send,
+///         R: Send,
+///         W: Fn(T) -> R + Sync,
+///         S: FnMut(Option<R>) -> Vec<T>,
+///     {
+///         let mut waiting = step(None);
+///         while let Some(task) = waiting.pop() {
+///             waiting.extend(step(Some(work(task))));
+///         }
+///         Ok(())
+///     }
+/// }
+///
+/// impl Clock for Nothing {
+///     fn now(&self) -> Timestamp {
+///         Timestamp::UNIX_EPOCH
+///     }
 /// }
 ///
 /// /// A bundle choosing it for every port.
@@ -109,6 +188,11 @@ use crate::ports::{
 ///     type StatCache = Nothing;
 ///     type Tools = Nothing;
 ///     type Cache = Nothing;
+///     type Cas = Nothing;
+///     type Log = Nothing;
+///     type Strategy = Nothing;
+///     type Dispatcher = Nothing;
+///     type Clock = Nothing;
 /// }
 /// ```
 pub trait Ports {
@@ -124,6 +208,17 @@ pub trait Ports {
     type StatCache: StatCache;
     /// How the programs commands name are found.
     type Tools: ToolResolver;
-    /// Where the previous build's rows are read from.
+    /// Where each target's row is read from and written to.
     type Cache: ActionCache;
+    /// Where what actions produce is stored, by content.
+    type Cas: ContentStore;
+    /// Where the record of how each target ended is written.
+    type Log: EventLog;
+    /// How one action is run.
+    type Strategy: ExecStrategy;
+    /// How several actions are run at once.
+    type Dispatcher: Dispatcher;
+    /// How the wall clock is read. `Sync` because an action's start and end are read from the
+    /// thread that runs it.
+    type Clock: Clock + Sync;
 }
