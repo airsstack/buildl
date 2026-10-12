@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [09]
 ---
@@ -954,3 +954,72 @@ docs/roadmap.md                        — [modify] the I6 row, the completed-in
 - The roadmap shows I6 Execute + Record done, no longer lists follow-ups #14, #15 and #16, and
   carries #17 to #21.
 - Every `mermaid` block is still a `mermaid` block.
+
+## Review findings
+
+Reviewed once, 2026-10-12, when all six tasks were done. The reviewer re-ran the gate:
+`cargo make dod` exit 0 (`[cargo-make] INFO - Build Done in 5.84 seconds.`), `cargo deny check`
+exit 0 (`advisories ok, bans ok, licenses ok, sources ok`), and, from an empty target directory,
+`RUSTDOCFLAGS="-D warnings" cargo doc -p buildl-core --all-features --no-deps` exit 0, so every
+new link in `lib.rs` resolves. Blocking: none. Fit to the plan: the 35 `Replace` / `With` pairs
+applied to the last commit give the tree byte for byte, apart from the one departure under
+Deviations. `mermaid` blocks: 13, 3, 7, 3. `CLAUDE.md` is unmodified. Signatures, fields,
+variants, the port count (twelve), the recording order and every section cross-reference in the
+edited passages were checked against the code and held, except as listed.
+
+- risk — the design's own example cannot run under the design's own ceiling: §5's
+  `run = { "$deps", "--self-test" }` expands to `out/app --self-test`, §8.7 holds that first
+  argument to `proc.run`, and §4's `proc.run` list has no `out/app`, so the example is refused —
+  `docs/design.md` §4, §5. Left as it is, for the author to decide: spec §10 asks only for the
+  `$deps` swap, so the gap is in the spec, not in what was done. The line it replaced
+  (`$out/app`) named a path that does not exist.
+- nit — the prose says `complete(node, finish)`; the code is
+  `Schedule::complete(graph, node, finish)` — `docs/architecture.md` §3.4. Left as it is: the
+  plan's own text.
+- nit — "a write that fails leaves no row" is looser than the port's contract: after an error
+  the cache holds what it held before, so a rebuilt target keeps its old row —
+  `docs/architecture.md` §3.5. Left as it is: the plan's own text.
+- nit — the §8.5 diagram still draws `[*] --> Expand : take target from queue`, while every
+  command is expanded before any action is handed out — `docs/design.md` §8.5. Left as it is:
+  the plan changes only that state's label.
+- nit — nothing would catch a doc sentence being changed back; only the `lib.rs` links are
+  checked by a machine. Left as it is: expected for prose.
+
+## Probe results
+
+No separate probe was run. Each task's `grep` checks were its probe, and each printed what the
+plan expects:
+
+- Task 1 — `grep -c -e 'mod@execute' -e 'fn@execute' crates/buildl-core/src/lib.rs` → `2`;
+  `grep -c 'Execute and Record are not implemented yet' crates/buildl-core/src/lib.rs
+  crates/buildl-core/README.md` → `…/lib.rs:0`, `…/README.md:0`; `cargo make dod` ended
+  `[cargo-make] INFO - Build Done in 4.79 seconds.`; `cargo deny check` ended `advisories ok,
+  bans ok, licenses ok, sources ok`.
+- Task 2 — the five-pattern count on `docs/design.md` → `6`; `"\$out/app", "--self-test"` →
+  `0`; `mermaid` blocks → `13`.
+- Task 3 — the four lines at `docs/architecture.md:171`, `:238`, `:266`, `:268`; the
+  five-pattern count of removed text → `0`; `mermaid` blocks → `3`.
+- Task 4 — the seven lines at `docs/architecture-building-blocks.md:199`, `:206`, `:220`,
+  `:231`, `:265`, `:266`, `:301`; removed text → `0`; `Grants` / `Approver` lines → `5`;
+  `mermaid` blocks → `7`.
+- Task 5 — `grep -rn 'Execute and Record are not implemented yet' README.md CLAUDE.md docs
+  crates/buildl-core/README.md crates/buildl-core/src/lib.rs` printed nothing (run once task 1
+  was done); `workspace-relative paths` in `README.md` → `1`; `mermaid` blocks → `3`;
+  `git status --short CLAUDE.md` printed nothing.
+- Task 6 — date `2026-10-12`; tasks per plan 2, 2, 1, 2, 7, 3, 2, 3, 5, 6; first hash
+  `f88cd77`; `^|14|`, `^|15|`, `^|16|` → `0`; `^|17|` to `^|21|` → `5`;
+  `^|I6 Execute + Record|` → `1`.
+
+## Deviations
+
+- 2026-10-12 — the six tasks' commit steps were skipped. The work is in the tree, uncommitted;
+  committing is left to the author.
+- 2026-10-12 — task 6, step 2: the last cell of the new roadmap §4 row reads
+  `` `f88cd77` … LAST-PENDING `` where the plan says to write the latest commit's hash. With
+  the commit steps skipped, the work of plans 06 to 10 is in no commit, so no true last hash
+  exists yet. The marker is replaced with the real hash when the author commits. Done the same
+  day: the cell reads `` `f88cd77` … `6e39019` ``, the commit of this plan's document edits.
+- 2026-10-12 — tasks 2, 3 and 4 ran at the same time, and so did tasks 1 and 5, then task 6:
+  each edits a different file. Task 5's first check was run again after task 1 had finished.
+- 2026-10-12 — this plan started while plan 09 was `executing`, not `done`: the author asked
+  for plans 06 to 10 in one run.

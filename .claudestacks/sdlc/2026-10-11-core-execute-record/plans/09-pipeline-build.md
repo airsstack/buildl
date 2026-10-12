@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [05, 06, 07, 08]
 ---
@@ -2662,3 +2662,103 @@ crates/expected-module-edges.txt                   — [modify] two edges
 - `crates/expected-module-edges.txt` holds 24 lines: the 20 it had before this chain, and `execute -> error`, `execute -> ports`, `execute -> types`, `pipeline -> execute`. It holds no edge between `execute` and `load`, `resolve` or `plan`.
 - No `expect(dead_code)` remains under `crates/buildl-core/src/execute/`: `grep -rn 'dead_code' crates/buildl-core/src/execute` prints nothing.
 - `execute/` implements no port: `grep -rn 'impl .* for ' crates/buildl-core/src/execute` prints nothing.
+
+## Review findings
+
+Reviewed twice, 2026-10-12, as the plan's checkpoints say: once when task 1 was done, once when
+tasks 2 to 5 were done. Blocking, both times: none.
+
+First review (task 1). The reviewer re-ran the gate: `cargo make dod` exit 0 (`[cargo-make] INFO
+- Build Done in 15.30 seconds.`, 422 lib tests, 58 flows), `cargo deny check` exit 0
+(`advisories ok, bans ok, licenses ok, sources ok`). Fit to the plan: every full-file block and
+every diff hunk of task 1 is byte for byte what the tree holds. Two things were checked on
+purpose and held: `Schedule::abandon` is called in one place, `Build::abandon`, behind
+`let Some(failed) = self.schedule.stopped() else { return Ok(()) }`; and a target's content is
+stored and placed before its row is written, with a log event for every outcome and no row for
+a failed, cached or skipped target.
+
+- risk — nothing fails if `place` and `cache.record` are swapped in `store`: no flow fails
+  `place` for a target that ran (both `fail_place` uses are on cached targets) —
+  `execute/record.rs`. Left as it is: the order is right and was read by the reviewer; the plan
+  fixes the flows at the spec §9 scenarios, and none of them is this one.
+- risk — a target left without an outcome is dropped by `flatten` in `Build::outcomes`, so a
+  dispatcher that lost a task would answer `Ok` with a short list — `execute/assembly.rs`. Left
+  as it is: it follows spec §5.9 as written; it is a question for the slice that writes a real
+  dispatcher.
+- nit — the doc of `execute` says "After such an error no port is asked anything more", which
+  is too wide: a worker already inside an action still finishes through the strategy, the store
+  and the clock; spec §5.9 scopes it to `step` — `execute/assembly.rs`. Left as it is: the
+  plan's own text.
+- nit — one doc sentence was changed outside this plan's files (`types/outcome_event.rs:32`).
+  The reviewer confirmed the new sentence is true. Recorded under Deviations.
+
+Second review (tasks 2 to 5). The reviewer re-ran the gate: `cargo make dod` exit 0
+(`[cargo-make] INFO - Build Done in 6.08 seconds.`), `cargo deny check` exit 0 (`advisories ok,
+bans ok, licenses ok, sources ok`). `grep -rn 'dead_code' crates/buildl-core/src/execute` and
+`grep -rn 'impl .* for ' crates/buildl-core/src/execute` printed nothing. Fit to the plan:
+`tests/flows/build.rs` and `tests/flows/golden/log.jsonl` are byte for byte the plan's text; 20
+`build::` flows pass (76 flows, 422 lib tests). All 18 scenario rows of spec §9 have a flow. No
+mutation was left behind in `settle.rs`, `assembly.rs` or `admission.rs`.
+
+- nit — some flows spell out the `Store` class and the diagnostic text by hand, and the `cc`
+  fingerprint insert is written four times — `tests/flows/build.rs:355,427,449` and
+  `:105,254,861,954`. Left as it is: the plan's own text.
+- nit — the name of the flow at `tests/flows/build.rs:608` says each failure "is a class of its
+  own", while three of the eight ways share `InfraFailure { kind: Store }` and differ by
+  message. Left as it is: the plan's own name.
+- nit — the "refusal of the plan" half of the flow at `tests/flows/build.rs:897` cannot tell
+  which phase refused, since Execute's `admit` would refuse the same program the same way. Left
+  as it is: the plan's own refusal is pinned by the plan flows.
+
+## Probe results
+
+No separate probe was run. Each task's own runs were its probe:
+
+- Task 1 — red: `cargo test -p buildl-core --test flows build::` failed to build with
+  `error[E0599]: no method named `build` found for mutable reference `&mut Pipeline<FakePorts>`
+  in the current scope`; `cargo test -p buildl-core --lib execute::assembly` failed to build
+  with `error[E0432]: unresolved imports `super::made_from`, `super::own_of`, `super::ready``
+  and `error[E0432]: unresolved import `assembly::execute``. Green: `test result: ok. 3 passed;
+  0 failed; 0 ignored; 0 measured; 419 filtered out; finished in 0.01s` and `test result: ok. 2
+  passed; 0 failed; 0 ignored; 0 measured; 56 filtered out; finished in 0.01s` — as the plan
+  quotes.
+- Task 2 — `test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 56 filtered out;
+  finished in 0.01s`. Mutation `|digest| cas.contains(digest)` → `|_| true` in `settle.rs`:
+  `test build::a_target_whose_output_left_the_store_runs_again_and_the_others_stay_cached ...
+  FAILED`, `test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 62 filtered out` —
+  as the plan quotes. Line put back: `shasum` of `settle.rs`
+  `7c43cd52d6b2f9ea54b99b613a32ea4656bb9064` before and after.
+- Task 3 — `test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 56 filtered out;
+  finished in 0.01s`. Mutation `self.stop.store(true, Ordering::SeqCst);` → `false` in `finish`
+  of `assembly.rs`: `test build::under_stop_nothing_begins_after_the_first_failure ... FAILED`,
+  `test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 68 filtered out` — as the
+  plan quotes. Line put back: `shasum` of `assembly.rs`
+  `610a62e50400bdf8c26b94c0973293265f3bda5f` before and after.
+- Task 4 — `test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 56 filtered out;
+  finished in 0.01s`. Mutation `if !ceiling.run.contains(&program) {` → `if
+  ceiling.run.is_empty() {` in `admission.rs`: `test
+  build::a_program_first_named_by_expansion_is_refused_before_anything_runs ... FAILED`, `called
+  Result::unwrap_err() on an Ok value`, `test result: FAILED. 0 passed; 1 failed; 0 ignored; 0
+  measured; 73 filtered out` — as the plan quotes. Line put back: `shasum` of `admission.rs`
+  `86d08617877ee289137c0daa75d915d463f5fdf7` before and after.
+- Task 5 — red, against a golden file holding `{}`: `test
+  build::a_two_directory_workspace_hands_each_action_its_expanded_command_and_logs_the_pinned_events
+  ... FAILED`, `right: "{}"`, `test result: FAILED. 19 passed; 1 failed; 0 ignored; 0 measured;
+  56 filtered out`. The events the run printed matched the plan's golden text byte for byte;
+  the golden file was typed from the plan, not written from the run. Green: `test result: ok.
+  20 passed; 0 failed; 0 ignored; 0 measured; 56 filtered out; finished in 0.01s`.
+- After each task: `cargo fmt --all -- --check` printed nothing, `cargo make dod` ended
+  `[cargo-make] INFO - Build Done in … seconds.`, `cargo deny check` ended `advisories ok, bans
+  ok, licenses ok, sources ok`.
+
+## Deviations
+
+- 2026-10-12 — the five tasks' commit steps were skipped. The work is in the tree, uncommitted;
+  committing is left to the author.
+- 2026-10-12 — this plan started while plans 06, 07 and 08 were `executing` (built and
+  reviewed), not `done`: the author asked for plans 06 to 10 in one run.
+- 2026-10-12 — the mutation runs of tasks 2 to 4 printed one `unused variable` warning each
+  time a mutated line left a parameter unused; the plan does not quote it. It goes away with
+  the line put back.
+- 2026-10-12 — between task 1 and its review, one doc sentence in `types/outcome_event.rs` (a
+  file of plan 02) was corrected; see plan 08's Deviations.

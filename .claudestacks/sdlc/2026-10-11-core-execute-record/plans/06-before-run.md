@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [01, 04]
 ---
@@ -1495,3 +1495,42 @@ crates/expected-module-edges.txt              — [modify] two edges from execut
 - `crates/expected-module-edges.txt` gains exactly `execute -> error` and `execute -> types`.
 - No file under `execute/` names `crate::load`, `crate::resolve`, `crate::plan` or
   `crate::ports`.
+
+## Review findings
+
+Reviewed once, 2026-10-12, when all three tasks were done. The reviewer re-ran the gate:
+`cargo make dod` exit 0 (`[cargo-make] INFO - Build Done in 5.10 seconds.`), `cargo deny check`
+exit 0 (`advisories ok, bans ok, licenses ok, sources ok`). Blocking: none. Fit to the plan: the
+five files under `execute/` are byte-identical to the plan's final code blocks; `lib.rs` gains
+exactly `pub mod execute;`; `crates/expected-module-edges.txt` gains exactly the two lines.
+
+- nit — the label tie-break `.then_with(|| a.1.label.cmp(&b.1.label))` is guarded by no test:
+  the sort is stable and `claims` is built in label order, so deleting it fails nothing —
+  `execute/layout.rs:52`. Left as it is: the code is right and matches spec §5.2, and it is the
+  plan's own text.
+- nit — "Nothing is exported yet." and the three `reason = "… which is not written yet"` speak
+  of work to come in the docs of a public module — `execute/mod.rs:6,14,22,30`. Left as it is:
+  true today, and plan 09 removes these attributes.
+
+## Probe results
+
+No separate probe was run. The facts each task asserts about existing code are ones its own
+compile and test runs depend on:
+
+- Task 1 — red: `error[E0432]: unresolved import `super::Layout`` at `execute/layout.rs:10:9`.
+  Green: `test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 349 filtered out;
+  finished in 0.00s` — as the plan quotes.
+- Task 2 — red: `error[E0432]: unresolved imports `super::Lists`, `super::expand`` at
+  `execute/expand.rs:7:17`. Green: `test result: ok. 13 passed; 0 failed; 0 ignored; 0
+  measured; 358 filtered out; finished in 0.00s` — as the plan quotes.
+- Task 3 — red: `error[E0432]: unresolved import `super::admit`` at
+  `execute/admission.rs:12:9`. Green: `test result: ok. 8 passed; 0 failed; 0 ignored; 0
+  measured; 371 filtered out; finished in 0.00s` — as the plan quotes.
+- After each task: `cargo fmt --all -- --check` printed nothing, `cargo make dod` ended
+  `[cargo-make] INFO - Build Done in … seconds.`, `cargo deny check` ended `advisories ok, bans
+  ok, licenses ok, sources ok`.
+
+## Deviations
+
+- 2026-10-12 — the three tasks' commit steps were skipped. The work is in the tree,
+  uncommitted; committing is left to the author.

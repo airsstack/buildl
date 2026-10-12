@@ -69,7 +69,7 @@ graph LR
 |**I-lua**|`buildl-lua`|`DeclarationSource` on airsl; the `buildl` table bound to both `airsstack.buildl` and the `buildl` global (design §5)|`build.lua` fixtures produce exact declarations|**done**, 2026-10-08 (§4)|
 |**I4 Resolve**|`buildl-core`|the `TargetGraph` arena, duplicate, unknown-reference and cycle detection; the guard that no phase module imports another|the pipeline stops at `graph`|**done**, 2026-10-10 (§4)|
 |**I5 Plan**|`buildl-core`|the action key, `KeyComponents`, why-dirty; the wanted set ∩ ceiling as a plan-time refusal; setting overrides; the manifest, digest, stat, tool and cache-read ports|the pipeline stops at `plan`|**done**, 2026-10-11 (§4)|
-|**I6 Execute + Record**|`buildl-core`|`Schedule`, `Dispatcher`, `ExecStrategy`; cas, cache and log writes; the crash-safety invariant (design §8.5)|a full `build` runs against fakes|**executing**, 2026-10-12 — plans 01–05 of 10 done, 06–10 approved — `.claudestacks/sdlc/2026-10-11-core-execute-record/`|
+|**I6 Execute + Record**|`buildl-core`|`Schedule`, `Dispatcher`, `ExecStrategy`; cas, cache and log writes; the crash-safety invariant (design §8.5)|a full `build` runs against fakes|**done**, 2026-10-12 (§4)|
 
 Ground rules for the ladder:
 
@@ -91,6 +91,7 @@ Ground rules for the ladder:
 |I-lua|`.claudestacks/sdlc/2026-10-08-lua-adapter/`|`01-workspace-config` (4 tasks), `02-staging` (1 task), `03-value-readers` (2 tasks), `04-sources-walk` (1 task), `05-buildl-module` (2 tasks), `06-lua-source` (5 tasks), `07-fixtures` (4 tasks), `08-documentation` (4 tasks)|`27f7976` … `5e83952`|
 |I4 Resolve|`.claudestacks/sdlc/2026-10-10-core-resolve/`|`01-graph-types` (1 task), `02-setting-references` (2 tasks), `03-resolve-errors` (2 tasks), `04-suggest` (1 task), `05-cycle` (1 task), `06-resolve` (4 tasks), `07-pipeline-graph` (2 tasks), `08-module-edge-guard` (1 task), `09-documentation` (4 tasks)|`46a8164` … `c8b84e8`|
 |I5 Plan|`.claudestacks/sdlc/2026-10-10-core-plan/`|`01-small-values` (6 tasks), `02-action-key` (2 tasks), `03-authority-types` (1 task), `04-plan-types` (1 task), `05-plan-errors` (3 tasks), `06-ports` (5 tasks), `07-plan-checks` (3 tasks), `08-plan-gather` (2 tasks), `09-plan-verdicts` (3 tasks), `10-pipeline-plan` (3 tasks), `11-documentation` (6 tasks)|`05dbe53` … `4f130d5`|
+|I6 Execute + Record|`.claudestacks/sdlc/2026-10-11-core-execute-record/`|`01-handoff-types` (2 tasks), `02-outcome-types` (2 tasks), `03-cache-row` (1 task), `04-errors` (2 tasks), `05-ports` (7 tasks), `06-before-run` (3 tasks), `07-schedule` (2 tasks), `08-decisions` (3 tasks), `09-pipeline-build` (5 tasks), `10-documentation` (6 tasks)|`f88cd77` … `6e39019`|
 
 The plan file's `## Review findings`, `## Probe results` and `## Deviations` sections hold the full execution record. §5 lists the follow-ups from that record that are still open.
 
@@ -102,10 +103,11 @@ Findings an earlier slice recorded but left out of scope, each assigned to the s
 |---|---|---|---|
 |5|The `buildl-cli` `description` says "a thin clap shell", but clap is not yet a dependency.|I1 review|CLI slice|
 |13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs. I5 made both directories known to `buildl-core`: `Manifest::workspace` returns them as `Workspace::out` and `Workspace::state`. What remains is `buildl-lua`'s walk skipping them, where a manifest is first read.|I-lua spec §6.2|the `buildl` adapters slice|
-|14|A command whose first argument holds a placeholder names no program at plan time, so it is neither checked against `proc.run` nor fingerprinted. Check it once the executor has expanded it.|I5 spec §2 (D6)|I6 Execute + Record|
-|15|Confirm a clean target's outputs are present in the cas before they are linked into `out/`. A plan trusts the cache row.|I5 spec §11|I6 Execute + Record|
-|16|`ActionCache` gains `upsert` and `commit`, and `CacheRow` gains `stdout` and `stderr`. I5 landed `row`, and a row holding the key and the output digests.|I5 spec §2 (D12)|I6 Execute + Record|
-|17|Read a cache row back: `Deserialize` for `ActionKey` and the types it is made of, which I5 left `Serialize`-only.|I5 spec §3.2|the `buildl` adapters slice|
+|17|Read a cache row back: `Deserialize` for `ActionKey` and the types it is made of, which I5 left `Serialize`-only. Since I6 a row also holds the digests of what its action printed, `stdout` and `stderr`, so reading one back covers them too.|I5 spec §3.2, I6 spec §11|the `buildl` adapters slice|
+|18|A program a command names through `$opt:` in its first argument is held to `proc.run` when the build expands it, but has no fingerprint in the action key, so replacing that tool leaves the target clean.|I6 spec §11|the next slice that changes Plan|
+|19|A rule's `desc` is not expanded: nothing shows one yet.|I6 spec §11|the slice that adds the `Reporter` port|
+|20|An output that is a directory tree cannot be stored: `ExecStrategy::collect` answers one digest per declared output. Design §9.2 and §9.6 declare such outputs (`--outdir $out`, `tar … -C $out`) without the stamp file §9.2 prescribes.|I6 spec §11|the `buildl` adapters slice|
+|21|`[execution]`'s `timeout`, `workers` and `strategy` are not in `Workspace`, so the adapters that need them have no port to read them from.|I6 spec §11|the `buildl` adapters slice|
 
 ## 6. Process notes
 

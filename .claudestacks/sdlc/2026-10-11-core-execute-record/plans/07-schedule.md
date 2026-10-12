@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [01, 06]
 ---
@@ -738,3 +738,52 @@ crates/buildl-core/src/execute/mod.rs        — [modify] declare the module
   finish and releases nothing.
 - A chain of 100 000 targets is skipped from its far end without recursion, in id order.
 - `crates/expected-module-edges.txt` is unchanged.
+
+## Review findings
+
+Reviewed once, 2026-10-12, when both tasks were done. The reviewer re-ran the gate:
+`cargo make dod` exit 0 (`[cargo-make] INFO - Build Done in 4.93 seconds.`), `cargo deny check`
+exit 0 (`advisories ok, bans ok, licenses ok, sources ok`). Blocking: none. Fit to the plan:
+`execute/schedule.rs` is byte-identical to the plan's final code blocks, and the `mod schedule;`
+line with its attribute matches.
+
+- risk — `Schedule::abandon` requires "the build has stopped" only in its doc: abandoning while
+  the build has not stopped would leave that target's pending dependents pending for good —
+  `execute/schedule.rs`. Left as it is: it matches spec §5.5, and spec §5.9 abandons only after
+  a stop; the caller is written in plan 09.
+- nit — the `Schedule` type doc says a started target "succeeds or fails" and leaves out
+  started → skipped through `abandon` — `execute/schedule.rs`. Left as it is: the plan's own
+  text.
+- nit — the `skip_from` doc sentence "one skipped earlier had everything behind it skipped
+  then" does not hold for a target skipped by `abandon`; the walk is still correct —
+  `execute/schedule.rs`. Left as it is: the plan's own text.
+- nit — the `stopped.is_some()` arm of `complete` cannot be observed (after a stop nothing is
+  pending), so no test would catch its removal — `execute/schedule.rs`. Left as it is: the code
+  is right.
+- nit — `started.sort_unstable()` in `release` repeats the id order `TargetGraph::dependents`
+  already gives; no test guards it — `execute/schedule.rs`. Left as it is: harmless.
+- nit — no test asserts `stopped()` before a failure under `KeepGoing` (after one is covered;
+  both are covered under `Stop`) — spec §9 row for `execute/schedule.rs`. Left as it is.
+
+## Probe results
+
+No separate probe was run. The facts each task asserts about existing code are ones its own
+compile and test runs depend on:
+
+- Task 1 — red: `error[E0432]: unresolved imports `super::Effects`, `super::Finish`,
+  `super::Schedule``. Green: `test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 379
+  filtered out; finished in 0.00s` — as the plan quotes.
+- Task 2 — red: `error[E0599]: no method named `abandon` found for struct `Schedule` in the
+  current scope`, five times (one per call site), "could not compile `buildl-core` (lib test)
+  due to 5 previous errors". Green: `test result: ok. 14 passed; 0 failed; 0 ignored; 0
+  measured; 379 filtered out; finished in 0.20s` — as the plan quotes.
+- After each task: `cargo fmt --all -- --check` printed nothing, `cargo make dod` ended
+  `[cargo-make] INFO - Build Done in … seconds.`, `cargo deny check` ended `advisories ok, bans
+  ok, licenses ok, sources ok`.
+
+## Deviations
+
+- 2026-10-12 — both tasks' commit steps were skipped. The work is in the tree, uncommitted;
+  committing is left to the author.
+- 2026-10-12 — this plan started while plan 06 was `executing` (built and reviewed), not
+  `done`: the author asked for plans 06 to 10 in one run.

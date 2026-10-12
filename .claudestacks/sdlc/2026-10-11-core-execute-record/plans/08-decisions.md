@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-11
 depends-on: [01, 02, 03, 06, 07]
 ---
@@ -1518,3 +1518,57 @@ Each task declares its module the same way. The block to add to `crates/buildl-c
   one no worker began, and neither for a skipped one.
 - `crates/expected-module-edges.txt` is unchanged, and no file under `execute/` names
   `crate::ports`, `crate::load`, `crate::resolve`, `crate::plan` or `crate::pipeline`.
+
+## Review findings
+
+Reviewed once, 2026-10-12, when all three tasks were done. The reviewer re-ran the gate:
+`cargo make dod` exit 0 (`[cargo-make] INFO - Build Done in 5.02 seconds.`), `cargo deny check`
+exit 0 (`advisories ok, bans ok, licenses ok, sources ok`). Blocking: none. Fit to the plan:
+`settle.rs`, `perform.rs`, `record.rs`, `fixtures.rs` and `mod.rs` are line for line the plan's
+final code blocks.
+
+- nit — the module doc says how an action ended "is decided here … in a fixed order", while the
+  file holds three separate functions and the order between them belongs to a caller not yet
+  written — `execute/perform.rs:5`. Left as it is: plan 09 adds that caller, which makes the
+  sentence true.
+- nit — `failed_to(kind: InfraKind, ..)` accepts `InfraKind::TimedOut`, and `Ended::Failed.class`
+  and `record::failed(class)` accept `Built` and `Cached`; no caller should pass those —
+  `execute/perform.rs:101`. Left as it is: private to the crate, no caller does, and the shape
+  is the plan's.
+- nit — the test helper `printed()` is written twice — `execute/perform.rs:184`,
+  `execute/record.rs:179`. Left as it is: the plan asked for exactly this.
+- outside this plan — the doc of `OutcomeEvent::key` (plan 02's file) says a skipped target's
+  key "was never finished"; `Progress::Skipped` here says it may have been, and spec §5.9
+  agrees with this file — `types/outcome_event.rs:32`. Fixed: see Deviations.
+
+## Probe results
+
+No separate probe was run. The facts each task asserts about existing code are ones its own
+compile and test runs depend on:
+
+- Task 1 — red: `error[E0432]: unresolved imports `super::finished_key`, `super::is_cached`` at
+  `execute/settle.rs:10:17`. Green: `test result: ok. 8 passed; 0 failed; 0 ignored; 0
+  measured; 393 filtered out; finished in 0.00s` — as the plan quotes.
+- Task 2 — red: `error[E0432]: unresolved imports `super::Ended`, `super::Performed`,
+  `super::Printed`, `super::Span`, `super::Task`, `super::Worked`, `super::collected`,
+  `super::exited`, `super::failed_to`` at `execute/perform.rs:7:17`. Green: `test result: ok. 8
+  passed; 0 failed; 0 ignored; 0 measured; 401 filtered out; finished in 0.00s` — as the plan
+  quotes.
+- Task 3 — red: `error[E0432]: unresolved imports `super::Progress`, `super::built`,
+  `super::cached`, `super::event`, `super::failed`, `super::mismatched`, `super::row`,
+  `super::skipped`, `super::unplaced`, `super::unstored``. Green: `test result: ok. 10 passed; 0
+  failed; 0 ignored; 0 measured; 409 filtered out; finished in 0.00s` — as the plan quotes.
+- After each task: `cargo fmt --all -- --check` printed nothing, `cargo make dod` ended
+  `[cargo-make] INFO - Build Done in … seconds.`, `cargo deny check` ended `advisories ok, bans
+  ok, licenses ok, sources ok`.
+
+## Deviations
+
+- 2026-10-12 — the three tasks' commit steps were skipped. The work is in the tree,
+  uncommitted; committing is left to the author.
+- 2026-10-12 — this plan started while plans 06 and 07 were `executing` (built and reviewed),
+  not `done`: the author asked for plans 06 to 10 in one run.
+- 2026-10-12 — one doc sentence outside this plan's files was corrected after the review: in
+  `types/outcome_event.rs`, the doc of `OutcomeEvent::key` now reads "`None` for a target that
+  was skipped, whether or not a key had been finished for it", to agree with
+  `Progress::Skipped` and spec §5.9. No code changed.
