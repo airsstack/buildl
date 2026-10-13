@@ -51,7 +51,7 @@ crates/buildl-core/README.md                     — [modify] what the crate hol
 docs/architecture.md                            — [modify] §2 diagram, §3.2, §8 (task 2)
 docs/architecture-building-blocks.md            — [modify] §7 rules table (task 2)
 docs/design.md                                  — [modify] §5, §8.2, §12.1 (task 3)
-docs/roadmap.md                                 — [modify] the I4 row, §4, §5 (task 4)
+docs/roadmap.md                                 — [modify] the I6 row, §4, §5 (task 4)
 README.md                                       — [modify] the status paragraph (task 4)
 ```
 
@@ -340,7 +340,7 @@ README.md                                       — [modify] the status paragrap
    $ git commit -m "docs(repo): state the alias and list-order rules in the design"
    ```
 
-### Task 4 — Mark I4 Resolve done in the roadmap
+### Task 4 — Mark I6 Resolve done in the roadmap
 
 **Files:**
 - Modify `docs/roadmap.md`
@@ -348,13 +348,13 @@ README.md                                       — [modify] the status paragrap
 
 **Steps:**
 
-1. In the §3 table of `docs/roadmap.md`, replace the last cell of the **I4 Resolve** row — everything after ``|the pipeline stops at `graph`|`` — with `**done**, <date> (§4)|`, where `<date>` is what this command prints:
+1. In the §3 table of `docs/roadmap.md`, replace the last cell of the **I6 Resolve** row — everything after ``|the pipeline stops at `graph`|`` — with `**done**, <date> (§4)|`, where `<date>` is what this command prints:
 
    ```
    $ date +%F
    ```
 
-2. In §4, add the chain's row after the I-lua row. In the last cell, write the two hashes printed by the commands below in place of `FIRST` and `LAST`: the commit of plan `01`'s task, and the latest commit.
+2. In §4, add the chain's row after the I5 row. In the last cell, write the two hashes printed by the commands below in place of `FIRST` and `LAST`: the commit of plan `01`'s task, and the latest commit.
 
    ```
    $ git log --format=%h -1 --grep='add Node and TargetGraph'
@@ -364,7 +364,7 @@ README.md                                       — [modify] the status paragrap
     Insert:
 
    ```markdown
-   |I4 Resolve|`.claudestacks/sdlc/2026-10-10-core-resolve/`|`01-graph-types` (1 task), `02-setting-references` (2 tasks), `03-resolve-errors` (2 tasks), `04-suggest` (1 task), `05-cycle` (1 task), `06-resolve` (4 tasks), `07-pipeline-graph` (2 tasks), `08-module-edge-guard` (1 task), `09-documentation` (4 tasks)|`FIRST` … `LAST`|
+   |I6 Resolve|`.claudestacks/sdlc/2026-10-10-core-resolve/`|`01-graph-types` (1 task), `02-setting-references` (2 tasks), `03-resolve-errors` (2 tasks), `04-suggest` (1 task), `05-cycle` (1 task), `06-resolve` (4 tasks), `07-pipeline-graph` (2 tasks), `08-module-edge-guard` (1 task), `09-documentation` (4 tasks)|`FIRST` … `LAST`|
    ```
 
    immediately after:
@@ -375,12 +375,12 @@ README.md                                       — [modify] the status paragrap
 
 3. In §5, delete the whole row that starts `|11|No guard asserts`: plan `08` closed that follow-up.
 
-4. Confirm follow-up #11 is gone and the I4 row reads as done. `grep -c` prints `0` and exits `1` when nothing matches, which is the expected result of the first command:
+4. Confirm follow-up #11 is gone and the I6 row reads as done. `grep -c` prints `0` and exits `1` when nothing matches, which is the expected result of the first command:
 
    ```
    $ grep -c -e '^|11|' docs/roadmap.md
    0
-   $ grep -c -e 'I4 Resolve.*done' docs/roadmap.md
+   $ grep -c -e 'I6 Resolve.*done' docs/roadmap.md
    1
    ```
 
@@ -400,7 +400,7 @@ README.md                                       — [modify] the status paragrap
 
    ```
    $ git add docs/roadmap.md README.md
-   $ git commit -m "docs(repo): mark I4 Resolve done in the roadmap"
+   $ git commit -m "docs(repo): mark I6 Resolve done in the roadmap"
    ```
 
 ---
@@ -411,13 +411,13 @@ README.md                                       — [modify] the status paragrap
   `RUSTDOCFLAGS=-D warnings`.
 - No `mermaid` block in `docs/` was converted, and no section was renumbered:
   `git diff --stat` shows only the files in the file structure above.
-- `docs/roadmap.md` shows I4 as done with a row in §4, and §5 no longer lists follow-up #11.
+- `docs/roadmap.md` shows I6 as done with a row in §4, and §5 no longer lists follow-up #11.
 
 ## Review findings
 
 One reviewer pass over the four tasks, 2026-10-10. Verdict: compliant with amendments; blocking set of two, both fixed in one round. The reviewer re-ran the gate: `cargo fmt --all -- --check` exit 0; `cargo make dod` exit 0; `cargo deny check` exit 0 (`advisories ok, bans ok, licenses ok, sources ok`). The delivery matched this plan text for text; the Mermaid field lists match the structs in `types/target_graph.rs`; no heading or fence line changed in `docs/`; `§8.4`, `§10.2`, `§12.1` and `§4` point where they say.
 
-- blocking, fixed and verified — the root README's status paragraph still said Resolve was not implemented and that no build file can be evaluated until the Lua adapter lands. Both were false: this chain built Resolve, and the roadmap marks I-lua done on 2026-10-08. This plan and the spec's §10 said the README needed no change, having examined only `README.md:60-68`. The paragraph is rewritten in task 4, and the spec's §10 row and this plan's note, file list and task 4 are amended. Shown by `grep -rn -E "LuaSource|Pipeline|buildl_lua" crates/buildl/src crates/buildl-cli/src`, which printed one line, a doc comment (`crates/buildl/src/lib.rs:26`): no command composes the adapter with the pipeline, as the new sentence says — `README.md:7`
+- blocking, fixed and verified — the root README's status paragraph still said Resolve was not implemented and that no build file can be evaluated until the Lua adapter lands. Both were false: this chain built Resolve, and the roadmap marks I5 done on 2026-10-08. This plan and the spec's §10 said the README needed no change, having examined only `README.md:60-68`. The paragraph is rewritten in task 4, and the spec's §10 row and this plan's note, file list and task 4 are amended. Shown by `grep -rn -E "LuaSource|Pipeline|buildl_lua" crates/buildl/src crates/buildl-cli/src`, which printed one line, a doc comment (`crates/buildl/src/lib.rs:26`): no command composes the adapter with the pipeline, as the new sentence says — `README.md:7`
 - blocking, fixed and verified — "so adding a target changes only that target's lines" is false as worded: the canonical serializer has no multi-line form, and the golden `graph.json` is one line. The word is now "entry" in `docs/architecture.md`, in the rustdoc on `impl Serialize for TargetGraph`, in this plan's task 2 and in the spec's D7. After the fix `cargo make dod` exited 0, ending `[cargo-make] INFO - Build Done in 12.65 seconds.` — `docs/architecture.md:201`, `crates/buildl-core/src/types/target_graph.rs:195`
 - risk — an unchanged neighbour of the amended §12.1 text now disagrees with it: "A `pairs` loop does not fail the check" is unqualified, while a `pairs` loop that fills a list field does fail it. Not in the spec's §10 list. Not fixed — `docs/design.md:589`
 - nit — the quoted rule "no phase module names another" is cited to `architecture.md` §1.1, whose words are "no phase invokes the next"; the quoted words are rule 1 of the crate doc. The reference lands in the right section. Not fixed — `docs/architecture-building-blocks.md:292`
@@ -435,7 +435,7 @@ The plan's verification commands are its probes. Each matched:
 - `grep -c 'guard-module-edges' docs/architecture-building-blocks.md` — `1`
 - `grep -c -e 'gives a target a second name' -e 'keeps the order it was written in' -e 'belong to the scheduler (§8.4)' -e 'numbered in label order at Resolve' docs/design.md` — `4`
 - `grep -c -e '^|11|' docs/roadmap.md` — `0`
-- `grep -c -e 'I4 Resolve.*done' docs/roadmap.md` — `1`
+- `grep -c -e 'I6 Resolve.*done' docs/roadmap.md` — `1`
 - `git log --format=%h -1 --grep='add Node and TargetGraph'` — `46a8164`
 
 One claim came out against the plan and the spec:

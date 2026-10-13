@@ -167,9 +167,9 @@ so each later slice adds a directory instead of editing another slice's files.
 
 ```text
 crates/buildl-core/src/
-  lib.rs        export-only; the crate doc carries the map below      [I2]
-  error.rs      the one Error enum, grown by variant per slice        [I2]
-  types/        §5.1  the vocabulary                                  [I2]
+  lib.rs        export-only; the crate doc carries the map below      [I3]
+  error.rs      the one Error enum, grown by variant per slice        [I3]
+  types/        §5.1  the vocabulary                                  [I3]
     mod.rs            export-only
     directory.rs      Directory
     target_name.rs    TargetName
@@ -178,25 +178,25 @@ crates/buildl-core/src/
     node_id.rs        NodeId
     provenance.rs     Provenance
     timestamp.rs      Timestamp
-  json/         §5.4 row "canonical JSON"                             [I2]
+  json/         §5.4 row "canonical JSON"                             [I3]
     mod.rs            export-only
     canonical.rs      to_vec, to_string
-  ports/        §5.2  traits only                                     [I2]
+  ports/        §5.2  traits only                                     [I3]
     mod.rs            export-only
     clock.rs          Clock
-  pipeline/     §5.3  Pipeline<P: Ports>, Ports, FakePorts            [I3]
-  load/         §5.4  queue, subdir, sorted merge                     [I3]
-  resolve/      §5.4  interning, label resolution, cycles             [I4]
-  grants/       §5.4  wanted set ∩ ceiling → grants or refusal        [I4]
-  plan/         §5.4  key assembly, dirty reasons                     [I5]
-  schedule/     §5.4  the pure state machine                          [I6]
-  record/       §5.4  cas → row → log                                 [I6]
+  pipeline/     §5.3  Pipeline<P: Ports>, Ports, FakePorts            [I4]
+  load/         §5.4  queue, subdir, sorted merge                     [I4]
+  resolve/      §5.4  interning, label resolution, cycles             [I6]
+  grants/       §5.4  wanted set ∩ ceiling → grants or refusal        [I6]
+  plan/         §5.4  key assembly, dirty reasons                     [I7]
+  schedule/     §5.4  the pure state machine                          [I8]
+  record/       §5.4  cas → row → log                                 [I8]
 ```
 
-I2 creates `error.rs`, `types/`, `json/` and `ports/`. Every remaining directory is created by the
+I3 creates `error.rs`, `types/`, `json/` and `ports/`. Every remaining directory is created by the
 one slice that owns it.
 
-Five rules keep the tree from collapsing into a god-crate. They are stated here because I2 is the
+Five rules keep the tree from collapsing into a god-crate. They are stated here because I3 is the
 slice that establishes them, and restated in the crate-level doc comment so the next implementer
 reads them without finding this file.
 
@@ -210,13 +210,13 @@ reads them without finding this file.
    slice cannot introduce a second `Label`-alike. (rust-guidelines `modularity`, rule 2.)
 4. **`ports/` never gains an implementation.** An implementation would need the I/O §1.2 forbids, so
    this is already enforced — it is written down so it is not mistaken for an accident.
-5. **Every phase module is exercised against `FakePorts`** once `FakePorts` exists in I3
+5. **Every phase module is exercised against `FakePorts`** once `FakePorts` exists in I4
    (`abb` §8), with tests colocated in the file under test.
 
 Rule 1 is the one that will rot first, and it is the same shape as the crate-edge guard the
 `2026-09-18-workspace-guardrails` chain built: a golden file of permitted module edges, diffed by a
-`cargo make` task. It is **not** in this chain's scope — I2 ships zero phase modules, so the guard
-would assert nothing. §10's roadmap row and §12 record it as a follow-up for I4, the first slice in
+`cargo make` task. It is **not** in this chain's scope — I3 ships zero phase modules, so the guard
+would assert nothing. §10's roadmap row and §12 record it as a follow-up for I6, the first slice in
 which two phase modules coexist and the rule becomes violable.
 
 ---
@@ -367,7 +367,7 @@ impl NodeId {
 ```
 
 `u32` per `architecture.md:102`. Infallible construction: a `NodeId` is an index into arenas the
-graph owns, so validity is the graph's invariant (I4), not this type's. The newtype exists so the
+graph owns, so validity is the graph's invariant (I6), not this type's. The newtype exists so the
 compiler refuses to swap an index with a count. `Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash`;
 serde-transparent, so it is a JSON number.
 
@@ -453,7 +453,7 @@ has to be representable rather than fatal. `Duration` is the return type because
 `std::time` item this crate may name.
 
 `Clock` is a bare trait with no implementation in `buildl-core` — the whole content of rule 4. Its
-only real adapter is in `buildl` (`abb` §6). The `Ports` bundle that will carry it is I3's
+only real adapter is in `buildl` (`abb` §6). The `Ports` bundle that will carry it is I4's
 (`abb` §5.3); this chain defines the trait, not the bundle.
 
 **`Timestamp` and `SOURCE_DATE_EPOCH` are unrelated mechanisms**, which the intent flagged as
@@ -465,7 +465,7 @@ unstated. They differ in every respect that matters:
 |Nanoseconds|Whole seconds — "an ASCII representation of an integer with no fractional component"|
 |Appears in `log.jsonl` event timestamps and durations|Appears in an action's environment, alongside `LC_ALL=C` and `TZ=UTC` (`design.md` §12.4)|
 |Never an action-key component — it is exactly the value that must not affect a key|An input class *in* the ledger|
-|`buildl-core` + the `Clock` adapter|The executor and its isolation tiers, I6|
+|`buildl-core` + the `Clock` adapter|The executor and its isolation tiers, I8|
 
 No date or calendar dependency is added. `chrono` was considered and declined. Its registry metadata,
 read from the crates.io sparse index (`curl -sS 'https://index.crates.io/ch/ro/chrono'`, latest
@@ -522,7 +522,7 @@ fields, no message parsing anywhere": a caller branches on `NameKind::Label`, ne
 message. `reason` stays `&'static str` because it is a fixed explanatory phrase chosen at the
 failure site, not data a caller interprets.
 
-`#[non_exhaustive]` on both enums is what lets I3 through I6 add the variants they earn without a
+`#[non_exhaustive]` on both enums is what lets I4 and I6 through I8 add the variants they earn without a
 breaking change — the property the intent's desired outcome asks for.
 
 **This departs from a guideline rule, on the documents' authority.**
@@ -536,7 +536,7 @@ the guideline yields here. Recorded rather than left for a reviewer to catch as 
 chain can raise has a `Label` or a `Provenance` available to attach: `InvalidName` is raised by a
 constructor, where a name that failed to parse *is* the subject and no label exists yet;
 `CanonicalJson` and `FloatRejected` are raised by `json/canonical`, which receives an opaque
-`T: Serialize` and knows nothing about targets. The rule binds the variants I3 onward add, where a
+`T: Serialize` and knows nothing about targets. The rule binds the variants I4 onward add, where a
 failure is about a target that was successfully named and a declaring file is already in hand. This
 is recorded here so the gap reads as a boundary rather than an omission.
 
@@ -706,7 +706,7 @@ correct, so the edits are in scope here.
 |`architecture-building-blocks.md` §5.1|"Names and identity" gains `Directory`, `TargetName` and `Timestamp`|
 |`architecture-building-blocks.md` §5.2|The port sketches read `Result<T>` against the one `Error`, with `abb:124`'s disclaimer made concrete|
 |`design.md` §14|The label-syntax bullet is partially resolved: relative labels are adopted in both the bare and `:sibling` forms; whether `subdir` should be implicit via file discovery remains open|
-|`docs/roadmap.md`|§3's I2 row status; a §4 completed-intent row; §5 follow-up 3 reduced to the crates this chain did not touch; a new §5 row for the intra-crate module-edge guard, targeted at I4|
+|`docs/roadmap.md`|§3's I3 row status; a §4 completed-intent row; §5 follow-up 3 reduced to the crates this chain did not touch; a new §5 row for the intra-crate module-edge guard, targeted at I6|
 
 The `design.md` §14 edit narrows an open question rather than deleting it — the file-discovery half
 is untouched by this chain.
@@ -781,11 +781,11 @@ not amend it.
 - **The workspace gate guards that enforce these constraints mechanically** — the sibling chain
   `2026-09-18-workspace-guardrails`, which is `done`. This chain adds no guard task, no golden file
   and no CI job; §12.1 records its one two-line exception and why.
-- The phase handoff types — `Declaration`, `BuildFile`, `StagedFile` (I3), `TargetGraph` (I4),
-  `Plan` (I5), `ActionOutcome` (I6).
+- The phase handoff types — `Declaration`, `BuildFile`, `StagedFile` (I4), `TargetGraph` (I6),
+  `Plan` (I7), `ActionOutcome` (I8).
 - `OutcomeClass`, `Ceiling`, `WantedSet`, `Grants`, `KeyComponents` and `ActionKey`. Each is settled
   by the slice that first needs it, under real pressure rather than in advance.
-- `Pipeline`, the `Ports` bundle and `FakePorts` — `abb` §5.3 and §8 place them in I3. This chain
+- `Pipeline`, the `Ports` bundle and `FakePorts` — `abb` §5.3 and §8 place them in I4. This chain
   defines one port trait, not the bundle that carries it.
 - Any port adapter; any filesystem or process code; anything in `buildl`, `buildl-lua` or
   `buildl-cli`. The `Clock` port's real adapter is `buildl`'s.
@@ -795,7 +795,7 @@ not amend it.
 
 - **A date or calendar dependency** (§5). `Timestamp` is an integer; formatting belongs to an
   adapter.
-- **A guard for rule 1 of §2** — no phase module names another. I2 ships no phase module, so the
-  guard would assert nothing; §10 assigns it to I4 as a roadmap follow-up.
+- **A guard for rule 1 of §2** — no phase module names another. I3 ships no phase module, so the
+  guard would assert nothing; §10 assigns it to I6 as a roadmap follow-up.
 - **`Duration` as a domain newtype.** `std::time::Duration` is permitted in this crate and is
   sufficient; a newtype over it would carry no invariant.

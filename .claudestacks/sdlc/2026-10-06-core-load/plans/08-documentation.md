@@ -24,7 +24,7 @@ amendment states taken from spec §2 (D7), §3.3, §3.4, §4.2, §4.4, §5.1, §
 
 ## Context an implementer needs
 
-Plans `01` through `07` are `done`. `crates/buildl-core` now holds, beyond I2's vocabulary:
+Plans `01` through `07` are `done`. `crates/buildl-core` now holds, beyond I3's vocabulary:
 
 ```
 src/types/{written,source_path,output_name,env_name,argument,description,setting,
@@ -44,7 +44,7 @@ doctests) — so each intra-doc link in them resolves against the code plans 01�
 
 Rules that bind this plan:
 
-- **No planning vocabulary in rustdoc or the crate README.** No spec, plan or `§` citation, no "I3",
+- **No planning vocabulary in rustdoc or the crate README.** No spec, plan or `§` citation, no "I4",
   no chain path. The crate docs state the topology in their own words. `docs/` and `docs/roadmap.md`
   are the opposite: section cross-references there are load-bearing and stay.
 - **`load` is both a function and a module at the crate root.** A bare ``[`load`]`` link is
@@ -83,7 +83,7 @@ docs/architecture.md                                — [modify] §2 diagram + L
 docs/architecture-building-blocks.md                — [modify] §1.1 line, §5.2, §5.3, §8 (task 6)
 README.md                                           — [modify] status line (task 7)
 CLAUDE.md                                           — [modify] status section becomes a pointer to the roadmap (task 7)
-docs/roadmap.md                                     — [modify] I3 row, §4 row, §5 follow-up 12 (task 8)
+docs/roadmap.md                                     — [modify] I4 row, §4 row, §5 follow-up 12 (task 8)
 ```
 
 ---
@@ -387,7 +387,7 @@ docs/roadmap.md                                     — [modify] I3 row, §4 row
    0
    $ grep -c '| Declarations |\|| Build-file port |\|| Load |\|Load, the first pipeline phase' crates/buildl-core/README.md
    4
-   $ grep -n 'I3\|§\|spec\|plan ' crates/buildl-core/README.md
+   $ grep -n 'I4\|§\|spec\|plan ' crates/buildl-core/README.md
    ```
 
    Expected: the last command prints nothing — the README carries no planning reference.
@@ -795,30 +795,30 @@ docs/roadmap.md                                     — [modify] I3 row, §4 row
 
 **Steps:**
 
-1. §3's I3 row, `roadmap.md:68`, current:
+1. §3's I4 row, `roadmap.md:68`, current:
 
    ```markdown
-   |**I3 Load**|`buildl-core`|`Declaration`, `BuildFile`, `StagedFile`, `DeclarationSource`; the `Pipeline` skeleton and `FakePorts`|a fake source's output becomes `Vec<Declaration>`|**in progress** — intent and spec approved 2026-10-06, `.claudestacks/sdlc/2026-10-06-core-load/`|
+   |**I4 Load**|`buildl-core`|`Declaration`, `BuildFile`, `StagedFile`, `DeclarationSource`; the `Pipeline` skeleton and `FakePorts`|a fake source's output becomes `Vec<Declaration>`|**in progress** — intent and spec approved 2026-10-06, `.claudestacks/sdlc/2026-10-06-core-load/`|
    ```
 
-   Only the Status cell changes, to the completion form the I1, I2 and I-guard rows use. Print the
+   Only the Status cell changes, to the completion form the I1, I3 and I2 rows use. Print the
    row with today's commit date filled in and paste it over line 68 verbatim:
 
    ```
-   $ printf '|**I3 Load**|`buildl-core`|`Declaration`, `BuildFile`, `StagedFile`, `DeclarationSource`; the `Pipeline` skeleton and `FakePorts`|a fake source'"'"'s output becomes `Vec<Declaration>`|**done**, %s (§4)|\n' "$(git log -1 --format=%cs)"
+   $ printf '|**I4 Load**|`buildl-core`|`Declaration`, `BuildFile`, `StagedFile`, `DeclarationSource`; the `Pipeline` skeleton and `FakePorts`|a fake source'"'"'s output becomes `Vec<Declaration>`|**done**, %s (§4)|\n' "$(git log -1 --format=%cs)"
    ```
 
-2. §4, after the I2 row (`roadmap.md:89`). Following the I2 precedent, the range runs from this
+2. §4, after the I3 row (`roadmap.md:89`). Following the I3 precedent, the range runs from this
    chain's first implementation commit (the first commit touching `crates/` after the spec commit
    `f754c87`, which excludes the plan-set commit) to `HEAD`, which is task 7's commit; this task's
-   own commit lands outside the range, as I2's and I-guard's closures did. The task counts are read
+   own commit lands outside the range, as I3's and I2's closures did. The task counts are read
    from the plan files. Print the row and insert it as the new line 90 verbatim:
 
    ```
    $ first=$(git log --reverse --format=%h f754c87..HEAD -- crates/ | head -1)
    $ last=$(git log -1 --format=%h)
    $ plans=$(for f in .claudestacks/sdlc/2026-10-06-core-load/plans/0*.md; do n=$(grep -c '^## Task ' "$f"); [ "$n" = 1 ] && w=task || w=tasks; printf '`%s` (%s %s), ' "$(basename "$f" .md)" "$n" "$w"; done)
-   $ printf '|I3 Load|`.claudestacks/sdlc/2026-10-06-core-load/`|%s|`%s` … `%s`|\n' "${plans%, }" "$first" "$last"
+   $ printf '|I4 Load|`.claudestacks/sdlc/2026-10-06-core-load/`|%s|`%s` … `%s`|\n' "${plans%, }" "$first" "$last"
    ```
 
    Expected: eight plans listed, `01-value-types` through `08-documentation` (this plan: 8 tasks).
@@ -827,7 +827,7 @@ docs/roadmap.md                                     — [modify] I3 row, §4 row
    numbers are never reused (spec §6.2, §9):
 
    ```markdown
-   |12|Add a per-file staging cap to the `buildl-lua` adapter. It stages declarations in a Rust-side buffer that the Lua memory ceiling (`[declaration] memory`, design §4) does not count, and the instruction ceiling bounds a file's calls but not, verifiably, how many declarations they stage, since airsl's per-call cost is not measured. Declaration is meant to be safe on untrusted input (design §2), so the cap is refused in airsl's refusal style; `buildl-core` already carries that failure as `EvaluationFailure::LimitReached { limit: EvaluationLimit::Staging }`.|I3 spec|I-lua|
+   |12|Add a per-file staging cap to the `buildl-lua` adapter. It stages declarations in a Rust-side buffer that the Lua memory ceiling (`[declaration] memory`, design §4) does not count, and the instruction ceiling bounds a file's calls but not, verifiably, how many declarations they stage, since airsl's per-call cost is not measured. Declaration is meant to be safe on untrusted input (design §2), so the cap is refused in airsl's refusal style; `buildl-core` already carries that failure as `EvaluationFailure::LimitReached { limit: EvaluationLimit::Staging }`.|I4 spec|I5|
    ```
 
 4. Verify:
@@ -835,7 +835,7 @@ docs/roadmap.md                                     — [modify] I3 row, §4 row
    ```
    $ grep -c 'intent and spec approved 2026-10-06' docs/roadmap.md
    0
-   $ grep -c '^|\*\*I3 Load\*\*|.*|\*\*done\*\*, \|^|I3 Load|`.claudestacks/sdlc/2026-10-06-core-load/`|\|^|12|Add a per-file staging cap' docs/roadmap.md
+   $ grep -c '^|\*\*I4 Load\*\*|.*|\*\*done\*\*, \|^|I4 Load|`.claudestacks/sdlc/2026-10-06-core-load/`|\|^|12|Add a per-file staging cap' docs/roadmap.md
    3
    $ grep -n '`<\|<first>\|<last>' docs/roadmap.md
    $ diff <(git show HEAD:docs/roadmap.md | grep '^#\{2,4\} ') <(grep '^#\{2,4\} ' docs/roadmap.md)
@@ -867,7 +867,7 @@ $ cargo make guard-crate-edges
 $ cargo make guard-core-purity
 $ for f in docs/design.md docs/architecture.md docs/architecture-building-blocks.md docs/roadmap.md; do diff <(git show f754c87:"$f" | grep '^#\{2,4\} ') <(grep '^#\{2,4\} ' "$f") || echo "$f headings moved"; done
 $ for f in docs/design.md docs/architecture.md docs/architecture-building-blocks.md docs/roadmap.md; do [ "$(git show f754c87:"$f" | grep -c '^```mermaid')" = "$(grep -c '^```mermaid' "$f")" ] || echo "$f mermaid count changed"; done
-$ grep -rn 'I3\|spec §\|plan 0' crates/buildl-core/src crates/buildl-core/README.md
+$ grep -rn 'I4\|spec §\|plan 0' crates/buildl-core/src crates/buildl-core/README.md
 ```
 
 The first five exit 0. The two loops print nothing: every heading and every Mermaid block in
@@ -887,7 +887,7 @@ roadmap (task 8), and the repository README (task 7) — plus `architecture-buil
 - reversion guard 🔵 — prose amendments have no gate beyond rustdoc's intra-doc links. No change possible.
 - spec drift 🔵 — spec §9 row 1 asks the crate README to describe `ports` as holding every trait; only `lib.rs` does (plan Task 3 text omits it). No change.
 - spec amendment 🔵 — CLAUDE.md pointer and abb §1.1 go beyond spec §9's table; the plan grounds both. No change.
-- amendment hygiene 🟡 — Task 8's quoted I3 Status cell did not match the file; recorded below under Deviations.
+- amendment hygiene 🟡 — Task 8's quoted I4 Status cell did not match the file; recorded below under Deviations.
 
 ## Probe results
 
@@ -895,7 +895,7 @@ roadmap (task 8), and the repository README (task 7) — plus `architecture-buil
 
 ## Deviations
 
-- 2026-10-08 — roadmap I3 Status cell read "**in progress** — intent, spec and 8 plans approved 2026-10-06, …", not the quoted "intent and spec approved". Only that cell changes; replaced with "**done**, 2026-10-08 (§4)" as the task intends.
+- 2026-10-08 — roadmap I4 Status cell read "**in progress** — intent, spec and 8 plans approved 2026-10-06, …", not the quoted "intent and spec approved". Only that cell changes; replaced with "**done**, 2026-10-08 (§4)" as the task intends.
 - 2026-10-08 — Task 8's `$( )` and process-substitution commands are refused by the worktree guard; git queries ran separately and the §4 row was assembled by hand from the same values. Heading and Mermaid diffs ran against HEAD copies saved to scratch.
-- 2026-10-08 — roadmap §4 I3 commit range ends at `4192376`, the documentation commit; the status-flip commit that follows it is bookkeeping.
+- 2026-10-08 — roadmap §4 I4 commit range ends at `4192376`, the documentation commit; the status-flip commit that follows it is bookkeeping.
 - 2026-10-08 — four review fixes beyond the plan text (Review findings above).

@@ -33,7 +33,7 @@ Every slice after this one needs a vocabulary that does not exist yet:
   rather than code.
 
 This is the blocking slice. `docs/roadmap.md` §3 puts it directly after the completed workspace
-chain, and I3 (Load), I4 (Resolve), I5 (Plan) and I6 (Execute + Record) all consume its output.
+chain, and I4 (Load), I6 (Resolve), I7 (Plan) and I8 (Execute + Record) all consume its output.
 Nothing else in milestone 1 can start.
 
 Two questions the design pass has to close, both open in the documents today:
@@ -87,13 +87,13 @@ Two questions the design pass has to close, both open in the documents today:
 
 ## Non-goals
 
-- The phase handoff types — `Declaration`, `BuildFile`, `StagedFile` (I3), `TargetGraph` (I4),
-  `Plan` (I5), `ActionOutcome` (I6).
+- The phase handoff types — `Declaration`, `BuildFile`, `StagedFile` (I4), `TargetGraph` (I6),
+  `Plan` (I7), `ActionOutcome` (I8).
 - `OutcomeClass`, `Ceiling`, `WantedSet`, `Grants`, `KeyComponents` and `ActionKey`. Each is settled
   by the slice that first needs it, so its data model is decided under real pressure rather than in
   advance.
 - `Pipeline`, the `Ports` bundle and `FakePorts`. `architecture-building-blocks.md` §5.3 and §8
-  place them in I3; this chain defines one port trait, not the bundle that carries it.
+  place them in I4; this chain defines one port trait, not the bundle that carries it.
 - Any port adapter, any filesystem or process code, anything in `buildl`, `buildl-lua` or
   `buildl-cli`.
 - The workspace gate guards that enforce these constraints mechanically. They are the sibling

@@ -53,7 +53,7 @@ Commits: `type(scope): summary`, scope `repo`. One commit per task.
 ```
 docs/architecture-building-blocks.md  — [modify] §6 Clock port sentence, §7 "Enforced by" table (task 1)
 docs/architecture.md                  — [modify] §5 rule 4 (task 2)
-docs/roadmap.md                       — [modify] §3 I-guard status, new §4 row, delete §5 rows 1, 2, 9 (task 3)
+docs/roadmap.md                       — [modify] §3 I2 status, new §4 row, delete §5 rows 1, 2, 9 (task 3)
 ```
 
 ---
@@ -159,14 +159,14 @@ docs/roadmap.md                       — [modify] §3 I-guard status, new §4 r
 
 ---
 
-## Task 3 — Close the I-guard follow-ups in the roadmap
+## Task 3 — Close the I2 follow-ups in the roadmap
 
 **Files:**
 - Modify `docs/roadmap.md`
 
 **Steps:**
 
-1. In §3's intent-ladder table, change the **I-guard** row's Status cell from:
+1. In §3's intent-ladder table, change the **I2** row's Status cell from:
 
    ```markdown
    |**intent approved**, 2026-09-18; chain `2026-09-18-workspace-guardrails`|
@@ -195,7 +195,7 @@ docs/roadmap.md                       — [modify] §3 I-guard status, new §4 r
    two values substituted, matching the `I1 workspace` row's format exactly:
 
    ```markdown
-   |I-guard|`.claudestacks/sdlc/2026-09-18-workspace-guardrails/`|`01-crate-edge-guards` (4 tasks), `02-core-purity-bans` (3 tasks), `03-msrv-ci-job` (2 tasks), `04-doc-amendments` (3 tasks)|`0000000` … `0000000`|
+   |I2|`.claudestacks/sdlc/2026-09-18-workspace-guardrails/`|`01-crate-edge-guards` (4 tasks), `02-core-purity-bans` (3 tasks), `03-msrv-ci-job` (2 tasks), `04-doc-amendments` (3 tasks)|`0000000` … `0000000`|
    ```
 
    If plans 01–03 have not landed yet when this task runs, record that in `## Deviations` and use
@@ -216,11 +216,11 @@ docs/roadmap.md                       — [modify] §3 I-guard status, new §4 r
    ```
    $ grep -c '|I1 review|' docs/roadmap.md
    6
-   $ grep -n '|I-guard|$' docs/roadmap.md
+   $ grep -n '|I2|$' docs/roadmap.md
    ```
 
    Before the edit `grep -c '|I1 review|'` returns `9`; rows 1, 2 and 9 are three of them, so `6`
-   remains. The second grep finds follow-up rows whose Target column is `I-guard` and must print
+   remains. The second grep finds follow-up rows whose Target column is `I2` and must print
    nothing. Control — the same anchored pattern still finds a surviving row:
 
    ```
@@ -250,7 +250,7 @@ One reviewer pass over the combined plan 03 + plan 04 diff. Findings landing in 
 | 1 | risk | `docs/architecture-building-blocks.md:259` — the replacement sentence cites "`architecture.md` §5.4", a section that does not exist. `architecture.md` §5 has no subsections; the target is §5 rule 4. Worse, this document has its own `### 5.4 Pure logic`, so the reference silently resolves to the wrong document. | applied — repointed to `architecture.md` §5 rule 4. The dangling reference was inherited from the sentence being replaced and was carried forward by this plan's own mandated text. |
 | 2 | risk | `docs/roadmap.md:66` — `**done**, 2026-09-18` is contradicted by the commits the same table cites. Every commit in `1fa8421`…`f8941e3` is dated 2026-09-21, and the neighbouring I1 row (`**done**, 2026-09-15`, commits dated 2026-09-15) proves the cell is a completion date, not a chain-creation date. | applied — changed to `**done**, 2026-09-21 (§4)`. The plan mandated the wrong literal. |
 | 3 | risk | `docs/roadmap.md:88` — the new §4 row is covered by the sentence claiming the plan files hold the full execution record, but plans 03 and 04's record sections were still placeholders. | applied — this section and plan 03's are that record. |
-| 4 | risk | `spec.md` §3.3 quotes the superseded guard script. Plan 02's Deviations assigned reconciling it to this plan, which neither did it nor recorded the deferral — and marking I-guard done closes the chain over a spec whose `grep -q 'allow-invalid'` can never pass, whose suppression regex is the evadable one, and which says "five exits" where the tree has six. | applied — a marked note was added at the head of §3.3 naming what the shipped task does instead and pointing at `Makefile.toml` and commit `2e4a300`. The draft script itself is left unedited as the design-time record, per the chain convention that nothing is removed. |
+| 4 | risk | `spec.md` §3.3 quotes the superseded guard script. Plan 02's Deviations assigned reconciling it to this plan, which neither did it nor recorded the deferral — and marking I2 done closes the chain over a spec whose `grep -q 'allow-invalid'` can never pass, whose suppression regex is the evadable one, and which says "five exits" where the tree has six. | applied — a marked note was added at the head of §3.3 naming what the shipped task does instead and pointing at `Makefile.toml` and commit `2e4a300`. The draft script itself is left unedited as the design-time record, per the chain convention that nothing is removed. |
 | 5 | cleanup | `:259` — the three-item failure list reads as exhaustive over a guard that has six exits. | applied — the sentence now says the guard covers three further ways the bans can be switched off, which the task itself enumerates. Plan 02's review caught this same defect class in both `Makefile.toml` and `clippy.toml`. |
 | 6 | cleanup | `:270` — the §7 row's enumeration omits the network bans. `crates/buildl-core/clippy.toml` bans `std::net::TcpListener`, `std::net::TcpStream` and `std::net::UdpSocket` at lines 139-141. | applied — "network" added to the enumeration. A doc amendment whose purpose is replacing an inaccurate claim should not ship an incomplete list. |
 | 7 | cleanup | `docs/architecture.md:216` — the rewritten line re-asserts "`now()` is read in exactly two places", which is unverifiable because the code does not exist yet. | declined — the claim is design intent, it is present verbatim in the sentence being replaced, and this plan's scope is the enforcement clause, not the intent clause. |
@@ -272,7 +272,7 @@ post-edit assertion was run:
 | `git diff --stat docs/architecture.md` | `2 +-` | `2 +-` |
 | `grep -n 'crate boundary enforces' docs/architecture.md` | nothing | nothing |
 | `grep -c '\|I1 review\|' docs/roadmap.md` | `6` | `6` (was 9) |
-| `grep -n '\|I-guard\|$' docs/roadmap.md` | nothing | nothing |
+| `grep -n '\|I2\|$' docs/roadmap.md` | nothing | nothing |
 | `grep -n '^\|10\|' docs/roadmap.md` (control) | the row-10 line | the row-10 line |
 | surviving §5 `#` values | 3, 4, 5, 6, 7, 8, 10 | 3, 4, 5, 6, 7, 8, 10 |
 | `grep -rn 'roadmap.*§5 row' docs/ README.md` | — | no hits, so nothing outside the roadmap pointed at a deleted row |

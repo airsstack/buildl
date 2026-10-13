@@ -12,10 +12,10 @@ created: 2026-10-10
 the pipeline cannot go further:
 
 - **No graph value.** `architecture.md` §2 names `TargetGraph` as the second phase handoff and §3.2
-  gives its shape, but no type holds a graph. `NodeId` exists and indexes nothing. I5 Plan has no
+  gives its shape, but no type holds a graph. `NodeId` exists and indexes nothing. I7 Plan has no
   input to plan over.
 - **Nothing checks a declaration against the others.** Load validates each value alone and leaves
-  every question that needs all build files open (I3 spec §11): whether a label is declared twice,
+  every question that needs all build files open (I4 spec §11): whether a label is declared twice,
   whether a `deps` entry, a `rule =` reference or an alias target names anything, whether it names the
   right kind of thing, whether a `$opt:name` placeholder names a declared setting, and whether the
   dependencies form a cycle. A workspace wrong in any of these ways passes `check` today.
@@ -28,21 +28,21 @@ the pipeline cannot go further:
   phase modules exist. This slice adds the second, so the rule is breakable from here on with a green
   gate.
 
-This is the next rung of the milestone 1 ladder (`docs/roadmap.md` §3): I5 Plan consumes this slice's
+This is the next rung of the milestone 1 ladder (`docs/roadmap.md` §3): I7 Plan consumes this slice's
 output and is blocked on it.
 
 Decided in the dialogue: **grants leave this slice.** `docs/roadmap.md` listed "grants (wanted set ∩
-ceiling)" under I4, but `architecture.md` §3.2 and `architecture-building-blocks.md` §5.4 give resolve
+ceiling)" under I6, but `architecture.md` §3.2 and `architecture-building-blocks.md` §5.4 give resolve
 no port, `architecture.md` §3.3 runs the ceiling check in Plan, and the `graph` command's output does
 not depend on a grant. The wanted set, the ceiling intersection and the `Manifest` and `Approver` ports
-move to I5 Plan. Follow-up #13, which needs the `Manifest` port, moves with them.
+move to I7 Plan. Follow-up #13, which needs the `Manifest` port, moves with them.
 
 Questions the documents leave open, which the design pass has to close:
 
 - What a graph node is: `architecture.md` §2 draws `nodes: Vec<Target>`, while Load hands over four
   kinds of declaration, and rules, aliases and settings are not targets.
-- Where a `rule` reference is expanded into the command of the target that uses it — here or in I5
-  (left open by the I3 intent).
+- Where a `rule` reference is expanded into the command of the target that uses it — here or in I7
+  (left open by the I4 intent).
 - What each reference may name: whether a dependency may name an alias, whether an alias may name
   another alias, and which kind mismatches are errors.
 - Whether Resolve stops at the first failure or reports every one it finds, given that the crate's
@@ -59,7 +59,7 @@ Questions the documents leave open, which the design pass has to close:
 - `crates/buildl-core` — the graph type, the Resolve logic as a second phase module, new error
   variants, `Pipeline::graph`, the flow tests and their fakes, the crate rustdoc and `README.md`
 - `Makefile.toml` and a golden file beside `crates/expected-edges.txt` — the guard of follow-up #11
-- `docs/roadmap.md` — the I4 and I5 rows, follow-ups #11 and #13, §4 on completion
+- `docs/roadmap.md` — the I6 and I7 rows, follow-ups #11 and #13, §4 on completion
 - `docs/architecture.md`, `docs/architecture-building-blocks.md`, `docs/design.md`, `README.md` — only
   where a decision closed here contradicts or settles text there
 
@@ -78,7 +78,7 @@ Questions the documents leave open, which the design pass has to close:
 - A `cargo make` guard turns the gate red when one phase module imports another, closing follow-up #11.
 - Every new type and flow is tested in `buildl-core` with no Lua, filesystem, process or thread.
 - `buildl-core`'s rustdoc and `README.md` describe what the crate now holds, and `docs/roadmap.md`
-  shows grants and follow-up #13 under I5.
+  shows grants and follow-up #13 under I7.
 - `cargo make dod` and `cargo deny check` pass, including every guard.
 
 ## Constraints
@@ -107,11 +107,11 @@ Questions the documents leave open, which the design pass has to close:
 
 ## Non-goals
 
-- The wanted set, the ceiling intersection, grants, the `Manifest` and `Approver` ports — I5 Plan.
-- Roadmap follow-up #13 (excluding `out` and `.buildl` from `b.sources()`) — I5, with the `Manifest`
+- The wanted set, the ceiling intersection, grants, the `Manifest` and `Approver` ports — I7 Plan.
+- Roadmap follow-up #13 (excluding `out` and `.buildl` from `b.sources()`) — I7, with the `Manifest`
   port.
-- The action key, `KeyComponents`, dirtiness, tool resolution — I5.
-- Placeholder expansion (`$in`, `$out`, `$deps`, `$opt:name` substitution) — the executor's, I6.
+- The action key, `KeyComponents`, dirtiness, tool resolution — I7.
+- Placeholder expansion (`$in`, `$out`, `$deps`, `$opt:name` substitution) — the executor's, I8.
 - `--set` values reaching the pipeline, and checking them against declared settings.
 - Selecting the subgraph a requested target needs, and demand-driven loading (design §11.1).
 - `query` and `rdeps` — milestone 2.

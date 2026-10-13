@@ -35,7 +35,7 @@ at all?_
   file name and nothing else. Where an override is checked against the declared settings is still
   open in `architecture.md` §8.
 - **The pipeline has no `plan` handoff.** `Pipeline` has `check` and `graph`. The `plan` command
-  (design §7) has nothing to report, and I6 Execute + Record has no input.
+  (design §7) has nothing to report, and I8 Execute + Record has no input.
 - **Two promises in the documents contradict each other.** Design §8.3 and `architecture.md` §3.3
   fold each dependency's _action key_ into a target's key. Design §8.5, `fundamental-walkthrough.md`
   §4 and a flow test in `architecture-building-blocks.md` §8 promise early cutoff: a rebuilt output
@@ -45,13 +45,13 @@ at all?_
 - **`b.sources()` lists build outputs** (roadmap follow-up #13). Which directories to skip is known
   only from the manifest, and nothing in `buildl-core` knows the manifest.
 
-This is the next rung of the milestone 1 ladder (`docs/roadmap.md` §3): I6 Execute + Record consumes
+This is the next rung of the milestone 1 ladder (`docs/roadmap.md` §3): I8 Execute + Record consumes
 this slice's output and is blocked on it.
 
 Decided in the dialogue:
 
 - **One chain, as the roadmap has it.** The action key, dirtiness and the authority check stay
-  together, so the slice ends at the `plan` command's handoff like every slice since I3. Its size is
+  together, so the slice ends at the `plan` command's handoff like every slice since I4. Its size is
   handled by the plan fan-out.
 - **Early cutoff is binding.** Whatever the key holds for a dependency, this slice must not close off
   early cutoff. Where design §8.3's wording contradicts that, the wording is amended.
@@ -90,7 +90,7 @@ Questions the documents leave open, which the design pass has to close:
   the new ports and the `Ports` bundle, new error variants, `Pipeline::plan`, the flow tests and
   their fakes, the crate rustdoc and `README.md`
 - `crates/expected-module-edges.txt` — the module-edge guard's golden file
-- `docs/roadmap.md` — the I5 row, follow-up #13's split, §4 on completion
+- `docs/roadmap.md` — the I7 row, follow-up #13's split, §4 on completion
 - `docs/design.md`, `docs/architecture.md`, `docs/architecture-building-blocks.md`,
   `docs/fundamental-walkthrough.md`, `README.md` — only where a decision closed here contradicts or
   settles text there: the early-cutoff contradiction, the port catalog's gaps, the settings question
@@ -157,8 +157,8 @@ Questions the documents leave open, which the design pass has to close:
 
 - The `Approver` port, the interactive prompt and CI detection — milestone 4.
 - Running anything: `Schedule`, `Dispatcher`, `ExecStrategy`, and every write to the cas, the action
-  cache and the log — I6.
-- Placeholder expansion (`$in`, `$out`, `$deps`, `$opt:name` substitution) — the executor's, I6.
+  cache and the log — I8.
+- Placeholder expansion (`$in`, `$out`, `$deps`, `$opt:name` substitution) — the executor's, I8.
 - Every real adapter: the `buildl.toml` reader, the filesystem digester, `.buildl/statcache.json`,
   the `PATH` lookup, `.buildl/cache.json` — the `buildl` adapters slice.
 - The `buildl-lua` half of follow-up #13 — the adapters slice.

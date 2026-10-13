@@ -611,7 +611,7 @@ Flows in `tests/flows/graph.rs`, through `Pipeline::<FakePorts>::graph` and `Fak
 |`docs/design.md` §12.1 item 2|the order build files issue their declarations in never changes the graph; the order inside one list is part of the command and of the action key, and a list whose order varies between evaluations fails `check`|
 |`docs/design.md` §8.2|the dependency count is the length of a node's edge list; the counters belong to the scheduler|
 |`docs/architecture-building-blocks.md` §7|the rules table gains the module-edge guard|
-|`docs/roadmap.md`|the I4 row and §4 on completion; follow-up #11 closed. Grants and follow-up #13 already sit under I5 (`docs/roadmap.md:70-71`, `:103`), edited when this chain's intent was written|
+|`docs/roadmap.md`|the I6 row and §4 on completion; follow-up #11 closed. Grants and follow-up #13 already sit under I7 (`docs/roadmap.md:70-71`, `:103`), edited when this chain's intent was written|
 |`README.md`|the status paragraph (`README.md:7`) names Resolve as implemented and the Lua adapter as landed. Nothing else changes: its only passage on dependencies, aliases and placeholders (`README.md:60-68`) states no list order and no alias rule. Amended 2026-10-10: this row first read "no change", which left the status paragraph saying Resolve was not implemented|
 
 Mermaid stays Mermaid, and every section cross-reference survives.
@@ -627,10 +627,10 @@ Mermaid stays Mermaid, and every section cross-reference survives.
 
 ## 12. Non-goals
 
-- The wanted set, the ceiling intersection, grants, the `Manifest` and `Approver` ports — I5 Plan.
-- Roadmap follow-up #13 — I5, with the `Manifest` port. Follow-up #5 — the CLI slice.
-- The action key, `KeyComponents`, dirtiness, tool resolution, a topological order — I5.
-- Placeholder expansion, and any check of `$in`, `$out`, `$deps` or an unrecognised `$name` — I6.
+- The wanted set, the ceiling intersection, grants, the `Manifest` and `Approver` ports — I7 Plan.
+- Roadmap follow-up #13 — I7, with the `Manifest` port. Follow-up #5 — the CLI slice.
+- The action key, `KeyComponents`, dirtiness, tool resolution, a topological order — I7.
+- Placeholder expansion, and any check of `$in`, `$out`, `$deps` or an unrecognised `$name` — I8.
 - `--set` values reaching the pipeline, and checking them against declared settings.
 - Selecting the subgraph a requested target needs, and demand-driven loading (design §11.1).
 - `query` and `rdeps` — milestone 2.

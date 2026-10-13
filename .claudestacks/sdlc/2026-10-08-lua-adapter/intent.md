@@ -3,11 +3,11 @@ status: done
 created: 2026-10-08
 ---
 
-# Intent: I-lua — evaluating a real `build.lua` through airsl
+# Intent: I5 — evaluating a real `build.lua` through airsl
 
 ## Problem
 
-I3 gave `buildl-core` a complete Load phase: the `DeclarationSource` port, the staged values it
+I4 gave `buildl-core` a complete Load phase: the `DeclarationSource` port, the staged values it
 returns, the closed `EvaluationFailure` set, and the traversal and merge that turn staged files into
 `Vec<Declaration>`. Nothing implements the port yet. `buildl-lua` holds only a crate doc, so no real
 build file can be evaluated, and the pipeline runs only against `FakePorts`:
@@ -29,7 +29,7 @@ build file can be evaluated, and the pipeline runs only against `FakePorts`:
   `[declaration] memory` ceiling does not count (roadmap follow-up #12).
 
 This is the next rung of the milestone 1 ladder (`docs/roadmap.md` §3), and its port has been ready
-since I3 closed. It is independent of I4–I6. The `buildl` adapters and the CLI need it before the
+since I4 closed. It is independent of I6–I8. The `buildl` adapters and the CLI need it before the
 first real `buildl check` can run.
 
 ## Affected systems
@@ -37,7 +37,7 @@ first real `buildl check` can run.
 - `crates/buildl-lua`: its first real code, `Cargo.toml`, crate rustdoc and `README.md`
 - workspace `Cargo.toml`: the airsl requirement (follow-up #4) and any dependency the slice adds,
   each with a reason comment
-- `docs/roadmap.md`: the I-lua row, §4 on completion, and §5 (close #3 for `buildl-lua`, #4 and
+- `docs/roadmap.md`: the I5 row, §4 on completion, and §5 (close #3 for `buildl-lua`, #4 and
   #12)
 - `docs/design.md` §5 and §12.1, `docs/architecture-building-blocks.md` §11: only where a decision
   here settles or contradicts their text
@@ -57,7 +57,7 @@ first real `buildl check` can run.
 - Each build file runs on a fresh engine. Evaluating the same file twice yields byte-identical staged
   output, `math.random` included. The one entropy source left open, address-derived text from
   `tostring` or `string.format` of a table or function, is named and recorded as a follow-up.
-- Every way an evaluation can fail maps onto I3's `EvaluationFailure` (`Syntax`, `Runtime`,
+- Every way an evaluation can fail maps onto I4's `EvaluationFailure` (`Syntax`, `Runtime`,
   `Refused`, `LimitReached{Instructions|Memory|Staging}`, `UnknownField`, `WrongFieldType`), with a
   `Diagnostic` a person can act on. No change to `buildl-core` is needed.
 - The per-file staging cap is enforced and refused as `LimitReached{Staging}` (follow-up #12).
@@ -71,11 +71,11 @@ first real `buildl check` can run.
 
 - `buildl-lua` depends only on `buildl-core` and `airsl` among buildl-relevant crates, never on
   `buildl` (`architecture-building-blocks.md` §7). No other crate learns Lua exists.
-- `buildl-core` is not amended. I3 fixed the `DeclarationSource` contract and the
+- `buildl-core` is not amended. I4 fixed the `DeclarationSource` contract and the
   `EvaluationFailure` set so this slice could not need to. A disproven premise is raised, not patched
   around.
 - The adapter records what a build file wrote. Validation, label resolution, deduplication,
-  traversal and ordering stay in Load (I3 decision D2). Lua never recurses into another build file
+  traversal and ordering stay in Load (I4 decision D2). Lua never recurses into another build file
   and never holds a real artifact path (design §5).
 - airsl stays on the `0.1` series (`docs/roadmap.md` §3). Moving to `0.2` is its own decision.
 - Never rename the root table to `buildl`. The module is installed as `airsstack.buildl` and binds
@@ -91,12 +91,12 @@ first real `buildl check` can run.
 
 ## Non-goals
 
-- The `buildl.toml` parser, the `Manifest` port, the ceiling, the wanted set and grants: I4 and
+- The `buildl.toml` parser, the `Manifest` port, the ceiling, the wanted set and grants: I6 and
   milestone 4.
 - `LocalPorts` and the composition root in `buildl`, and any `buildl-cli` command wiring: the
   adapters slice.
 - Parallel load across engines.
 - Plugins and `buildl.use` (design §10): milestone 5.
-- Implicit `subdir` by file discovery: rejected in I3, not deferred.
+- Implicit `subdir` by file discovery: rejected in I4, not deferred.
 - Follow-ups #3 for `buildl` and `buildl-cli`, and #5–#11: assigned elsewhere.
 - Moving airsl to `0.2`.
