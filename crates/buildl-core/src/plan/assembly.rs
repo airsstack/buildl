@@ -25,14 +25,22 @@ use crate::plan::verdict;
 use crate::ports::{ActionCache, Host, Manifest, PortSet, Ports};
 use crate::types::{Plan, SettingName, SettingValue, TargetGraph};
 
-/// Plans a build of `graph`: one verdict per target, and what the build wants.
+/// Plans a build of `graph`: one verdict per target, what the build wants, and the settings in
+/// force.
 ///
-/// `overrides` gives values to build settings for this run. Every target is given an action key
-/// from its command, the digests of its inputs, its environment, the tool it runs, the settings
-/// it names, the platform, and what its dependencies produced; the key is compared with the one
-/// the target's last build recorded. A target is clean when the two are equal, dirty when they
-/// differ, and conditional when all that could still differ is the output of a dependency that
-/// is about to run.
+/// `overrides` gives values to build settings for this run: the plan holds every setting `graph`
+/// declares with its override, or else its default, and nothing after the plan reads an override
+/// again. Every target is given an action key from its command, the digests of its inputs, its
+/// environment, the tool it runs, the settings it names, the platform, and what its dependencies
+/// produced; the key is compared with the one the target's last build recorded. A target is
+/// clean when the two are equal, dirty when they differ, and conditional when all that could
+/// still differ is the output of a dependency that is about to run.
+///
+/// The tool a target runs is the program its command's first argument names once each `$opt:`
+/// reference in it is replaced by the setting's value for this run. So a program named through
+/// a setting is held to the ceiling, looked up and keyed exactly as one written out. A first
+/// argument that still holds a `$` after that, as one running what the build produced does,
+/// names no tool here.
 ///
 /// Nothing runs. The one thing a plan writes is the stat cache, and only when it had to hash a
 /// file.
@@ -58,7 +66,7 @@ pub fn plan<P: Ports>(
 ) -> Result<Plan> {
     let workspace = ports.manifest.workspace()?;
     let settings = effective(graph.settings(), overrides)?;
-    let sites = sites(graph);
+    let sites = sites(graph, &settings);
     let wanted = check(graph, &sites, &workspace)?;
 
     let fingerprints = fingerprints(&sites.programs, &ports.tools)?;
@@ -85,5 +93,5 @@ pub fn plan<P: Ports>(
         .iter()
         .map(|node| node.label.clone())
         .collect();
-    Ok(Plan::new(labels, verdicts, wanted))
+    Ok(Plan::new(labels, verdicts, wanted, gathered.settings))
 }

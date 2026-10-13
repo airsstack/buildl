@@ -2,7 +2,8 @@
 //!
 //! Its own file because a plan is a different value from the graph it is made from: the graph
 //! says what each target is, a plan says whether each one needs to run, and it is the value the
-//! `plan` command prints and the executor later walks.
+//! `plan` command prints and the executor later walks. It is also where a run's build settings
+//! are fixed: the graph holds each setting's default, a plan the value in force.
 //!
 //! Responsibilities: [`Plan`], the [`Verdict`] it holds for each target, the parts of a verdict
 //! — [`DirtyReason`], [`Difference`], [`PlannedKey`], [`Unfinished`] — and a plan's serialized
@@ -16,7 +17,8 @@ use std::collections::BTreeMap;
 use serde::{Serialize, Serializer};
 
 use crate::types::{
-    ActionKey, EnvName, Label, NodeId, OwnComponents, SettingName, SourcePath, WantedSet,
+    ActionKey, EnvName, Label, NodeId, OwnComponents, SettingName, SettingValue, SourcePath,
+    WantedSet,
 };
 
 /// One way a target's key differs from the key its last build recorded.
@@ -100,7 +102,8 @@ pub enum Verdict {
     Conditional(Unfinished),
 }
 
-/// What a build of a workspace would do: one verdict per target, and what the build wants.
+/// What a build of a workspace would do: one verdict per target, what the build wants, and the
+/// value every build setting has for it.
 ///
 /// A plan is obtained from [`plan`](fn@crate::plan). Its verdicts are addressed by the
 /// [`NodeId`]s of the graph it was made from.
@@ -109,15 +112,23 @@ pub struct Plan {
     labels: Vec<Label>,
     verdicts: Vec<Verdict>,
     wanted: WantedSet,
+    settings: BTreeMap<SettingName, SettingValue>,
 }
 
 impl Plan {
-    /// Assembles a plan from one label and one verdict per node, both in id order.
-    pub(crate) const fn new(labels: Vec<Label>, verdicts: Vec<Verdict>, wanted: WantedSet) -> Self {
+    /// Assembles a plan from one label and one verdict per node, both in id order, with what the
+    /// build wants and the value of every declared setting.
+    pub(crate) const fn new(
+        labels: Vec<Label>,
+        verdicts: Vec<Verdict>,
+        wanted: WantedSet,
+        settings: BTreeMap<SettingName, SettingValue>,
+    ) -> Self {
         Self {
             labels,
             verdicts,
             wanted,
+            settings,
         }
     }
 
@@ -156,6 +167,16 @@ impl Plan {
     pub const fn wanted(&self) -> &WantedSet {
         &self.wanted
     }
+
+    /// The settings in force: every setting the plan's graph declares, with the value it has for
+    /// this plan — the one it was overridden with, or else its default.
+    ///
+    /// A key holds only the settings its target's command names; this holds them all, so it is
+    /// also where the value of a setting no command names is found.
+    #[must_use]
+    pub const fn settings(&self) -> &BTreeMap<SettingName, SettingValue> {
+        &self.settings
+    }
 }
 
 /// An unfinished key as it is written to JSON: the dependencies it waits on as labels.
@@ -174,9 +195,11 @@ struct TargetView<'a> {
     verdict: &'static str,
 }
 
-/// A plan as it is written to JSON: every target under its label, no id anywhere.
+/// A plan as it is written to JSON: every setting under its name, every target under its label,
+/// no id anywhere.
 #[derive(Serialize)]
 struct PlanView<'a> {
+    settings: &'a BTreeMap<SettingName, SettingValue>,
     targets: BTreeMap<&'a Label, TargetView<'a>>,
     wanted: &'a WantedSet,
 }
@@ -240,6 +263,7 @@ impl Serialize for Plan {
             .map(|(label, verdict)| (label, self.target_view(verdict)))
             .collect();
         PlanView {
+            settings: &self.settings,
             targets,
             wanted: &self.wanted,
         }
@@ -260,7 +284,8 @@ mod tests {
     use crate::json::canonical;
     use crate::types::{
         ActionKey, Argument, Command, Directory, EnvName, KeyComponents, Label, NetworkAccess,
-        NodeId, OutputName, OwnComponents, Platform, Program, SettingName, SourcePath, WantedSet,
+        NodeId, OutputName, OwnComponents, Platform, Program, SettingName, SettingValue,
+        SourcePath, WantedSet,
     };
 
     fn label(raw: &str) -> Label {
@@ -301,6 +326,19 @@ mod tests {
         }
     }
 
+    /// Two settings, `mode` and `test_filter`, the second with an empty value.
+    fn settings() -> BTreeMap<SettingName, SettingValue> {
+        [("test_filter", ""), ("mode", "release")]
+            .into_iter()
+            .map(|(name, value)| {
+                (
+                    SettingName::parse(name).unwrap(),
+                    SettingValue::parse(value).unwrap(),
+                )
+            })
+            .collect()
+    }
+
     /// Five targets, `//:a` to `//:e`: clean, dirty for each of the three reasons — the last
     /// with an unfinished key — and conditional.
     fn plan() -> Plan {
@@ -330,7 +368,7 @@ mod tests {
                 awaiting: vec![NodeId::new(3)],
             }),
         ];
-        Plan::new(labels, verdicts, wanted())
+        Plan::new(labels, verdicts, wanted(), settings())
     }
 
     #[test]
@@ -345,6 +383,7 @@ mod tests {
         );
         assert_eq!(plan.verdicts().len(), 5);
         assert_eq!(plan.wanted(), &wanted());
+        assert_eq!(plan.settings(), &settings());
     }
 
     #[test]
@@ -362,12 +401,16 @@ mod tests {
             write: BTreeSet::new(),
             network: BTreeSet::new(),
         };
-        let plan = Plan::new(Vec::new(), Vec::new(), empty);
+        let plan = Plan::new(Vec::new(), Vec::new(), empty, BTreeMap::new());
         assert!(plan.is_empty());
         assert_eq!(plan.len(), 0);
+        assert!(plan.settings().is_empty());
         assert_eq!(
             canonical::to_string(&plan).unwrap(),
-            r#"{"targets":{},"wanted":{"env":[],"network":[],"programs":[],"write":[]}}"#
+            concat!(
+                r#"{"settings":{},"targets":{},"#,
+                r#""wanted":{"env":[],"network":[],"programs":[],"write":[]}}"#
+            )
         );
     }
 
@@ -421,12 +464,12 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_serializes_keyed_by_label_with_awaited_targets_as_labels() {
+    fn a_plan_serializes_its_settings_by_name_and_its_targets_by_label_awaited_ones_as_labels() {
         let json = canonical::to_string(&plan()).unwrap();
         let key_of = |output: &str| canonical::to_string(&key(output)).unwrap();
         let own_of = |output: &str| canonical::to_string(&own(output)).unwrap();
         let expected = [
-            r#"{"targets":{"#,
+            r#"{"settings":{"mode":"release","test_filter":""},"targets":{"#,
             r#""//:a":{"key":"#,
             &key_of("a"),
             r#","reason":null,"unfinished":null,"verdict":"Clean"},"#,

@@ -38,7 +38,7 @@ pub struct Node {
     pub description: Option<Description>,
     /// The workspace files it reads, in written order without repeats.
     pub inputs: Vec<SourcePath>,
-    /// The files it produces, in written order without repeats.
+    /// The outputs it produces, each a file or a directory, in written order without repeats.
     pub outputs: Vec<OutputName>,
     /// The environment variables it reads, in written order without repeats.
     pub env: Vec<EnvName>,

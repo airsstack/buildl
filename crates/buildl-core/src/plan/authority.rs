@@ -14,8 +14,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::error::{DeclarationSite, Error, Result};
 use crate::plan::tools::programs;
 use crate::types::{
-    Directory, EnvName, NetworkAccess, Node, Program, SourcePath, TargetGraph, Want, WantedSet,
-    Workspace,
+    Directory, EnvName, NetworkAccess, Node, Program, SettingName, SettingValue, SourcePath,
+    TargetGraph, Want, WantedSet, Workspace,
 };
 
 /// Everything a graph's targets want, each with the lowest-labelled target wanting it.
@@ -24,7 +24,7 @@ use crate::types::{
 /// asked for in.
 #[derive(Debug)]
 pub(crate) struct Sites<'g> {
-    /// The programs commands name.
+    /// The programs commands name, whether written out or through a build setting.
     pub(crate) programs: BTreeMap<Program, &'g Node>,
     /// The environment variables targets read.
     pub(crate) env: BTreeMap<&'g EnvName, &'g Node>,
@@ -32,8 +32,12 @@ pub(crate) struct Sites<'g> {
     pub(crate) inputs: BTreeMap<&'g SourcePath, &'g Node>,
 }
 
-/// Collects what `graph`'s targets want.
-pub(crate) fn sites(graph: &TargetGraph) -> Sites<'_> {
+/// Collects what `graph`'s targets want when its build settings have the values `settings`
+/// gives them.
+pub(crate) fn sites<'g>(
+    graph: &'g TargetGraph,
+    settings: &BTreeMap<SettingName, SettingValue>,
+) -> Sites<'g> {
     let mut env = BTreeMap::new();
     let mut inputs = BTreeMap::new();
     for node in graph.nodes() {
@@ -45,7 +49,7 @@ pub(crate) fn sites(graph: &TargetGraph) -> Sites<'_> {
         }
     }
     Sites {
-        programs: programs(graph),
+        programs: programs(graph, settings),
         env,
         inputs,
     }
@@ -139,14 +143,17 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::path::Path;
 
     use super::{check, holds, sites};
     use crate::error::{DeclarationSite, Error};
-    use crate::plan::fixtures::{command, dir, env_name, graph, label, node, path, program};
+    use crate::plan::fixtures::{
+        command, dir, env_name, graph, label, node, path, program, settings,
+    };
     use crate::types::{
-        Ceiling, Directory, NetworkAccess, Node, TargetGraph, Want, WantedSet, Workspace,
+        Ceiling, Directory, Execution, NetworkAccess, Node, SettingName, SettingValue, TargetGraph,
+        Want, WantedSet, Workspace,
     };
 
     /// A workspace writing to `out` and `.buildl`, whose ceiling allows `cc` and `ld`, `HOME`
@@ -161,6 +168,7 @@ mod tests {
                 read: BTreeSet::from([dir("src"), dir("lib")]),
                 write: BTreeSet::from([dir("out"), dir(".buildl")]),
             },
+            execution: Execution::default(),
         }
     }
 
@@ -183,12 +191,28 @@ mod tests {
     }
 
     fn checked(graph: &TargetGraph, workspace: &Workspace) -> crate::error::Result<WantedSet> {
-        check(graph, &sites(graph), workspace)
+        checked_under(graph, &BTreeMap::new(), workspace)
+    }
+
+    fn checked_under(
+        graph: &TargetGraph,
+        settings: &BTreeMap<SettingName, SettingValue>,
+        workspace: &Workspace,
+    ) -> crate::error::Result<WantedSet> {
+        check(graph, &sites(graph, settings), workspace)
     }
 
     /// What `graph` is refused under `workspace`: the want, and the label and build file named.
     fn refusal(graph: &TargetGraph, workspace: &Workspace) -> (Want, Option<(String, String)>) {
-        match checked(graph, workspace).unwrap_err() {
+        refusal_of(checked(graph, workspace), workspace)
+    }
+
+    /// What `checked` refused under `workspace`: the want, and the label and build file named.
+    fn refusal_of(
+        checked: crate::error::Result<WantedSet>,
+        workspace: &Workspace,
+    ) -> (Want, Option<(String, String)>) {
+        match checked.unwrap_err() {
             Error::Refused {
                 want,
                 site,
@@ -212,7 +236,7 @@ mod tests {
     #[test]
     fn sites_name_the_lowest_labelled_target_for_each_want() {
         let graph = graph(vec![app(), text()], &[&[], &[]]);
-        let sites = sites(&graph);
+        let sites = sites(&graph, &BTreeMap::new());
         let programs: Vec<(&str, String)> = sites
             .programs
             .iter()
@@ -272,6 +296,29 @@ mod tests {
             (
                 Want::Program(program("cc")),
                 Some(named("//lib:text", "lib/build.lua"))
+            )
+        );
+    }
+
+    #[test]
+    fn a_program_named_through_a_setting_is_wanted_and_held_to_the_ceiling() {
+        let graph = graph(
+            vec![node("//:app", |node| {
+                node.run = command(&["$opt:linker", "$in"]);
+            })],
+            &[&[]],
+        );
+        let workspace = workspace();
+
+        let allowed = checked_under(&graph, &settings(&[("linker", "ld")]), &workspace);
+        assert_eq!(allowed.unwrap().programs, BTreeSet::from([program("ld")]));
+
+        let outside = checked_under(&graph, &settings(&[("linker", "mold")]), &workspace);
+        assert_eq!(
+            refusal_of(outside, &workspace),
+            (
+                Want::Program(program("mold")),
+                Some(named("//:app", "build.lua"))
             )
         );
     }

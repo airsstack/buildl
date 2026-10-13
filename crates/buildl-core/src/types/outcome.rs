@@ -5,12 +5,12 @@
 //! outcome and not an error, so one failure does not hide what the rest of the build did.
 //!
 //! Responsibilities: [`ActionOutcome`], [`OutcomeClass`] with [`OutcomeClass::succeeded`],
-//! [`InfraKind`], and [`Summary`] with [`Summary::of`].
+//! [`InfraKind`], [`OutputRefusal`], and [`Summary`] with [`Summary::of`].
 //!
 //! Non-responsibilities: deciding which class a target's build ends in, which the phase that
 //! executes does; and rendering an outcome for a person, which belongs to whoever shows it.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::types::{Diagnostic, Digest, Label, OutputName, Produced};
 
@@ -29,6 +29,26 @@ pub enum InfraKind {
     /// An output, something the action printed, or the record of the build could not be stored
     /// or put in place.
     Store,
+}
+
+/// Why what an action left at an output path cannot be kept.
+///
+/// An output is a regular file, or a directory of regular files with no empty directory in it.
+/// Anything else could not be put back exactly as it was, so it is refused rather than stored
+/// as something close. Serializes as its name. Non-exhaustive: an output that can be refused
+/// another way gains a variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
+pub enum OutputRefusal {
+    /// The output, or something in its directory, is a symbolic link.
+    Symlink,
+    /// The output, or something in its directory, is neither a file, a directory nor a
+    /// symbolic link: a device, a socket, a named pipe.
+    Special,
+    /// The output is a directory holding nothing, or holds one.
+    EmptyDirectory,
+    /// Something in the output's directory has a name that is not valid Unicode.
+    NotText,
 }
 
 /// How the build of one target ended.
@@ -52,6 +72,14 @@ pub enum OutcomeClass {
     OutputMissing {
         /// The first such output, in declared order.
         name: OutputName,
+    },
+    /// It ran and exited with status zero, and left where an output it declares should be
+    /// something that cannot be kept.
+    OutputRefused {
+        /// The first such output, in declared order.
+        name: OutputName,
+        /// Why it cannot be kept.
+        refusal: OutputRefusal,
     },
     /// The builder could not build it. Nothing is said about the target's own action.
     InfraFailure {
@@ -82,7 +110,8 @@ pub struct ActionOutcome {
     /// How its build ended.
     pub class: OutcomeClass,
     /// A message for display: set for an [`OutcomeClass::InfraFailure`] other than a timeout,
-    /// and `None` for every other outcome.
+    /// and for an [`OutcomeClass::OutputRefused`], where it names what was refused; `None` for
+    /// every other outcome.
     pub diagnostic: Option<Diagnostic>,
     /// What the target produced, in declared order. Empty unless the target succeeded.
     pub outputs: Vec<Produced>,
@@ -95,8 +124,8 @@ pub struct ActionOutcome {
 /// How many targets of one build ended in each way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Summary {
-    /// Targets whose action failed, whose output was missing, or that the builder could not
-    /// build.
+    /// Targets whose action failed, whose output was missing or refused, or that the builder
+    /// could not build.
     pub failed: usize,
     /// Targets never begun because another target failed.
     pub skipped: usize,
@@ -122,6 +151,7 @@ impl Summary {
                 OutcomeClass::Built => summary.built += 1,
                 OutcomeClass::ActionFailure { .. }
                 | OutcomeClass::OutputMissing { .. }
+                | OutcomeClass::OutputRefused { .. }
                 | OutcomeClass::InfraFailure { .. } => summary.failed += 1,
                 OutcomeClass::Skipped { .. } => summary.skipped += 1,
             }
@@ -137,18 +167,22 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use super::{ActionOutcome, InfraKind, OutcomeClass, Summary};
+    use super::{ActionOutcome, InfraKind, OutcomeClass, OutputRefusal, Summary};
     use crate::json::canonical;
     use crate::types::{Label, OutputName};
 
     /// One class of every kind, in the order the enum declares them.
-    fn every_class() -> [OutcomeClass; 6] {
+    fn every_class() -> [OutcomeClass; 7] {
         [
             OutcomeClass::Cached,
             OutcomeClass::Built,
             OutcomeClass::ActionFailure { status: 2 },
             OutcomeClass::OutputMissing {
                 name: OutputName::parse("bin/app").unwrap(),
+            },
+            OutcomeClass::OutputRefused {
+                name: OutputName::parse("dist").unwrap(),
+                refusal: OutputRefusal::Symlink,
             },
             OutcomeClass::InfraFailure {
                 kind: InfraKind::Store,
@@ -174,7 +208,7 @@ mod tests {
     #[test]
     fn only_a_cached_and_a_built_target_succeeded() {
         let succeeded = every_class().map(|class| class.succeeded());
-        assert_eq!(succeeded, [true, true, false, false, false, false]);
+        assert_eq!(succeeded, [true, true, false, false, false, false, false]);
     }
 
     #[test]
@@ -195,7 +229,7 @@ mod tests {
         assert_eq!(
             Summary::of(&outcomes),
             Summary {
-                failed: 3,
+                failed: 4,
                 skipped: 1,
                 built: 1,
                 cached: 1,
@@ -260,6 +294,7 @@ mod tests {
             [
                 r#"{"ActionFailure":{"status":2}}"#,
                 r#"{"OutputMissing":{"name":"bin/app"}}"#,
+                r#"{"OutputRefused":{"name":"dist","refusal":"Symlink"}}"#,
                 r#"{"InfraFailure":{"kind":"Store"}}"#,
                 r#"{"Skipped":{"because":"//lib:text"}}"#,
             ]
@@ -281,5 +316,22 @@ mod tests {
             rendered,
             [r#""Prepare""#, r#""Run""#, r#""TimedOut""#, r#""Store""#]
         );
+    }
+
+    #[test]
+    fn every_refusal_serializes_as_its_name_and_reads_back() {
+        for (refusal, text) in [
+            (OutputRefusal::Symlink, r#""Symlink""#),
+            (OutputRefusal::Special, r#""Special""#),
+            (OutputRefusal::EmptyDirectory, r#""EmptyDirectory""#),
+            (OutputRefusal::NotText, r#""NotText""#),
+        ] {
+            assert_eq!(canonical::to_string(&refusal).unwrap(), text);
+            assert_eq!(
+                serde_json::from_str::<OutputRefusal>(text).unwrap(),
+                refusal
+            );
+        }
+        assert!(serde_json::from_str::<OutputRefusal>(r#""Hardlink""#).is_err());
     }
 }

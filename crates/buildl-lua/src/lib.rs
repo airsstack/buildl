@@ -17,7 +17,8 @@
 //!   `math.randomseed`, `print` or `airsstack.path.absolute`, and with `tostring` and
 //!   `string.format` refusing address-derived text (a table, function, thread or userdata without `__tostring`,
 //!   and `%p`). `buildl.sources` is the only filesystem read, and it walks only the declaring
-//!   directory.
+//!   directory, never entering a directory [`LuaSource::new`] was told to skip, such as the
+//!   workspace's output and state directories.
 //! - Bounding a build file's memory, instructions and source walk: the ceilings of
 //!   [`DeclarationLimits`], and a byte budget, equal to the memory ceiling, on what one file may
 //!   stage. The `buildl.sources` walk is capped at `walk_entries` directory entries per build

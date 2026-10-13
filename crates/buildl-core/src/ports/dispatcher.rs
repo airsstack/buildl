@@ -23,7 +23,11 @@ pub trait Dispatcher {
     /// in turn. The call returns when no task is running and none is waiting.
     ///
     /// `step` is always called on the calling thread. `work` may be called on any thread, several
-    /// calls at once. Every task `step` returns is run, and every result reaches `step`.
+    /// calls at once. Every task `step` returns is run, and every result reaches `step`. Neither
+    /// can happen twice, and no result can be made up: a task and a result are each handed over
+    /// by value, and the port asks for no way to copy or to build one. A dispatcher that loses a
+    /// task or its result breaks the contract: a build over it fails with
+    /// [`Error::DispatcherFault`](crate::Error::DispatcherFault) instead of reporting success.
     ///
     /// # Errors
     ///

@@ -12,8 +12,10 @@ use buildl_core::{
     ActionKey, CacheRow, DepProducts, Difference, Digest, DirtyReason, EntryName, EnvName,
     EnvValue, Error, EvaluationFailure, FileStat, Freshness, KeyComponents, Label, NodeId,
     OwnComponents, Pipeline, Plan, PlannedKey, Platform, PortName, SettingName, SettingValue,
-    SourcePath, StagedItem, TargetGraph, Timestamp, Verdict, Want, Written, json,
+    SourcePath, StagedItem, StagedSetting, TargetGraph, Timestamp, ToolIdentity, Verdict, Want,
+    Written, json,
 };
+use buildl_core::{Execution, Isolation, Manifest, Timeout, Workers};
 
 use crate::common::{
     FakeContent, FakeFile, FakePorts, FakeSource, dir, file, ports, program, setting, target,
@@ -698,6 +700,248 @@ fn an_override_naming_no_setting_is_refused() {
         "setting mod is overridden but not declared"
     );
     assert!(matches!(error, Error::UnknownOverride { name } if name.as_str() == "mod"));
+}
+
+#[test]
+fn a_plan_holds_every_declared_setting_with_its_override_or_else_its_default() {
+    let mut pipeline = root_only(vec![
+        setting_of("mode", "debug"),
+        setting_of("level", "1"),
+        setting_of("unused", "idle"),
+        running("a", &["cc", "-m=$opt:mode", "-O$opt:level"]),
+    ]);
+
+    assert_eq!(
+        planned(&mut pipeline).settings(),
+        &overrides(&[("level", "1"), ("mode", "debug"), ("unused", "idle")]),
+        "with nothing overridden, every default"
+    );
+
+    let plan = pipeline
+        .plan(
+            &entry(),
+            &overrides(&[("mode", "release"), ("unused", "busy")]),
+        )
+        .unwrap();
+
+    assert_eq!(
+        plan.settings(),
+        &overrides(&[("level", "1"), ("mode", "release"), ("unused", "busy")]),
+        "a setting no command names is held too"
+    );
+    let json = json::canonical::to_string(&plan).unwrap();
+    assert!(
+        json.starts_with(
+            r#"{"settings":{"level":"1","mode":"release","unused":"busy"},"targets":{"#
+        ),
+        "{json}"
+    );
+}
+
+#[test]
+fn the_execution_settings_are_read_through_the_manifest_and_reach_no_key() {
+    let mut pipeline = chain();
+    assert_eq!(
+        pipeline.ports().manifest.workspace().unwrap().execution,
+        Execution::default()
+    );
+    build(&mut pipeline, &Overrides::new(), "v1");
+
+    let execution = Execution {
+        workers: Workers::parse("2").unwrap(),
+        timeout: Timeout::parse("30s").unwrap(),
+        strategy: Isolation::parse("bare").unwrap(),
+    };
+    assert_ne!(execution.workers, Execution::default().workers);
+    assert_ne!(execution.timeout, Execution::default().timeout);
+    assert_ne!(execution.strategy, Execution::default().strategy);
+    pipeline.ports_mut().manifest.workspace.execution = execution;
+
+    assert_eq!(
+        pipeline.ports().manifest.workspace().unwrap().execution,
+        execution
+    );
+    let plan = planned(&mut pipeline);
+    for raw in ["//:app", "//:docs", "//:gen", "//:lib"] {
+        assert_eq!(said(&plan, raw), Said::Clean, "{raw}");
+    }
+}
+
+/// A `b.option(name, { default = default })` call.
+fn setting_of(name: &str, default: &str) -> StagedItem {
+    StagedItem::Setting(StagedSetting {
+        name: Written::new(name),
+        default: Written::new(default),
+    })
+}
+
+/// `//:app` and `//:lib`, each running the program the setting `tool` names, which is `cc`
+/// unless overridden. The workspace also allows `clang`, and both programs can be found.
+fn tool_by_setting() -> Pipeline<FakePorts> {
+    let mut pipeline = root_only(vec![
+        setting_of("tool", "cc"),
+        running("app", &["$opt:tool", "-o", "$out"]),
+        running("lib", &["$opt:tool", "-c"]),
+    ]);
+    let ports = pipeline.ports_mut();
+    ports
+        .manifest
+        .workspace
+        .ceiling
+        .run
+        .insert(program("clang"));
+    ports
+        .tools
+        .fingerprints
+        .insert(program("clang"), Digest::of(b"clang 19.1"));
+    pipeline
+}
+
+/// The tool `plan` keyed the target `raw` names on.
+fn tool_of(plan: &Plan, raw: &str) -> Option<ToolIdentity> {
+    let wanted = label(raw);
+    let id = (0_u32..)
+        .take(plan.len())
+        .map(NodeId::new)
+        .find(|id| plan.label(*id) == Some(&wanted))
+        .unwrap();
+    own_of(plan.verdict(id).unwrap()).tool.clone()
+}
+
+#[test]
+fn a_tool_named_through_a_setting_is_wanted_looked_up_once_and_keyed_like_a_written_one() {
+    let mut pipeline = tool_by_setting();
+
+    let plan = planned(&mut pipeline);
+
+    assert_eq!(plan.wanted().programs, BTreeSet::from([program("cc")]));
+    assert_eq!(pipeline.ports().tools.lookups(), [program("cc")]);
+    for raw in ["//:app", "//:lib"] {
+        assert_eq!(
+            tool_of(&plan, raw),
+            Some(ToolIdentity {
+                program: program("cc"),
+                fingerprint: Digest::of(b"cc 14.2"),
+            }),
+            "{raw}"
+        );
+    }
+}
+
+#[test]
+fn replacing_a_tool_named_through_a_setting_dirties_the_targets_running_it() {
+    let mut pipeline = tool_by_setting();
+    build(&mut pipeline, &Overrides::new(), "v1");
+    assert_eq!(said(&planned(&mut pipeline), "//:app"), Said::Clean);
+
+    let tools = &mut pipeline.ports_mut().tools;
+    tools
+        .fingerprints
+        .insert(program("cc"), Digest::of(b"cc 15.1"));
+
+    let plan = planned(&mut pipeline);
+    for raw in ["//:app", "//:lib"] {
+        assert_eq!(
+            said(&plan, raw),
+            Said::Dirty(changed(vec![Difference::Tool]), Vec::new()),
+            "{raw}"
+        );
+    }
+}
+
+#[test]
+fn a_setting_changed_to_another_program_dirties_its_targets_for_the_tool_and_the_setting() {
+    let mut pipeline = tool_by_setting();
+    build(&mut pipeline, &Overrides::new(), "v1");
+
+    let plan = pipeline
+        .plan(&entry(), &overrides(&[("tool", "clang")]))
+        .unwrap();
+
+    let tool = SettingName::parse("tool").unwrap();
+    assert_eq!(
+        said(&plan, "//:app"),
+        Said::Dirty(
+            changed(vec![Difference::Tool, Difference::Setting(tool)]),
+            Vec::new()
+        )
+    );
+    assert_eq!(
+        tool_of(&plan, "//:app"),
+        Some(ToolIdentity {
+            program: program("clang"),
+            fingerprint: Digest::of(b"clang 19.1"),
+        })
+    );
+    assert_eq!(plan.wanted().programs, BTreeSet::from([program("clang")]));
+}
+
+#[test]
+fn a_tool_named_through_a_setting_is_held_to_the_ceiling_before_anything_is_read() {
+    let mut pipeline = tool_by_setting();
+
+    let error = pipeline
+        .plan(&entry(), &overrides(&[("tool", "docker")]))
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "build.lua: //:app: program docker is outside the ceiling (proc.run allows: cc, clang)"
+    );
+    assert_eq!(
+        site_of(&error),
+        Some(("//:app".to_owned(), Path::new("build.lua")))
+    );
+    assert!(
+        matches!(&error, Error::Refused { want, .. } if want == &Want::Program(program("docker"))),
+        "{error}"
+    );
+    assert_eq!(pipeline.ports().tools.lookups(), []);
+}
+
+#[test]
+fn a_tool_named_through_a_setting_that_cannot_be_found_names_the_lowest_labelled_target() {
+    let mut pipeline = tool_by_setting();
+    let tools = &mut pipeline.ports_mut().tools;
+    tools.fingerprints.remove(&program("clang"));
+
+    let error = pipeline
+        .plan(&entry(), &overrides(&[("tool", "clang")]))
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "build.lua: //:app: program clang was not found"
+    );
+    assert_eq!(
+        site_of(&error),
+        Some(("//:app".to_owned(), Path::new("build.lua")))
+    );
+    assert!(
+        matches!(error, Error::MissingTool { program: missing, .. } if missing == program("clang"))
+    );
+}
+
+#[test]
+fn a_first_argument_that_runs_what_the_build_produced_names_no_tool() {
+    let mut pipeline = root_only(vec![
+        setting_of("suite", "unit"),
+        target("app", &[]),
+        target_with("self_test", |target| {
+            target.run = Some(["$deps", "--self-test"].map(Written::new).to_vec());
+            target.deps = vec![Written::new("app")];
+        }),
+        target_with("suite_test", |target| {
+            target.run = Some(["$out/$opt:suite"].map(Written::new).to_vec());
+        }),
+    ]);
+
+    let plan = planned(&mut pipeline);
+
+    assert_eq!(tool_of(&plan, "//:self_test"), None);
+    assert_eq!(tool_of(&plan, "//:suite_test"), None);
+    assert_eq!(plan.wanted().programs, BTreeSet::from([program("cc")]));
+    assert_eq!(pipeline.ports().tools.lookups(), [program("cc")]);
 }
 
 #[test]

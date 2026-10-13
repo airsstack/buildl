@@ -68,7 +68,7 @@ pub struct Target {
     pub inputs: Vec<SourcePath>,
     /// The targets it depends on.
     pub deps: Vec<Label>,
-    /// The files it produces, relative to its output directory.
+    /// The outputs it produces, each a file or a directory, relative to its output directory.
     pub outputs: Vec<OutputName>,
     /// The environment variables it reads.
     pub env: Vec<EnvName>,

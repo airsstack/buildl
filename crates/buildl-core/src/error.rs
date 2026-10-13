@@ -17,6 +17,7 @@
 //! - [`DeclarationSite`] — a declared label and its build file: the declaration holding a bad
 //!   reference, or one target on a dependency cycle.
 //! - [`PortName`] — which port an [`Error::Adapter`] came through.
+//! - [`TreeFault`] — why a list of files an [`Error::InvalidTree`] is about is not a tree.
 //! - [`Result`] — the crate-wide alias.
 //!
 //! Non-responsibilities: presentation. [`Error`]'s `Display` renders one diagnostic, on one line
@@ -27,7 +28,7 @@ use core::fmt;
 
 use crate::types::{
     Ceiling, Declaration, DeclarationOrder, Diagnostic, Directory, FieldName, Label, Node,
-    OutputPath, Program, Provenance, SettingName, SourcePath, Want, Written,
+    OutputPath, Program, Provenance, SettingName, SourcePath, TreePath, Want, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -61,6 +62,21 @@ pub enum Error {
     FloatRejected {
         /// Where in the value the float was found, as a JSONPath-style location.
         path: String,
+    },
+    /// Bytes could not be read as a value: they are not JSON, or the JSON does not describe a
+    /// valid value of the type asked for.
+    #[error("canonical JSON could not be read: {source}")]
+    UnreadableJson {
+        /// The underlying `serde_json` failure, which names the line and column.
+        #[source]
+        source: serde_json::Error,
+    },
+    /// Bytes describe a valid value, but are not the bytes the canonical serializer writes for
+    /// it.
+    #[error("JSON is not in canonical form: it differs from it at byte {offset}")]
+    NonCanonicalJson {
+        /// The index of the first byte that differs from the canonical form of the value.
+        offset: usize,
     },
     /// An adapter could not evaluate a build file.
     #[error("{provenance}: {failure}: {diagnostic}")]
@@ -176,7 +192,8 @@ pub enum Error {
         suggestion_suffix(.suggestion.as_ref())
     )]
     UnknownSetting {
-        /// The target or rule whose command holds the reference, and its build file.
+        /// The target or rule holding the reference in its command, or the rule holding it in
+        /// its description, and its build file.
         site: Box<DeclarationSite>,
         /// The name after `$opt:`, as written.
         name: String,
@@ -268,6 +285,16 @@ pub enum Error {
         /// The target whose command it is, and its build file.
         site: Box<DeclarationSite>,
     },
+    /// The dispatcher returned success and left targets without an outcome: it lost a task, or
+    /// the result of one, and with it everything that waited on that target.
+    ///
+    /// Not an [`Error::Adapter`]: that carries an adapter's own failure as text for display,
+    /// while this names the targets left without an outcome, as data.
+    #[error("{}", lost_by_the_dispatcher(.targets))]
+    DispatcherFault {
+        /// The targets without an outcome. Never empty; in label order.
+        targets: Vec<Label>,
+    },
     /// An adapter could not do what a port asked of it.
     #[error("{port}: {diagnostic}")]
     Adapter {
@@ -276,6 +303,23 @@ pub enum Error {
         /// The adapter's message, for display only.
         diagnostic: Diagnostic,
     },
+    /// A list of files is not a directory tree.
+    #[error("not a tree: {fault}")]
+    InvalidTree {
+        /// What is wrong with the list.
+        fault: TreeFault,
+    },
+}
+
+/// A dispatcher fault as one sentence naming the port at fault and the targets it left without
+/// an outcome.
+fn lost_by_the_dispatcher(targets: &[Label]) -> String {
+    let labels: Vec<String> = targets.iter().map(ToString::to_string).collect();
+    format!(
+        "{}: returned without an outcome for {}",
+        PortName::Dispatcher,
+        labels.join(", ")
+    )
 }
 
 /// The suffix naming who required a missing build file.
@@ -637,6 +681,14 @@ pub enum NameKind {
     EnvValue,
     /// A host platform: an operating system and an architecture.
     Platform,
+    /// How many actions a build runs at once.
+    Workers,
+    /// How long one action may run.
+    Timeout,
+    /// The execution strategy a workspace runs its actions under.
+    Isolation,
+    /// The path of a file inside a directory an action left as an output.
+    TreePath,
 }
 
 impl fmt::Display for NameKind {
@@ -659,7 +711,35 @@ impl fmt::Display for NameKind {
             Self::Program => "program",
             Self::EnvValue => "environment variable value",
             Self::Platform => "platform",
+            Self::Workers => "worker count",
+            Self::Timeout => "timeout",
+            Self::Isolation => "execution strategy",
+            Self::TreePath => "tree path",
         })
+    }
+}
+
+/// Why a list of files an [`Error::InvalidTree`] is about is not a directory tree.
+///
+/// Non-exhaustive for the same reason [`Error`] is.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum TreeFault {
+    /// It holds no file.
+    Empty,
+    /// It lists this path twice.
+    Repeated(TreePath),
+    /// It lists a file at this path, and another file below it.
+    Clash(TreePath),
+}
+
+impl fmt::Display for TreeFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Empty => f.write_str("it holds no file"),
+            Self::Repeated(path) => write!(f, "{path} is listed twice"),
+            Self::Clash(path) => write!(f, "{path} is both a file and a directory"),
+        }
     }
 }
 
@@ -675,12 +755,12 @@ mod tests {
 
     use super::{
         ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
-        EvaluationLimit, NameKind, PortName,
+        EvaluationLimit, NameKind, PortName, TreeFault,
     };
     use crate::types::{
         Argument, Ceiling, Command, DeclarationOrder, Diagnostic, Directory, EnvName, FieldName,
         Freshness, Label, NetworkAccess, Node, OutputName, OutputPath, Program, Provenance,
-        SettingName, SourcePath, TargetName, TargetRole, Want, Written,
+        SettingName, SourcePath, TargetName, TargetRole, TreePath, Want, Written,
     };
 
     fn lib_file() -> Provenance {
@@ -1100,6 +1180,17 @@ mod tests {
     }
 
     #[test]
+    fn a_dispatcher_fault_names_the_dispatcher_and_the_targets_left_without_an_outcome() {
+        let lost = Error::DispatcherFault {
+            targets: vec![label("//:a"), label("//lib:b")],
+        };
+        assert_eq!(
+            lost.to_string(),
+            "dispatcher: returned without an outcome for //:a, //lib:b"
+        );
+    }
+
+    #[test]
     fn every_port_name_renders_a_human_phrase() {
         let cases = [
             (PortName::Manifest, "manifest"),
@@ -1137,6 +1228,10 @@ mod tests {
         assert_eq!(NameKind::Program.to_string(), "program");
         assert_eq!(NameKind::EnvValue.to_string(), "environment variable value");
         assert_eq!(NameKind::Platform.to_string(), "platform");
+        assert_eq!(NameKind::Workers.to_string(), "worker count");
+        assert_eq!(NameKind::Timeout.to_string(), "timeout");
+        assert_eq!(NameKind::Isolation.to_string(), "execution strategy");
+        assert_eq!(NameKind::TreePath.to_string(), "tree path");
     }
 
     #[test]
@@ -1172,6 +1267,28 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "floating-point value at $.timings.elapsed cannot appear in canonical JSON"
+        );
+    }
+
+    #[test]
+    fn unreadable_json_states_what_could_not_be_read() {
+        let Err(source) = serde_json::from_slice::<u32>(b"[]") else {
+            unreachable!("an array is not a number")
+        };
+        let err = Error::UnreadableJson { source };
+        assert_eq!(
+            err.to_string(),
+            "canonical JSON could not be read: invalid type: sequence, expected u32 at line 1 \
+             column 0"
+        );
+    }
+
+    #[test]
+    fn non_canonical_json_states_where_the_bytes_differ() {
+        let err = Error::NonCanonicalJson { offset: 36 };
+        assert_eq!(
+            err.to_string(),
+            "JSON is not in canonical form: it differs from it at byte 36"
         );
     }
 
@@ -1324,5 +1441,23 @@ mod tests {
             err.to_string(),
             "lib/build.lua: declarations differ between two evaluations"
         );
+    }
+
+    #[test]
+    fn an_invalid_tree_says_what_is_wrong_with_the_list() {
+        let path = TreePath::parse("assets/app.js").unwrap();
+        for (fault, rendered) in [
+            (TreeFault::Empty, "not a tree: it holds no file"),
+            (
+                TreeFault::Repeated(path.clone()),
+                "not a tree: assets/app.js is listed twice",
+            ),
+            (
+                TreeFault::Clash(path),
+                "not a tree: assets/app.js is both a file and a directory",
+            ),
+        ] {
+            assert_eq!(Error::InvalidTree { fault }.to_string(), rendered);
+        }
     }
 }

@@ -96,8 +96,8 @@ mod tests {
     };
     use crate::types::{
         BuildFile, CacheRow, Ceiling, Digest, Directory, EnvName, EnvValue, Evaluated, Exit,
-        FileStat, Label, OutcomeEvent, OutputPath, Platform, Program, RawOutcome, ReadyAction,
-        SourcePath, StatEntry, Timestamp, Workspace,
+        FileMode, FileStat, Found, Label, OutcomeEvent, OutputPath, Platform, Program, RawOutcome,
+        ReadyAction, SourcePath, StatEntry, Timestamp, Workspace,
     };
 
     /// One port type answering that there is nothing, standing in for every port.
@@ -121,6 +121,7 @@ mod tests {
                     read: BTreeSet::new(),
                     write: BTreeSet::new(),
                 },
+                execution: crate::types::Execution::default(),
             })
         }
     }
@@ -182,7 +183,15 @@ mod tests {
             false
         }
 
-        fn place(&self, _digest: &Digest, _at: &OutputPath) -> Result<()> {
+        fn get(&self, _digest: &Digest) -> Result<Option<Vec<u8>>> {
+            Ok(None)
+        }
+
+        fn clear(&self, _at: &OutputPath) -> Result<()> {
+            Ok(())
+        }
+
+        fn place(&self, _digest: &Digest, _mode: FileMode, _at: &OutputPath) -> Result<()> {
             Ok(())
         }
     }
@@ -213,7 +222,7 @@ mod tests {
             _dir: &(),
             _action: &ReadyAction,
             _cas: &C,
-        ) -> Result<Vec<Option<Digest>>> {
+        ) -> Result<Vec<Found>> {
             Ok(Vec::new())
         }
     }

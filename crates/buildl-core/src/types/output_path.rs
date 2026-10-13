@@ -5,7 +5,7 @@
 //! directory of the target's label, and the name. Giving that its own type keeps a path nobody
 //! computed from being handed to an executor.
 //!
-//! Responsibilities: [`OutputPath`], its one constructor, and its rendering.
+//! Responsibilities: [`OutputPath`], its two constructors, and its rendering.
 //!
 //! Non-responsibilities: whether two targets were given the same path, which needs the whole
 //! graph; and the filesystem. Nothing here asks whether the file exists.
@@ -14,12 +14,14 @@ use core::fmt;
 
 use serde::Serialize;
 
-use crate::types::{Directory, Label, OutputName};
+use crate::types::{Directory, Label, OutputName, TreePath};
 
-/// The workspace-relative path one output of one target lives at, such as `out/lib/text`.
+/// The workspace-relative path one output of one target lives at, such as `out/lib/text`, or
+/// the path of one file of an output that is a directory.
 ///
-/// Built only by [`OutputPath::of`], so every path held is one the layout rule produced. There
-/// is no `parse` and no `Deserialize`: nothing reads one back.
+/// Built only by [`OutputPath::of`] and, from such a path, by [`OutputPath::entry`], so every
+/// path held is one the layout rule produced or lies below one. There is no `parse` and no
+/// `Deserialize`: nothing reads one back.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(transparent)]
 pub struct OutputPath(String);
@@ -39,6 +41,12 @@ impl OutputPath {
             .filter(|segment| !segment.is_empty())
             .collect();
         Self(present.join("/"))
+    }
+
+    /// The path of the file at `path` below this one, for an output that is a directory.
+    #[must_use]
+    pub fn entry(&self, path: &TreePath) -> Self {
+        Self(format!("{}/{path}", self.0))
     }
 
     /// The path as a string slice.
@@ -62,7 +70,7 @@ mod tests {
     )]
 
     use super::OutputPath;
-    use crate::types::{Directory, Label, OutputName};
+    use crate::types::{Directory, Label, OutputName, TreePath};
 
     fn path(out: &str, label: &str, name: &str) -> OutputPath {
         OutputPath::of(
@@ -87,6 +95,14 @@ mod tests {
         assert_eq!(path("out", "//:app", "app").as_str(), "out/app");
         assert_eq!(path("", "//lib:text", "text").as_str(), "lib/text");
         assert_eq!(path("", "//:app", "app").as_str(), "app");
+    }
+
+    #[test]
+    fn a_file_of_a_directory_output_lives_below_the_outputs_path() {
+        let site = path("out", "//web:site", "site");
+        let script = site.entry(&TreePath::parse("assets/app.js").unwrap());
+        assert_eq!(script.as_str(), "out/web/site/assets/app.js");
+        assert_eq!(site.as_str(), "out/web/site");
     }
 
     #[test]

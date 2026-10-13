@@ -37,7 +37,7 @@ pub(crate) fn root_file() -> BuildFile {
 
 /// Evaluates the root build file of the workspace at `root` under the default limits.
 pub(crate) fn evaluate(root: &Path) -> Result<Evaluated> {
-    LuaSource::new(root, DeclarationLimits::default()).evaluate(&root_file())
+    LuaSource::new(root, DeclarationLimits::default(), []).evaluate(&root_file())
 }
 
 /// The failure and diagnostic of evaluating a root build file holding `source`.

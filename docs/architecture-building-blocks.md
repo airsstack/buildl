@@ -143,12 +143,14 @@ Every value is a validated newtype or a serializable handoff; field-level detail
 |---|---|
 |Names and identity|`Directory`, `TargetName`, `Label`, `NodeId`, `Provenance`|
 |Content|`Digest` — the single SHA-256 type for files, outputs, keys, and log blobs|
+|Outputs|`OutputManifest` — what one output is, a file or a directory of files, and the value an output's digest is taken of — with `StoredFile` and `FileMode` (a file's digest and whether it may be run), `Tree`, `TreeEntry` and `TreePath` (a directory's files, in path order); `Found`, `FoundEntry` and `FoundKind` — what a strategy reports at an output path|
 |Time|`Timestamp` — nanoseconds since the Unix epoch, the current one obtained only through the `Clock` port|
 |Phase handoffs|`Declaration`, `TargetGraph`, `Plan`, `ActionOutcome`|
-|Execution handoffs|`OutputPath` — where one output lives under `out/` — `ReadyAction` — one action with its command expanded — `RawOutcome` and `Exit` — how a run ended and what it printed — `OutcomeEvent` — one line of the log — `OnFailure`, `Summary`|
+|Execution handoffs|`OutputPath` — where one output lives under `out/` — `ReadyAction` — one action with its command expanded, and its rule's description expanded with it as an `ExpandedDescription` — `RawOutcome` and `Exit` — how a run ended and what it printed — `OutcomeEvent` — one line of the log — `OnFailure`, `Summary`|
 |Incrementality|`KeyComponents`, `ActionKey`|
 |Authority|`Ceiling`, `WantedSet`, `Want`, `Workspace`, `Grants`|
-|Classification|`OutcomeClass` and `InfraKind` (`#[non_exhaustive]`, `architecture.md` §4)|
+|Execution settings|`Execution` — the manifest's `[execution]` table, held in `Workspace` — with `Workers`, `Timeout` and `Isolation`, each validated at construction; none is a key component (`architecture.md` §6)|
+|Classification|`OutcomeClass`, `InfraKind` and `OutputRefusal` (`#[non_exhaustive]`, `architecture.md` §4); `TreeFault` — why a list of files is not a tree|
 
 ### 5.2 Ports
 
@@ -161,7 +163,9 @@ pub trait DeclarationSource {
     fn evaluate(&self, file: &BuildFile) -> Result<Evaluated>;
 }
 
-/// What the workspace's manifest says: its output and state directories, its ceiling.
+/// What the workspace's manifest says: its output and state directories, its ceiling,
+/// and its execution settings. The phases read the directories and the ceiling; the
+/// execution settings are for whoever assembles the dispatcher and the strategy.
 pub trait Manifest {
     fn workspace(&self) -> Result<Workspace>;
 }
@@ -191,12 +195,19 @@ pub trait ToolResolver {
     fn fingerprint(&self, program: &Program) -> Result<Option<Digest>>;
 }
 
-/// Workers write output blobs concurrently. `place` makes a stored blob the file at
-/// an output's path, replacing what is there.
+/// Workers write output blobs concurrently. What is held is bytes, by their digest
+/// alone: whether a file may be run is said each time it is placed.
 pub trait ContentStore: Send + Sync {
     fn put(&self, bytes: &[u8]) -> Result<Digest>;
     fn contains(&self, digest: &Digest) -> bool;
-    fn place(&self, digest: &Digest, at: &OutputPath) -> Result<()>;
+    /// The held content; `Ok(None)` when it is not held.
+    fn get(&self, digest: &Digest) -> Result<Option<Vec<u8>>>;
+    /// Removes whatever is at `at`, a file or a directory with everything below it.
+    /// Called before an output is placed, and again when it could not be placed whole.
+    fn clear(&self, at: &OutputPath) -> Result<()>;
+    /// Makes a stored blob the file at `at`, runnable or not as `mode` says, making
+    /// every missing directory above it and replacing a file already there.
+    fn place(&self, digest: &Digest, mode: FileMode, at: &OutputPath) -> Result<()>;
 }
 
 /// The scheduler side is the single writer. A row is durable once `record` returns
@@ -210,23 +221,28 @@ pub trait EventLog {
     fn append(&mut self, event: &OutcomeEvent) -> Result<()>;
 }
 
+/// When the command starts, the directory that will contain each declared output
+/// exists and nothing exists at an output path itself.
 pub trait ExecStrategy: Send + Sync {
     /// Each isolation tier materialises a differently shaped exec dir.
     type Dir;
     fn prepare(&self, action: &ReadyAction) -> Result<Self::Dir>;
     fn run(&self, dir: &Self::Dir, action: &ReadyAction) -> Result<RawOutcome>;
-    /// One entry per declared output, in order: its digest once stored in `cas`,
-    /// `None` when the action left nothing there.
+    /// One entry per declared output, in order: what the action left there — nothing,
+    /// a file, a directory with everything below it, or something that is neither.
+    /// Stores the bytes of every regular file it reports, and follows no symbolic link.
     fn collect<C: ContentStore>(
         &self,
         dir: &Self::Dir,
         action: &ReadyAction,
         cas: &C,
-    ) -> Result<Vec<Option<Digest>>>;
+    ) -> Result<Vec<Found>>;
 }
 
 /// `work` runs one task, on any thread. `step` runs on the calling thread, first with
-/// `None` and then with each result, and returns the tasks that became ready.
+/// `None` and then with each result, and returns the tasks that became ready. Every task
+/// `step` returns is run and every result reaches `step`; a build over a dispatcher that
+/// loses one fails with `Error::DispatcherFault` instead of reporting success.
 pub trait Dispatcher {
     fn dispatch<T, R, W, S>(&mut self, work: W, step: S) -> Result<()>
     where
@@ -319,25 +335,25 @@ classDiagram
 |---|---|---|
 |load|workspace root → `Vec<Declaration>` (queue, `subdir`, sorted merge)|`DeclarationSource`|
 |resolve|`Vec<Declaration>` → `TargetGraph` (validations, cycle detection)|—|
-|plan|`TargetGraph` and setting overrides → `Plan` (ceiling check, key assembly, a verdict per target)|`Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver`, `ActionCache`|
+|plan|`TargetGraph` and setting overrides → `Plan` (the settings in force, ceiling check, key assembly, a verdict per target; the plan carries the settings it was made with, as `Plan::settings()`)|`Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver`, `ActionCache`|
 |grants|wanted set ∩ ceiling → grants or refusal|`Manifest`, `Approver`|
-|execute|`TargetGraph`, `Plan` and the failure policy → `Vec<ActionOutcome>` (output layout, placeholder expansion, the program check, the `Schedule` state machine, cached or run, then cas, row, log)|`Manifest`, `Dispatcher`, `ExecStrategy`, `ContentStore`, `ActionCache`, `EventLog`, `Clock`|
-|canonical JSON|value → sorted-key bytes|—|
+|execute|`TargetGraph`, `Plan` and the failure policy → `Vec<ActionOutcome>` (output layout, placeholder expansion of commands and descriptions under the plan's settings, the program check, the `Schedule` state machine, cached or run, what an action left judged into one manifest per output, then cas, row, log; an outcome per target, or `Error::DispatcherFault`)|`Manifest`, `Dispatcher`, `ExecStrategy`, `ContentStore`, `ActionCache`, `EventLog`, `Clock`|
+|canonical JSON|value → sorted-key bytes; those bytes, and no others, → the value|—|
 
 ## 6. Port catalog
 
 |Port|`buildl-core` uses it for|v1 adapter|Crate|
 |---|---|---|---|
 |`DeclarationSource`|Load — one build file at a time|airsl engine per file, `buildl` module table|`buildl-lua`|
-|`Manifest`|the ceiling and the workspace's output and state directories; declaration limits, settings|`buildl.toml` reader|`buildl`|
+|`Manifest`|the ceiling and the workspace's output and state directories; the `[execution]` settings, which no phase reads and the composition root hands to the dispatcher and the strategy; declaration limits, settings|`buildl.toml` reader|`buildl`|
 |`Host`|the platform in every key, and the values of the env names targets read|the running machine's OS, architecture and environment|`buildl`|
 |`Digester`|input content hashes|filesystem + rayon|`buildl`|
 |`StatCache`|reusing digests on unchanged mtime + size|`.buildl/statcache.json`|`buildl`|
 |`ToolResolver`|tool fingerprints in the key|`PATH` lookup + fingerprint|`buildl`|
-|`ContentStore`|the cas: storing a blob, asking whether one is held, and making a stored output the file at its path under `out/`|`.buildl/cas/ab/…`, temp file then rename; hard links into `out/`|`buildl`|
-|`ActionCache`|cache rows: reading the last build's, and recording one durably for each target that was built|`.buildl/cache.json`|`buildl`|
+|`ContentStore`|the cas: storing a blob, asking whether one is held, reading a held one back (an output's manifest), clearing an output's path under `out/` — before the output is placed, and again when it cannot be placed whole — and making a stored blob a file there, runnable or not|`.buildl/cas/ab/…`, temp file then rename; hard links into `out/`, with a second inode or a copy where one blob is placed both plain and executable|`buildl`|
+|`ActionCache`|cache rows: reading the last build's, and recording one durably for each target that was built|`.buildl/cache.json`, written by the canonical serializer and read back by the canonical reader|`buildl`|
 |`EventLog`|one event per outcome|`.buildl/log.jsonl`|`buildl`|
-|`ExecStrategy`|running one action|`Bare` (tier 1), `InputSandbox` (tier 2)|`buildl`|
+|`ExecStrategy`|running one action, started with each output's containing directory in place and nothing at the output's own path, then reporting what the action left at each output path — a file, a directory with everything below it, or neither — and storing every regular file of it|`Bare` (tier 1), `InputSandbox` (tier 2)|`buildl`|
 |`Dispatcher`|running ready actions in parallel|std threads + `mpsc`|`buildl`|
 |`Approver`|turning the wanted set into grants|interactive, manifest|`buildl`|
 |`Clock`|log timestamps and durations|system clock|`buildl`|
@@ -382,11 +398,11 @@ The fakes live in `buildl-core`'s integration tests (`crates/buildl-core/tests/f
 |`Digester`|files held as bytes with their metadata, counting every call|a filesystem|
 |`StatCache`|in-memory, counting commits|a filesystem|
 |`ToolResolver`|fixed fingerprints, recording every lookup|a `PATH`|
-|`ContentStore`|blobs and placed paths held in memory; digests it can be told to forget, paths and content it can be told to fail on|a filesystem|
+|`ContentStore`|blobs and placed paths held in memory, each placed path with its mode; digests it can be told to forget, paths and content it can be told to fail on|a filesystem|
 |`ActionCache`|rows held in memory, with labels it can be told to fail on|a filesystem|
 |`EventLog`|the events appended, and whether to fail|a filesystem|
-|`ExecStrategy`|scripted per label: how the action exits, what it prints, what each output holds or that it is missing|process spawning|
-|`Dispatcher`|inline, on the test thread, taking the oldest or the newest waiting task first|threads; results are deterministic|
+|`ExecStrategy`|scripted per label: how the action exits, what it prints, and what is at each output — a file, one that may be run, a directory of files and of things that are not, a symbolic link, something special, or nothing|process spawning|
+|`Dispatcher`|inline, on the test thread, taking the oldest or the newest waiting task first; tasks it can be told to lose, unrun or run with the result dropped|threads; results are deterministic|
 |`Clock`|a counter, one tick per read|wall-clock time|
 
 Flows that run entirely in `buildl-core`'s tests:
@@ -396,8 +412,16 @@ Flows that run entirely in `buildl-core`'s tests:
 |`//:a` fails under `--keep-going`|summary `1 failed, 2 skipped, 2 built`|
 |cas write succeeds, cache write fails|no row for the target — the crash-safety invariant (design §8.5)|
 |rebuilt output byte-identical|downstream targets stay `Clean` — early cutoff|
+|an action leaves a directory at an output|stored file by file under one manifest; the next build puts it back whole without running|
+|a directory rebuilt to the same files, then with one file changed|its dependent is cached, then runs|
+|one file of a recorded directory has left the cas|the target is built again, never half put back|
+|one file of a directory cannot be placed, on a build or on a cache hit|the target fails and nothing of the directory is left at its path|
 |wanted program outside the ceiling|an `Error::Refused` before any strategy runs — an error of the build, not an outcome class|
 |one input changed|dirty reason is the `KeyComponents` diff|
+|a tool named through a build setting is replaced|the target is dirty for the tool, and runs again|
+|the `[execution]` settings all change after a build|every target stays `Clean`: none of them is in a key|
+|only a rule's `desc` is edited|every target is cached, and no action runs|
+|the dispatcher loses a task|`Error::DispatcherFault` naming every target left without an outcome; what ended before keeps its content, row and event|
 |a build file enqueues subdirectories out of order|merged declarations sorted by directory, then declared name|
 
 ## 9. Publishing
@@ -439,7 +463,7 @@ Once published, the ports are a semver contract:
 |Port openness|**Open, unsealed traits**|Adapters are implemented in other crates [5]; ports grow through default methods.|
 |Scheduler|**Pure `Schedule` + `Dispatcher` port**|Keep-going and skip semantics are testable without threads; the scheduler was already the single writer (`architecture.md` §3.4), so counters need no atomics.|
 |Load granularity|**`DeclarationSource` evaluates one file**|The directory queue and the sorted merge are determinism-bearing logic, so they stay in `buildl-core` where fakes can test them.|
-|Source globbing|**Host-side in `buildl-lua`**|`b.sources()` walks with `globset` and `walkdir`, so the declaration engine holds no grant and `airsstack.glob.walk` is refused; sorting, symlink policy and the containment check are buildl's, in one place.|
+|Source globbing|**Host-side in `buildl-lua`**|`b.sources()` walks with `globset` and `walkdir`, so the declaration engine holds no grant and `airsstack.glob.walk` is refused; sorting, symlink policy and the containment check are buildl's, in one place. The directories the walk stays out of are a required argument of `LuaSource::new`, so a source cannot be built without them, and the composition root gives it the manifest's output and state directories: the skip list is the adapter's configuration, not part of the port, so `buildl-lua` reads no manifest.|
 |Diagram notation|**Mermaid `graph` with C4 element labels**|Renders wherever the other documents' Mermaid renders; Mermaid's dedicated C4 syntax is marked experimental.|
 
 ## 11. Open questions

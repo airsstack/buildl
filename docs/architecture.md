@@ -124,6 +124,7 @@ classDiagram
         labels: Vec~Label~
         verdicts: Vec~Verdict~
         wanted: WantedSet
+        settings: BTreeMap~SettingName_SettingValue~
     }
     class Verdict {
         <<enumeration>>
@@ -178,7 +179,7 @@ stateDiagram-v2
     Skipped --> [*]
 ```
 
-A started target is _settled_ before it runs: its key is finished from what its dependencies' rows now hold, and when the target is not declared `always`, that key equals the one its last build recorded, and every digest the row holds is still in the cas, it succeeds as cached without running. So a target becomes cached when it is settled, not only when the plan called it clean: a conditional target (§3.3) gets its answer here, and a clean one whose output left the cas runs again. `Succeeded` covers cached and built, and the outcome's class tells them apart (§4). A cached target and a skipped one never run — the two results a task runner cannot represent, and the reason the summary line can say `1 failed, 2 skipped, 2 built, 9 cached`.
+A started target is _settled_ before it runs: its key is finished from what its dependencies' rows now hold, and when the target is not declared `always`, that key equals the one its last build recorded, and everything needed to put its outputs back is still in the cas — what the action printed, the manifest of each output, and every file a manifest names (§3.5) — it succeeds as cached without running. So a target becomes cached when it is settled, not only when the plan called it clean: a conditional target (§3.3) gets its answer here, and a clean one whose output left the cas runs again. `Succeeded` covers cached and built, and the outcome's class tells them apart (§4). A cached target and a skipped one never run — the two results a task runner cannot represent, and the reason the summary line can say `1 failed, 2 skipped, 2 built, 9 cached`.
 
 ## 3. Phase implementations
 
@@ -188,8 +189,8 @@ Each phase's logic lives in `buildl-core` and reaches I/O only through ports; th
 |---|---|---|---|
 |§3.1 `declare`|directory queue, `subdir`, sorted merge|`DeclarationSource`|`buildl-lua`|
 |§3.2 `graph`|resolve, validations, cycle detection|—|—|
-|§3.3 `plan`|ceiling check, key assembly, a verdict per target|`Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver`, `ActionCache`|`buildl`|
-|§3.4 `exec` and §3.5 `store` — one phase module, `execute`|output layout, placeholder expansion, the program check, the `Schedule` state machine, cached or run, record ordering: cas, row, log|`Manifest`, `Dispatcher`, `ExecStrategy`, `ContentStore`, `ActionCache`, `EventLog`, `Clock`|`buildl`|
+|§3.3 `plan`|the settings in force, ceiling check, key assembly, a verdict per target|`Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver`, `ActionCache`|`buildl`|
+|§3.4 `exec` and §3.5 `store` — one phase module, `execute`|output layout, placeholder expansion of commands and descriptions, the program check, the `Schedule` state machine, cached or run, record ordering: cas, row, log, the dispatcher held to its contract|`Manifest`, `Dispatcher`, `ExecStrategy`, `ContentStore`, `ActionCache`, `EventLog`, `Clock`|`buildl`|
 
 ### 3.1 `declare` — the airsl boundary
 
@@ -198,6 +199,8 @@ The only crate that speaks Lua is `buildl-lua`, which implements the `Declaratio
 Installation: the engine keeps airsl's default `airsstack` root table, the `buildl` `HostModule` populates its own table, and inside `install` it binds that same table to the global `buildl` (design doc §5) — so every build file is evaluated with `buildl` loaded and `airsstack` beside it. `HostModule: Send + Sync` is part of airsl's contract, which is what rules the staging buffer's shape below.
 
 The mechanics of collection: the `buildl` `HostModule`'s closures capture an `Arc<Mutex<Staging>>` for the file being evaluated: the staged records, the file's byte budget (its memory ceiling), and the first refusal, which stands even if the build file catches it with `pcall`. `b.target(...)` validates its option table shape _immediately_ (an unknown field, or a field of the wrong Lua type → `EvaluationFailure::UnknownField` / `WrongFieldType`, airsl-refusal style) and pushes a staged declaration: every value exactly as written, a `Written<T>` typed by what it must become, numbered with its `DeclarationOrder`. `b.subdir(dir)` pushes a `StagedSubdir` into the same buffer. Both return to `buildl-core` inside the `StagedFile` that `evaluate` hands back; Load attaches the `Provenance` (it built the `BuildFile`, so it already knows which file the result belongs to), validates every value, and resolves the requested directories, rejecting escapes, skipping repeats and queueing the rest — Lua never recurses, and the adapter never sees the queue.
+
+`b.sources()` is the phase's one filesystem read, a host-side walk inside `buildl-lua`. The directories that walk must stay out of are a required argument of `LuaSource::new`, so no source exists without them; an empty list is written out and skips nothing. Each is workspace-relative and matched by its whole path from the workspace root: the walk neither lists, enters nor counts anything inside one, and a build file whose own directory is one, or lies inside one, gets an empty list. The composition root passes the manifest's output and state directories (`Workspace::out`, `Workspace::state`), so the adapter reads no manifest and a build file at the workspace root never lists what the build wrote.
 
 Parallel load: the directory queue is processed by a small pool; each worker owns its engines, staging buffers merge at the end, and the merge sorts by (directory, declared name, then the whole declaration) so parallel load yields the identical staging list as serial load. The key holds no declaration order: under `pairs` the same file may issue its declarations in a different order on each evaluation. Determinism rule: parallelism must never be observable in any output (§6).
 
@@ -209,19 +212,23 @@ Cycle detection is iterative DFS (explicit stack — a deep graph must not overf
 
 ### 3.3 `plan` — keys and the stat cache
 
-The ceiling check comes first: every program, env name, declared input and output root is compared with the manifest's ceiling, and nothing is hashed or looked up until it passes. Then, once per graph: one fingerprint per distinct program (`ToolResolver`), one digest per distinct input (`Digester`, through the stat cache), the platform and one value per env name (`Host`). Each node's own components are assembled from those.
+The settings in force are fixed first: each declared setting's default, or its override for this run, and an override naming no declared setting fails the plan. Everything after reads those values, and the plan carries them: `Plan::settings()` holds every declared setting with the overrides applied, so Execute takes the graph, the plan and the failure policy, and expands commands and descriptions from the plan's own values, never from overrides handed to it a second time. The ceiling check comes next: every program, env name, declared input and output root is compared with the manifest's ceiling, and nothing is hashed or looked up until it passes. A program is what a command's first argument names once each `$opt:` reference in it is replaced by its setting's value (`Argument::with_settings`), so one named through a setting is wanted, looked up and keyed exactly as one written out. A first argument that is then empty or still holds a `$` — one that runs `$deps` — names no program here; §3.4's program check decides it. Then, once per graph: one fingerprint per distinct program (`ToolResolver`), one digest per distinct input (`Digester`, through the stat cache), the platform and one value per env name (`Host`). Each node's own components are assembled from those.
 
 Verdicts are decided bottom-up over a topological order, computed with a queue rather than by recursion. A node whose dependencies are all clean has a finished key — its own components plus what each dependency's cache row says it produced — digested from the canonical serialization of the components and compared with the key in the node's own row: equal is `Clean`, different is `Dirty` with the components that differ. A node with a dependency that is not clean cannot finish its key, because that dependency's output does not exist yet: it is `Dirty` when something already known differs and `Conditional` otherwise, running only if the dependency produces something other than what was recorded. Its unfinished key holds everything the ports supplied, so the executor finishes it from the graph and its dependencies' new rows.
 
 The stat cache holds, per input path, a `StatEntry { stat: FileStat { modified, size }, digest }`, loaded by its adapter from `.buildl/statcache.json`; an entry whose `FileStat` equals the file's current one reuses the digest, anything else re-hashes and records — ninja's mtime discipline with content-hash truth underneath [3]. The reuse rule is Plan's, tested against fakes, and the adapter only stores; Plan commits the cache once when it recorded something and not at all otherwise. File hashing fans out with rayon's parallel iterators [5] — files are independent, the work is chunkable, and rayon's pool is confined to the `Digester` adapter in `buildl` (decision record §6).
 
-Output: a `Plan` — one `Verdict` per node, and the `WantedSet` — and a build that would exceed the ceiling is an `Err`, not a plan.
+Output: a `Plan` — one `Verdict` per node, the `WantedSet`, and the settings in force — and a build that would exceed the ceiling is an `Err`, not a plan.
 
 ### 3.4 `exec` — the scheduler
 
 Two halves. The scheduling logic is `Schedule`, a pure state machine in `buildl-core`: it owns the state array (§2.1) and one dependency counter per node, hands out the `NodeId`s that became ready, and on `complete(node, finish)` starts dependents or skips them. Its caller is the only writer, so the counters are plain integers — single-writer bookkeeping, so no lock ordering to reason about. Parallelism is the `Dispatcher` port, one method: `dispatch(work, step)`. `work` runs one task and may run on any thread, several at once; `step` runs on the calling thread, first with nothing and then with each result, and returns the tasks that became ready. The port is generic over the task and the result, so it knows nothing of builds. Its v1 adapter in `buildl` uses plain threads, no async runtime (decision record §6): a ready queue (`std::sync::mpsc` channel) and N worker threads that receive a task, run it through `work`, and send the result back on a results channel. Tests drive the same two closures through an inline dispatcher on one thread.
 
-What runs where follows the record ordering (§3.5). A worker prepares the exec dir, runs the action through the strategy (below), stores what the action printed, and stores its outputs in the cas. The calling thread links the outputs into `out/`, writes the cache row, appends the log event and releases dependents. Stopping after a failure is a flag `step` sets and `work` reads before it begins an action: the dispatcher runs every task it was given, so a task handed over before the failure comes back not begun, and its target is skipped.
+The port's contract is that every task `step` returns is run and every result reaches `step`. The signature settles half of it: the port is generic over the task and the result and asks for no way to copy or to build either, so a dispatcher cannot hand `step` a result twice, or one for a task it was never given. What it can do is lose a task or its result, and the build does not take that on trust. A dispatcher that returns `Ok` while a target has no outcome fails the build with `Error::DispatcherFault { targets }`: every target without an outcome, in label order, those that waited on the lost one included. A build therefore never reports success, or a summary, with a target missing; what ended before the loss has its blobs, its row and its log event already, and keeps them.
+
+Everything that can refuse a build is decided before the first task is handed out: the plan belongs to the graph, no two outputs claim one path, and every command is expanded and its program held to the ceiling — the program check. A program written out or named through a setting was already held to it at Plan (§3.3); the check is the only place that knows a program first named by `$in`, `$out` or `$deps`, whose path comes from the output layout, and a command that names no program at all (`Error::NoProgram`). It is one check over every expanded command, whichever way the program was named.
+
+What runs where follows the record ordering (§3.5). A worker prepares the exec dir, runs the action through the strategy (below), stores what the action printed, has the strategy store every file the action left and report what is at each output path, and stores one manifest per output (§3.5). The calling thread clears each output's path under `out/` and places its files there — clearing the path again when an output cannot be placed whole (§3.5) — writes the cache row, appends the log event and releases dependents. Stopping after a failure is a flag `step` sets and `work` reads before it begins an action: the dispatcher runs every task it was given, so a task handed over before the failure comes back not begun, and its target is skipped.
 
 Execution strategies are one trait, the design doc's isolation ladder (§12.2) as code:
 
@@ -233,26 +240,42 @@ pub trait ExecStrategy: Send + Sync {
     fn prepare(&self, action: &ReadyAction) -> Result<Self::Dir>;
     /// Spawn and wait, capturing output. No shell, ever.
     fn run(&self, dir: &Self::Dir, action: &ReadyAction) -> Result<RawOutcome>;
-    /// Store what the action left at each declared output: one entry per output,
-    /// `None` where nothing is there.
+    /// Say what the action left at each declared output, one entry per output, in
+    /// order, and store the bytes of every regular file reported. No symbolic link
+    /// is followed, and nothing is left out because it cannot be kept.
     fn collect<C: ContentStore>(
         &self,
         dir: &Self::Dir,
         action: &ReadyAction,
         cas: &C,
-    ) -> Result<Vec<Option<Digest>>>;
+    ) -> Result<Vec<Found>>;
 }
 ```
 
-The trait is a `buildl-core` port, and `buildl` ships the v1 adapters: `Bare` (tier 1: workspace cwd, granted env only) and `InputSandbox` (tier 2: temp dir, symlinked declared inputs). `OsSandbox` and `Container` are later impls of the same trait — the trait is in v1 so the ladder is a seam, not a refactor. A `ReadyAction` holds its command already expanded to workspace-relative paths (design doc §8.5), so a strategy only makes those paths true in its exec dir. `collect` is the strategy's because it alone knows that dir, and an output never passes through `buildl-core` as bytes. `run` returns a `RawOutcome`: how the action ended — an exit status, or a timeout — and what it printed.
+The trait is a `buildl-core` port, and `buildl` ships the v1 adapters: `Bare` (tier 1: workspace cwd, granted env only) and `InputSandbox` (tier 2: temp dir, symlinked declared inputs). `OsSandbox` and `Container` are later impls of the same trait — the trait is in v1 so the ladder is a seam, not a refactor. A `ReadyAction` holds its command already expanded to workspace-relative paths (design doc §8.5), so a strategy only makes those paths true in its exec dir. It also holds the rule's description as an `Option<ExpandedDescription>`, expanded with the command from the same paths and settings (design doc §5): `None` for an inline command or a rule without `desc`, otherwise one line of any length, with a control character from a substituted value shown as a space. That is display text for whoever shows the action — no part of the key, the outcome or the log event. `collect` is the strategy's because it alone knows that dir, and an output's files never pass through `buildl-core` as bytes: only its manifest does. `run` returns a `RawOutcome`: how the action ended — an exit status, or a timeout — and what it printed.
+
+A command starts with the directory that will contain each declared output in place and nothing at the output path itself; the command creates what it produces there, a file or a directory. `collect` then reports, and does not judge. Each output path comes back as a `Found`: `Nothing`, `File` (a `StoredFile` — the digest of its bytes and a `FileMode`, `Plain` or `Executable`), `Tree` (everything below a directory, in any order, each entry a file or what it is instead: an empty directory, a symbolic link, something special, a name that is not Unicode), `Symlink` or `Special`. Every decision is `buildl-core`'s, made from those values in declared order and, inside a directory, in path order, so the same files end a build the same way whatever order a filesystem lists them in:
+
+|Found at an output|The target ends as|
+|---|---|
+|nothing|`OutputMissing`|
+|a regular file, or a directory holding only regular files|an `OutputManifest`, and `Built` once it is stored and recorded|
+|a symbolic link, a special file, an empty directory, or a name that is not Unicode — at the path or below it|`OutputRefused { name, refusal }`, the action's fault (§4)|
+|a list that is no tree: a path that leaves the directory, a path twice, a file where another needs a directory; or an answer for the wrong number of outputs|`InfraFailure { kind: Store }`: a directory walk cannot produce these, so the strategy misreported|
 
 Output capture: piped stdout/stderr read by two threads per action into buffers, blobs written to the cas, digests recorded on the outcome. Printing is owned by a single reporter on the scheduler side (block per completed action; TTY status line) — workers never touch the terminal.
 
 ### 3.5 `store` — cas, action cache, log
 
-The cas is `.buildl/cas/ab/cdef...` (two-char shard dirs). Every write is temp-file-then-rename within the same filesystem — atomic, the `fs.atomic_write` discipline [1]. `out/` entries are hard links into the cas (copy fallback for filesystems that refuse). The action cache is a `BTreeMap<Label, CacheRow { key: ActionKey, outputs: Vec<Digest>, stdout, stderr }>` — the whole key, components included, so the next plan can name the component that changed — serialized as sorted-key JSON. A row is written through `ActionCache::record`, one write per target, and is durable when that call returns: a dependent keys on its dependency's row, so the row must be safe before the dependent starts, and a write that fails leaves no row. Write ordering enforces the §8.5 invariant: **cas first, row after, log always**. `log.jsonl` is append-only, one sorted-key JSON object per outcome, output blobs referenced by digest rather than inlined.
+The cas is `.buildl/cas/ab/cdef...` (two-char shard dirs). Every write is temp-file-then-rename within the same filesystem — atomic, the `fs.atomic_write` discipline [1]. The cas holds bytes by their digest and nothing else: whether a file may be run is not stored with it, and is said again each time the file is placed.
 
-`gc` walks roots (current `graph.json` outputs + cache rows) and unlinks unreferenced cas entries — refcounting deferred; mark-and-sweep is enough at v1 scale.
+An output is described by an `OutputManifest`, `File(StoredFile)` or `Tree(Tree)`, whose canonical JSON — `{"file":{"digest","mode"}}` or `{"tree":[{"digest","mode","path"},…]}` — is itself a blob in the cas. The digest of those bytes is the output's one digest, for a file and a directory alike: it is what a row, a log event and a dependent's `Produced` hold, so the executable bit and every file of a directory reach a dependent's key, and a file can never share a digest with a tree. A `Tree` is built only by `Tree::new`: at least one file, entries sorted by path bytes, no path twice, no file where another entry needs a directory, each path a `TreePath` that cannot leave the directory. It has no entry for a directory, so a directory is in it exactly when a file lies below it.
+
+Putting an output in place is `clear(path)`, then `place(digest, mode, path)` for the file, or for each file of the tree in path order at its path below the output's — the clear is what stops a file the new tree no longer holds, or a directory where a file now belongs, from surviving. When a `place` fails, the same `clear(path)` is called once more and the target fails as `InfraFailure { kind: Store }` with the placement's error: nothing of that output is left at its path, no later output of the target is touched, and the outputs placed whole before it stay. If that second `clear` fails too, its error is dropped — the target has failed already and no row is written — and what was placed stays until the next placement at that path, which begins with a `clear`. `out/` entries are hard links into the cas (copy fallback for filesystems that refuse); a hard link shares its inode's mode, so a blob placed both as plain and as executable needs a second inode or a copy with the mode set. A target is cached only when its row's key still stands and everything needed to put it back is held: what it printed, each output's manifest, reading back as one, and every file a manifest names. One file of a tree gone means the action runs again — a tree is put back whole or not at all — and a store that fails while reading a manifest fails the build.
+
+The action cache is a `BTreeMap<Label, CacheRow { key: ActionKey, outputs: Vec<Digest>, stdout, stderr }>` — one manifest digest per declared output, and the whole key, components included, so the next plan can name the component that changed — serialized as sorted-key JSON and read back through the canonical reader (§5 rule 2). Reading rebuilds each value through its own constructor: a key's stored digest is recomputed from its components and compared, and a row's outputs are counted against the outputs its key declares, so a row is read whole or not at all. A row is written through `ActionCache::record`, one write per target, and is durable when that call returns: a dependent keys on its dependency's row, so the row must be safe before the dependent starts, and a write that fails leaves no row. Write ordering enforces the §8.5 invariant: **cas first, row after, log always**. `log.jsonl` is append-only, one sorted-key JSON object per outcome, output blobs referenced by digest rather than inlined.
+
+`gc` walks roots (current `graph.json` outputs + cache rows), follows each output digest to its manifest and marks every file the manifest names, and unlinks unreferenced cas entries — refcounting deferred; mark-and-sweep is enough at v1 scale.
 
 ## 4. Error architecture
 
@@ -264,12 +287,26 @@ pub enum OutcomeClass {
     Built,
     ActionFailure { status: i32 },          // the build did its job
     OutputMissing { name: OutputName },     // exit 0, a declared output absent
+    OutputRefused {                         // exit 0, an output that cannot be kept
+        name: OutputName,
+        refusal: OutputRefusal,             // Symlink, Special, EmptyDirectory, NotText
+    },
     InfraFailure { kind: InfraKind },       // Prepare, Run, TimedOut, Store
     Skipped { because: Label },
 }
 ```
 
-`OutputMissing` is the build revealing a fault, like `ActionFailure`: the action exited zero and left nothing at an output it declared. `Skipped` names the failed target by `Label`, so no `NodeId` reaches the log. Classification is structural at the site that knows (spawn error vs non-zero exit vs timeout flag), never downstream. The CLI maps classes to exit codes; `log.jsonl` carries the class verbatim. Every error that can name a target carries `Label + Provenance`; the display impl renders airsl-refusal-shaped messages — what was wanted, what was granted or found, where it was declared.
+`OutputMissing` is the build revealing a fault, like `ActionFailure`: the action exited zero and left nothing at an output it declared. `OutputRefused` is the same family: the action exited zero and left, where an output it declared should be, something that cannot be put back exactly by placing files (§3.4); `name` is the first such output in declared order. It counts as failed, leaves no cache row, and its diagnostic names what was refused and where. A tree the strategy misreported is the builder's fault instead, `InfraFailure { kind: Store }`. `Skipped` names the failed target by `Label`, so no `NodeId` reaches the log. Classification is structural at the site that knows (spawn error vs non-zero exit vs timeout flag), never downstream. The CLI maps classes to exit codes; `log.jsonl` carries the class verbatim. Every error that can name a target carries `Label + Provenance`; the display impl renders airsl-refusal-shaped messages — what was wanted, what was granted or found, where it was declared.
+
+An error that is not an outcome fails the build as a whole. Three kinds carry data a caller branches on, and each is kept apart from `Error::Adapter`, which carries an adapter's own failure as text for display only:
+
+|Variant|Raised when|Carries|
+|---|---|---|
+|`Refused`|a want is outside the ceiling, at Plan or at the program check (§3.4)|the want, the lowest-labelled target wanting it with its build file, and the ceiling|
+|`DispatcherFault`|the dispatcher returned success and left a target without an outcome (§3.4)|`targets`: every target without an outcome, in label order|
+|`UnreadableJson`, `NonCanonicalJson`|bytes handed to the canonical reader cannot be trusted (§5 rule 2)|`source`, the `serde_json` error with its line and column; or `offset`, the first byte that differs from the canonical form|
+
+The two JSON variants are how a storage adapter tells a corrupt file from one it could not read: the first is one of these, the second its own `Error::Adapter`. `UnknownSetting`, Resolve's error for a `$opt:` that names no declared setting, names the target or rule holding the reference in its command, or the rule holding it in its description.
 
 ## 5. Determinism engineering rules
 
@@ -286,6 +323,11 @@ House rules enforcing design-doc §12 at the code level — checkable in review,
    before the walk sees them, indistinguishable from a genuine `null`. The real guarantee is
    `crates/buildl-core/clippy.toml`'s ban on `f32` and `f64` in the crate, asserted by
    `cargo make guard-core-purity`; the serializer's walk is the second line, not the first.
+   JSON comes back through one place too: `canonical::from_slice` rebuilds the value through its
+   type's own `Deserialize`, writes it again and compares the bytes, so it accepts exactly what
+   the serializer writes for some value and nothing else. A field left out or unknown, a key out
+   of order or written twice, whitespace, and an escape the serializer would not use are all
+   refused, and writing a value that was read gives back the bytes it was read from.
 3. **Parallelism is never observable.** Parallel load merges sorted (§3.1); parallel hashing writes into pre-indexed slots; the executor's completion _order_ appears only in the log's timestamps, never in any artifact.
 4. **Wall clock is quarantined.** `now()` is read in exactly two places — log event timestamps and durations — via the `Clock` port, whose only real adapter lives in `buildl`. The crate boundary does not enforce this: `std::time` is in scope for every crate. `crates/buildl-core/clippy.toml` bans `Instant`, `SystemTime` and `SystemTimeError` under `disallowed-types`, and `cargo make guard-core-purity` runs that ban inside `cargo make dod` — so it is lint configuration, not grep and not the compiler, that keeps the rule true.
 5. **Double-run checks are CI, not doctrine.** `buildl check` runs declaration twice and compares the two sorted staging lists by value; the test suite builds a fixture workspace twice and asserts byte-identical `graph.json`, `cache.json`, and cas contents.
@@ -298,7 +340,7 @@ House rules enforcing design-doc §12 at the code level — checkable in review,
 |Graph library|**Own arenas; petgraph declined** [2]|Built once, immutable, three algorithms needed, must serialize stably (§3.2).|
 |Parallel hashing|**rayon, confined to the `Digester` adapter** [5]|Chunkable CPU-bound work is its exact use case; confining it keeps the executor's threading model singular.|
 |Hash|**SHA-256**|REAPI compatibility [4] outweighs blake3's speed; the stat cache makes hashing rare on warm builds anyway.|
-|Cache files|**JSON via the canonical serializer**|Diff-stable and debuggable beats compact; airsl's sorted-key JSON is the precedent [1]. Binary formats only if profiling demands.|
+|Cache files|**JSON written by the canonical serializer, read back by the canonical reader**|Diff-stable and debuggable beats compact; airsl's sorted-key JSON is the precedent [1]. Binary formats only if profiling demands. The reader takes only the bytes the serializer writes, verifies a key's digest against its components and counts a row's outputs against its key's, so a file that fails is `Error::UnreadableJson` or `Error::NonCanonicalJson` — corrupt, and distinct from an `Error::Adapter` read failure (§3.5, §4).|
 |Worker/scheduler channel|**std mpsc**|One producer set, one consumer, no select needed; crossbeam only if the reporter grows a second consumer.|
 |Lua exposure|**`buildl-lua` crate only**|An airsl (or mlua [6]) upgrade touches one crate; `buildl-core` compiles Lua-free by construction, since airsl is not among its dependencies.|
 |Structure|**Four dependency-inverted crates**|Every flow testable against fake ports; recorded with its alternatives in building blocks §10.|
@@ -306,6 +348,14 @@ House rules enforcing design-doc §12 at the code level — checkable in review,
 |Directory-only labels|**Rejected, not resolved to `//dir:dir`**|Bazel's shorthand is not adopted: the design document states no such rule, and one target with two spellings breaks the `Display` → `parse` round-trip and admits two cache keys meaning the same target.|
 |Floats in canonical JSON|**Refused outright, banned at compile time**|Nothing in the domain model is float-valued, and a non-finite float serializes as `null`, which would make an action key disagree with the value it was computed from. See §5 rule 2.|
 |`Timestamp` representation|**`u64` nanoseconds since the Unix epoch; no date dependency**|The clock feeds durations as well as event timestamps (§5 rule 4) and `Instant` is banned in `buildl-core`, so a duration is the difference of two timestamps — which second resolution could not express. Unrelated to `SOURCE_DATE_EPOCH`, a whole-second value the sandbox hands to an action. Formatting belongs to the adapter that displays it, where a date library may be taken.|
+|Execution settings and the key|**`workers`, `timeout` and `strategy` are not key components**|`workers` is scheduling, never observable in an artifact (§5 rule 3). `timeout` bounds whether an action finishes, not what it produces, and a timed-out action is a failure, never cached. `strategy` decides what an action can reach beyond its declared inputs, not what they are: keying on it would rebuild a workspace on every move up the ladder and stop a `sandbox` machine and an `os-sandbox` one sharing a cache, without making any output more correct. The tier-4 image is what changes output, and its digest joins the key per action (design §11.2).|
+|Execution settings as types|**`Execution { workers: Workers, timeout: Timeout, strategy: Isolation }` in `Workspace`**|Each grammar is checked once, at construction, and the manifest's `0` never leaves `Workers`: a reader matches `PerCore` or `Fixed`, or asks `Workers::on(cores)`. `Timeout` is whole milliseconds, never zero. `Isolation` is ordered as the ladder is, so "tier 2 or above" is `>= Isolation::Sandbox`, and is named apart from the `ExecStrategy` port. An absent key is the type's `Default`.|
+|Program named through a build setting|**Resolved at Plan, under the settings in force**|A setting's value is known before anything runs, so the program is as settled as one written out: it gets the ceiling check, the lookup and a fingerprint in the key. The build-time program check stays one uniform check over every expanded command; it alone knows a program first named by `$in`, `$out` or `$deps` (§3.3, §3.4).|
+|A dispatcher that loses a task|**An error of the build, `Error::DispatcherFault`**|A build that answers `Ok` with fewer outcomes than targets reports success for work never done. The fault names the targets as data, so it is its own variant and not `Error::Adapter`'s display text (§3.4, §4).|
+|What an output's digest is|**The digest of its `OutputManifest`, for a file and a directory alike**|An output is a file that may or may not be run, or a whole directory, and a row, an event and a dependent's key each hold exactly one digest per output. One manifest blob in the cas says which it is, so those three keep their shapes, the executable bit is in the digest, and a file never shares a digest with a tree. The cost is one small blob per output and one read per output on a cache hit (§3.5).|
+|What a directory output may hold|**Regular files only; anything else is refused, not approximated**|A symbolic link, a special file, an empty directory and a name that is not Unicode cannot be put back exactly by placing files, so the action fails as `OutputRefused` rather than having something close to its output stored. A stamp file is the idiom for such a tree (design §9.2).|
+|Who judges what an action left|**`collect` reports as `Found`; `buildl-core` decides**|I/O stays in the port and every decision is testable against values. Only the executable bit of a file's mode is kept; other permission bits, the owner and the times of a placed file are the store's to choose (§3.4).|
+|A rule's description|**Expanded with the command; display text outside the key**|It reaches a `ReadyAction` as its own type, `ExpandedDescription`, because an expanded list of paths has no length limit while a written `Description` is held to 1024 bytes. Nothing in Plan reads it, so editing only a `desc` leaves every target cached (§3.4).|
 
 ## 7. Testing strategy
 
@@ -322,7 +372,7 @@ The narrow handoffs are the test surface. Each flow runs first in `buildl-core` 
 
 - Whether `ExecDir` materialisation for `InputSandbox` uses symlinks (fast, but visible to tools that `readlink`) or hard links (opaque, but same-filesystem only) — likely per-strategy config with hard links default.
 - Whether the stat cache should be keyed by `(dev, inode)` in addition to path, to survive renames without re-hashing.
-- Settled: where settings validation lives. A `$opt:name` reference in a command is checked against the declared settings at Resolve; a `--set` override is checked against them at Plan, the first phase an invocation value reaches, and one naming no declared setting fails the plan.
+- Settled: where settings validation lives. A `$opt:name` reference in a command, or in a rule's description, is checked against the declared settings at Resolve; a `--set` override is checked against them at Plan, the first phase an invocation value reaches, and one naming no declared setting fails the plan.
 - Whether `graph.json` is written on every build or only on `buildl graph` — writing always makes `gc` roots simpler; measuring the cost first.
 
 ## References

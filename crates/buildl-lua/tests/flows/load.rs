@@ -55,7 +55,7 @@ fn target(
 
 #[test]
 fn load_turns_a_real_workspace_into_declarations() {
-    let source = LuaSource::new(fixture("workspace"), DeclarationLimits::default());
+    let source = LuaSource::new(fixture("workspace"), DeclarationLimits::default(), []);
     let declarations = load(&source, &EntryName::parse("build.lua").unwrap()).unwrap();
     let expected = vec![
         target(

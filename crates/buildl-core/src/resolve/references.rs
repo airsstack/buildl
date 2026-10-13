@@ -5,7 +5,7 @@
 //! the wrong kind of thing.
 //!
 //! Responsibilities: [`Holder`], and one function per kind of reference — [`dependency`],
-//! [`rule`], [`alias_target`] and [`settings`].
+//! [`rule`], [`alias_target`], [`settings`] and [`description_settings`].
 //!
 //! Non-responsibilities: the order references are checked in, and what is built from the
 //! answers. Both belong to the function that walks the index.
@@ -13,7 +13,7 @@
 use crate::error::{DeclarationField, DeclarationSite, DeclaredKind, Error, Result};
 use crate::resolve::index::{Entry, Index, Item};
 use crate::resolve::suggest::nearest;
-use crate::types::{Command, Label, Provenance, Rule, SettingName};
+use crate::types::{Argument, Command, Description, Label, Provenance, Rule, SettingName};
 
 /// The declaration holding a reference: the one an error about that reference names.
 ///
@@ -145,20 +145,42 @@ pub(crate) fn alias_target<'a>(
 ///
 /// Returns [`Error::UnknownSetting`] for the first reference that names no declared setting.
 pub(crate) fn settings(index: &Index, holder: Holder<'_>, command: &Command) -> Result<()> {
-    for argument in command.arguments() {
-        for name in argument.setting_references() {
-            let declared =
-                SettingName::parse(name).is_ok_and(|setting| index.settings.contains_key(&setting));
-            if !declared {
-                return Err(Error::UnknownSetting {
-                    site: Box::new(holder.site()),
-                    name: name.to_owned(),
-                    suggestion: nearest(name, index.settings.keys()).cloned(),
-                });
-            }
-        }
+    command
+        .arguments()
+        .iter()
+        .flat_map(Argument::setting_references)
+        .try_for_each(|name| declared(index, holder, name))
+}
+
+/// Checks that every `$opt:name` in `description` names a declared build setting, as
+/// [`settings`] does for a command.
+///
+/// References are checked in the order they appear.
+///
+/// # Errors
+///
+/// Returns [`Error::UnknownSetting`] for the first reference that names no declared setting.
+pub(crate) fn description_settings(
+    index: &Index,
+    holder: Holder<'_>,
+    description: &Description,
+) -> Result<()> {
+    description
+        .setting_references()
+        .into_iter()
+        .try_for_each(|name| declared(index, holder, name))
+}
+
+/// Checks that the build setting written as `name` is declared.
+fn declared(index: &Index, holder: Holder<'_>, name: &str) -> Result<()> {
+    if SettingName::parse(name).is_ok_and(|setting| index.settings.contains_key(&setting)) {
+        return Ok(());
     }
-    Ok(())
+    Err(Error::UnknownSetting {
+        site: Box::new(holder.site()),
+        name: name.to_owned(),
+        suggestion: nearest(name, index.settings.keys()).cloned(),
+    })
 }
 
 /// The error for a reference to a declaration its field cannot name.
@@ -208,11 +230,11 @@ mod tests {
 
     use std::path::Path;
 
-    use super::{Holder, alias_target, dependency, rule, settings};
+    use super::{Holder, alias_target, dependency, description_settings, rule, settings};
     use crate::error::{DeclarationField, DeclaredKind, Error};
     use crate::resolve::fixtures::{alias, command, file, label, rule as a_rule, setting, target};
     use crate::resolve::index::{Index, index};
-    use crate::types::{Label, Provenance};
+    use crate::types::{Description, Label, Provenance};
 
     /// `//:app` and `//lib:text` are targets, `//:default` an alias for `//:app`,
     /// `//tools:cc` a rule, and `test_filter` a setting.
@@ -417,6 +439,41 @@ mod tests {
             "$opt:yyy",
         ]);
         match settings(&index, holder, &run).unwrap_err() {
+            Error::UnknownSetting {
+                site,
+                name,
+                suggestion,
+            } => {
+                assert_eq!(site.label, label("//:holder"));
+                assert_eq!(site.provenance.file(), Path::new("build.lua"));
+                assert_eq!(name, "test_fliter");
+                assert_eq!(suggestion.unwrap().as_str(), "test_filter");
+            }
+            other => unreachable!("expected UnknownSetting, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_description_naming_only_declared_settings_passes() {
+        let index = workspace();
+        let (holder, root) = (label("//:holder"), file(""));
+        let holder = held_by(&holder, &root);
+        for raw in ["compile $in", "go test $opt:test_filter", "$opt: $opt"] {
+            let description = Description::parse(raw).unwrap();
+            assert!(
+                description_settings(&index, holder, &description).is_ok(),
+                "{raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_first_undeclared_setting_of_a_description_is_reported_with_the_nearest_declared_one() {
+        let index = workspace();
+        let (holder, root) = (label("//:holder"), file(""));
+        let description =
+            Description::parse("go test $opt:test_filter $opt:test_fliter $opt:zzz").unwrap();
+        match description_settings(&index, held_by(&holder, &root), &description).unwrap_err() {
             Error::UnknownSetting {
                 site,
                 name,

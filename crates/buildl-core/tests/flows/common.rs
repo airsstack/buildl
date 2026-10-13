@@ -16,6 +16,7 @@ use buildl_core::{
     StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, StatCache,
     StatEntry, TargetRole, Timestamp, ToolResolver, Workspace, Written,
 };
+use buildl_core::{FileMode, Found, FoundEntry, FoundKind, StoredFile};
 
 /// What the fake holds for one directory.
 #[derive(Debug, Clone)]
@@ -295,6 +296,7 @@ struct CasState {
     placements: Vec<(OutputPath, Digest)>,
     unstorable: BTreeSet<Vec<u8>>,
     unplaceable: BTreeSet<OutputPath>,
+    modes: BTreeMap<OutputPath, FileMode>,
 }
 
 /// A content store held in memory, with the workspace paths content was placed at.
@@ -349,6 +351,12 @@ impl FakeCas {
     pub fn fail_put(&self, bytes: Vec<u8>) {
         self.state().unstorable.insert(bytes);
     }
+
+    /// Whether the file at each workspace path now may be run: the mode it was last placed with.
+    #[must_use]
+    pub fn modes(&self) -> BTreeMap<OutputPath, FileMode> {
+        self.state().modes.clone()
+    }
 }
 
 impl ContentStore for FakeCas {
@@ -370,7 +378,24 @@ impl ContentStore for FakeCas {
         self.state().blobs.contains_key(digest)
     }
 
-    fn place(&self, digest: &Digest, at: &OutputPath) -> Result<()> {
+    fn get(&self, digest: &Digest) -> Result<Option<Vec<u8>>> {
+        Ok(self.state().blobs.get(digest).cloned())
+    }
+
+    fn clear(&self, at: &OutputPath) -> Result<()> {
+        let below = format!("{at}/");
+        let mut state = self.state();
+        state
+            .placed
+            .retain(|path, _| path != at && !path.as_str().starts_with(&below));
+        state
+            .modes
+            .retain(|path, _| path != at && !path.as_str().starts_with(&below));
+        drop(state);
+        Ok(())
+    }
+
+    fn place(&self, digest: &Digest, mode: FileMode, at: &OutputPath) -> Result<()> {
         let mut state = self.state();
         if !state.blobs.contains_key(digest) {
             return Err(Error::Adapter {
@@ -386,6 +411,7 @@ impl ContentStore for FakeCas {
         }
         state.placed.insert(at.clone(), *digest);
         state.placements.push((at.clone(), *digest));
+        state.modes.insert(at.clone(), mode);
         drop(state);
         Ok(())
     }
@@ -465,6 +491,32 @@ pub enum Content {
     Holds(Vec<u8>),
     /// Nothing.
     Missing,
+    /// A file holding these bytes that may be run.
+    Runs(Vec<u8>),
+    /// A directory holding these things, each at its path below the directory, listed in this
+    /// order.
+    Tree(Vec<(String, Leaf)>),
+    /// A symbolic link.
+    Link,
+    /// Something that is neither a file, a directory nor a symbolic link.
+    Special,
+}
+
+/// One thing a scripted action leaves below an output path that is a directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Leaf {
+    /// A file holding these bytes.
+    Holds(Vec<u8>),
+    /// A file holding these bytes that may be run.
+    Runs(Vec<u8>),
+    /// A directory holding nothing.
+    Empty,
+    /// A symbolic link.
+    Link,
+    /// Something that is neither a file, a directory nor a symbolic link.
+    Special,
+    /// Something whose name is not valid Unicode.
+    NotText,
 }
 
 /// How the action of one target behaves, where that differs from an unscripted one.
@@ -490,6 +542,10 @@ pub struct Script {
 pub struct FakeDir;
 
 /// A strategy that runs nothing: each action ends, prints and produces what its script says.
+///
+/// It keeps no directory, so no output path holds anything before an action runs: what it
+/// reports for a path is what the script leaves there on this run, and never what an earlier
+/// run of the same target left.
 ///
 /// Actions are run from several threads, so what it records sits behind locks.
 #[derive(Debug, Default)]
@@ -598,7 +654,7 @@ impl ExecStrategy for FakeStrategy {
         _dir: &FakeDir,
         action: &ReadyAction,
         cas: &C,
-    ) -> Result<Vec<Option<Digest>>> {
+    ) -> Result<Vec<Found>> {
         let script = self.script(&action.label);
         if script.ends == Ends::CollectFails {
             return Err(strategy_failure(
@@ -614,8 +670,31 @@ impl ExecStrategy for FakeStrategy {
                 .cloned()
                 .unwrap_or_else(|| Content::Holds(self.unscripted(action, path)));
             entries.push(match content {
-                Content::Holds(bytes) => Some(cas.put(&bytes)?),
-                Content::Missing => None,
+                Content::Holds(bytes) => Found::File(stored(cas, &bytes, FileMode::Plain)?),
+                Content::Missing => Found::Nothing,
+                Content::Runs(bytes) => Found::File(stored(cas, &bytes, FileMode::Executable)?),
+                Content::Tree(leaves) => Found::Tree(
+                    leaves
+                        .into_iter()
+                        .map(|(path, leaf)| {
+                            let kind = match leaf {
+                                Leaf::Holds(bytes) => {
+                                    FoundKind::File(stored(cas, &bytes, FileMode::Plain)?)
+                                }
+                                Leaf::Runs(bytes) => {
+                                    FoundKind::File(stored(cas, &bytes, FileMode::Executable)?)
+                                }
+                                Leaf::Empty => FoundKind::EmptyDirectory,
+                                Leaf::Link => FoundKind::Symlink,
+                                Leaf::Special => FoundKind::Special,
+                                Leaf::NotText => FoundKind::NotText,
+                            };
+                            Ok(FoundEntry { path, kind })
+                        })
+                        .collect::<Result<Vec<FoundEntry>>>()?,
+                ),
+                Content::Link => Found::Symlink,
+                Content::Special => Found::Special,
             });
         }
         if script.ends == Ends::CollectShort {
@@ -635,11 +714,25 @@ pub enum Order {
     NewestFirst,
 }
 
+/// How a [`FakeDispatcher`] loses a task.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Loss {
+    /// The task is never run, and no result is handed to `step`.
+    Unrun,
+    /// The task is run, and its result is dropped instead of being handed to `step`.
+    Unreported,
+}
+
 /// A dispatcher that runs every task on the calling thread, one at a time.
+///
+/// It breaks the port's contract only where told to: `lose` names tasks by the position at which
+/// they are taken, counting from zero.
 #[derive(Debug, Default)]
 pub struct FakeDispatcher {
     /// Which waiting task is taken next.
     pub order: Order,
+    /// The tasks to lose, by the position at which they are taken, and how.
+    pub lose: BTreeMap<usize, Loss>,
 }
 
 impl Dispatcher for FakeDispatcher {
@@ -651,6 +744,7 @@ impl Dispatcher for FakeDispatcher {
         S: FnMut(Option<R>) -> Vec<T>,
     {
         let mut waiting: VecDeque<T> = step(None).into();
+        let mut taken = 0_usize;
         loop {
             let next = match self.order {
                 Order::OldestFirst => waiting.pop_front(),
@@ -659,7 +753,13 @@ impl Dispatcher for FakeDispatcher {
             let Some(task) = next else {
                 return Ok(());
             };
-            waiting.extend(step(Some(work(task))));
+            let loss = self.lose.get(&taken).copied();
+            taken += 1;
+            match loss {
+                Some(Loss::Unrun) => {}
+                Some(Loss::Unreported) => drop(work(task)),
+                None => waiting.extend(step(Some(work(task)))),
+            }
         }
     }
 }
@@ -696,6 +796,7 @@ pub fn open_workspace() -> Workspace {
             read: BTreeSet::from([Directory::root()]),
             write: BTreeSet::from([dir("out"), dir(".buildl")]),
         },
+        execution: buildl_core::Execution::default(),
     }
 }
 
@@ -842,6 +943,25 @@ pub fn workspace(files: Vec<(&str, FakeFile)>) -> BTreeMap<Directory, FakeFile> 
         .collect()
 }
 
+/// Stores `bytes` in `cas`, and returns the file a strategy reports for them.
+fn stored<C: ContentStore>(cas: &C, bytes: &[u8], mode: FileMode) -> Result<StoredFile> {
+    Ok(StoredFile {
+        digest: cas.put(bytes)?,
+        mode,
+    })
+}
+
+/// A directory of plain files, each a `(path, text)`, listed in the order given.
+#[must_use]
+pub fn tree(files: &[(&str, &str)]) -> Content {
+    Content::Tree(
+        files
+            .iter()
+            .map(|(path, text)| ((*path).to_owned(), Leaf::Holds(text.as_bytes().to_vec())))
+            .collect(),
+    )
+}
+
 /// The fakes held to the contracts of the ports they stand in for: a flow is only as good as
 /// the fake it runs against.
 #[cfg(test)]
@@ -863,12 +983,22 @@ mod tests {
     };
 
     use super::{
-        Content, Ends, FakeCache, FakeCas, FakeClock, FakeDispatcher, FakeLog, FakeStrategy, Order,
-        Script, dir,
+        Content, Ends, FakeCache, FakeCas, FakeClock, FakeDispatcher, FakeLog, FakeStrategy, Loss,
+        Order, Script, dir,
     };
+    use super::{Leaf, tree};
+    use buildl_core::{FileMode, Found, FoundEntry, FoundKind, StoredFile, TreePath};
 
     fn label(raw: &str) -> Label {
         Label::parse(raw).unwrap()
+    }
+
+    /// A plain file with that digest, as a strategy reports one.
+    const fn plain(digest: Digest) -> Found {
+        Found::File(StoredFile {
+            digest,
+            mode: FileMode::Plain,
+        })
     }
 
     fn path(raw: &str) -> SourcePath {
@@ -880,6 +1010,7 @@ mod tests {
         ReadyAction {
             label: label(raw),
             command: Command::new(vec![Argument::parse("cc").unwrap()]).unwrap(),
+            description: None,
             env: BTreeMap::new(),
             inputs: inputs.iter().map(|input| path(input)).collect(),
             deps: Vec::new(),
@@ -1006,11 +1137,57 @@ mod tests {
         let second = cas.put(b"second").unwrap();
         let app = out_path("//:app", "app");
 
-        cas.place(&first, &app).unwrap();
-        cas.place(&second, &app).unwrap();
+        cas.place(&first, FileMode::Executable, &app).unwrap();
+        cas.place(&second, FileMode::Plain, &app).unwrap();
 
         assert_eq!(cas.placed(), BTreeMap::from([(app.clone(), second)]));
+        assert_eq!(
+            cas.modes(),
+            BTreeMap::from([(app.clone(), FileMode::Plain)]),
+            "the mode it was last placed with"
+        );
         assert_eq!(cas.placements(), [(app.clone(), first), (app, second)]);
+    }
+
+    #[test]
+    fn held_content_is_read_back_and_content_not_held_is_not() {
+        let cas = FakeCas::default();
+        let digest = cas.put(b"app").unwrap();
+
+        assert_eq!(cas.get(&digest).unwrap(), Some(b"app".to_vec()));
+        assert_eq!(cas.get(&Digest::of(b"other")).unwrap(), None);
+
+        cas.forget(&digest);
+        assert_eq!(cas.get(&digest).unwrap(), None);
+    }
+
+    #[test]
+    fn clearing_a_path_removes_the_file_there_or_everything_below_it() {
+        let cas = FakeCas::default();
+        let digest = cas.put(b"app").unwrap();
+        let site = out_path("//:site", "site");
+        let page = site.entry(&TreePath::parse("index.html").unwrap());
+        let script = site.entry(&TreePath::parse("assets/app.js").unwrap());
+        let sibling = out_path("//:site", "site2");
+        for path in [&page, &script, &sibling] {
+            cas.place(&digest, FileMode::Plain, path).unwrap();
+        }
+
+        cas.clear(&site).unwrap();
+
+        assert_eq!(
+            cas.placed(),
+            BTreeMap::from([(sibling.clone(), digest)]),
+            "a path that only starts like the cleared one is left alone"
+        );
+        assert_eq!(
+            cas.modes(),
+            BTreeMap::from([(sibling.clone(), FileMode::Plain)])
+        );
+
+        cas.clear(&sibling).unwrap();
+        cas.clear(&sibling).unwrap();
+        assert!(cas.placed().is_empty(), "clearing nothing is not an error");
     }
 
     #[test]
@@ -1020,7 +1197,7 @@ mod tests {
         let digest = cas.put(b"app").unwrap();
         cas.forget(&digest);
 
-        let error = cas.place(&digest, &app).unwrap_err();
+        let error = cas.place(&digest, FileMode::Plain, &app).unwrap_err();
 
         assert!(!cas.contains(&digest));
         assert_eq!(
@@ -1038,8 +1215,8 @@ mod tests {
         let digest = cas.put(b"app").unwrap();
         cas.fail_place(app.clone());
 
-        let error = cas.place(&digest, &app).unwrap_err();
-        cas.place(&digest, &map).unwrap();
+        let error = cas.place(&digest, FileMode::Plain, &app).unwrap_err();
+        cas.place(&digest, FileMode::Plain, &map).unwrap();
 
         assert_eq!(
             error.to_string(),
@@ -1092,7 +1269,7 @@ mod tests {
         assert_eq!(ran.stderr, b"");
         let binary = Digest::of(b"//:app out/app");
         let map = Digest::of(b"//:app out/app.map");
-        assert_eq!(collected, [Some(binary), Some(map)]);
+        assert_eq!(collected, [plain(binary), plain(map)]);
         assert_eq!(cas.digests(), BTreeSet::from([binary, map]));
         assert_eq!(strategy.handed(), [app]);
         assert_eq!(strategy.ran(), [label("//:app")]);
@@ -1122,7 +1299,7 @@ mod tests {
             Digest::of(b"one"),
             Digest::of(b"")
         );
-        assert_eq!(first, [Some(Digest::of(text.as_bytes()))]);
+        assert_eq!(first, [plain(Digest::of(text.as_bytes()))]);
     }
 
     #[test]
@@ -1218,7 +1395,7 @@ mod tests {
         let dir = partial.prepare(&app).unwrap();
         assert_eq!(
             partial.collect(&dir, &app, &cas).unwrap(),
-            [Some(Digest::of(b"binary")), None]
+            [plain(Digest::of(b"binary")), Found::Nothing]
         );
         assert_eq!(cas.digests(), BTreeSet::from([Digest::of(b"binary")]));
 
@@ -1226,7 +1403,80 @@ mod tests {
         assert_eq!(short.run(&dir, &app).unwrap().exit, Exit::Exited(0));
         assert_eq!(
             short.collect(&dir, &app, &cas).unwrap(),
-            [Some(Digest::of(b"binary"))]
+            [plain(Digest::of(b"binary"))]
+        );
+    }
+
+    #[test]
+    fn a_scripted_output_is_reported_as_what_it_is_and_only_its_files_are_stored() {
+        let cas = FakeCas::default();
+        let app = action("//:app", &[], &["app", "dist", "link", "pipe"]);
+        let leaves = vec![
+            ("index.html".to_owned(), Leaf::Holds(b"page".to_vec())),
+            ("bin/serve".to_owned(), Leaf::Runs(b"server".to_vec())),
+            ("cache".to_owned(), Leaf::Empty),
+            ("latest".to_owned(), Leaf::Link),
+            ("socket".to_owned(), Leaf::Special),
+            ("caf\u{fffd}".to_owned(), Leaf::NotText),
+        ];
+        let strategy = scripted(Script {
+            outputs: BTreeMap::from([
+                (out_path("//:app", "app"), Content::Runs(b"binary".to_vec())),
+                (out_path("//:app", "dist"), Content::Tree(leaves)),
+                (out_path("//:app", "link"), Content::Link),
+                (out_path("//:app", "pipe"), Content::Special),
+            ]),
+            ..Script::default()
+        });
+
+        let dir = strategy.prepare(&app).unwrap();
+        let collected = strategy.collect(&dir, &app, &cas).unwrap();
+
+        let file = |bytes: &[u8], mode| StoredFile {
+            digest: Digest::of(bytes),
+            mode,
+        };
+        let entry = |path: &str, kind| FoundEntry {
+            path: path.to_owned(),
+            kind,
+        };
+        assert_eq!(
+            collected,
+            [
+                Found::File(file(b"binary", FileMode::Executable)),
+                Found::Tree(vec![
+                    entry(
+                        "index.html",
+                        FoundKind::File(file(b"page", FileMode::Plain))
+                    ),
+                    entry(
+                        "bin/serve",
+                        FoundKind::File(file(b"server", FileMode::Executable))
+                    ),
+                    entry("cache", FoundKind::EmptyDirectory),
+                    entry("latest", FoundKind::Symlink),
+                    entry("socket", FoundKind::Special),
+                    entry("caf\u{fffd}", FoundKind::NotText),
+                ]),
+                Found::Symlink,
+                Found::Special,
+            ],
+            "a directory is listed in the order it was scripted in"
+        );
+        assert_eq!(
+            cas.digests(),
+            BTreeSet::from([
+                Digest::of(b"binary"),
+                Digest::of(b"page"),
+                Digest::of(b"server")
+            ])
+        );
+        assert_eq!(
+            tree(&[("a", "one"), ("b/c", "two")]),
+            Content::Tree(vec![
+                ("a".to_owned(), Leaf::Holds(b"one".to_vec())),
+                ("b/c".to_owned(), Leaf::Holds(b"two".to_vec())),
+            ])
         );
     }
 
@@ -1251,7 +1501,10 @@ mod tests {
     fn dispatched(order: Order) -> Vec<u32> {
         let worked = AtomicU32::new(0);
         let mut results = Vec::new();
-        let mut dispatcher = FakeDispatcher { order };
+        let mut dispatcher = FakeDispatcher {
+            order,
+            ..FakeDispatcher::default()
+        };
 
         dispatcher
             .dispatch(
@@ -1273,6 +1526,39 @@ mod tests {
 
         assert_eq!(worked.load(Ordering::SeqCst), 4, "every task is run");
         results
+    }
+
+    #[test]
+    fn a_lost_task_is_either_never_run_or_run_without_its_result_being_handed_over() {
+        for (loss, worked) in [(Loss::Unrun, 2), (Loss::Unreported, 3)] {
+            let ran = AtomicU32::new(0);
+            let mut results = Vec::new();
+            let mut dispatcher = FakeDispatcher {
+                lose: BTreeMap::from([(1, loss)]),
+                ..FakeDispatcher::default()
+            };
+
+            dispatcher
+                .dispatch(
+                    |task: u32| {
+                        ran.fetch_add(1, Ordering::SeqCst);
+                        task * 10
+                    },
+                    |result| {
+                        result.map_or_else(
+                            || vec![1, 2, 3],
+                            |result| {
+                                results.push(result);
+                                Vec::new()
+                            },
+                        )
+                    },
+                )
+                .unwrap();
+
+            assert_eq!(ran.load(Ordering::SeqCst), worked, "{loss:?}");
+            assert_eq!(results, [10, 30], "{loss:?}: the second task has no result");
+        }
     }
 
     #[test]

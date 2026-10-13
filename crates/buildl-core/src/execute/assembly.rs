@@ -7,8 +7,9 @@
 //! start and recorded when it is done.
 //!
 //! Responsibilities: [`execute`]; the flag that keeps workers from beginning anything once the
-//! build has stopped; and the bookkeeping between two results — which targets wait to be
-//! settled, which have their outcome, and the one error that fails the whole build.
+//! build has stopped; the bookkeeping between two results — which targets wait to be settled,
+//! which have their outcome, and the one error that fails the whole build; and refusing to
+//! report a build whose dispatcher returned with a target left without an outcome.
 //!
 //! Non-responsibilities: what each step decides. Each has its own sibling file.
 
@@ -17,7 +18,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use crate::error::{Error, Result};
 use crate::execute::admission::admit;
-use crate::execute::expand::{Lists, expand};
+use crate::execute::expand::{Lists, expand, expand_description};
 use crate::execute::layout::Layout;
 use crate::execute::perform::{Ended, Performed, Task, Worked, perform};
 use crate::execute::record::{Progress, append, failed, restore, skipped, store};
@@ -25,23 +26,34 @@ use crate::execute::schedule::{Finish, Schedule};
 use crate::execute::settle::{Settled, settle};
 use crate::ports::{Dispatcher, Manifest, PortSet, Ports};
 use crate::types::{
-    ActionOutcome, Ceiling, Command, EnvName, EnvValue, Label, Node, NodeId, OnFailure, OutputPath,
-    OwnComponents, Plan, PlannedKey, ReadyAction, TargetGraph, Verdict,
+    ActionOutcome, Ceiling, Command, EnvName, EnvValue, ExpandedDescription, Label, Node, NodeId,
+    OnFailure, OutputPath, OwnComponents, Plan, PlannedKey, ReadyAction, TargetGraph, Verdict,
 };
 
 /// Builds every target of `graph` as `plan` says, and returns one outcome per target, in id
 /// order.
 ///
-/// `plan` must be the plan made from `graph`. A target starts once everything it depends on
-/// has succeeded. Its key is then finished from what those dependencies produced: when its
-/// last build recorded that key and everything it produced is still stored, the target is not
-/// run and its outputs are put back in place; otherwise its action runs. What an action
-/// produced is stored first, its row recorded after, and its outcome logged whatever it is, so
-/// a row never names content that is not held and a failure is never recorded as a result.
+/// `plan` must be the plan made from `graph`; the value of every build setting is the one
+/// `plan` holds. A target starts once everything it depends on has succeeded. Its key is then
+/// finished from what those dependencies produced: when its last build recorded that key and
+/// everything it produced is still stored, the target is not run and its outputs are put back
+/// in place; otherwise its action runs. What an action produced is stored first, its row
+/// recorded after, and its outcome logged whatever it is, so a row never names content that is
+/// not held and a failure is never recorded as a result.
+///
+/// An action may leave a regular file or a directory of regular files at each output path. A
+/// directory is stored file by file with a manifest of its paths, is put back whole or not at
+/// all, and is one digest in the key of every target that depends on it. An output that is
+/// anything else, or a directory holding anything else, is refused for one of the reasons of
+/// [`OutputRefusal`](crate::types::OutputRefusal), and the target fails.
 ///
 /// An action that fails is an outcome, not an error. What a failure does to the rest of the
 /// build is `on_failure`'s to say: under [`OnFailure::Stop`] nothing more is begun, and under
 /// [`OnFailure::KeepGoing`] only the targets that depend on the failed one are skipped.
+///
+/// A target's description is expanded with its command, from the same paths and with the
+/// settings `plan` holds, and handed to the strategy with it; expanding one cannot fail, and it
+/// is no part of the key.
 ///
 /// # Errors
 ///
@@ -55,10 +67,15 @@ use crate::types::{
 ///    is outside the workspace's ceiling.
 ///
 /// Once the build is under way, returns the first of: the log port's failure to append an
-/// event; [`Error::CanonicalJson`] for a key that cannot be serialized; and
-/// [`Error::Adapter`], naming the action cache, for a dependency that succeeded and has no
-/// row. After such an error no port is asked anything more. Otherwise returns whatever the
-/// dispatcher port itself returns.
+/// event; [`Error::CanonicalJson`] for a key that cannot be serialized; [`Error::Adapter`],
+/// naming the action cache, for a dependency that succeeded and has no row; and the content
+/// store's failure to read the manifest of a recorded output. After such an error no port is
+/// asked anything more. Otherwise returns whatever the dispatcher port itself returns.
+///
+/// When the dispatcher returns success and a target has no outcome, returns
+/// [`Error::DispatcherFault`] naming those targets: the port's contract is that every task is
+/// run and every result reaches the build, so a build never reports success, or a summary,
+/// with a target missing. What ended before is recorded and logged already, and stays.
 pub fn execute<P: Ports>(
     graph: &TargetGraph,
     plan: &Plan,
@@ -104,7 +121,8 @@ pub fn execute<P: Ports>(
     build.outcomes(dispatched)
 }
 
-/// Whether `plan` holds exactly the targets of `graph`, under the same ids.
+/// Whether `plan` holds exactly the targets of `graph`, under the same ids, and a value for
+/// exactly the settings `graph` declares.
 fn made_from(plan: &Plan, graph: &TargetGraph) -> bool {
     plan.len() == graph.len()
         && graph
@@ -112,6 +130,7 @@ fn made_from(plan: &Plan, graph: &TargetGraph) -> bool {
             .iter()
             .zip((0_u32..).map(NodeId::new))
             .all(|(node, id)| plan.label(id) == Some(&node.label))
+        && plan.settings().keys().eq(graph.settings().keys())
 }
 
 /// The components a verdict holds for its target, whatever the verdict says.
@@ -131,7 +150,8 @@ const fn own_of(verdict: &Verdict) -> &OwnComponents {
 }
 
 /// The action of `node` as a strategy is handed it: `command` is its expanded command,
-/// `outputs` where its own outputs live and `deps` where its dependencies' do.
+/// `description` its description expanded the same way, `outputs` where its own outputs live
+/// and `deps` where its dependencies' do.
 ///
 /// The environment holds each variable the target reads that has a value; one that is not set
 /// is left out, as it is absent where the action runs.
@@ -139,6 +159,7 @@ fn ready(
     node: &Node,
     own: &OwnComponents,
     command: Command,
+    description: Option<ExpandedDescription>,
     outputs: &[OutputPath],
     deps: Vec<OutputPath>,
 ) -> ReadyAction {
@@ -150,6 +171,7 @@ fn ready(
     ReadyAction {
         label: node.label.clone(),
         command,
+        description,
         env,
         inputs: node.inputs.clone(),
         deps,
@@ -170,7 +192,12 @@ struct Prepared<'a> {
     action: ReadyAction,
 }
 
-/// Every target of `graph` prepared, in id order: its command expanded and admitted.
+/// Every target of `graph` prepared, in id order: its command expanded and admitted, and its
+/// description expanded.
+///
+/// A command is expanded with the settings its key holds. A description may name a setting its
+/// command does not, which its key does not hold, so it is expanded with the settings `plan`
+/// holds: the value of every setting.
 ///
 /// # Errors
 ///
@@ -197,6 +224,10 @@ fn prepared<'a>(
                 deps: &dep_paths,
             };
             let command = admit(expand(&node.run, &own.settings, &lists), node, ceiling)?;
+            let description = node
+                .description
+                .as_ref()
+                .map(|description| expand_description(description, plan.settings(), &lists));
             let deps = graph
                 .deps(id)
                 .unwrap_or_default()
@@ -208,9 +239,25 @@ fn prepared<'a>(
                 node,
                 own,
                 deps,
-                action: ready(node, own, command, outputs, dep_paths),
+                action: ready(node, own, command, description, outputs, dep_paths),
             })
         })
+        .collect()
+}
+
+/// The labels of the targets of `graph` whose slot in `slots` is empty, in label order.
+///
+/// A build that ran to its end gave every target an outcome: one that succeeded, one that
+/// failed, or one that was skipped. A target left without is one whose task, or whose result,
+/// the dispatcher lost, or one that waited on such a target. Targets are numbered in label
+/// order, so walking the slots in order yields the labels sorted.
+fn without_outcome<T>(graph: &TargetGraph, slots: &[Option<T>]) -> Vec<Label> {
+    graph
+        .nodes()
+        .iter()
+        .zip(slots)
+        .filter(|(_, slot)| slot.is_none())
+        .map(|(node, _)| node.label.clone())
         .collect()
 }
 
@@ -295,15 +342,18 @@ impl<P: Ports> Build<'_, P> {
                 self.cas,
             )?;
             match settled {
-                Settled::Runs(key) => tasks.push(Task {
-                    node,
-                    key,
-                    action: target.action.clone(),
-                }),
-                Settled::Cached(row) => {
+                Settled::Runs(key) => {
+                    tasks.push(Task {
+                        node,
+                        key,
+                        action: target.action.clone(),
+                    });
+                }
+                Settled::Cached { row, manifests } => {
                     let outcome = restore(
                         target.node.label.clone(),
                         &row,
+                        &manifests,
                         self.layout.outputs(node),
                         self.cas,
                     );
@@ -412,11 +462,20 @@ impl<P: Ports> Build<'_, P> {
 
     /// What the build comes to, once the dispatcher has returned with `dispatched`: the error
     /// that failed it, or the dispatcher's own, or else every target's outcome in id order.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::DispatcherFault`] when the dispatcher returned success and a target has
+    /// no outcome. Whatever ended before that was recorded and logged as it ended, and stays.
     fn outcomes(self, dispatched: Result<()>) -> Result<Vec<ActionOutcome>> {
         if let Some(error) = self.fatal {
             return Err(error);
         }
         dispatched?;
+        let targets = without_outcome(self.graph, &self.outcomes);
+        if !targets.is_empty() {
+            return Err(Error::DispatcherFault { targets });
+        }
         Ok(self.outcomes.into_iter().flatten().collect())
     }
 }
@@ -430,15 +489,18 @@ mod tests {
 
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{made_from, own_of, ready};
-    use crate::execute::fixtures::{command, graph, key, label, node, output_path, own, path};
+    use super::{made_from, own_of, ready, without_outcome};
+    use crate::execute::fixtures::{
+        command, graph, key, label, node, output_path, own, path, settings,
+    };
     use crate::types::{
-        DirtyReason, EnvName, EnvValue, NetworkAccess, NodeId, Plan, PlannedKey, Unfinished,
-        Verdict, WantedSet,
+        DirtyReason, EnvName, EnvValue, ExpandedDescription, NetworkAccess, NodeId, Plan,
+        PlannedKey, TargetGraph, Unfinished, Verdict, WantedSet,
     };
 
-    /// A plan holding one clean verdict per label, in the order given.
-    fn plan(labels: &[&str]) -> Plan {
+    /// A plan holding one clean verdict per label, in the order given, and the settings
+    /// `values`.
+    fn plan_with(labels: &[&str], values: &[(&str, &str)]) -> Plan {
         let verdicts = labels
             .iter()
             .map(|_| Verdict::Clean { key: key(&["o"]) })
@@ -453,7 +515,13 @@ mod tests {
             labels.iter().map(|raw| label(raw)).collect(),
             verdicts,
             wanted,
+            settings(values),
         )
+    }
+
+    /// A plan holding one clean verdict per label, in the order given, and no setting.
+    fn plan(labels: &[&str]) -> Plan {
+        plan_with(labels, &[])
     }
 
     #[test]
@@ -475,6 +543,64 @@ mod tests {
         assert!(
             !made_from(&plan(&["//:b", "//:a"]), &graph),
             "the same targets under other ids"
+        );
+    }
+
+    #[test]
+    fn the_targets_without_an_outcome_are_named_in_label_order() {
+        let graph = graph(
+            vec![
+                node("//:a", |_| {}),
+                node("//:b", |_| {}),
+                node("//:c", |_| {}),
+            ],
+            &[&[], &[], &[]],
+        );
+        assert_eq!(
+            without_outcome(&graph, &[Some(()), None, None]),
+            [label("//:b"), label("//:c")]
+        );
+        assert_eq!(
+            without_outcome(&graph, &[None, Some(()), Some(())]),
+            [label("//:a")]
+        );
+        assert_eq!(without_outcome(&graph, &[Some(()); 3]), []);
+        assert_eq!(without_outcome::<()>(&graph, &[]), [], "no slot, no target");
+    }
+
+    #[test]
+    fn a_plan_is_made_from_a_graph_when_it_holds_a_value_for_exactly_its_settings() {
+        let graph = TargetGraph::new(
+            Vec::new(),
+            Vec::new(),
+            BTreeMap::new(),
+            settings(&[("level", "1"), ("mode", "debug")]),
+        );
+        assert!(
+            made_from(
+                &plan_with(&[], &[("level", "1"), ("mode", "debug")]),
+                &graph
+            ),
+            "the defaults"
+        );
+        assert!(
+            made_from(&plan_with(&[], &[("level", "1"), ("mode", "fast")]), &graph),
+            "an overridden value"
+        );
+        assert!(
+            !made_from(&plan_with(&[], &[("mode", "debug")]), &graph),
+            "a setting short"
+        );
+        assert!(
+            !made_from(
+                &plan_with(&[], &[("arch", "arm"), ("level", "1"), ("mode", "debug")]),
+                &graph
+            ),
+            "a setting more"
+        );
+        assert!(
+            !made_from(&plan_with(&[], &[("level", "1"), ("tool", "cc")]), &graph),
+            "another setting"
         );
     }
 
@@ -524,12 +650,17 @@ mod tests {
             &node,
             &own,
             command(&["cc", "-o", "out/app"]),
+            Some(ExpandedDescription::new("compile z.c a.c")),
             &outputs,
             deps.clone(),
         );
 
         assert_eq!(action.label, label("//:app"));
         assert_eq!(action.command, command(&["cc", "-o", "out/app"]));
+        assert_eq!(
+            action.description,
+            Some(ExpandedDescription::new("compile z.c a.c"))
+        );
         assert_eq!(
             action.env,
             BTreeMap::from([(cc, EnvValue::parse("clang").unwrap())])

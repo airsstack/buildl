@@ -1,21 +1,25 @@
-//! Expansion: a declared command's placeholders replaced by what they stand for.
+//! Expansion: a declared command's, and a rule's description's, placeholders replaced by what
+//! they stand for.
 //!
 //! Its own file because a build file never holds a real path: a command is written with `$in`,
 //! `$out`, `$deps` and `$opt:name`, and what an action is handed is the command with each of
 //! them replaced. The replacement is workspace-relative text, the same wherever the action
-//! runs, so it is known before anything does.
+//! runs, so it is known before anything does. A description is expanded by the same rules, so
+//! that the line shown for an action names what the action was handed.
 //!
-//! Responsibilities: [`Lists`] and [`expand`].
+//! Responsibilities: [`Lists`], [`expand`] and [`expand_description`].
 //!
-//! Non-responsibilities: whether the expanded command names a program that may run; and which
-//! characters a setting's name is made of, which [`Argument::setting_references`] decides.
+//! Non-responsibilities: whether the expanded command names a program that may run; and where a
+//! reference to a setting starts and ends, which is read here through the scanner
+//! [`Argument::setting_references`] and [`Description::setting_references`] list their names
+//! with.
 
 use std::collections::BTreeMap;
 
-use crate::types::{Argument, Command, OutputPath, SettingName, SettingValue, SourcePath};
-
-/// What follows the `$` of a reference to a build setting, before the setting's name.
-const SETTING: &str = "opt:";
+use crate::types::setting_reference;
+use crate::types::{
+    Command, Description, ExpandedDescription, OutputPath, SettingName, SettingValue, SourcePath,
+};
 
 /// The three lists of paths one target's placeholders stand for.
 #[derive(Debug, Clone, Copy)]
@@ -71,59 +75,59 @@ pub(crate) fn expand(
             .and_then(|word| lists.named(word));
         match alone {
             Some(paths) => expanded.extend(paths.into_iter().map(str::to_owned)),
-            None => expanded.push(within(argument, settings, lists)),
+            None => expanded.push(within(argument.as_str(), settings, lists)),
         }
     }
     expanded
 }
 
-/// One argument with every placeholder inside it replaced.
+/// `description` with its placeholders replaced, as the line to show for an action.
 ///
-/// The names of the settings it refers to are taken from [`Argument::setting_references`], in
-/// the order they appear, and matched against the text as it is read: this function finds the
-/// same `$opt:` occurrences in the same order, so the next name is always the one at hand.
-fn within(
-    argument: &Argument,
+/// Placeholders are read as [`expand`] reads them within one argument: `$opt:` and a setting's
+/// name becomes the value `settings` holds, and stays as it is when `settings` holds none, and
+/// `$in`, `$out` and `$deps` become their list of `lists`. A list is always its paths joined by
+/// one space, since a description is one line and has no arguments to split a list across. Text
+/// that was substituted is never read again.
+pub(crate) fn expand_description(
+    description: &Description,
     settings: &BTreeMap<SettingName, SettingValue>,
     lists: &Lists<'_>,
-) -> String {
-    let mut references = argument.setting_references().into_iter().peekable();
-    let mut text = String::new();
-    let mut rest = argument.as_str();
-    while let Some((before, after)) = rest.split_once('$') {
-        text.push_str(before);
-        rest = if let Some((name, tail)) = reference(after, references.peek().copied()) {
-            references.next();
+) -> ExpandedDescription {
+    ExpandedDescription::new(&within(description.as_str(), settings, lists))
+}
+
+/// One text with every placeholder inside it replaced.
+///
+/// The text is read `$` by `$`. One that starts a reference to a setting is replaced by the
+/// setting's value, or left as written when `settings` holds none; one followed by the word of a
+/// list is replaced by that list; any other stays a `$`.
+fn within(text: &str, settings: &BTreeMap<SettingName, SettingValue>, lists: &Lists<'_>) -> String {
+    let mut expanded = String::new();
+    let mut rest = text;
+    while let Some(at) = rest.find('$') {
+        let (before, from) = rest.split_at(at);
+        expanded.push_str(before);
+        rest = if let Some((name, tail)) = setting_reference::leading(from) {
             match value(settings, name) {
-                Some(value) => text.push_str(value.as_str()),
-                None => text.extend(["$", SETTING, name]),
+                Some(value) => expanded.push_str(value.as_str()),
+                None => expanded.extend([setting_reference::MARKER, name]),
             }
             tail
         } else {
+            let after = from.strip_prefix('$').unwrap_or(from);
             let tail = after.trim_start_matches(|letter: char| letter.is_ascii_alphabetic());
             let word = after.strip_suffix(tail).unwrap_or_default();
             if let Some(paths) = lists.named(word) {
-                text.push_str(&paths.join(" "));
+                expanded.push_str(&paths.join(" "));
                 tail
             } else {
-                text.push('$');
+                expanded.push('$');
                 after
             }
         };
     }
-    text.push_str(rest);
-    text
-}
-
-/// The setting name `after` starts a reference to, with the text that follows the name, when
-/// that name is `next`: the next name the argument refers to.
-///
-/// A `$opt:` followed by no name is not a reference, and then `after` cannot continue with
-/// `next`: a name starts with a character a name may hold, and the text here does not.
-fn reference<'t>(after: &'t str, next: Option<&'t str>) -> Option<(&'t str, &'t str)> {
-    let name = next?;
-    let tail = after.strip_prefix(SETTING)?.strip_prefix(name)?;
-    Some((name, tail))
+    expanded.push_str(rest);
+    expanded
 }
 
 /// The value `settings` holds for the setting written as `name`.
@@ -138,11 +142,16 @@ fn value<'s>(
 
 #[cfg(test)]
 mod tests {
+    #![expect(
+        clippy::unwrap_used,
+        reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
+    )]
+
     use std::collections::BTreeMap;
 
-    use super::{Lists, expand};
+    use super::{Lists, expand, expand_description};
     use crate::execute::fixtures::{command, output_path, path, settings};
-    use crate::types::{OutputPath, SettingName, SettingValue, SourcePath};
+    use crate::types::{Description, OutputPath, SettingName, SettingValue, SourcePath};
 
     /// `declared`, expanded with no setting and these three lists.
     fn expanded(
@@ -332,6 +341,107 @@ mod tests {
                 &[],
             ),
             ["$in", "--x=$in", "$opt:flag"]
+        );
+    }
+
+    /// `declared` as a description, expanded with these settings and lists.
+    fn described(
+        declared: &str,
+        settings: &BTreeMap<SettingName, SettingValue>,
+        inputs: &[SourcePath],
+        outputs: &[OutputPath],
+        deps: &[OutputPath],
+    ) -> String {
+        let lists = Lists {
+            inputs,
+            outputs,
+            deps,
+        };
+        let description = Description::parse(declared).unwrap();
+        expand_description(&description, settings, &lists)
+            .as_str()
+            .to_owned()
+    }
+
+    #[test]
+    fn a_description_names_what_the_command_was_handed() {
+        let inputs = [path("lib/a.c"), path("lib/b.c")];
+        let outputs = [output_path("//lib:text", "text")];
+        let deps = [
+            output_path("//:gen", "gen.h"),
+            output_path("//:gen", "gen.c"),
+        ];
+        assert_eq!(
+            described("compile $in", &BTreeMap::new(), &inputs, &outputs, &deps),
+            "compile lib/a.c lib/b.c",
+            "a list alone is still one text, its paths joined by one space"
+        );
+        assert_eq!(
+            described(
+                "$in -> $out after $deps",
+                &BTreeMap::new(),
+                &inputs,
+                &outputs,
+                &deps
+            ),
+            "lib/a.c lib/b.c -> out/lib/text after out/gen.h out/gen.c"
+        );
+        assert_eq!(
+            described("none: $in|$out|$deps", &BTreeMap::new(), &[], &[], &[]),
+            "none: ||"
+        );
+    }
+
+    #[test]
+    fn a_description_follows_the_rules_of_a_command_for_everything_else() {
+        let held = settings(&[("mode", "debug"), ("flag", "$in")]);
+        assert_eq!(
+            described(
+                "$input $in2 $opt:mode-$opt:mode $opt:flag $opt:missing $ $opt:",
+                &held,
+                &[path("a.c")],
+                &[],
+                &[],
+            ),
+            "$input a.c2 $opt:mode-debug $in $opt:missing $ $opt:",
+            "the longest run decides a placeholder, a substituted text is not read again, and an \
+             unknown setting stays text"
+        );
+    }
+
+    #[test]
+    fn a_description_is_expanded_where_a_command_would_be_with_the_same_text() {
+        let held = settings(&[("level", "2")]);
+        let inputs = [path("a.c"), path("b.c")];
+        let outputs = [output_path("//:app", "app")];
+        let text = "cc -O$opt:level $in -o $out";
+        let as_command = expand(
+            &command(&[text]),
+            &held,
+            &Lists {
+                inputs: &inputs,
+                outputs: &outputs,
+                deps: &[],
+            },
+        );
+        assert_eq!(
+            [described(text, &held, &inputs, &outputs, &[])],
+            as_command.as_slice(),
+            "the same text, inside other text, expands the same way in both"
+        );
+    }
+
+    #[test]
+    fn a_control_character_in_a_substituted_value_does_not_break_the_line() {
+        assert_eq!(
+            described(
+                "mode $opt:mode.",
+                &settings(&[("mode", "a\nb")]),
+                &[],
+                &[],
+                &[]
+            ),
+            "mode a b."
         );
     }
 

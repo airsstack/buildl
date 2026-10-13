@@ -35,7 +35,8 @@ use crate::types::{Action, Declaration, Label, Node, NodeId, Target, TargetGraph
 /// 3. walking the declarations in label order, the first reference that is wrong:
 ///    [`Error::UnknownReference`], [`Error::WrongReferenceKind`] or [`Error::UnknownSetting`].
 ///    Within a target the rule reference is checked first, then its dependencies in written
-///    order, then the settings its own command names;
+///    order, then the settings its own command names. Within a rule, the settings its command
+///    names are checked first, then the settings its description names;
 /// 4. [`Error::DependencyCycle`] when the dependencies loop.
 ///
 /// # Examples
@@ -66,7 +67,12 @@ pub fn resolve(declarations: Vec<Declaration>) -> Result<TargetGraph> {
                 nodes.push(node);
                 edges.push(deps);
             }
-            Item::Rule(rule) => references::settings(&index, holder, &rule.run)?,
+            Item::Rule(rule) => {
+                references::settings(&index, holder, &rule.run)?;
+                if let Some(description) = &rule.description {
+                    references::description_settings(&index, holder, description)?;
+                }
+            }
             Item::Alias(alias) => {
                 let target = references::alias_target(&index, holder, &alias.target)?;
                 if let Some(id) = ids.get(target) {
@@ -427,6 +433,41 @@ mod tests {
             }
             other => unreachable!("expected UnknownSetting, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_rules_description_is_checked_at_the_rule_after_its_command() {
+        let err = resolve(vec![
+            described_rule("//tools:cc", &["cc"], "compile $in for $opt:nope"),
+            setting("mode"),
+        ])
+        .unwrap_err();
+        match err {
+            Error::UnknownSetting { site, name, .. } => {
+                assert_eq!(site.label, label("//tools:cc"));
+                assert_eq!(site.provenance.file(), Path::new("tools/build.lua"));
+                assert_eq!(name, "nope");
+            }
+            other => unreachable!("expected UnknownSetting, got {other:?}"),
+        }
+        let err = resolve(vec![described_rule(
+            "//tools:cc",
+            &["cc", "$opt:first"],
+            "$opt:second",
+        )])
+        .unwrap_err();
+        match err {
+            Error::UnknownSetting { name, .. } => assert_eq!(name, "first"),
+            other => unreachable!("expected UnknownSetting, got {other:?}"),
+        }
+        assert!(
+            resolve(vec![
+                described_rule("//tools:cc", &["cc"], "compile $in in $opt:mode"),
+                setting("mode"),
+            ])
+            .is_ok(),
+            "a declared setting passes"
+        );
     }
 
     #[test]

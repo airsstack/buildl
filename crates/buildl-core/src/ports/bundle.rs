@@ -28,9 +28,9 @@ use crate::ports::{
 /// use buildl_core::{
 ///     ActionCache, BuildFile, CacheRow, Ceiling, Clock, ContentStore, DeclarationSource,
 ///     Diagnostic, Digest, Digester, Directory, Dispatcher, EnvName, EnvValue, Error, Evaluated,
-///     EventLog, ExecStrategy, FileStat, Host, Label, Manifest, OutcomeEvent, OutputPath,
-///     Platform, PortName, Ports, Program, RawOutcome, ReadyAction, Result, SourcePath,
-///     StatCache, StatEntry, Timestamp, ToolResolver, Workspace,
+///     EventLog, ExecStrategy, FileMode, FileStat, Found, Host, Label, Manifest, OutcomeEvent,
+///     OutputPath, Platform, PortName, Ports, Program, RawOutcome, ReadyAction, Result,
+///     SourcePath, StatCache, StatEntry, Timestamp, ToolResolver, Workspace,
 /// };
 ///
 /// /// Every port at once, each answering that there is nothing.
@@ -61,6 +61,7 @@ use crate::ports::{
 ///                 read: BTreeSet::new(),
 ///                 write: BTreeSet::new(),
 ///             },
+///             execution: buildl_core::Execution::default(),
 ///         })
 ///     }
 /// }
@@ -122,7 +123,15 @@ use crate::ports::{
 ///         false
 ///     }
 ///
-///     fn place(&self, _digest: &Digest, _at: &OutputPath) -> Result<()> {
+///     fn get(&self, _digest: &Digest) -> Result<Option<Vec<u8>>> {
+///         Ok(None)
+///     }
+///
+///     fn clear(&self, _at: &OutputPath) -> Result<()> {
+///         Err(nothing(PortName::ContentStore))
+///     }
+///
+///     fn place(&self, _digest: &Digest, _mode: FileMode, _at: &OutputPath) -> Result<()> {
 ///         Err(nothing(PortName::ContentStore))
 ///     }
 /// }
@@ -149,7 +158,7 @@ use crate::ports::{
 ///         _dir: &(),
 ///         _action: &ReadyAction,
 ///         _cas: &C,
-///     ) -> Result<Vec<Option<Digest>>> {
+///     ) -> Result<Vec<Found>> {
 ///         Err(nothing(PortName::ExecStrategy))
 ///     }
 /// }

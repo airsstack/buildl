@@ -4,7 +4,7 @@
 
 The positioning in one sentence: Lua where Starlark sits in Bazel [5], ninja's execution discipline underneath [4], and airsl's capability model as the trust layer neither of them has.
 
-> **Status: design settled, implementation under way.** `buildl-core` ships the validated domain vocabulary, the one error enum, the canonical JSON serializer, the twelve ports the pipeline reaches everything outside it through, and every pipeline phase — Load, Resolve, Plan, Execute and Record, with `check`, `graph`, `plan` and `build`, whose flows run against in-memory fakes; the adapters that run a real build are not implemented yet. `buildl-lua` evaluates build files on airsl, and no command composes it with the pipeline yet. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
+> **Status: design settled, implementation under way.** `buildl-core` ships the validated domain vocabulary, the one error enum, the canonical JSON serializer and the reader that takes back only what it writes, the twelve ports the pipeline reaches everything outside it through, and every pipeline phase — Load, Resolve, Plan, Execute and Record, with `check`, `graph`, `plan` and `build`, whose flows run against in-memory fakes; the adapters that run a real build are not implemented yet. `buildl-lua` evaluates build files on airsl, and no command composes it with the pipeline yet. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
 
 ---
 
@@ -65,7 +65,7 @@ b.target("app", {
 b.alias("default", "app")
 ```
 
-Design decisions visible in those lines: cross-directory references are graph **labels** (`//lib:text`) resolved in Rust, never `require` — build files reference each other's *targets*, not each other's code. Placeholders (`$in`, `$out`, `$deps`) expand host-side, each to a list of workspace-relative paths, the ninja model [4]; Lua never holds a real artifact path. And `b.sources()` is the declaration phase's only filesystem read, returning sorted results so declaration is deterministic regardless of filesystem order.
+Design decisions visible in those lines: cross-directory references are graph **labels** (`//lib:text`) resolved in Rust, never `require` — build files reference each other's *targets*, not each other's code. Placeholders (`$in`, `$out`, `$deps`) expand host-side, each to a list of workspace-relative paths, the ninja model [4]; Lua never holds a real artifact path. And `b.sources()` is the declaration phase's only filesystem read, returning sorted results so declaration is deterministic regardless of filesystem order, and never entering the workspace's output or state directory, so a build file does not list what the build wrote. A rule's `desc` is the line shown for its actions: expanded like the command, and display text only, outside the action key.
 
 Authority lives in `buildl.toml`, parsed by the host before any Lua runs — the workspace owner's statement of maximum authority, the **ceiling**:
 
@@ -77,7 +77,7 @@ fs.read  = ["."]
 fs.write = ["out", ".buildl", "target"]
 ```
 
-There is no per-file capability manifest, because the build's authority is **derived, not requested**: after Resolve, the host walks the DAG, computes the wanted set (every program in every `run`, every env name, every output root), intersects it with the ceiling, and hands the result to an approver. A wanted program outside the ceiling refuses the plan at plan time, naming both sets — it never silently degrades the build.
+There is no per-file capability manifest, because the build's authority is **derived, not requested**: after Resolve, the host walks the DAG, computes the wanted set (every program in every `run`, written out or named through a build setting, every env name, every output root), intersects it with the ceiling, and hands the result to an approver. A wanted program outside the ceiling refuses the plan at plan time, naming both sets — it never silently degrades the build.
 
 ## Incrementality: the action key
 
@@ -95,9 +95,9 @@ graph TD
     CMP -- no --> DIRTY["Dirty — plus the reason why"]
 ```
 
-A key folds what each dependency *produced*, not the dependency's own key, so a dependency rebuilt to the same bytes leaves everything downstream clean, and a target downstream of a dirty one is *conditional*: it runs only if that output changes. The mismatching component is retained per dirty target — that is the entire implementation of `buildl plan`'s explanations. Outputs land in a content-addressed store before the cache row is written, so an interrupted build simply continues on the next run: no "corrupt cache, run clean" state is representable, and failures are never cached.
+A key folds what each dependency *produced*, not the dependency's own key, so a dependency rebuilt to the same bytes leaves everything downstream clean, and a target downstream of a dirty one is *conditional*: it runs only if that output changes. The mismatching component is retained per dirty target — that is the entire implementation of `buildl plan`'s explanations. An output is a regular file or a directory of regular files, and has one digest either way: the digest of a small manifest naming each file's bytes, path and executable bit, so a built program is still runnable when a cache hit puts it back and a directory is put back whole or not at all. Outputs land in a content-addressed store before the cache row is written, so an interrupted build simply continues on the next run: no "corrupt cache, run clean" state is representable, and failures are never cached.
 
-Execution isolation is a ladder, set in `buildl.toml` with per-target overrides:
+Execution isolation is a ladder, set in `buildl.toml` with per-target overrides. The tier, like the worker count and the per-action timeout beside it in `[execution]`, is no part of an action key — it decides how an action is run, never which action it is — so machines on different tiers share cache entries:
 
 ```mermaid
 %% Execution isolation ladder

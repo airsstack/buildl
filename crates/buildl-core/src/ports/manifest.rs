@@ -1,4 +1,4 @@
-//! The port through which Plan learns what a workspace's manifest says.
+//! The port through which the pipeline learns what a workspace's manifest says.
 //!
 //! Its own file because the manifest is a file with a format, and this crate reads no file and
 //! knows no format: what it needs from one arrives as a value.
@@ -15,7 +15,18 @@ use crate::types::Workspace;
 
 /// Reports what a workspace's manifest says.
 pub trait Manifest {
-    /// The workspace's directories and its ceiling.
+    /// The workspace's directories, its ceiling, and how it wants its actions run.
+    ///
+    /// The phases read the directories and the ceiling. The execution settings,
+    /// [`Workspace::execution`], are read by whoever assembles the adapters that run a build:
+    /// its worker count for the dispatcher, its timeout and its strategy for what runs one
+    /// action.
+    ///
+    /// An implementation builds each execution setting from the manifest's own text through
+    /// that setting's type — [`Workers::parse`](crate::Workers::parse) or
+    /// [`Workers::of`](crate::Workers::of), [`Timeout::parse`](crate::Timeout::parse) and
+    /// [`Isolation::parse`](crate::Isolation::parse) — and gives a setting the manifest leaves
+    /// out its type's default. Text a type rejects makes the manifest not valid.
     ///
     /// # Errors
     ///

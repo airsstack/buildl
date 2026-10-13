@@ -1,6 +1,6 @@
 # buildl — development roadmap
 
-**Status: living document.** Companion to [`design.md`](./design.md), [`architecture.md`](./architecture.md) and [`architecture-building-blocks.md`](./architecture-building-blocks.md). `design.md` §13 fixes _what ships in which order_; this document tracks _how that order is being built_: the milestone ladder, the intent slices that break the first milestone into reviewable units of work, each slice's status, and the follow-ups that earlier slices handed to later ones. Update it whenever a chain changes state.
+**Status: living document.** Companion to [`design.md`](./design.md), [`architecture.md`](./architecture.md) and [`architecture-building-blocks.md`](./architecture-building-blocks.md). `design.md` §13 fixes _what ships in which order_; this document tracks _how that order is being built_: the milestone ladder, the intent slices that break the first milestone into reviewable units of work, each slice's status, and the rule that a slice closes what it finds and hands nothing on. Update it whenever a chain changes state.
 
 **Author:** rstlix0x0 · **Date:** 2026-09-15 · **Reviewers:** —
 
@@ -70,7 +70,7 @@ graph LR
 |**I6 Resolve**|`buildl-core`|the `TargetGraph` arena, duplicate, unknown-reference and cycle detection; the guard that no phase module imports another|the pipeline stops at `graph`|**done**, 2026-10-10 (§4)|
 |**I7 Plan**|`buildl-core`|the action key, `KeyComponents`, why-dirty; the wanted set ∩ ceiling as a plan-time refusal; setting overrides; the manifest, digest, stat, tool and cache-read ports|the pipeline stops at `plan`|**done**, 2026-10-11 (§4)|
 |**I8 Execute + Record**|`buildl-core`|`Schedule`, `Dispatcher`, `ExecStrategy`; cas, cache and log writes; the crash-safety invariant (design §8.5)|a full `build` runs against fakes|**done**, 2026-10-12 (§4)|
-|**I9 adapters + CLI**|`buildl`, `buildl-cli`|`LocalPorts`, the `Workspace` facade and the adapters for every port except `DeclarationSource` (architecture-building-blocks Â§6); the `Reporter` port; the `check`/`graph`/`plan`/`build` commands and exit codes in `buildl-cli`|the `buildl` binary builds a fixture workspace twice, byte-identical|**not started**, not sliced yet|
+|**I9 adapters + CLI**|`buildl`, `buildl-cli`|`LocalPorts`, the `Workspace` facade and the adapters for every port except `DeclarationSource` (architecture-building-blocks §6); the `Reporter` port; the `check`/`graph`/`plan`/`build` commands and exit codes in `buildl-cli`|the `buildl` binary builds a fixture workspace twice, byte-identical|**not started**, not sliced yet|
 
 Ground rules for the ladder:
 
@@ -94,22 +94,11 @@ Ground rules for the ladder:
 |I7 Plan|`.claudestacks/sdlc/2026-10-10-core-plan/`|`01-small-values` (6 tasks), `02-action-key` (2 tasks), `03-authority-types` (1 task), `04-plan-types` (1 task), `05-plan-errors` (3 tasks), `06-ports` (5 tasks), `07-plan-checks` (3 tasks), `08-plan-gather` (2 tasks), `09-plan-verdicts` (3 tasks), `10-pipeline-plan` (3 tasks), `11-documentation` (6 tasks)|`05dbe53` … `4f130d5`|
 |I8 Execute + Record|`.claudestacks/sdlc/2026-10-11-core-execute-record/`|`01-handoff-types` (2 tasks), `02-outcome-types` (2 tasks), `03-cache-row` (1 task), `04-errors` (2 tasks), `05-ports` (7 tasks), `06-before-run` (3 tasks), `07-schedule` (2 tasks), `08-decisions` (3 tasks), `09-pipeline-build` (5 tasks), `10-documentation` (6 tasks)|`f88cd77` … `6e39019`|
 
-The plan file's `## Review findings`, `## Probe results` and `## Deviations` sections hold the full execution record. §5 lists the follow-ups from that record that are still open.
+The plan file's `## Review findings`, `## Probe results` and `## Deviations` sections hold the full execution record. None of them leaves a follow-up open (§5).
 
 ## 5. Carried follow-ups
 
-Findings an earlier slice recorded but left out of scope, each assigned to the slice expected to close it. When a slice's intent is written, pull in the rows assigned to it.
-
-|#|Follow-up|Origin|Target|
-|---|---|---|---|
-|5|The `buildl-cli` `description` says "a thin clap shell", but clap is not yet a dependency.|I1 review|I9|
-|13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs. I7 made both directories known to `buildl-core`: `Manifest::workspace` returns them as `Workspace::out` and `Workspace::state`. What remains is `buildl-lua`'s walk skipping them, where a manifest is first read.|I5 spec §6.2|I9|
-|17|Read a cache row back: `Deserialize` for `ActionKey` and the types it is made of, which I7 left `Serialize`-only. Since I8 a row also holds the digests of what its action printed, `stdout` and `stderr`, so reading one back covers them too.|I7 spec §3.2, I8 spec §11|I9|
-|18|A program a command names through `$opt:` in its first argument is held to `proc.run` when the build expands it, but has no fingerprint in the action key, so replacing that tool leaves the target clean.|I8 spec §11|the next slice that changes Plan|
-|19|A rule's `desc` is not expanded: nothing shows one yet.|I8 spec §11|the slice that adds the `Reporter` port|
-|20|An output that is a directory tree cannot be stored: `ExecStrategy::collect` answers one digest per declared output. Design §9.2 and §9.6 declare such outputs (`--outdir $out`, `tar … -C $out`) without the stamp file §9.2 prescribes.|I8 spec §11|I9|
-|21|`[execution]`'s `timeout`, `workers` and `strategy` are not in `Workspace`, so the adapters that need them have no port to read them from.|I8 spec §11|I9|
-|22|`execute` gathers the outcomes it has and drops a target left without one, so a `Dispatcher` that loses a task answers `Ok` with fewer outcomes than targets. Decide whether that is an error of the build when the first real dispatcher is written.|I8 plan `09` review|I9|
+No follow-up is open. A slice closes everything it finds before it is marked done, and nothing is carried to a later slice, plan or milestone (§6).
 
 ## 6. Process notes
 
@@ -119,6 +108,7 @@ Findings an earlier slice recorded but left out of scope, each assigned to the s
 |Commits|Conventional Commits, `type(scope): summary`; scope is the crate name, or `repo` for cross-cutting changes; one commit per plan task|
 |Gates|`cargo make dod` (fmt, clippy `-D warnings`, doc `-D warnings`, tests, doctests) and `cargo deny check`, both green before each commit|
 |Review|one reviewer pass per batch of tasks and one fix round; a disproven plan premise is amended in the plan, not only in the code|
+|Findings|closed inside the slice that finds them: a slice is not done while a finding of its own is open, and nothing is carried forward to a later slice, plan or milestone|
 |Known tooling gap|`handoff.lua init` is refused under worktree isolation because it runs `airsl run … --allow-exec git`. Until claudestacks issue #6 [2] is fixed, runs use a session-scratch handoff directory and record that as a deviation.|
 
 ## References
