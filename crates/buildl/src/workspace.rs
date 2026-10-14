@@ -4,18 +4,18 @@
 //! [`Workspace`] and call a command on it, and neither names an adapter. What each command
 //! needs of the workspace is decided here.
 //!
-//! Responsibilities: [`Workspace`]: opening one, reading a target as a person names it, and
-//! the commands.
+//! Responsibilities: [`Workspace`]: opening one, reading a target or a query as a person writes
+//! it, and the commands.
 //!
 //! Non-responsibilities: the sequence of phases, which is the pipeline's; making the adapters,
 //! which is the wiring's; and showing anything, which is the caller's.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use buildl_core::{
-    ActionOutcome, Declaration, Directory, Label, LiveOutput, OnFailure, Pipeline, Plan, Reporter,
-    Result, Scope, SettingName, SettingValue, TargetGraph, pipeline,
+    ActionOutcome, Declaration, Directory, Label, LiveOutput, OnFailure, Pipeline, Plan, Query,
+    Reporter, Result, Scope, SettingName, SettingValue, TargetGraph, pipeline,
 };
 
 use crate::local_ports::Wiring;
@@ -69,6 +69,17 @@ impl Workspace {
         Label::resolve(raw, &base)
     }
 
+    /// A query as a person writes it: `deps(<target>)` or `rdeps(<target>)`, with the target read
+    /// as [`Workspace::label`] reads one.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidQuery`](buildl_core::Error::InvalidQuery) when `raw` is in neither
+    /// form, and whatever [`Workspace::label`] returns for the target.
+    pub fn query_of(&self, raw: &str) -> Result<Query> {
+        Query::parse(raw, |target| self.label(target))
+    }
+
     /// Evaluates every build file twice and returns the declarations when both runs agree.
     ///
     /// Takes no lock and opens no state file, so it is stopped neither by a running build nor
@@ -90,6 +101,18 @@ impl Workspace {
     /// Returns whatever [`pipeline::graph`] returns.
     pub fn graph(&self) -> Result<TargetGraph> {
         pipeline::graph(&self.wiring.source(), self.wiring.entry())
+    }
+
+    /// Evaluates every build file once and answers `query`: the targets it reaches, in label
+    /// order, without the target it names.
+    ///
+    /// Takes no lock and opens no state file, as [`Workspace::check`].
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever [`pipeline::query`] returns.
+    pub fn query(&self, query: &Query) -> Result<BTreeSet<Label>> {
+        pipeline::query(&self.wiring.source(), self.wiring.entry(), query)
     }
 
     /// Plans a build of `scope` with `overrides` given to build settings, and runs nothing.
@@ -373,7 +396,7 @@ mod tests {
     }
 
     #[test]
-    fn check_and_graph_are_stopped_by_neither_a_held_lock_nor_a_cache_that_is_not_canonical() {
+    fn source_only_commands_mind_neither_a_held_lock_nor_a_cache_that_is_not_canonical() {
         let (_dir, root) = copying();
         let workspace = Workspace::open(&root).unwrap();
         let _held = workspace.wiring.lock().unwrap();
@@ -381,6 +404,8 @@ mod tests {
 
         assert_eq!(workspace.check().unwrap().len(), 1);
         workspace.graph().unwrap();
+        let query = workspace.query_of("deps(//:copy)").unwrap();
+        assert_eq!(workspace.query(&query).unwrap(), BTreeSet::new());
     }
 
     #[test]

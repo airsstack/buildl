@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-14
 depends-on: [01]
 built-on: 050ed7322c38
@@ -136,3 +136,24 @@ and `cargo deny check` is green. Commit `feat(buildl): the workspace answers a q
 - `cargo make dod` and `cargo deny check` green.
 - `cargo test -p buildl --test e2e facade`: the facade answers `deps(//:report)` on the `chain`
   fixture with `//:greet`, `//:greeting`, `//lib:words` and writes no `.buildl/` and no `out/`.
+
+## Review findings
+
+- unit-test-mandate — `Workspace::query`'s "opens no state file" was untested: the colocated lock-and-bad-cache test covered `check` and `graph` only — `crates/buildl/src/workspace.rs` — fixed: the test now also answers `deps(//:copy)` with the lock held and `.buildl/cache.json` not canonical, renamed `source_only_commands_mind_neither_a_held_lock_nor_a_cache_that_is_not_canonical`; `cargo test -p buildl --lib source_only_commands` → `test result: ok. 1 passed; 0 failed`
+- reversion guard — `a_query_in_neither_form_is_refused_before_anything_is_loaded` claimed more than the sound `chain` fixture can show — `crates/buildl/tests/e2e/facade.rs:150` — fixed: renamed `a_query_in_neither_form_is_refused_as_written`; `cargo test -p buildl --test e2e facade` → `test result: ok. 10 passed; 0 failed`; `cargo fmt --all -- --check` clean, `cargo clippy -p buildl --all-targets --all-features -- -D warnings` clean
+
+## Probe results
+
+No throwaway probe was needed: each behavioural claim sits under a test the plan names, and each red-green run was the probe.
+
+- The `chain` fixture's answers (`deps(//:report)`, `rdeps(//:text)` through the alias, `deps(//:site)` under a held lock) — the five facade scenarios pass. Holds.
+- `Label` order differs from byte order (`//:z` < `//a:x` < `//a-b:x` < `//lib:a`) — `each_label_is_one_line_in_label_order` passes. Holds.
+- `query` takes no lock (Risks) — `a_query_is_answered_while_another_buildl_holds_the_workspace` passed on its first green run. Holds.
+- Full gate after Task 2: `cargo make dod` → exit 0, 1232 tests passed, 0 failed, 0 warnings; `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`.
+
+## Deviations
+
+- 2026-10-14 — Task 2: the third scenario is named `a_query_in_neither_form_is_refused_as_written`, not `a_query_in_neither_form_is_refused_before_anything_is_loaded`; the `chain` fixture's build files are sound, so the test could not show that nothing was loaded.
+- 2026-10-14 — Task 2: the colocated `workspace.rs` test for source-only commands also covers `query`, and was renamed to fit 100 columns. The plan did not list this change; the review asked for it.
+- 2026-10-14 — Task 1: `query_text` builds its string with a `push_str` loop, because clippy's `format_collect` rejects `map(format!).collect()`. The plan did not specify the form.
+- 2026-10-14 — Commits: the plan asks for one commit per task. Nothing was committed during execution; committing is left to the author.
