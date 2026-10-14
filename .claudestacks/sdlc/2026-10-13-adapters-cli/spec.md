@@ -604,7 +604,8 @@ and for the empty digest, and names the content store when the content is not he
 `UnknownTarget`'s text with and without a suggestion. Fakes held to their contracts (`common.rs`
 self-tests): what a task said reaches `step` before its result; `Pace::Together`'s order; a broken
 `FakeGraphRecord` records nothing; `a_digester_reports_a_file_nothing_and_what_is_not_a_file` (in
-PA).
+PA). PA holds none of the "written with the implementation" tests; with them the core's counts are
+553 unit, 129 flow and 13 doc tests.
 
 ### 2.12 An input that is not a regular file (`Digester::stat`, `src/plan/inputs.rs`)
 
@@ -655,7 +656,8 @@ build.lua: //:lib: input lib.c is a pipe, a socket or a device; an input must be
 The change is part of PA: applied to the prototype with the rest of §2, the gate printed
 `547 passed`, `125 passed`, `13 passed` and `guard-module-edges: OK (24 edges, golden file
 unchanged)`, and the two crates of PB and PC, which build the core's fakes, passed again (`27 passed`,
-`22 passed` and `1 passed`).
+`22 passed` and `1 passed`). The committed core, with §2.11's tests written with the implementation,
+passes `553`, `129` and `13`.
 
 ---
 
@@ -782,8 +784,13 @@ manifest/  mod.rs · root.rs · schema.rs (the tables as serde reads them) · in
 
 Parsed with `toml` 0.8.23, parse only (§14). Every table and every key is optional. Every table
 struct carries `#[serde(deny_unknown_fields)]`, so a key this version does not read is an error:
-`[approver]`, a plugin table and a typo alike. Dotted keys, `[ceiling.fs]` headers and inline tables
-are the same TOML and read alike.
+`[approver]`, a plugin table and a typo alike. A table is read from a table only: every table-typed
+field is read with `#[serde(default, deserialize_with = "table")]`, a reader that accepts a TOML
+table and nothing else, because the derived reader also takes an array by position and drops what is
+past its fields (`[ceiling] proc = [["cc"], ["ld"]]` would silently lose `ld`). An array, or any
+other value, where a table belongs reads `buildl.toml:<line>:<col>: invalid type: sequence, expected
+a table`, and an integer, a string or a boolean there likewise ends `expected a table`. Dotted keys, `[ceiling.fs]` headers and
+inline tables are the same TOML and read alike.
 
 |Key|TOML type|When absent|Becomes|Refused when|
 |---|---|---|---|---|
@@ -859,7 +866,8 @@ pub struct DeclarationSettings {
 ```
 
 `schema.rs` holds the raw tables with `Option<toml::Spanned<String>>`, `Option<toml::Spanned<i64>>`
-and `Vec<toml::Spanned<String>>` fields, so every value keeps its byte span. `interpret.rs` builds
+and `Vec<toml::Spanned<String>>` fields, so every value keeps its byte span, and its private
+`fn table` that reads a table from a table and from nothing else. `interpret.rs` builds
 each value through its core type and, on a failure, reports where the value is.
 
 **Diagnostics.** One line each, the file always named `buildl.toml`:
@@ -1132,6 +1140,9 @@ impl StateLock {
     /// The filesystem's own time when the lock was taken.
     pub const fn acquired(&self) -> Timestamp;
 }
+impl Drop for StateLock {
+    fn drop(&mut self) { let _ = self.file.unlock(); }   // closing the file frees it as well
+}
 
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -1144,10 +1155,10 @@ pub enum LockError {
 
 /// What may be done with a file once it is written.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Access { Rewritable /* 0o644 */, ReadOnly /* 0o444 */, ReadOnlyRunnable /* 0o555 */ }
+pub enum Access { Rewritable /* 0o644 */, ReadOnly /* 0o444 */, ReadOnlyRunnable /* 0o555 */ }
 
 /// Makes `bytes` the whole of `target`: written to a new file in `staging`, then renamed onto it.
-pub(crate) fn write_whole(staging: &Path, target: &Path, bytes: &[u8], access: Access) -> io::Result<()>;
+pub fn write_whole(staging: &Path, target: &Path, bytes: &[u8], access: Access) -> io::Result<()>;
 
 /// Removes whatever is at `path`, following no symbolic link. Nothing being there is not an error.
 pub(crate) fn clear_path(path: &Path) -> io::Result<()>;
@@ -1184,7 +1195,11 @@ whole or the new one whole. A sync would add safety only against the machine its
 remedy is `rm -rf .buildl out`. Measured, 200 files of 4 KiB, temp file then rename:
 `no sync: 131.639µs per file`; `sync_all: 4.189259ms per file`.
 
-**`clear_path`** is the one rule for removing what stands at a path, used by `cas/` and `exec/`:
+`Access` and `write_whole` are `pub` (`buildl::state::{write_whole, Access}`): `pub(crate)` with no
+adapter yet in the crate is dead code the gate refuses, so they are public API.
+
+**`clear_path`** is the one rule for removing what stands at a path, used by `cas/`, `exec/` and the
+sweep of `StateLock::acquire`:
 `symlink_metadata` — nothing there (`NotFound`, or a parent that is not a directory) → `Ok`; a real
 directory → `remove_dir_all`; anything else, a link to a directory included → `remove_file`. The
 link's target is never touched. It unlinks and never opens a file for writing, which is what keeps a
@@ -1200,9 +1215,9 @@ remove_file(symlink to dir): ok; target file survives=true    remove_file(dangli
 
 **`StateLock::acquire`**, in order: `create_dir_all(dir)`; open `lock` (write, create, no truncate);
 `File::try_lock` — `WouldBlock` becomes `LockError::Busy`; `set_len(0)` then write `"<pid>\n"`, which
-stamps the file's modification time; read that time as `acquired`; remove every `.tmp-*` entry
+stamps the file's modification time; read that time as `acquired`; remove, each through `clear_path`, every `.tmp-*` entry
 directly in `dir` and every entry of `cas/tmp/`. The sweep is safe because the lock is held. The lock
-file is never deleted. `File::try_lock` is std (stable since 1.89, `flock(LOCK_EX|LOCK_NB)` on
+file is never deleted; dropping the `StateLock` calls `File::unlock`. `File::try_lock` is std (stable since 1.89, `flock(LOCK_EX|LOCK_NB)` on
 Unix), so the system frees the lock when its holder dies and no stale lock exists. std opens files
 `O_CLOEXEC`, so an action does not inherit it. Probe, across processes:
 
@@ -1260,7 +1275,7 @@ flowchart TD
     SRC2 --> M
     M -- Link --> L["hard_link(source, root/at)"]
     L -- fails --> C
-    M -- Copy --> C["read source; write_whole(parent of at, root/at, bytes, same access)"]
+    M -- Copy --> C["read source; clear_path(root/at);<br/>write_whole(parent of at, root/at, bytes, same access)"]
 ```
 
 |Method|Behaviour|
@@ -1269,7 +1284,7 @@ flowchart TD
 |`contains`|`symlink_metadata(blob)` is a regular file. Any error is `false`|
 |`get`|`fs::read(blob)`: `NotFound` → `Ok(None)`; another error → `Err`. Bytes whose digest is not the one asked for: blob and twin are removed, `Ok(None)`|
 |`clear`|`state::clear_path(root/at)`|
-|`place`|As the diagram. `hard_link` answers: `NotFound` → make the parent directories, make the twin again if it is gone, link once more; `AlreadyExists` → `clear_path` what is there, link once more; anything else → the copy. Never link-to-temp-then-rename: renaming one link of an inode over another is a silent no-op that leaves the temp name. `Placement` is probed on the first call and kept|
+|`place`|As the diagram. `hard_link` answers: `NotFound` → make the parent directories, make the twin again if it is gone, link once more; `AlreadyExists` → `clear_path` what is there, link once more; anything else → the copy. The copy clears the target with `clear_path` before `write_whole`, since a rename does not replace a directory. Never link-to-temp-then-rename: renaming one link of an inode over another is a silent no-op that leaves the temp name. `Placement` is probed on the first call and kept|
 
 **The executable twin.** The store keeps bytes; whether a file may be run is said at each placement
 (`crates/buildl-core/src/ports/content_store.rs:19-20`), and a mode belongs to the inode. The twin
@@ -1385,7 +1400,9 @@ blob mode 444: an action appends to out/dep/x -> exit 1, "Permission denied", bl
 ```
 
 A file standing where `place` needs a directory (`out/app` from an older graph, now needing
-`out/app/bin`) is not removed: `place` fails naming it. The store deletes only at a path it was
+`out/app/bin`) is not removed: `place` fails naming it — the nearest ancestor of the target below the
+root that exists and is not a directory: `placing a file at <target>: <obstacle> is in the way and is
+not a directory`. The store deletes only at a path it was
 asked to clear, because `out` is the user's choice of directory. `rm -rf out` is always safe: every
 build places every output again (`crates/buildl-core/src/execute/record.rs:192`).
 
@@ -1408,11 +1425,13 @@ impl LocalCache {
 /// One line of the journal.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Entry { label: Label, row: CacheRow }
+pub(crate) struct Entry { pub(crate) label: Label, pub(crate) row: CacheRow }
 
 pub(crate) struct Journal { path: PathBuf, file: Option<File>, broken: bool }
 impl Journal {
     pub(crate) fn new(path: PathBuf) -> Self;
+    /// The journal's file, so a failed fold can name it (§5.8).
+    pub(crate) fn path(&self) -> &Path;
     /// Every whole line of the file at `path`, in order. A last line with no newline is left out.
     pub(crate) fn read(path: &Path) -> buildl_core::Result<Vec<Entry>>;
     pub(crate) fn append(&mut self, entry: &Entry) -> buildl_core::Result<()>;
@@ -1573,7 +1592,8 @@ std only, no `unsafe`, no dependency.
 
 ```text
 exec/  mod.rs · bare.rs (Bare, impl ExecStrategy) · capture.rs (reader threads, the wait loop,
-       deadline, drain) · outputs.rs (walking one output -> Found)
+       deadline, drain) · outputs.rs (walking one output -> Found) · memory_store.rs (#[cfg(test)]:
+       the in-memory `ContentStore` the tests of bare.rs and outputs.rs share)
 ```
 
 ```rust
@@ -1596,7 +1616,7 @@ impl ExecStrategy for Bare {
 }
 
 // crate-private
-pub(crate) struct Capture { pub status: ExitStatus, pub timed_out: bool, pub stdout: Vec<u8>, pub stderr: Vec<u8> }
+pub(crate) struct Capture { pub(crate) status: ExitStatus, pub(crate) timed_out: bool, pub(crate) stdout: Vec<u8>, pub(crate) stderr: Vec<u8> }
 /// Spawns `command` with stdin null and both outputs piped, and waits for it at most `timeout`.
 pub(crate) fn capture(command: &mut Command, timeout: Duration, live: Option<LiveSink<'_>>) -> io::Result<Capture>;
 /// What is at `path`, following no symbolic link; every regular file is stored through `cas`.
@@ -1668,7 +1688,8 @@ sequenceDiagram
   in arrival order. So `live` is called on the worker thread, once per chunk, each channel's order
   exact, with exactly the bytes `RawOutcome` later holds. It is the only thread that touches the
   `Child`, so `try_wait`, `kill` and `wait` need no lock.
-- Deadline: `Instant::now() + timeout`, read at spawn. `try_wait` is checked before the deadline, so
+- Deadline: `Instant::now().checked_add(timeout)`, read at spawn; a timeout too long to add is no
+  deadline (`Instant + Duration` would panic in the worker). `try_wait` is checked before the deadline, so
   a child that ends on the deadline is not a timeout. std has no timed wait; the pipes closing is the
   wake-up, so a short action pays nothing.
 - Both pipes at their end while the child still runs (it closed them): nothing more can arrive, so
@@ -1800,12 +1821,14 @@ flowchart LR
 `dispatch`, all inside one `std::thread::scope`:
 
 1. `ready = step(Turn::Begin)`. Empty → `Ok(())`, no channel and no thread.
-2. For each ready task: `running += 1`; when `started < limit && started < running`, start a worker
-   (`thread::Builder::new().name("buildl-worker-{n}").spawn_scoped`); send the task. Tasks leave in
-   the order `step` returned them.
-3. `running == 0` → done. Otherwise block on the reports channel: `Told(m)` → `ready = step(Turn::Told(m))`;
-   `Done(r)` → `running -= 1; ready = step(Turn::Done(r))`; `Lost` → `running -= 1`, `step` is not
-   called. Back to 2.
+2. Ready tasks join a `waiting` queue. While `busy < limit` and a task waits: when `busy == started`,
+   start a worker (`thread::Builder::new().name("buildl-worker-{n}").spawn_scoped`); then
+   `busy += 1` and send the front task. A task is handed out only when a worker is free, so a worker
+   gets its next task only after `step` has seen its previous result; the rest stay in `waiting`.
+   Tasks leave in the order `step` returned them.
+3. `busy == 0` → done. Otherwise block on the reports channel: `Told(m)` → `step(Turn::Told(m))`;
+   `Done(r)` → `busy -= 1; step(Turn::Done(r))`; `Lost` → `busy -= 1`, `step` is not called. What
+   `step` returns joins `waiting`. Back to 2.
 4. The tasks `Sender` is owned by the scope's closure, so it drops when the closure returns on any
    path; each worker's `recv` then fails and it ends; the scope joins them.
 
@@ -1822,7 +1845,7 @@ the flags and the port has no `'static` bound
 |every task ran|`Ok(())`|its outcomes|
 |a task panicked, in an adapter or in the core's `work`|`Ok(())`; the rest of the build still runs|`Error::DispatcherFault { targets }`: the lost target and all that waited on it|
 |the first worker cannot be started|`Error::Adapter { port: Dispatcher }`|that error|
-|a later worker cannot be started|carries on with the workers there are|its outcomes|
+|a later worker cannot be started|carries on with the workers there are (`limit = started`)|its outcomes|
 |the build stopped at a failure|`Ok(())` once running actions end and queued tasks came back not begun|its outcomes: failed, built, skipped|
 
 The pool knows nothing of stopping at a failure: the flag is the core's, and nothing running is
@@ -1923,7 +1946,7 @@ a `Vec<u8>` and no test needs a terminal. What each call does:
 
 |Call|Writes|
 |---|---|
-|`begun(total)`|nothing; keeps `total`|
+|`begun(total)`|nothing; keeps `total` and clears `done`, `running`, `live` and `mid_line`, so a reporter lent to a second build starts clean|
 |`started(action)`|adds the action to `running`, with its description or, without one, its label. `Live`, and nothing shown live: redraws the status line|
 |`printed(label, _, bytes)`|the first for a target: erases the status line and writes the header `--- <label>`. Then the bytes, as they are|
 |`finished(event, printed)`|for the target shown live: a newline if its output ended mid-line, then its trailer if it failed. For any other: its block (§9.2), when it printed something or failed. `Live`: erases the status line first and redraws it after|
@@ -2018,8 +2041,8 @@ pub struct Wiring { root: WorkspaceRoot, manifest: TomlManifest, workspace: buil
 impl Wiring {
     /// Finds the workspace at or above `start` and reads its manifest.
     pub fn read(start: &Path) -> Result<Self>;
-    pub fn root(&self) -> &WorkspaceRoot;
-    pub fn entry(&self) -> &EntryName;
+    pub const fn root(&self) -> &WorkspaceRoot;
+    pub const fn entry(&self) -> &EntryName;
     /// The source of build files: all that `check` and `graph` need.
     pub fn source(&self) -> LuaSource;
     /// Whether this version of buildl can run actions under the workspace's strategy (§8.3).
@@ -2041,9 +2064,9 @@ order: `WorkspaceRoot::find(start)`; `TomlManifest::read(&root)`; `manifest.work
 let defaults = DeclarationLimits::default();
 let settings = self.manifest.declaration();
 let limits = DeclarationLimits::new(
-        settings.memory_bytes.unwrap_or(defaults.memory_bytes()),
-        settings.instructions.unwrap_or(defaults.instructions()),
-    ).with_walk_entries(settings.walk_entries.unwrap_or(defaults.walk_entries()));
+        settings.memory_bytes.unwrap_or_else(|| defaults.memory_bytes()),
+        settings.instructions.unwrap_or_else(|| defaults.instructions()),
+    ).with_walk_entries(settings.walk_entries.unwrap_or_else(|| defaults.walk_entries()));
 LuaSource::new(self.root.as_path(), limits, [self.workspace.out.clone(), self.workspace.state.clone()])
 ```
 
@@ -2192,6 +2215,9 @@ day tier 2 ships. So:
 ```text
 manifest: buildl.toml: [execution] strategy is "sandbox" (the default when it is not written), and this version of buildl runs "bare" only: write strategy = "bare" under [execution]
 ```
+
+The parenthesis is printed whenever the strategy equals `Isolation::default()`, written or not;
+`os-sandbox` and `container` get the same line without it.
 
 - **Exit code 5**, "fix your build files or `buildl.toml`" (§9.3). The remedy is one line of
   `buildl.toml`; nothing is wrong with the machine (3) and no grant is exceeded (4). It is the
@@ -2345,7 +2371,8 @@ error: unexpected argument '--keep-goin' found
 ```
 
 `buildl` with no command prints the help to stderr and exits 2. `--help` and `--version` print to
-stdout and exit 0. A setting given twice is a usage error: an ambiguity is never resolved silently.
+stdout and exit 0. Only the top-level `buildl --version` is tested: with `propagate_version`, clap
+answers `buildl build --version` as `buildl-build 0.1.0`. A setting given twice is a usage error: an ambiguity is never resolved silently.
 The definitions are clean under the workspace lints (`cargo clippy -- -D warnings` with pedantic,
 nursery, `unwrap_used` and `panic` set: `Finished`, on 1.99.0 and on 1.94).
 
@@ -2402,7 +2429,7 @@ clean  //lib:text
 |`Command` / `Outputs` / `Network` / `Platform`|`command changed` / `declared outputs changed` / `network access changed` / `platform changed`|
 |`Input(p)` / `InputOrder`|`input <p> changed` / `inputs reordered`|
 |`Env(n)` / `Setting(n)`|`environment variable <n> changed` / `setting <n> changed`|
-|`Tool`|`tool <program> changed`, the program from the planned key's `own.tool`|
+|`Tool`|`tool <program> changed`, the program from the planned key's `own.tool`; `tool changed` when it names none|
 |`Dep(l)` / `DepOrder`|`dependency <l> changed` / `dependencies reordered`|
 |a difference added later (`_`)|`something this buildl cannot name changed`|
 
@@ -2418,9 +2445,9 @@ started:
 --- //:main.o (cached)
 main.c:4:9: warning: unused variable 'n'
 FAILED //:docs: infrastructure failure (the command could not be started)
-    exec strategy: //:docs: the command cannot be started
+    exec strategy: //:docs: running <located path of mkdoc>: No such file or directory (os error 2)
     declared in build.lua
-    command: cc --doc README "a b"
+    command: mkdoc --doc README "a b"
 --- //lib:text
 lib/text.c:3:1: error: expected ';'
 FAILED //lib:text: action failure (exit status 1)
@@ -2454,7 +2481,8 @@ main.c:4:9: warning: unused variable 'n'
 Without `--keep-going` the first example stops at its first failure. With one worker that is
 `//:docs`, the first of the two failing targets in label order: `//lib:text` comes back not begun
 and is skipped with `//:app`, `//:main.o` was already found cached, and the build ends
-`1 failed, 2 skipped, 1 cached` with exit 3. With more workers `//lib:text` may have begun before
+`1 failed, 2 skipped, 1 cached` with exit 3; the real binary prints this line, because the pool hands
+`//lib:text` to the worker only after the core has seen `//:docs` fail (§6.3 step 2). With more workers `//lib:text` may have begun before
 `//:docs` failed; it then runs to its end and the line is the keep-going one. Both counts, and the
 keep-going one, come from running that graph through `Pipeline::build` over the core's fakes, with
 `//:docs` unable to start and `//lib:text` exiting 1:
@@ -2698,7 +2726,9 @@ graph BT
 All four run under `cargo make dod` with no change to its commands: `cargo test --workspace
 --all-targets` builds the unit tests, both integration binaries and the `buildl` binary they run.
 Each integration root opens with `#![expect(clippy::unwrap_used, clippy::panic, reason = "…")]`, as
-`crates/buildl-lua/tests/flows/main.rs:6` does. Rules every test follows: the workspace root is
+`crates/buildl-lua/tests/flows/main.rs:6` does — except the CLI root (`tests/cli/main.rs`), which
+expects `clippy::unwrap_used` only: none of its tests calls `panic!`, so a `clippy::panic`
+expectation there is unfulfilled and the gate refuses it. Rules every test follows: the workspace root is
 passed explicitly; no test calls `set_current_dir` or `set_var`; an edit to an input always changes
 the file's length, so the stat cache sees it whatever the filesystem's timestamp granule.
 
@@ -2817,7 +2847,7 @@ In a script, a tool is named by its absolute path, because the child has no `PAT
 |`the_command_runs_in_the_workspace_root`|working directory|`pwd`|
 |`the_child_sees_only_the_declared_variables`|env cleared, then `env`|`env`|
 |`standard_input_is_empty`|stdin null|`cat`|
-|`the_located_file_is_the_one_run`|a same-named file later on the path is not run|two `#!/bin/sh` scripts the test writes; `SearchPath::new([first, second])`|
+|`the_located_file_is_the_one_run`|a same-named file later on the path is not run|two symbolic links named `tool` to `/bin/sh`, in two directories; `SearchPath::new([first, second])`; `tool -c 'echo $0'` prints the path under `first` (links, not written scripts: a script open for writing while another test thread spawns can fail with `ETXTBSY`)|
 |`a_program_that_is_not_located_is_an_adapter_error`|not an outcome|`SearchPath::new([])`|
 |`a_command_that_cannot_be_started_is_an_adapter_error`|a spawn failure is an adapter error|`sh`, a `Bare` whose root does not exist|
 |`an_exit_status_is_reported_as_it_is`|`Exited(3)`, both streams captured apart|`sh -c 'echo out; echo err >&2; exit 3'`|
@@ -2826,7 +2856,7 @@ In a script, a tool is named by its absolute path, because the child has no `PAT
 |`an_action_killed_by_a_signal_is_reported_signaled`|`Signaled(n)`|`sh -c 'kill -SEGV $$'`|
 |`a_grandchild_holding_the_pipes_does_not_hang_the_run`|drain bound, output so far kept|`sh -c '/bin/sleep 30 & echo hi; exit 0'`|
 |`a_child_that_closes_its_streams_is_still_timed_out`|wait without pipes|`sh -c 'exec >&- 2>&-; exec /bin/sleep 30'`|
-|`a_live_sink_is_handed_each_chunk_before_the_command_ends`|`live`, and equality with the result|`sh -c 'echo one; /bin/sleep 0.3; echo two'`|
+|`a_live_sink_is_handed_each_chunk_before_the_command_ends`|`live`, and equality with the result|`sh -c 'echo one; while [ ! -e heard ]; do /bin/sleep 0.05; done; echo two; echo three >&2'`; the sink creates `heard`, so the command ends only if its first line reached the sink while it ran — no timing|
 |`prepare_makes_the_directory_and_leaves_nothing_at_the_path`|file, tree and link removed; missing parent made|none|
 |`collect_reports_one_entry_per_output_in_order`|count and order|none|
 |`collect_reports_a_file_with_its_mode_and_stores_it`|`File`, executable bit, blob held|none|
@@ -3190,7 +3220,8 @@ b.target("good2",  { deps = { "good" },  run = { "cp", "$deps", "$out" } })
 
 One worker and `bad` sorting before `good` make the stop case exact: ready targets come out in id
 order (`crates/buildl-core/src/execute/schedule.rs:80`), one worker runs them in that order (PB),
-`bad` fails first, `good` comes back not begun. Expected `Summary`: stop → 1 failed, 4 skipped; keep
+`bad` fails first, `good` comes back not begun, because the pool hands the worker `good` only after
+the core has seen `bad`'s result (§6.3 step 2). Expected `Summary`: stop → 1 failed, 4 skipped; keep
 going → 1 failed, 2 skipped, 2 built — the line design §8.7 quotes.
 
 ### 12.4 End-to-end scenarios (`crates/buildl/tests/e2e`)
@@ -3430,9 +3461,10 @@ gives; the real crate's count is whatever its edges are, and the guard asserts n
 ### 13.3 Golden files
 
 - `crates/expected-module-edges.txt`: unchanged (PA).
-- `crates/expected-edges.txt`: the `# buildl` and `# buildl-cli` sections change. The file is
-  regenerated with the guard's own command, never by hand; with §14's manifests that command printed
-  (PD):
+- `crates/expected-edges.txt`: the `# buildl` and `# buildl-cli` sections change, each with the
+  commit that adds its crate's dependencies: `# buildl` with the adapters, `# buildl-cli` (`clap`,
+  `tempfile`) with the binary. The file is regenerated with the guard's own command, never by hand;
+  with §14's manifests that command printed (PD):
 
 ```text
 # buildl-core
@@ -3476,6 +3508,10 @@ it depends on `buildl` alone for build logic, is the crate-edge guard's and `car
 +        architecture.md §6: rayon is confined to the Digester adapter inside buildl""" },
 ```
 
+The edits land in two steps, because `cargo deny check -D unused-wrapper` refuses a wrapper no crate
+yet uses (`error[unused-wrapper]: wrapper for banned crate was not encountered`): the `toml` and
+`rayon` lines and `tempfile`'s `"buildl"` land with the adapters; the `clap` entry and `tempfile`'s
+`"buildl-cli"` land with the binary, when `buildl-cli` first depends on them.
 The first two are required: the bans fail without them (PD). The last two turn "clap is the
 binary's" and "rayon stays in `buildl`" into checks, like the entries beside them. `tempfile`'s
 reason text becomes: temp-file-then-rename is a storage concern of `buildl`'s shared `state` module;
@@ -3545,7 +3581,8 @@ Publishing is a Non-goal; these four rules keep it possible, and the plans follo
 ## 14. New dependencies
 
 No crate is new to `[workspace.dependencies]`; four of its lines change, and two members gain
-dependency lines. Each crate is named here once, with the one version the lockfile resolves.
+dependency lines. The `rayon`, `toml` and `tempfile` lines (and the `sha2` comment) change with the
+adapters; the `clap` line changes with the binary. Each crate is named here once, with the one version the lockfile resolves.
 
 |Crate|Version|Licence|Taken by|Reason|Proof|
 |---|---|---|---|---|---|
@@ -3592,7 +3629,9 @@ packages above and no second version of anything (PD).
 
 Each row is a sentence that is wrong or missing once this spec is built, and what replaces it.
 Section cross-references between the documents are kept as they are; no section is renumbered. No
-rustdoc or crate README names a plan, an intent or a slice.
+rustdoc or crate README names a plan, an intent or a slice. Where a row below says "milestone N",
+the design documents and the READMEs write "design §13 item N" instead (they use no milestone
+numbers); `docs/roadmap.md` and `CLAUDE.md` keep "milestone".
 
 ### 15.1 `docs/design.md`
 
@@ -3864,6 +3903,36 @@ proved on Linux alone, by `collect_reports_a_name_that_is_not_unicode`.
 |— workspace policy and the Rust guidelines|§3, §9.4, §12.1, §14|
 |— section cross-references survive|§15|
 |— airsl stays on the `0.1` series|§14 (no airsl line changes)|
+
+### 18.1 Corrections after the build
+
+Each line: the section changed, and what it now says, matching the committed code.
+
+1. §2.11, §2.12 — the core's counts with the tests written with the implementation are 553 unit, 129 flow, 13 doc.
+2. §4.2 — a table is read from a table only (`deserialize_with = "table"`); an array or other value where a table belongs is refused `… expected a table`.
+3. §5.2 — `Access` and `write_whole` are `pub`, re-exported as `buildl::state::{write_whole, Access}`.
+4. §5.2 — `StateLock` has `impl Drop` calling `File::unlock`.
+5. §5.2 — `clear_path` is also used by the sweep of `StateLock::acquire`, which removes each entry through it.
+6. §5.3 — the `Copy` arm of `place` clears the target with `clear_path` before `write_whole`.
+7. §5.3 — the obstacle in the way of `place` is named: `placing a file at <target>: <obstacle> is in the way and is not a directory`.
+8. §5.4 — `Entry` and its fields `label`, `row` are `pub(crate)`.
+9. §5.4 — `Journal` has `pub(crate) fn path(&self) -> &Path`.
+10. §6.1 — `exec/` has a fifth file, `memory_store.rs` (`#[cfg(test)]`).
+11. §6.1 — `Capture`'s fields are `pub(crate)`.
+12. §6.1 — the deadline is `Instant::now().checked_add(timeout)`; one too long to add is no deadline.
+13. §6.3 — `dispatch` step 2/3: tasks wait in a queue and a task is handed out only when a worker is free, after `step` has seen that worker's previous result; a later worker that cannot start sets `limit = started`.
+14. §7 — `begun` also clears `done`, `running`, `live` and `mid_line`.
+15. §8.1 — `source()` uses `unwrap_or_else(|| defaults.…())`; `LocalPorts::root`/`entry` are `pub const fn`.
+16. §8.3 — the `(the default when it is not written)` parenthesis is printed whenever the strategy is `Isolation::default()`.
+17. §9.1 — only the top-level `--version` is tested; `buildl build --version` prints `buildl-build 0.1.0`.
+18. §9.2 — `Tool` with no program reads `tool changed`.
+19. §9.2 — keep-going example: the diagnostic is `exec strategy: //:docs: running <located path of mkdoc>: No such file or directory (os error 2)` and the program is `mkdoc` (`command: mkdoc --doc README "a b"`).
+20. §9.2 — the stop summary `1 failed, 2 skipped, 1 cached` is what the binary prints, because of §6.3 step 2.
+21. §12.1 — the CLI integration root expects `clippy::unwrap_used` only.
+22. §12.2 — `the_located_file_is_the_one_run` uses two symbolic links to `/bin/sh`; `a_live_sink_is_handed_each_chunk_before_the_command_ends` waits on a file `heard` the sink creates.
+23. §12.3 — the stop case's `1 failed, 4 skipped` holds because of §6.3 step 2.
+24. §13.3, §13.4, §14 — the `# buildl-cli` golden lines, the `clap` deny entry, `tempfile`'s `"buildl-cli"` wrapper and the `clap` workspace line land with the binary; the rest with the adapters (`-D unused-wrapper` refuses an unused wrapper).
+25. §15 — design documents and READMEs write "design §13 item N" where a row says "milestone N".
 
 ---
 
