@@ -1,0 +1,15 @@
+[workspace]
+name   = "twins"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["cp"]
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
+
+[execution]
+workers  = 4
+timeout  = "1m"
+strategy = "bare"

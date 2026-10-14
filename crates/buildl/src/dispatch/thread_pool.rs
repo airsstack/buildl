@@ -7,6 +7,7 @@
 //!
 //! Responsibilities: [`ThreadPool`].
 
+use std::collections::VecDeque;
 use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -62,9 +63,11 @@ enum Report<M, R> {
 /// Runs every task `step` yields through `work`, on up to `limit` threads, and returns how many
 /// threads it started.
 ///
-/// A thread is started only when a task is handed out while every thread there is has one, so
-/// the count is the most tasks that ever waited or ran together, up to `limit`. Tasks leave in
-/// the order `step` returned them.
+/// A task is handed to a worker only when one is free, so a task that waits is handed over
+/// after `step` has seen every result that came before: what `step` decides on a result
+/// reaches every task not yet with a worker. A thread is started only when a task is handed
+/// over while every thread there is has one, so the count is the most tasks that ever ran
+/// together, up to `limit`. Tasks leave in the order `step` returned them.
 fn serve<T, M, R, W, S>(limit: NonZeroUsize, work: &W, mut step: S) -> Result<usize>
 where
     T: Send,
@@ -73,7 +76,7 @@ where
     W: Fn(T, &(dyn Fn(M) + Sync)) -> R + Sync,
     S: FnMut(Turn<M, R>) -> Vec<T>,
 {
-    let mut ready = step(Turn::Begin);
+    let ready = step(Turn::Begin);
     if ready.is_empty() {
         return Ok(0);
     }
@@ -84,12 +87,14 @@ where
         // Owned by this closure, so it is dropped when the closure returns on any path: each
         // worker's `recv` then fails, the worker ends, and the scope joins it.
         let tasks = tasks;
+        let mut limit = limit.get();
         let mut started = 0_usize;
-        let mut running = 0_usize;
+        // The tasks a worker has, and the tasks that wait for one.
+        let mut busy = 0_usize;
+        let mut waiting = VecDeque::from(ready);
         loop {
-            for task in ready {
-                running += 1;
-                if started < limit.get() && started < running {
+            while busy < limit && !waiting.is_empty() {
+                if busy == started {
                     let (queue, back) = (&queue, back.clone());
                     let spawned = thread::Builder::new()
                         .name(format!("buildl-worker-{started}"))
@@ -105,32 +110,38 @@ where
                             });
                         }
                         // The workers there are take the task once one of them is free.
-                        Err(_) => {}
+                        Err(_) => {
+                            limit = started;
+                            continue;
+                        }
                     }
                 }
-                // The queue outlives the scope, so this cannot fail.
-                let _ = tasks.send(task);
+                if let Some(task) = waiting.pop_front() {
+                    busy += 1;
+                    // The queue outlives the scope, so this cannot fail.
+                    let _ = tasks.send(task);
+                }
             }
-            if running == 0 {
+            if busy == 0 {
                 return Ok(started);
             }
             // This function keeps a sender of its own, so the channel cannot close.
             let Ok(report) = reports.recv() else {
                 return Ok(started);
             };
-            ready = match report {
+            waiting.extend(match report {
                 Report::Told(message) => step(Turn::Told(message)),
                 Report::Done(result) => {
-                    running -= 1;
+                    busy -= 1;
                     step(Turn::Done(result))
                 }
                 // Nothing is handed to `step`: whoever handed the task out finds it has no
                 // result.
                 Report::Lost => {
-                    running -= 1;
+                    busy -= 1;
                     Vec::new()
                 }
-            };
+            });
         }
     })
 }
@@ -173,7 +184,7 @@ mod tests {
 
     use std::num::NonZeroUsize;
     use std::panic::resume_unwind;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Mutex, mpsc};
     use std::thread;
     use std::time::Duration;
@@ -325,6 +336,33 @@ mod tests {
         .unwrap();
 
         assert_eq!(order.into_inner().unwrap(), (0..50).collect::<Vec<u32>>());
+    }
+
+    #[test]
+    fn a_task_is_handed_to_a_worker_only_after_step_has_seen_every_result_before_it() {
+        let stopped = AtomicBool::new(false);
+        let mut results = Vec::new();
+
+        // The first result sets a flag, as a failed action stops a build. Eight tasks are handed
+        // out together to one worker, so seven of them wait while the first runs, and each of
+        // the seven must find the flag set.
+        serve(
+            limit(1),
+            &|task: u32, _tell: &(dyn Fn(()) + Sync)| (task, stopped.load(Ordering::SeqCst)),
+            |turn| match turn {
+                Turn::Begin => (0..8).collect(),
+                Turn::Told(()) => Vec::new(),
+                Turn::Done(result) => {
+                    stopped.store(true, Ordering::SeqCst);
+                    results.push(result);
+                    Vec::new()
+                }
+            },
+        )
+        .unwrap();
+
+        let expected: Vec<(u32, bool)> = (0..8).map(|task| (task, task > 0)).collect();
+        assert_eq!(results, expected);
     }
 
     #[test]
