@@ -95,7 +95,7 @@ wrapper list names `airsl` rather than `buildl`.
 member depends on them and airsl does not pull them in. A ban on an absent crate is inert, so
 listing them buys nothing and §2.2 covers the case they describe.
 
-Wrapper lists name only parents that exist **today**. When I7's adapters in `buildl` take
+Wrapper lists name only parents that exist **today**. When I9's adapters in `buildl` take
 `walkdir`, `tempfile`, `globset` or `toml` directly, that slice adds `"buildl"` to the relevant
 wrapper list — a deliberate, reviewed edit, which is the behaviour this guard exists to produce.
 Declaring a future parent in advance is not possible, because §2.3 denies the `unused-wrapper`

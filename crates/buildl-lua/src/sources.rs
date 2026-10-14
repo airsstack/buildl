@@ -4,7 +4,8 @@
 //! Its own file because it is the one place a build file's evaluation touches the filesystem. The
 //! Lua engine holds no filesystem grant at all, so containment is enforced here and nowhere else:
 //! the walk starts at the declaring directory, refuses a directory that resolves outside the
-//! workspace, never follows a symlink, and returns regular files only.
+//! workspace, never follows a symlink, never enters a directory it was told to skip, and returns
+//! regular files only.
 //!
 //! Responsibilities: [`Sources`], one declaring directory's walk.
 //!
@@ -27,21 +28,36 @@ use crate::refusal::Refusal;
 ///
 /// Clones share one entry count, so every `buildl.sources` call of one build file draws on the same
 /// ceiling.
+///
+/// The walk never lists, enters or counts anything inside a skipped directory. A skipped
+/// directory is a workspace-relative path, matched against the whole path from the workspace
+/// root: a directory of the same name deeper in the tree is not skipped. A declaring directory
+/// that is itself a skipped directory, or lies inside one, yields no files.
 #[derive(Debug, Clone)]
 pub(crate) struct Sources {
     root: PathBuf,
     directory: PathBuf,
+    skipped: Arc<[PathBuf]>,
     ceiling: NonZeroU64,
     visited: Arc<AtomicU64>,
 }
 
 impl Sources {
     /// The walk for `directory`, under the canonical workspace `root`, that visits at most
-    /// `ceiling` directory entries over its lifetime.
-    pub(crate) fn new(root: &Path, directory: &Directory, ceiling: NonZeroU64) -> Self {
+    /// `ceiling` directory entries over its lifetime and skips every directory in `skipped`.
+    pub(crate) fn new(
+        root: &Path,
+        directory: &Directory,
+        ceiling: NonZeroU64,
+        skipped: &[Directory],
+    ) -> Self {
         Self {
             root: root.to_path_buf(),
             directory: root.join(directory.as_str()),
+            skipped: skipped
+                .iter()
+                .map(|skipped| root.join(skipped.as_str()))
+                .collect(),
             ceiling,
             visited: Arc::new(AtomicU64::new(0)),
         }
@@ -52,7 +68,8 @@ impl Sources {
     ///
     /// The matcher uses the same flags as airsl's `glob` module: `*` stops at `/`, and `**/`
     /// matches zero or more directories. Every entry the walk visits, of any kind, counts against
-    /// the ceiling; visiting more than it refuses with the walk limit.
+    /// the ceiling; visiting more than it refuses with the walk limit. A skipped directory is
+    /// neither visited nor counted.
     pub(crate) fn find(&self, pattern: &str) -> Result<Vec<String>, Refusal> {
         let matcher = GlobBuilder::new(pattern)
             .literal_separator(true)
@@ -77,9 +94,14 @@ impl Sources {
         }
 
         let mut found = Vec::new();
+        if self.skipped.iter().any(|skipped| base.starts_with(skipped)) {
+            return Ok(found);
+        }
         for entry in WalkDir::new(&base)
             .follow_root_links(false)
             .sort_by_file_name()
+            .into_iter()
+            .filter_entry(|entry| !self.skipped.iter().any(|skipped| entry.path() == skipped))
         {
             let entry = entry
                 .map_err(|error| Refusal::new(EvaluationFailure::Runtime, error.to_string()))?;
@@ -152,7 +174,25 @@ mod tests {
         } else {
             Directory::parse(directory).unwrap()
         };
-        Sources::new(root, &directory, walk_entries)
+        Sources::new(root, &directory, walk_entries, &[])
+    }
+
+    fn skipping(root: &Path, directory: &str, skipped: &[&str]) -> Sources {
+        let directory = if directory.is_empty() {
+            Directory::root()
+        } else {
+            Directory::parse(directory).unwrap()
+        };
+        let skipped: Vec<Directory> = skipped
+            .iter()
+            .map(|path| Directory::parse(*path).unwrap())
+            .collect();
+        Sources::new(
+            root,
+            &directory,
+            DeclarationLimits::default().walk_entries(),
+            &skipped,
+        )
     }
 
     fn entries(count: u64) -> NonZeroU64 {
@@ -298,6 +338,91 @@ mod tests {
     fn a_missing_declaring_directory_is_a_runtime_refusal() {
         let (_dir, root) = workspace(&[]);
         let refusal = sources(&root, "gone").find("*.c").unwrap_err();
+        assert_eq!(refusal.failure(), &EvaluationFailure::Runtime);
+    }
+
+    #[test]
+    fn skipped_directories_are_not_listed_from_the_workspace_root() {
+        let (_dir, root) = workspace(&["a.c", "out/o.c", ".buildl/s.c", "lib/b.c"]);
+        assert_eq!(
+            skipping(&root, "", &["out", ".buildl"])
+                .find("**/*.c")
+                .unwrap(),
+            ["a.c", "lib/b.c"]
+        );
+    }
+
+    #[test]
+    fn a_skipped_directory_is_whatever_was_configured() {
+        let (_dir, root) = workspace(&["a.c", "out/o.c", "target/t.c", "var/state/s.c"]);
+        assert_eq!(
+            skipping(&root, "", &["target", "var/state"])
+                .find("**/*.c")
+                .unwrap(),
+            ["a.c", "out/o.c"]
+        );
+    }
+
+    #[test]
+    fn a_skipped_directory_is_matched_by_its_workspace_relative_path_only() {
+        let (_dir, root) = workspace(&["out/o.c", "lib/out/keep.c", "lib/out/deep/keep.c"]);
+        assert_eq!(
+            skipping(&root, "", &["out"]).find("**/*.c").unwrap(),
+            ["lib/out/deep/keep.c", "lib/out/keep.c"]
+        );
+    }
+
+    #[test]
+    fn a_skipped_directory_below_the_declaring_directory_is_pruned() {
+        let (_dir, root) = workspace(&["lib/a.c", "lib/gen/g.c", "app/b.c"]);
+        assert_eq!(
+            skipping(&root, "lib", &["lib/gen"]).find("**/*.c").unwrap(),
+            ["a.c"]
+        );
+    }
+
+    #[test]
+    fn a_shared_prefix_is_not_a_skipped_directory() {
+        let (_dir, root) = workspace(&["out/o.c", "out2/keep.c", "outer.c"]);
+        assert_eq!(
+            skipping(&root, "", &["out"]).find("**/*.c").unwrap(),
+            ["out2/keep.c", "outer.c"]
+        );
+    }
+
+    #[test]
+    fn a_skipped_directory_is_not_entered_so_it_costs_no_walk_entries() {
+        let (_dir, root) = workspace(&["a.c", "out/1.c", "out/2.c", "out/sub/3.c"]);
+        let skipped = [Directory::parse("out").unwrap()];
+        // The root and a.c are two entries; none of out is visited.
+        let walk = Sources::new(&root, &Directory::root(), entries(2), &skipped);
+        assert_eq!(walk.find("**/*.c").unwrap(), ["a.c"]);
+    }
+
+    #[test]
+    fn a_declaring_directory_inside_a_skipped_directory_lists_nothing() {
+        let (_dir, root) = workspace(&["out/pkg/a.c", "out/b.c"]);
+        let skipped = [Directory::parse("out").unwrap()];
+        let walk = Sources::new(
+            &root,
+            &Directory::parse("out/pkg").unwrap(),
+            entries(1),
+            &skipped,
+        );
+        assert_eq!(walk.find("*.c").unwrap(), Vec::<String>::new());
+        let walk = Sources::new(
+            &root,
+            &Directory::parse("out").unwrap(),
+            entries(1),
+            &skipped,
+        );
+        assert_eq!(walk.find("**/*.c").unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_missing_declaring_directory_is_still_refused_when_directories_are_skipped() {
+        let (_dir, root) = workspace(&[]);
+        let refusal = skipping(&root, "gone", &["out"]).find("*.c").unwrap_err();
         assert_eq!(refusal.failure(), &EvaluationFailure::Runtime);
     }
 

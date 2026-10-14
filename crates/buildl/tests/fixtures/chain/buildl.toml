@@ -1,0 +1,16 @@
+[workspace]
+name   = "chain"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["cp", "sort", "out/greet"]
+env.read = ["BUILDL_FIXTURE_FLAVOR"]
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
+
+[execution]
+workers  = 4
+timeout  = "1m"
+strategy = "bare"

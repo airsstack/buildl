@@ -36,7 +36,7 @@ Every claim here was checked in this task against the artifact named.
 |`Ports` is a trait of associated types and `Pipeline<P: Ports>` takes it as its one parameter; the signatures are "the shape, not the final API"|`docs/architecture-building-blocks.md:200-207` (§5.3), `docs/architecture-building-blocks.md:136` (§5)|
 |Fakes live in `buildl-core` under `#[cfg(test)]`|`docs/architecture-building-blocks.md:305` (§8)|
 |The crate's five module rules: no phase names another; `types/` holds no cross-concept decisions; one concept one type; `ports/` gains no production implementation; every phase module is tested against fakes|`crates/buildl-core/src/lib.rs:32-45`|
-|I2's module map placed `Pipeline`, `Ports` and `FakePorts` in `pipeline/` and the queue in `load/`|`.claudestacks/sdlc/2026-09-18-core-foundation/spec.md:187-188`|
+|I3's module map placed `Pipeline`, `Ports` and `FakePorts` in `pipeline/` and the queue in `load/`|`.claudestacks/sdlc/2026-09-18-core-foundation/spec.md:187-188`|
 |A `bool` must not carry a two-state semantic flag|rust-guidelines `strong-types.md:20`|
 |One real implementation is used directly, not behind a trait|rust-guidelines `static-dispatch.md:11`|
 
@@ -314,7 +314,7 @@ pub trait Ports {
 }
 ```
 
-- `Ports` moves from `pipeline/`, where I2's map placed it, to `ports/bundle.rs`, so that every trait
+- `Ports` moves from `pipeline/`, where I3's map placed it, to `ports/bundle.rs`, so that every trait
   of the crate is in one module and no logic module declares one. The trait keeps its documented name.
   `ports/` still gains no production implementation: `LocalPorts` lives in `buildl`.
 - `Ports` holds only `Source`. `Clock` and the other ports join in the slice that first uses them.
@@ -399,7 +399,7 @@ display; nothing branches on it. `DeclarationField` (`Name`, `Dep`, `Input`, `Ou
 was wanted, what was found and where it was declared. `NameKind` gains one variant per new validated
 type, `Command` included.
 
-### 6.2 Queue size, and the risk left to I-lua
+### 6.2 Queue size, and the risk left to I5
 
 The queue is not capped. Its size is bounded by construction: a directory is queued at most once, and
 every evaluated directory must hold a real build file, or Load stops. Since a `subdir` can only name a descendant, the
@@ -409,7 +409,7 @@ One resource risk is real and is not the queue's: the adapter stages declaration
 buffer (`architecture.md:148`), which the Lua memory ceiling (`[declaration] memory`,
 `docs/design.md:103`) does not count. The instruction ceiling bounds a file's calls, but how many
 declarations it admits depends on airsl's per-call cost, which is not verified. Since declaration is
-meant to be safe on untrusted input (`docs/design.md:56`), I-lua adds a per-file staging cap, refused
+meant to be safe on untrusted input (`docs/design.md:56`), I5 adds a per-file staging cap, refused
 in airsl's refusal style. It is recorded as a roadmap follow-up (§9).
 
 ---
@@ -504,7 +504,7 @@ No test uses Lua, the filesystem, a process or a thread.
 |`docs/architecture-building-blocks.md` §8|the fakes live in `buildl-core`'s integration tests (`tests/flows/common.rs`), not under `#[cfg(test)]`|
 |`docs/architecture-building-blocks.md` §5.2, §5.3|`evaluate` returns `Result<Evaluated>`; `Ports` is declared in `ports/`|
 |`docs/architecture-building-blocks.md` §8|the out-of-order scenario's assertion becomes "sorted by directory, then declared name"|
-|`docs/roadmap.md`|the I3 row and §4 on completion; a new §5 follow-up: per-file staging cap, target I-lua|
+|`docs/roadmap.md`|the I4 row and §4 on completion; a new §5 follow-up: per-file staging cap, target I5|
 |`README.md` (repository)|the status line no longer says no pipeline phase is implemented|
 
 Section numbers and Mermaid blocks in `docs/` are preserved.
@@ -524,7 +524,7 @@ Section numbers and Mermaid blocks in `docs/` are preserved.
 ## 11. Non-goals
 
 - The airsl engine, the declaration policy, the `buildl` module table and its `buildl` global binding,
-  and the per-file staging cap — I-lua.
+  and the per-file staging cap — I5.
 - `b.sources()`, `b.fetch`, `b.use`.
 - Duplicate detection, unknown references, `$opt:name` validation, rule expansion, cycles,
   `TargetGraph` — Resolve.

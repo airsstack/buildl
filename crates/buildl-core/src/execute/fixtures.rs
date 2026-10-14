@@ -11,10 +11,12 @@
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
+use crate::execute::perform::Kept;
 use crate::types::{
-    ActionKey, Argument, CacheRow, Command, Digest, Directory, Freshness, KeyComponents, Label,
-    NetworkAccess, Node, NodeId, OutputName, OutputPath, OwnComponents, Platform, Program,
-    Provenance, SettingName, SettingValue, SourcePath, TargetGraph, TargetRole,
+    ActionKey, Argument, CacheRow, Command, Digest, Directory, FileMode, Freshness, KeyComponents,
+    Label, NetworkAccess, Node, NodeId, OutputManifest, OutputName, OutputPath, OwnComponents,
+    Platform, Program, Provenance, SettingName, SettingValue, SourcePath, StoredFile, TargetGraph,
+    TargetRole, Tree, TreeEntry, TreePath,
 };
 
 /// A directory from known-valid text.
@@ -99,15 +101,46 @@ pub(crate) fn key(names: &[&str]) -> ActionKey {
     .unwrap()
 }
 
-/// The row of a build under [`key`] in which each output's content was its own name, and the
-/// action printed `out` and `err`.
+/// The manifest of an output that is one plain file holding `content`.
+pub(crate) fn file(content: &str) -> OutputManifest {
+    OutputManifest::File(StoredFile {
+        digest: Digest::of(content.as_bytes()),
+        mode: FileMode::Plain,
+    })
+}
+
+/// The manifest of an output that is a directory of plain files, each a `(path, content)`.
+pub(crate) fn tree(files: &[(&str, &str)]) -> OutputManifest {
+    let entries = files
+        .iter()
+        .map(|(path, content)| TreeEntry {
+            path: TreePath::parse(*path).unwrap(),
+            digest: Digest::of(content.as_bytes()),
+            mode: FileMode::Plain,
+        })
+        .collect();
+    OutputManifest::Tree(Tree::new(entries).unwrap())
+}
+
+/// The digest of an output whose manifest is `manifest`: the digest of the manifest's bytes.
+pub(crate) fn digest_of(manifest: &OutputManifest) -> Digest {
+    Digest::of(&manifest.to_bytes().unwrap())
+}
+
+/// The output whose manifest is `manifest`, as a worker hands it back once that is stored.
+pub(crate) fn kept(manifest: OutputManifest) -> Kept {
+    Kept {
+        digest: digest_of(&manifest),
+        manifest,
+    }
+}
+
+/// The row of a build under [`key`] in which each output was one plain file holding its own
+/// name, and the action printed `out` and `err`.
 pub(crate) fn row(names: &[&str]) -> CacheRow {
     CacheRow::new(
         key(names),
-        names
-            .iter()
-            .map(|name| Digest::of(name.as_bytes()))
-            .collect(),
+        names.iter().map(|name| digest_of(&file(name))).collect(),
         Digest::of(b"out"),
         Digest::of(b"err"),
     )

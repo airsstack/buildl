@@ -5,8 +5,8 @@
 //! finished: a key holds what each dependency produced, and that is known only then. So the
 //! key is finished here, during the build, and compared with the recorded one.
 //!
-//! Responsibilities: [`finished_key`], [`is_cached`], and [`settle`] with [`Settled`], which
-//! asks the ports what the two decisions need.
+//! Responsibilities: [`finished_key`], [`stands`], [`restorable`], and [`settle`] with
+//! [`Settled`], which asks the ports what the decisions need.
 //!
 //! Non-responsibilities: keeping rows and content, which are the ports'; and what happens to a
 //! target once it is settled.
@@ -15,7 +15,7 @@ use crate::error::{Error, PortName, Result};
 use crate::ports::{ActionCache, ContentStore};
 use crate::types::{
     ActionKey, CacheRow, DepProducts, Diagnostic, Digest, Freshness, KeyComponents, Label,
-    OwnComponents,
+    OutputManifest, OwnComponents,
 };
 
 /// The key of a target whose dependencies have all succeeded: `own`, and what each dependency
@@ -52,29 +52,62 @@ pub(crate) fn finished_key(
     })
 }
 
-/// Whether a target need not run: what its last build recorded still stands.
+/// Whether `row` still stands for a target whose key is now `key`: the target is not declared
+/// to run on every build, and `key` has the digest of the row's key.
+pub(crate) fn stands(freshness: Freshness, key: &ActionKey, row: &CacheRow) -> bool {
+    freshness != Freshness::Always && row.key().digest() == key.digest()
+}
+
+/// What each output of `row` is, in declared order, when everything needed to put the outputs
+/// back is still held; `None` when any of it is gone.
 ///
-/// It does when the target is not declared to run on every build, `row` exists, `key` has the
-/// digest of the row's key, and `held` answers true for every digest the row holds: each
-/// output, and what the action printed. A row whose content is gone is no reason to skip the
-/// action, since there would be nothing to put in place.
-pub(crate) fn is_cached(
-    freshness: Freshness,
-    key: &ActionKey,
-    row: Option<&CacheRow>,
+/// `held` says whether content is held, and `read` returns held content. Needed are what the
+/// action printed, the manifest of each output, and every file a manifest names: the one file
+/// of a file output, and each file of a tree. A manifest that is gone, or whose bytes no
+/// longer read as one, makes the row no reason to skip the action, as does one file of a tree:
+/// a tree is put back whole or not at all.
+///
+/// # Errors
+///
+/// Returns whatever `read` returns.
+pub(crate) fn restorable(
+    row: &CacheRow,
     held: impl Fn(&Digest) -> bool,
-) -> bool {
-    freshness != Freshness::Always
-        && row.is_some_and(|row| {
-            row.key().digest() == key.digest() && row.digests().all(|digest| held(&digest))
+    read: impl Fn(&Digest) -> Result<Option<Vec<u8>>>,
+) -> Result<Option<Vec<OutputManifest>>> {
+    if !(held(&row.stdout()) && held(&row.stderr())) {
+        return Ok(None);
+    }
+    row.outputs()
+        .iter()
+        .map(|digest| {
+            let bytes = read(digest)?;
+            Ok(bytes
+                .as_deref()
+                .and_then(OutputManifest::from_bytes)
+                .filter(|manifest| files_held(manifest, &held)))
         })
+        .collect()
+}
+
+/// Whether every file `manifest` names is held.
+fn files_held(manifest: &OutputManifest, held: impl Fn(&Digest) -> bool) -> bool {
+    match manifest {
+        OutputManifest::File(file) => held(&file.digest),
+        OutputManifest::Tree(tree) => tree.entries().iter().all(|entry| held(&entry.digest)),
+    }
 }
 
 /// What settling a target that may start found.
 #[derive(Debug)]
 pub(crate) enum Settled {
-    /// It need not run: what its last build recorded, which is this row, still stands.
-    Cached(CacheRow),
+    /// It need not run: what its last build recorded still stands.
+    Cached {
+        /// What that build recorded.
+        row: CacheRow,
+        /// What each output it recorded is, in declared order.
+        manifests: Vec<OutputManifest>,
+    },
     /// It must run, under this key.
     Runs(ActionKey),
 }
@@ -82,12 +115,13 @@ pub(crate) enum Settled {
 /// Settles the target `label`, whose dependencies `deps` have all succeeded.
 ///
 /// Its key is finished from `own` and the row `cache` holds for each dependency, in the order
-/// the dependencies were written. It is cached when [`is_cached`] says so of that key, the
-/// row `cache` holds for the target itself, and what `cas` still holds.
+/// the dependencies were written. It is cached when the row `cache` holds for the target itself
+/// [`stands`] under that key and is [`restorable`] from what `cas` still holds.
 ///
 /// # Errors
 ///
-/// Returns whatever [`finished_key`] returns.
+/// Returns whatever [`finished_key`] returns, and whatever `cas` returns when the manifest of
+/// an output cannot be read.
 pub(crate) fn settle<A: ActionCache, C: ContentStore>(
     label: &Label,
     freshness: Freshness,
@@ -99,11 +133,17 @@ pub(crate) fn settle<A: ActionCache, C: ContentStore>(
     let rows: Vec<(&Label, Option<&CacheRow>)> =
         deps.iter().map(|dep| (*dep, cache.row(dep))).collect();
     let key = finished_key(own, &rows)?;
-    let standing = cache
-        .row(label)
-        .filter(|row| is_cached(freshness, &key, Some(row), |digest| cas.contains(digest)))
-        .cloned();
-    Ok(standing.map_or_else(|| Settled::Runs(key), Settled::Cached))
+    let Some(row) = cache.row(label).filter(|row| stands(freshness, &key, row)) else {
+        return Ok(Settled::Runs(key));
+    };
+    let manifests = restorable(row, |digest| cas.contains(digest), |digest| cas.get(digest))?;
+    Ok(manifests.map_or_else(
+        || Settled::Runs(key),
+        |manifests| Settled::Cached {
+            row: row.clone(),
+            manifests,
+        },
+    ))
 }
 
 #[cfg(test)]
@@ -113,10 +153,15 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use super::{finished_key, is_cached};
-    use crate::error::{Error, PortName};
-    use crate::execute::fixtures::{command, key, label, own, row};
-    use crate::types::{ActionKey, DepProducts, Digest, Freshness, KeyComponents};
+    use std::collections::BTreeMap;
+
+    use super::{finished_key, restorable, stands};
+    use crate::error::{Error, PortName, Result};
+    use crate::execute::fixtures::{command, digest_of, file, key, label, own, row, tree};
+    use crate::types::{
+        ActionKey, CacheRow, DepProducts, Diagnostic, Digest, Freshness, KeyComponents,
+        OutputManifest,
+    };
 
     #[test]
     fn a_key_is_finished_from_what_each_dependency_produced() {
@@ -185,36 +230,19 @@ mod tests {
     }
 
     #[test]
-    fn a_target_is_cached_when_its_row_has_its_key_and_everything_the_row_names_is_held() {
+    fn a_row_stands_when_it_was_recorded_under_the_targets_key() {
         let row = row(&["app", "app.map"]);
-        assert!(is_cached(
-            Freshness::Cached,
-            &key(&["app", "app.map"]),
-            Some(&row),
-            |_| true
-        ));
+        assert!(stands(Freshness::Cached, &key(&["app", "app.map"]), &row));
     }
 
     #[test]
-    fn a_target_declared_to_always_run_is_never_cached() {
+    fn no_row_stands_for_a_target_declared_to_always_run() {
         let row = row(&["app"]);
-        assert!(!is_cached(
-            Freshness::Always,
-            &key(&["app"]),
-            Some(&row),
-            |_| true
-        ));
+        assert!(!stands(Freshness::Always, &key(&["app"]), &row));
     }
 
     #[test]
-    fn a_target_with_no_row_is_not_cached() {
-        assert!(!is_cached(Freshness::Cached, &key(&["app"]), None, |_| {
-            true
-        }));
-    }
-
-    #[test]
-    fn a_target_whose_key_is_not_its_rows_is_not_cached() {
+    fn a_row_recorded_under_another_key_does_not_stand() {
         let row = row(&["app"]);
         let mut changed = own(&["app"]);
         changed.command = command(&["cc", "-O2"]);
@@ -223,29 +251,129 @@ mod tests {
             deps: Vec::new(),
         })
         .unwrap();
-        assert!(!is_cached(Freshness::Cached, &now, Some(&row), |_| true));
+        assert!(!stands(Freshness::Cached, &now, &row));
+    }
+
+    /// A store holding the bytes given, and the manifest of each output given.
+    struct Store {
+        blobs: BTreeMap<Digest, Vec<u8>>,
+    }
+
+    impl Store {
+        fn holding(contents: &[&str], manifests: &[&OutputManifest]) -> Self {
+            let contents = contents.iter().map(|content| content.as_bytes().to_vec());
+            let manifests = manifests
+                .iter()
+                .map(|manifest| manifest.to_bytes().unwrap());
+            Self {
+                blobs: contents
+                    .chain(manifests)
+                    .map(|bytes| (Digest::of(&bytes), bytes))
+                    .collect(),
+            }
+        }
+
+        fn without(mut self, digest: &Digest) -> Self {
+            self.blobs.remove(digest);
+            self
+        }
+
+        fn restorable(&self, row: &CacheRow) -> Option<Vec<OutputManifest>> {
+            restorable(
+                row,
+                |digest| self.blobs.contains_key(digest),
+                |digest| Ok(self.blobs.get(digest).cloned()),
+            )
+            .unwrap()
+        }
+    }
+
+    /// The row of a build under the key of `names` that left `manifests`, one per name, and
+    /// printed `out` and `err`.
+    fn recorded(names: &[&str], manifests: &[&OutputManifest]) -> CacheRow {
+        CacheRow::new(
+            key(names),
+            manifests
+                .iter()
+                .map(|manifest| digest_of(manifest))
+                .collect(),
+            Digest::of(b"out"),
+            Digest::of(b"err"),
+        )
+        .unwrap()
     }
 
     #[test]
-    fn a_target_is_not_cached_when_any_digest_of_its_row_is_gone() {
-        let row = row(&["app", "app.map"]);
-        let key = key(&["app", "app.map"]);
+    fn a_row_is_restorable_when_everything_its_outputs_are_made_of_is_held() {
+        let app = file("app");
+        let site = tree(&[("index.html", "page"), ("assets/app.js", "script")]);
+        let row = recorded(&["app", "site"], &[&app, &site]);
+        let store = Store::holding(&["out", "err", "app", "page", "script"], &[&app, &site]);
+
+        assert_eq!(store.restorable(&row), Some(vec![app, site]));
+    }
+
+    #[test]
+    fn a_row_with_no_output_is_restorable_when_what_was_printed_is_held() {
+        let row = recorded(&[], &[]);
+        assert_eq!(
+            Store::holding(&["out", "err"], &[]).restorable(&row),
+            Some(Vec::new())
+        );
+        assert_eq!(Store::holding(&["out"], &[]).restorable(&row), None);
+    }
+
+    #[test]
+    fn a_row_is_not_restorable_when_anything_it_needs_is_gone() {
+        let app = file("app");
+        let site = tree(&[("index.html", "page"), ("assets/app.js", "script")]);
+        let row = recorded(&["app", "site"], &[&app, &site]);
+        let whole = || Store::holding(&["out", "err", "app", "page", "script"], &[&app, &site]);
+
         for (gone, what) in [
-            (Digest::of(b"app"), "the first output"),
-            (Digest::of(b"app.map"), "the second output"),
             (Digest::of(b"out"), "what the action printed"),
             (Digest::of(b"err"), "what the action printed as errors"),
+            (digest_of(&app), "the manifest of a file output"),
+            (Digest::of(b"app"), "the file of a file output"),
+            (digest_of(&site), "the manifest of a tree"),
+            (Digest::of(b"page"), "one file of a tree"),
+            (Digest::of(b"script"), "another file of a tree"),
         ] {
-            assert!(
-                !is_cached(Freshness::Cached, &key, Some(&row), |digest| *digest
-                    != gone),
-                "{what}"
-            );
+            assert_eq!(whole().without(&gone).restorable(&row), None, "{what}");
         }
         assert!(
-            is_cached(Freshness::Cached, &key, Some(&row), |digest| *digest
-                != Digest::of(b"something else")),
-            "content the row does not name"
+            whole()
+                .without(&Digest::of(b"something else"))
+                .restorable(&row)
+                .is_some(),
+            "content the row does not need"
         );
+    }
+
+    #[test]
+    fn a_manifest_whose_bytes_no_longer_read_as_one_is_as_good_as_gone() {
+        let app = file("app");
+        let row = recorded(&["app"], &[&app]);
+        let mut store = Store::holding(&["out", "err", "app"], &[]);
+        store
+            .blobs
+            .insert(digest_of(&app), b"not a manifest".to_vec());
+
+        assert_eq!(store.restorable(&row), None);
+    }
+
+    #[test]
+    fn a_store_that_cannot_read_a_manifest_fails_the_question() {
+        let row = recorded(&["app"], &[&file("app")]);
+        let unreadable = |_: &Digest| -> Result<Option<Vec<u8>>> {
+            Err(Error::Adapter {
+                port: PortName::ContentStore,
+                diagnostic: Diagnostic::new("the store cannot be read"),
+            })
+        };
+
+        let error = restorable(&row, |_| true, unreadable).unwrap_err();
+
+        assert_eq!(error.to_string(), "content store: the store cannot be read");
     }
 }

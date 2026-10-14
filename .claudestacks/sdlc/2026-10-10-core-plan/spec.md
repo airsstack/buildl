@@ -149,14 +149,14 @@ their keys by value (§3.4).
 |D3|Which wants are checked|Programs, environment names, declared inputs and the workspace's write roots|Chosen by the author. A ceiling list nothing checks is a hole|
 |D4|The approver|Not in this slice|Intent; `docs/design.md:643`|
 |D5|What else a key holds|§3.2. Not the label, provenance, role, description or `always`. `env` is keyed by name|None of the five changes what the action produces. An environment is a set of variables, so reordering an `env` list rebuilds nothing; `inputs` and `deps` keep written order because `$in` and `$deps` expand in it (`docs/design.md:153`)|
-|D6|Which argument names a tool, and what a fingerprint is|The first argument, when it is non-empty and holds no `$`. A key holds at most one tool. A fingerprint is a `Digest`|PC. `docs/design.md:387` leaves the fingerprint's source to the resolver, and `Digest` is the crate's one identity type. A first argument holding a placeholder names nothing until the executor expands it; checking that is carried to I6 (§11)|
+|D6|Which argument names a tool, and what a fingerprint is|The first argument, when it is non-empty and holds no `$`. A key holds at most one tool. A fingerprint is a `Digest`|PC. `docs/design.md:387` leaves the fingerprint's source to the resolver, and `Digest` is the crate's one identity type. A first argument holding a placeholder names nothing until the executor expands it; checking that is carried to I8 (§11)|
 |D7|What a cache row holds|The whole `ActionKey`, components included, and one digest per declared output|Without the previous components there is nothing to diff; without the output digests a dependent has nothing to key on|
 |D8|What a dirty reason holds|`Always`, `NeverBuilt`, or the names of every component that differs. No old or new values|Agreed with the author. The values are in the cache row and the plan for a renderer that wants them|
 |D9|The shape of `Plan`|One verdict per node, the nodes' labels, the wanted set. Serialized keyed by label, by hand; no `Deserialize`|A plan must serialize without the graph beside it, and no `NodeId` goes to a file (Resolve D7)|
 |D10|Who supplies environment values and the platform|One new port, `Host`|N1. Both are facts about the machine the actions run on|
 |D11|Who reads the stat cache, and who writes it|`Digester` reports a file's metadata and digests; `StatCache` holds recorded entries; the reuse rule is Plan's. Plan records and commits, and commits nothing when it recorded nothing|Agreed with the author. The rule is logic, so it is tested against fakes. A stat cache Plan could not write would re-hash every changed file on every `plan`|
 |D12|How much of `ActionCache` lands|`row` only|This slice reads rows; `upsert` and `commit` belong to the slice that writes them|
-|D13|How a pipeline takes its ports|One `PortSet<P>` struct with a public field per port; `Pipeline::new(PortSet<P>)`|PD. Seven ports now and more with I6|
+|D13|How a pipeline takes its ports|One `PortSet<P>` struct with a public field per port; `Pipeline::new(PortSet<P>)`|PD. Seven ports now and more with I8|
 |D14|Where an override is checked, and how it arrives|At Plan, as `&BTreeMap<SettingName, SettingValue>`|Agreed with the author. Plan is the first phase an invocation value reaches. Closes `docs/architecture.md:308`|
 |D15|How many failures are reported|The first, in the fixed order of §5.1|Same as Load and Resolve (Resolve D5)|
 |D16|What a refusal names|The first want outside the ceiling, the lowest-labelled target wanting it with its build file, and the ceiling|`docs/design.md:167`; D15|
@@ -751,7 +751,7 @@ clean, which a loop waiting for every target to be clean would not.
 |`docs/architecture-building-blocks.md` §5.2–§5.4, §6, §8|the six port signatures; `Ports` and `PortSet`; `plan`'s row; `Host` in the catalog; the fakes table|
 |`README.md` (`:91`, `:98`)|the same rule as design §8.3; the status paragraph|
 |`CLAUDE.md` (`:28`)|the same rule as design §8.3. Outside the intent's list of affected systems: it is the one other file that states the rule D1 replaces. The author approved this edit explicitly when approving the spec, 2026-10-11|
-|`docs/roadmap.md`|the I5 row and §4 on completion; the follow-ups of §11|
+|`docs/roadmap.md`|the I7 row and §4 on completion; the follow-ups of §11|
 
 `docs/fundamental-walkthrough.md` needs no change: it states early cutoff and never that a key holds a
 dependency's key. `grep -c -i -e 'dep keys' -e 'dep action' -e 'their action keys'` over it printed
@@ -769,9 +769,9 @@ survives.
 
 |Follow-up|Target|
 |---|---|
-|A command whose first argument holds a placeholder is checked against `proc.run` once it is expanded (D6)|I6|
-|A clean target's outputs are confirmed present in the cas before they are linked into `out/`|I6|
-|`ActionCache` gains `upsert` and `commit`; `CacheRow` gains `stdout` and `stderr` (D12)|I6|
+|A command whose first argument holds a placeholder is checked against `proc.run` once it is expanded (D6)|I8|
+|A clean target's outputs are confirmed present in the cas before they are linked into `out/`|I8|
+|`ActionCache` gains `upsert` and `commit`; `CacheRow` gains `stdout` and `stderr` (D12)|I8|
 |Reading a cache row back: `Deserialize` for the key's types|the `buildl` adapters slice|
 |Follow-up #13's `buildl-lua` half: the sources walk skips `Workspace::out` and `Workspace::state`|the `buildl` adapters slice|
 
@@ -779,8 +779,8 @@ survives.
 
 - The `Approver` port, the interactive prompt, CI detection, and whether a `Grants` type exists —
   milestone 4.
-- Running anything, `OutcomeClass`, and every write to the cas, the action cache and the log — I6.
-- Placeholder expansion, and any check of what a placeholder expands to — I6.
+- Running anything, `OutcomeClass`, and every write to the cas, the action cache and the log — I8.
+- Placeholder expansion, and any check of what a placeholder expands to — I8.
 - Every real adapter: the `buildl.toml` reader, the filesystem digester, `.buildl/statcache.json`, the
   `PATH` lookup, `.buildl/cache.json`.
 - Parsing `--set`, a did-you-mean for an override, and rendering a plan for a terminal — the CLI

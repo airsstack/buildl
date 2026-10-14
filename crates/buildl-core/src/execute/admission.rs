@@ -1,9 +1,11 @@
 //! Admission: whether an expanded command names a program, and whether that program may run.
 //!
-//! Its own file because a command can name its program only once its placeholders are expanded
-//! — a test that runs `$deps` runs what its dependency built — and a build is refused for what
-//! it wants before any of it runs. So every expanded command is held to the workspace's ceiling
-//! here, the ones whose program was written out in the build file included.
+//! Its own file because some commands name their program only once their paths are known — a
+//! test that runs `$deps` runs what its dependency built — and a build is refused for what it
+//! wants before any of it runs. A program written out, or named through a build setting, was
+//! already held to the ceiling when the build was planned. One first named by `$in`, `$out` or
+//! `$deps` is known only here, and so is a command that names no program at all. Every expanded
+//! command goes through the one check, whichever way its program was named.
 //!
 //! Responsibilities: [`admit`].
 //!

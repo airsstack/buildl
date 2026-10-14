@@ -103,7 +103,7 @@ Questions the documents leave open, which the design pass has to close:
   phase modules, the new ports and the grown `ActionCache`, the `Ports` bundle and `PortSet`, new error
   variants, `Pipeline::build`, the flow tests and their fakes, the crate rustdoc and `README.md`
 - `crates/expected-module-edges.txt` — the module-edge guard's golden file
-- `docs/roadmap.md` — the I6 row, follow-ups #14–#16, §4 on completion
+- `docs/roadmap.md` — the I8 row, follow-ups #14–#16, §4 on completion
 - `docs/design.md`, `docs/architecture.md`, `docs/architecture-building-blocks.md`, `README.md`,
   `CLAUDE.md` — only where a decision closed here contradicts or settles text there: the cache's
   durability, the target state machine, `OutcomeClass`, the port signatures and the catalog

@@ -65,7 +65,7 @@ Facts that bite here:
   `docs/architecture-building-blocks.md`, 3 in `README.md`.
 - `CLAUDE.md` is not edited. Its status paragraph points at the roadmap rather than naming what
   is implemented, and its pipeline and crash-safety sentences stay true.
-- Task 6 replaces the status cell of the I6 row as this chain's earlier steps left it in
+- Task 6 replaces the status cell of the I8 row as this chain's earlier steps left it in
   `docs/roadmap.md`; the instruction is by position, so it holds whatever that cell reads.
 
 All work happens in the worktree, on its branch, never on `main`. Commits follow Conventional Commits, one per task. Every edit below was made for real in a copy of the repository while this plan was written, and each `Replace` and `With` block is quoted from that copy, before and after the edit. Every quoted `grep` result was captured by running that command on that copy with the task's edits made. The gate step of task 1 was checked on a second copy holding the code of plans `01` to `09` with every edit of this plan applied: `cargo make dod` exited `0` there, so each of the crate doc's new links resolves.
@@ -79,7 +79,7 @@ docs/design.md                         — [modify] §3, §5, §8.5, §8.7
 docs/architecture.md                   — [modify] §2, §2.1, §3, §3.4, §3.5, §4, §7
 docs/architecture-building-blocks.md   — [modify] §5.1, §5.2, §5.3, §5.4, §6, §8
 README.md                              — [modify] the status line, the placeholder sentence
-docs/roadmap.md                        — [modify] the I6 row, the completed-intents row, the follow-ups
+docs/roadmap.md                        — [modify] the I8 row, the completed-intents row, the follow-ups
 ```
 
 ### Task 1 — Describe Execute and Record in the crate docs
@@ -866,23 +866,23 @@ docs/roadmap.md                        — [modify] the I6 row, the completed-in
    $ git commit -m "docs(repo): restate the status and the placeholder rule in the README"
    ```
 
-### Task 6 — Mark I6 Execute + Record done in the roadmap
+### Task 6 — Mark I8 Execute + Record done in the roadmap
 
 **Files:**
 - Modify `docs/roadmap.md`
 
 **Steps:**
 
-1. In the §3 table of `docs/roadmap.md`, replace the last cell of the **I6 Execute + Record** row — everything after ``|a full `build` runs against fakes|`` — with `**done**, <date> (§4)|`, where `<date>` is what this command prints:
+1. In the §3 table of `docs/roadmap.md`, replace the last cell of the **I8 Execute + Record** row — everything after ``|a full `build` runs against fakes|`` — with `**done**, <date> (§4)|`, where `<date>` is what this command prints:
 
    ```
    $ date +%Y-%m-%d
    ```
 
-2. In §4, add the chain's row directly below the I5 Plan row. Write each plan's number of tasks in place of its `N`: the first command below prints one `path:count` line per plan. In the last cell, write the two hashes printed by the other two commands in place of `FIRST` and `LAST`: the commit of plan `01`'s first task, and the latest commit.
+2. In §4, add the chain's row directly below the I7 Plan row. Write each plan's number of tasks in place of its `N`: the first command below prints one `path:count` line per plan. In the last cell, write the two hashes printed by the other two commands in place of `FIRST` and `LAST`: the commit of plan `01`'s first task, and the latest commit.
 
    ```markdown
-   |I6 Execute + Record|`.claudestacks/sdlc/2026-10-11-core-execute-record/`|`01-handoff-types` (N tasks), `02-outcome-types` (N tasks), `03-cache-row` (N tasks), `04-errors` (N tasks), `05-ports` (N tasks), `06-before-run` (N tasks), `07-schedule` (N tasks), `08-decisions` (N tasks), `09-pipeline-build` (N tasks), `10-documentation` (6 tasks)|`FIRST` … `LAST`|
+   |I8 Execute + Record|`.claudestacks/sdlc/2026-10-11-core-execute-record/`|`01-handoff-types` (N tasks), `02-outcome-types` (N tasks), `03-cache-row` (N tasks), `04-errors` (N tasks), `05-ports` (N tasks), `06-before-run` (N tasks), `07-schedule` (N tasks), `08-decisions` (N tasks), `09-pipeline-build` (N tasks), `10-documentation` (6 tasks)|`FIRST` … `LAST`|
    ```
 
    ```
@@ -896,20 +896,20 @@ docs/roadmap.md                        — [modify] the I6 row, the completed-in
 3. In §5, drop the three follow-ups this chain closed, bring #17 up to date, and add the four this chain hands on. Replace:
 
    ```markdown
-   |14|A command whose first argument holds a placeholder names no program at plan time, so it is neither checked against `proc.run` nor fingerprinted. Check it once the executor has expanded it.|I5 spec §2 (D6)|I6 Execute + Record|
-   |15|Confirm a clean target's outputs are present in the cas before they are linked into `out/`. A plan trusts the cache row.|I5 spec §11|I6 Execute + Record|
-   |16|`ActionCache` gains `upsert` and `commit`, and `CacheRow` gains `stdout` and `stderr`. I5 landed `row`, and a row holding the key and the output digests.|I5 spec §2 (D12)|I6 Execute + Record|
-   |17|Read a cache row back: `Deserialize` for `ActionKey` and the types it is made of, which I5 left `Serialize`-only.|I5 spec §3.2|the `buildl` adapters slice|
+   |14|A command whose first argument holds a placeholder names no program at plan time, so it is neither checked against `proc.run` nor fingerprinted. Check it once the executor has expanded it.|I7 spec §2 (D6)|I8 Execute + Record|
+   |15|Confirm a clean target's outputs are present in the cas before they are linked into `out/`. A plan trusts the cache row.|I7 spec §11|I8 Execute + Record|
+   |16|`ActionCache` gains `upsert` and `commit`, and `CacheRow` gains `stdout` and `stderr`. I7 landed `row`, and a row holding the key and the output digests.|I7 spec §2 (D12)|I8 Execute + Record|
+   |17|Read a cache row back: `Deserialize` for `ActionKey` and the types it is made of, which I7 left `Serialize`-only.|I7 spec §3.2|the `buildl` adapters slice|
    ```
 
    With:
 
    ```markdown
-   |17|Read a cache row back: `Deserialize` for `ActionKey` and the types it is made of, which I5 left `Serialize`-only. Since I6 a row also holds the digests of what its action printed, `stdout` and `stderr`, so reading one back covers them too.|I5 spec §3.2, I6 spec §11|the `buildl` adapters slice|
-   |18|A program a command names through `$opt:` in its first argument is held to `proc.run` when the build expands it, but has no fingerprint in the action key, so replacing that tool leaves the target clean.|I6 spec §11|the next slice that changes Plan|
-   |19|A rule's `desc` is not expanded: nothing shows one yet.|I6 spec §11|the slice that adds the `Reporter` port|
-   |20|An output that is a directory tree cannot be stored: `ExecStrategy::collect` answers one digest per declared output. Design §9.2 and §9.6 declare such outputs (`--outdir $out`, `tar … -C $out`) without the stamp file §9.2 prescribes.|I6 spec §11|the `buildl` adapters slice|
-   |21|`[execution]`'s `timeout`, `workers` and `strategy` are not in `Workspace`, so the adapters that need them have no port to read them from.|I6 spec §11|the `buildl` adapters slice|
+   |17|Read a cache row back: `Deserialize` for `ActionKey` and the types it is made of, which I7 left `Serialize`-only. Since I8 a row also holds the digests of what its action printed, `stdout` and `stderr`, so reading one back covers them too.|I7 spec §3.2, I8 spec §11|the `buildl` adapters slice|
+   |18|A program a command names through `$opt:` in its first argument is held to `proc.run` when the build expands it, but has no fingerprint in the action key, so replacing that tool leaves the target clean.|I8 spec §11|the next slice that changes Plan|
+   |19|A rule's `desc` is not expanded: nothing shows one yet.|I8 spec §11|the slice that adds the `Reporter` port|
+   |20|An output that is a directory tree cannot be stored: `ExecStrategy::collect` answers one digest per declared output. Design §9.2 and §9.6 declare such outputs (`--outdir $out`, `tar … -C $out`) without the stamp file §9.2 prescribes.|I8 spec §11|the `buildl` adapters slice|
+   |21|`[execution]`'s `timeout`, `workers` and `strategy` are not in `Workspace`, so the adapters that need them have no port to read them from.|I8 spec §11|the `buildl` adapters slice|
    ```
 
 4. Confirm the three closed follow-ups are gone, that #17 to #21 are there, and that §4 has the chain's row. The first command prints `0` and exits `1`, which is the expected result:
@@ -923,7 +923,7 @@ docs/roadmap.md                        — [modify] the I6 row, the completed-in
    5
    ```
    ```
-   $ grep -c '^|I6 Execute + Record|' docs/roadmap.md
+   $ grep -c '^|I8 Execute + Record|' docs/roadmap.md
    1
    ```
 
@@ -931,7 +931,7 @@ docs/roadmap.md                        — [modify] the I6 row, the completed-in
 
    ```
    $ git add docs/roadmap.md
-   $ git commit -m "docs(repo): mark I6 Execute + Record done in the roadmap"
+   $ git commit -m "docs(repo): mark I8 Execute + Record done in the roadmap"
    ```
 
 ---
@@ -951,7 +951,7 @@ docs/roadmap.md                        — [modify] the I6 row, the completed-in
 - The building blocks give `ContentStore`, `ActionCache`, `EventLog`, `ExecStrategy` and
   `Dispatcher` the signatures the code has, list `Dispatcher` and `Clock + Sync` in the bundle,
   and still describe `Grants`, `Approver` and `Reporter`.
-- The roadmap shows I6 Execute + Record done, no longer lists follow-ups #14, #15 and #16, and
+- The roadmap shows I8 Execute + Record done, no longer lists follow-ups #14, #15 and #16, and
   carries #17 to #21.
 - Every `mermaid` block is still a `mermaid` block.
 
@@ -1008,7 +1008,7 @@ plan expects:
   `git status --short CLAUDE.md` printed nothing.
 - Task 6 — date `2026-10-12`; tasks per plan 2, 2, 1, 2, 7, 3, 2, 3, 5, 6; first hash
   `f88cd77`; `^|14|`, `^|15|`, `^|16|` → `0`; `^|17|` to `^|21|` → `5`;
-  `^|I6 Execute + Record|` → `1`.
+  `^|I8 Execute + Record|` → `1`.
 
 ## Deviations
 

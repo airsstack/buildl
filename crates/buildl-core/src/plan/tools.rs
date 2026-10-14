@@ -13,22 +13,32 @@ use std::collections::BTreeMap;
 
 use crate::error::{DeclarationSite, Error, Result};
 use crate::ports::ToolResolver;
-use crate::types::{Command, Digest, Node, Program, TargetGraph};
+use crate::types::{Command, Digest, Node, Program, SettingName, SettingValue, TargetGraph};
 
-/// The program `command` names: its first argument, when that is a program name.
+/// The program `command` names under `settings`: its first argument, with each reference to a
+/// setting replaced by that setting's value, when that is a program name.
 ///
-/// A first argument that is empty or holds a placeholder names no program before the command is
-/// expanded, so such a command names none here.
-pub(crate) fn program_of(command: &Command) -> Option<Program> {
-    command.arguments().first().and_then(Program::of)
+/// A setting's value is known before anything runs, so a program named through one is as
+/// settled as one written out. A first argument that is then empty or still holds a `$` names
+/// no program here: one holding `$in`, `$out` or `$deps` runs a file of the workspace or of the
+/// build, whose path is known only when the command is expanded.
+pub(crate) fn program_of(
+    command: &Command,
+    settings: &BTreeMap<SettingName, SettingValue>,
+) -> Option<Program> {
+    let first = command.arguments().first()?;
+    Program::of(&first.with_settings(settings))
 }
 
-/// Every distinct program `graph`'s commands name, each with the lowest-labelled target naming
-/// it.
-pub(crate) fn programs(graph: &TargetGraph) -> BTreeMap<Program, &Node> {
+/// Every distinct program `graph`'s commands name under `settings`, each with the
+/// lowest-labelled target naming it.
+pub(crate) fn programs<'g>(
+    graph: &'g TargetGraph,
+    settings: &BTreeMap<SettingName, SettingValue>,
+) -> BTreeMap<Program, &'g Node> {
     let mut named = BTreeMap::new();
     for node in graph.nodes() {
-        if let Some(program) = program_of(&node.run) {
+        if let Some(program) = program_of(&node.run, settings) {
             named.entry(program).or_insert(node);
         }
     }
@@ -60,21 +70,56 @@ pub(crate) fn fingerprints<T: ToolResolver>(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::{program_of, programs};
-    use crate::plan::fixtures::{command, graph, node};
+    use crate::plan::fixtures::{command, graph, node, settings};
     use crate::types::Program;
 
-    #[test]
-    fn a_command_names_the_program_in_its_first_argument() {
-        let named = program_of(&command(&["/usr/bin/cc", "-c", "$in"]));
-        assert_eq!(named.as_ref().map(Program::as_str), Some("/usr/bin/cc"));
+    /// The program a command starting with `first` names under these `(name, value)` settings.
+    fn named(first: &str, pairs: &[(&str, &str)]) -> Option<String> {
+        program_of(&command(&[first, "-c", "$in"]), &settings(pairs))
+            .as_ref()
+            .map(Program::to_string)
     }
 
     #[test]
-    fn an_empty_or_placeholder_first_argument_names_no_program() {
-        for first in ["", "$out/app", "bin/$opt:tool"] {
-            assert_eq!(program_of(&command(&[first, "cc"])), None, "{first:?}");
+    fn a_command_names_the_program_in_its_first_argument() {
+        assert_eq!(named("/usr/bin/cc", &[]).as_deref(), Some("/usr/bin/cc"));
+    }
+
+    #[test]
+    fn a_first_argument_naming_a_setting_names_the_program_the_setting_holds() {
+        let held = [("tool", "clang"), ("dir", "/opt/llvm/bin")];
+        assert_eq!(named("$opt:tool", &held).as_deref(), Some("clang"));
+        assert_eq!(
+            named("$opt:dir/$opt:tool", &held).as_deref(),
+            Some("/opt/llvm/bin/clang")
+        );
+        assert_eq!(
+            named("$opt:tool", &[("tool", "gcc")]).as_deref(),
+            Some("gcc")
+        );
+    }
+
+    #[test]
+    fn an_empty_first_argument_or_one_still_holding_a_dollar_names_no_program() {
+        let held = [("tool", "clang"), ("none", ""), ("list", "$in")];
+        for first in [
+            "",
+            "$out/app",
+            "$deps",
+            "$in",
+            "$out/$opt:tool",
+            "$opt:none",
+            "$opt:list",
+            "$opt:missing",
+            "$opt:",
+            "bin/$tool",
+        ] {
+            assert_eq!(named(first, &held), None, "{first:?}");
         }
+        assert_eq!(named("bin/$opt:tool", &[]), None);
     }
 
     #[test]
@@ -88,7 +133,7 @@ mod tests {
             ],
             &[&[], &[], &[], &[]],
         );
-        let named: Vec<(String, String)> = programs(&graph)
+        let named: Vec<(String, String)> = programs(&graph, &BTreeMap::new())
             .into_iter()
             .map(|(program, node)| (program.to_string(), node.label.to_string()))
             .collect();
@@ -103,6 +148,38 @@ mod tests {
     }
 
     #[test]
+    fn a_program_named_through_a_setting_is_listed_with_the_ones_written_out() {
+        let graph = graph(
+            vec![
+                node("//:a", |node| node.run = command(&["$opt:tool", "$in"])),
+                node("//:b", |node| node.run = command(&["cc", "-c"])),
+                node("//:c", |node| node.run = command(&["$opt:linker"])),
+            ],
+            &[&[], &[], &[]],
+        );
+        let listed = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
+            programs(&graph, &settings(pairs))
+                .into_iter()
+                .map(|(program, node)| (program.to_string(), node.label.to_string()))
+                .collect()
+        };
+        assert_eq!(
+            listed(&[("tool", "cc"), ("linker", "ld")]),
+            [
+                ("cc".to_owned(), "//:a".to_owned()),
+                ("ld".to_owned(), "//:c".to_owned()),
+            ]
+        );
+        assert_eq!(
+            listed(&[("tool", "clang"), ("linker", "")]),
+            [
+                ("cc".to_owned(), "//:b".to_owned()),
+                ("clang".to_owned(), "//:a".to_owned()),
+            ]
+        );
+    }
+
+    #[test]
     fn a_target_whose_command_names_no_program_adds_none() {
         let graph = graph(
             vec![
@@ -111,6 +188,6 @@ mod tests {
             ],
             &[&[], &[]],
         );
-        assert!(programs(&graph).is_empty());
+        assert!(programs(&graph, &BTreeMap::new()).is_empty());
     }
 }

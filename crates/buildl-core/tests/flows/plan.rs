@@ -10,10 +10,12 @@ use std::path::Path;
 
 use buildl_core::{
     ActionKey, CacheRow, DepProducts, Difference, Digest, DirtyReason, EntryName, EnvName,
-    EnvValue, Error, EvaluationFailure, FileStat, Freshness, KeyComponents, Label, NodeId,
-    OwnComponents, Pipeline, Plan, PlannedKey, Platform, PortName, SettingName, SettingValue,
-    SourcePath, StagedItem, TargetGraph, Timestamp, Verdict, Want, Written, json,
+    EnvValue, Error, EvaluationFailure, FileStat, Freshness, InputKind, KeyComponents, Label,
+    NodeId, OwnComponents, Pipeline, Plan, PlannedKey, Platform, PortName, SettingName,
+    SettingValue, SourcePath, StagedItem, StagedSetting, TargetGraph, Timestamp, ToolIdentity,
+    Verdict, Want, Written, json,
 };
+use buildl_core::{Execution, Isolation, Manifest, Scope, Timeout, Workers};
 
 use crate::common::{
     FakeContent, FakeFile, FakePorts, FakeSource, dir, file, ports, program, setting, target,
@@ -56,7 +58,9 @@ fn put(pipeline: &mut Pipeline<FakePorts>, raw: &str, text: &str, modified: u64)
 
 /// A plan of the workspace with no setting overridden.
 fn planned(pipeline: &mut Pipeline<FakePorts>) -> Plan {
-    pipeline.plan(&entry(), &Overrides::new()).unwrap()
+    pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap()
 }
 
 /// What a verdict says, without its key: the reason, and the labels of the targets awaited.
@@ -152,7 +156,9 @@ fn record(
 /// so it also works for a workspace holding a target that is never clean.
 fn build(pipeline: &mut Pipeline<FakePorts>, overrides: &Overrides, version: &str) {
     let graph = pipeline.graph(&entry()).unwrap();
-    let plan = pipeline.plan(&entry(), overrides).unwrap();
+    let plan = pipeline
+        .plan(&entry(), &Scope::Workspace, overrides)
+        .unwrap();
     let mut built = BTreeSet::new();
     while built.len() < graph.len() {
         let ready: Vec<NodeId> = (0_u32..)
@@ -396,7 +402,9 @@ fn root_only(items: Vec<StagedItem>) -> Pipeline<FakePorts> {
 fn site_of(error: &Error) -> Option<(String, &Path)> {
     let site = match error {
         Error::Refused { site, .. } => site.as_deref(),
-        Error::MissingTool { site, .. } | Error::MissingInput { site, .. } => Some(&**site),
+        Error::MissingTool { site, .. }
+        | Error::MissingInput { site, .. }
+        | Error::InputNotAFile { site, .. } => Some(&**site),
         _ => None,
     };
     site.map(|site| (site.label.to_string(), site.provenance.file()))
@@ -413,7 +421,11 @@ fn an_override_dirties_exactly_the_targets_whose_commands_name_the_setting() {
     build(&mut pipeline, &Overrides::new(), "v1");
 
     let plan = pipeline
-        .plan(&entry(), &overrides(&[("mode", "release")]))
+        .plan(
+            &entry(),
+            &Scope::Workspace,
+            &overrides(&[("mode", "release")]),
+        )
         .unwrap();
 
     let mode = SettingName::parse("mode").unwrap();
@@ -513,7 +525,9 @@ fn a_program_outside_the_ceiling_is_refused_before_anything_is_read() {
     let mut pipeline = chain();
     pipeline.ports_mut().manifest.workspace.ceiling.run.clear();
 
-    let error = pipeline.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
 
     assert_eq!(
         error.to_string(),
@@ -542,7 +556,9 @@ fn a_variable_an_input_and_a_directory_outside_the_ceiling_are_each_refused() {
     let mut reads_secret = root_only(vec![target_with("app", |target| {
         target.env = vec![Written::new("AWS_SECRET")];
     })]);
-    let error = reads_secret.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = reads_secret
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
     assert_eq!(
         error.to_string(),
         "build.lua: //:app: environment variable AWS_SECRET is outside the ceiling \
@@ -552,7 +568,9 @@ fn a_variable_an_input_and_a_directory_outside_the_ceiling_are_each_refused() {
     let mut reads_outside = chain();
     let ceiling = &mut reads_outside.ports_mut().manifest.workspace.ceiling;
     ceiling.read = BTreeSet::from([dir("src")]);
-    let error = reads_outside.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = reads_outside
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
     assert_eq!(
         error.to_string(),
         "build.lua: //:docs: input README is outside the ceiling (fs.read allows: src)"
@@ -562,7 +580,7 @@ fn a_variable_an_input_and_a_directory_outside_the_ceiling_are_each_refused() {
     let ceiling = &mut writes_outside.ports_mut().manifest.workspace.ceiling;
     ceiling.write = BTreeSet::from([dir(".buildl")]);
     let error = writes_outside
-        .plan(&entry(), &Overrides::new())
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
         .unwrap_err();
     assert_eq!(
         error.to_string(),
@@ -576,7 +594,9 @@ fn a_program_that_cannot_be_found_names_the_lowest_labelled_target_running_it() 
     let mut pipeline = chain();
     pipeline.ports_mut().tools.fingerprints.clear();
 
-    let error = pipeline.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
 
     assert_eq!(
         error.to_string(),
@@ -592,11 +612,54 @@ fn a_program_that_cannot_be_found_names_the_lowest_labelled_target_running_it() 
 }
 
 #[test]
+fn an_input_that_is_not_a_regular_file_names_the_target_declaring_it_and_what_it_is() {
+    for (found, text) in [
+        (
+            InputKind::Directory,
+            "build.lua: //:lib: input lib.c is a directory; an input must be a regular file",
+        ),
+        (
+            InputKind::Symlink,
+            "build.lua: //:lib: input lib.c is a symbolic link; an input must be a regular file",
+        ),
+        (
+            InputKind::Special,
+            "build.lua: //:lib: input lib.c is a pipe, a socket or a device; an input must be a regular file",
+        ),
+    ] {
+        let mut pipeline = chain();
+        pipeline
+            .ports_mut()
+            .digester
+            .others
+            .insert(path("lib.c"), found);
+
+        let error = pipeline
+            .plan(&entry(), &Scope::Workspace, &Overrides::new())
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), text);
+        assert_eq!(
+            site_of(&error),
+            Some(("//:lib".to_owned(), Path::new("build.lua")))
+        );
+        assert!(matches!(
+            error,
+            Error::InputNotAFile { path: named, found: kind, .. }
+                if named == path("lib.c") && kind == found
+        ));
+        assert_eq!(pipeline.ports().digester.digest_calls(), 0);
+    }
+}
+
+#[test]
 fn an_input_that_does_not_exist_names_the_target_declaring_it() {
     let mut pipeline = chain();
     pipeline.ports_mut().digester.files.remove(&path("lib.c"));
 
-    let error = pipeline.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
 
     assert_eq!(
         error.to_string(),
@@ -629,7 +692,9 @@ fn of_two_variables_the_host_cannot_report_the_lower_name_is_the_error() {
         ports.host.unreportable = names;
     }
 
-    let error = pipeline.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
 
     assert_eq!(error.to_string(), "host: ALPHA does not hold valid text");
     assert!(matches!(error, Error::Adapter { port, .. } if port == PortName::Host));
@@ -652,10 +717,14 @@ fn several_faults_are_reported_one_at_a_time_in_a_fixed_order() {
     let mut pipeline = Pipeline::<FakePorts>::new(ports(source));
 
     let unknown = overrides(&[("bogus", "1")]);
-    let error = pipeline.plan(&entry(), &unknown).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &unknown)
+        .unwrap_err();
     assert!(matches!(error, Error::UnknownOverride { .. }), "{error}");
 
-    let error = pipeline.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
     assert!(
         matches!(&error, Error::Refused { want, .. } if want == &Want::Program(program("docker"))),
         "{error}"
@@ -663,7 +732,9 @@ fn several_faults_are_reported_one_at_a_time_in_a_fixed_order() {
 
     let ceiling = &mut pipeline.ports_mut().manifest.workspace.ceiling;
     ceiling.run.insert(program("docker"));
-    let error = pipeline.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
     assert!(
         matches!(&error, Error::MissingTool { program: missing, .. } if missing == &program("cc")),
         "{error}"
@@ -675,7 +746,9 @@ fn several_faults_are_reported_one_at_a_time_in_a_fixed_order() {
             .fingerprints
             .insert(program(name), Digest::of(name.as_bytes()));
     }
-    let error = pipeline.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
     assert!(
         matches!(&error, Error::MissingInput { path: missing, .. } if missing == &path("missing.c")),
         "{error}"
@@ -690,7 +763,11 @@ fn an_override_naming_no_setting_is_refused() {
     let mut pipeline = root_only(vec![setting("mode"), running("a", &["cc", "$opt:mode"])]);
 
     let error = pipeline
-        .plan(&entry(), &overrides(&[("mod", "release")]))
+        .plan(
+            &entry(),
+            &Scope::Workspace,
+            &overrides(&[("mod", "release")]),
+        )
         .unwrap_err();
 
     assert_eq!(
@@ -701,6 +778,261 @@ fn an_override_naming_no_setting_is_refused() {
 }
 
 #[test]
+fn a_plan_holds_every_declared_setting_with_its_override_or_else_its_default() {
+    let mut pipeline = root_only(vec![
+        setting_of("mode", "debug"),
+        setting_of("level", "1"),
+        setting_of("unused", "idle"),
+        running("a", &["cc", "-m=$opt:mode", "-O$opt:level"]),
+    ]);
+
+    assert_eq!(
+        planned(&mut pipeline).settings(),
+        &overrides(&[("level", "1"), ("mode", "debug"), ("unused", "idle")]),
+        "with nothing overridden, every default"
+    );
+
+    let plan = pipeline
+        .plan(
+            &entry(),
+            &Scope::Workspace,
+            &overrides(&[("mode", "release"), ("unused", "busy")]),
+        )
+        .unwrap();
+
+    assert_eq!(
+        plan.settings(),
+        &overrides(&[("level", "1"), ("mode", "release"), ("unused", "busy")]),
+        "a setting no command names is held too"
+    );
+    let json = json::canonical::to_string(&plan).unwrap();
+    assert!(
+        json.starts_with(
+            r#"{"settings":{"level":"1","mode":"release","unused":"busy"},"targets":{"#
+        ),
+        "{json}"
+    );
+}
+
+#[test]
+fn the_execution_settings_are_read_through_the_manifest_and_reach_no_key() {
+    let mut pipeline = chain();
+    assert_eq!(
+        pipeline.ports().manifest.workspace().unwrap().execution,
+        Execution::default()
+    );
+    build(&mut pipeline, &Overrides::new(), "v1");
+
+    let execution = Execution {
+        workers: Workers::parse("2").unwrap(),
+        timeout: Timeout::parse("30s").unwrap(),
+        strategy: Isolation::parse("bare").unwrap(),
+    };
+    assert_ne!(execution.workers, Execution::default().workers);
+    assert_ne!(execution.timeout, Execution::default().timeout);
+    assert_ne!(execution.strategy, Execution::default().strategy);
+    pipeline.ports_mut().manifest.workspace.execution = execution;
+
+    assert_eq!(
+        pipeline.ports().manifest.workspace().unwrap().execution,
+        execution
+    );
+    let plan = planned(&mut pipeline);
+    for raw in ["//:app", "//:docs", "//:gen", "//:lib"] {
+        assert_eq!(said(&plan, raw), Said::Clean, "{raw}");
+    }
+}
+
+/// A `b.option(name, { default = default })` call.
+fn setting_of(name: &str, default: &str) -> StagedItem {
+    StagedItem::Setting(StagedSetting {
+        name: Written::new(name),
+        default: Written::new(default),
+    })
+}
+
+/// `//:app` and `//:lib`, each running the program the setting `tool` names, which is `cc`
+/// unless overridden. The workspace also allows `clang`, and both programs can be found.
+fn tool_by_setting() -> Pipeline<FakePorts> {
+    let mut pipeline = root_only(vec![
+        setting_of("tool", "cc"),
+        running("app", &["$opt:tool", "-o", "$out"]),
+        running("lib", &["$opt:tool", "-c"]),
+    ]);
+    let ports = pipeline.ports_mut();
+    ports
+        .manifest
+        .workspace
+        .ceiling
+        .run
+        .insert(program("clang"));
+    ports
+        .tools
+        .fingerprints
+        .insert(program("clang"), Digest::of(b"clang 19.1"));
+    pipeline
+}
+
+/// The tool `plan` keyed the target `raw` names on.
+fn tool_of(plan: &Plan, raw: &str) -> Option<ToolIdentity> {
+    let wanted = label(raw);
+    let id = (0_u32..)
+        .take(plan.len())
+        .map(NodeId::new)
+        .find(|id| plan.label(*id) == Some(&wanted))
+        .unwrap();
+    own_of(plan.verdict(id).unwrap()).tool.clone()
+}
+
+#[test]
+fn a_tool_named_through_a_setting_is_wanted_looked_up_once_and_keyed_like_a_written_one() {
+    let mut pipeline = tool_by_setting();
+
+    let plan = planned(&mut pipeline);
+
+    assert_eq!(plan.wanted().programs, BTreeSet::from([program("cc")]));
+    assert_eq!(pipeline.ports().tools.lookups(), [program("cc")]);
+    for raw in ["//:app", "//:lib"] {
+        assert_eq!(
+            tool_of(&plan, raw),
+            Some(ToolIdentity {
+                program: program("cc"),
+                fingerprint: Digest::of(b"cc 14.2"),
+            }),
+            "{raw}"
+        );
+    }
+}
+
+#[test]
+fn replacing_a_tool_named_through_a_setting_dirties_the_targets_running_it() {
+    let mut pipeline = tool_by_setting();
+    build(&mut pipeline, &Overrides::new(), "v1");
+    assert_eq!(said(&planned(&mut pipeline), "//:app"), Said::Clean);
+
+    let tools = &mut pipeline.ports_mut().tools;
+    tools
+        .fingerprints
+        .insert(program("cc"), Digest::of(b"cc 15.1"));
+
+    let plan = planned(&mut pipeline);
+    for raw in ["//:app", "//:lib"] {
+        assert_eq!(
+            said(&plan, raw),
+            Said::Dirty(changed(vec![Difference::Tool]), Vec::new()),
+            "{raw}"
+        );
+    }
+}
+
+#[test]
+fn a_setting_changed_to_another_program_dirties_its_targets_for_the_tool_and_the_setting() {
+    let mut pipeline = tool_by_setting();
+    build(&mut pipeline, &Overrides::new(), "v1");
+
+    let plan = pipeline
+        .plan(
+            &entry(),
+            &Scope::Workspace,
+            &overrides(&[("tool", "clang")]),
+        )
+        .unwrap();
+
+    let tool = SettingName::parse("tool").unwrap();
+    assert_eq!(
+        said(&plan, "//:app"),
+        Said::Dirty(
+            changed(vec![Difference::Tool, Difference::Setting(tool)]),
+            Vec::new()
+        )
+    );
+    assert_eq!(
+        tool_of(&plan, "//:app"),
+        Some(ToolIdentity {
+            program: program("clang"),
+            fingerprint: Digest::of(b"clang 19.1"),
+        })
+    );
+    assert_eq!(plan.wanted().programs, BTreeSet::from([program("clang")]));
+}
+
+#[test]
+fn a_tool_named_through_a_setting_is_held_to_the_ceiling_before_anything_is_read() {
+    let mut pipeline = tool_by_setting();
+
+    let error = pipeline
+        .plan(
+            &entry(),
+            &Scope::Workspace,
+            &overrides(&[("tool", "docker")]),
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "build.lua: //:app: program docker is outside the ceiling (proc.run allows: cc, clang)"
+    );
+    assert_eq!(
+        site_of(&error),
+        Some(("//:app".to_owned(), Path::new("build.lua")))
+    );
+    assert!(
+        matches!(&error, Error::Refused { want, .. } if want == &Want::Program(program("docker"))),
+        "{error}"
+    );
+    assert_eq!(pipeline.ports().tools.lookups(), []);
+}
+
+#[test]
+fn a_tool_named_through_a_setting_that_cannot_be_found_names_the_lowest_labelled_target() {
+    let mut pipeline = tool_by_setting();
+    let tools = &mut pipeline.ports_mut().tools;
+    tools.fingerprints.remove(&program("clang"));
+
+    let error = pipeline
+        .plan(
+            &entry(),
+            &Scope::Workspace,
+            &overrides(&[("tool", "clang")]),
+        )
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "build.lua: //:app: program clang was not found"
+    );
+    assert_eq!(
+        site_of(&error),
+        Some(("//:app".to_owned(), Path::new("build.lua")))
+    );
+    assert!(
+        matches!(error, Error::MissingTool { program: missing, .. } if missing == program("clang"))
+    );
+}
+
+#[test]
+fn a_first_argument_that_runs_what_the_build_produced_names_no_tool() {
+    let mut pipeline = root_only(vec![
+        setting_of("suite", "unit"),
+        target("app", &[]),
+        target_with("self_test", |target| {
+            target.run = Some(["$deps", "--self-test"].map(Written::new).to_vec());
+            target.deps = vec![Written::new("app")];
+        }),
+        target_with("suite_test", |target| {
+            target.run = Some(["$out/$opt:suite"].map(Written::new).to_vec());
+        }),
+    ]);
+
+    let plan = planned(&mut pipeline);
+
+    assert_eq!(tool_of(&plan, "//:self_test"), None);
+    assert_eq!(tool_of(&plan, "//:suite_test"), None);
+    assert_eq!(plan.wanted().programs, BTreeSet::from([program("cc")]));
+    assert_eq!(pipeline.ports().tools.lookups(), [program("cc")]);
+}
+
+#[test]
 fn a_build_file_that_fails_to_evaluate_is_the_load_error_unchanged() {
     let source = FakeSource::new(workspace(vec![
         ("", file(vec![target("app", &[])], &["lib"])),
@@ -708,7 +1040,10 @@ fn a_build_file_that_fails_to_evaluate_is_the_load_error_unchanged() {
     ]));
     let mut pipeline = Pipeline::<FakePorts>::new(ports(source));
 
-    match pipeline.plan(&entry(), &Overrides::new()).unwrap_err() {
+    match pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err()
+    {
         Error::Evaluation {
             provenance,
             failure,

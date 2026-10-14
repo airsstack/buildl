@@ -498,7 +498,7 @@ mod tests {
         let mut rows = rows_of_chain("z v1");
         let mut own = own_of_chain();
         own[3].command = command(&["cc", "-O2"]);
-        // `//:z` was rebuilt under its new key and produced the same bytes.
+        // `//:z` was rebuilt under its new key and produced the same output.
         rows.insert(label("//:z"), row(key(own[3].clone(), &[]), "z v1"));
         let verdicts = verdicts_of_chain(own, &rows);
         assert!(

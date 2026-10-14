@@ -5,7 +5,8 @@
 //! compatibility with the Remote Execution API's digest model, so a remote cache is later a
 //! transport problem rather than a re-keying.
 //!
-//! Responsibilities: [`Digest`], hashing in-memory bytes, and the hexadecimal form.
+//! Responsibilities: [`Digest`], hashing in-memory bytes — whole with [`Digest::of`], or in
+//! pieces with [`Hasher`] — and the hexadecimal form.
 //!
 //! Non-responsibilities: reading anything. Hashing a *file* means touching the filesystem,
 //! which is a port's job; this type hashes a byte slice it is handed.
@@ -82,6 +83,47 @@ impl Digest {
     }
 }
 
+/// A SHA-256 digest taken over bytes handed in pieces.
+///
+/// For content too large to hold whole: whoever reads it hands each piece over as it is read.
+/// The digest is the one [`Digest::of`] gives for the pieces joined, so the two never disagree
+/// about one content.
+///
+/// # Examples
+///
+/// ```
+/// use buildl_core::{Digest, Hasher};
+///
+/// let mut hasher = Hasher::new();
+/// hasher.update(b"hello, ");
+/// hasher.update(b"world");
+/// assert_eq!(hasher.finish(), Digest::of(b"hello, world"));
+/// ```
+#[derive(Debug, Clone, Default)]
+pub struct Hasher(Sha256);
+
+impl Hasher {
+    /// A hasher that has been handed nothing.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Adds `bytes` to what is hashed.
+    pub fn update(&mut self, bytes: &[u8]) {
+        self.0.update(bytes);
+    }
+
+    /// The digest of every byte added, in order: equal to [`Digest::of`] over them joined.
+    #[must_use]
+    pub fn finish(self) -> Digest {
+        let out = self.0.finalize();
+        let mut raw = [0_u8; 32];
+        raw.copy_from_slice(&out);
+        Digest(raw)
+    }
+}
+
 impl fmt::Display for Digest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.0 {
@@ -125,6 +167,26 @@ mod tests {
     )]
 
     use super::Digest;
+
+    #[test]
+    fn bytes_handed_in_pieces_hash_like_the_bytes_joined() {
+        let bytes: Vec<u8> = (0..200_000_u32).map(|n| n.to_le_bytes()[0]).collect();
+        for piece in [1_usize, 7, 64, 65_536, 200_000, 300_000] {
+            let mut hasher = super::Hasher::new();
+            for chunk in bytes.chunks(piece) {
+                hasher.update(chunk);
+            }
+            assert_eq!(hasher.finish(), Digest::of(&bytes), "pieces of {piece}");
+        }
+    }
+
+    #[test]
+    fn a_hasher_handed_nothing_gives_the_digest_of_nothing() {
+        assert_eq!(super::Hasher::new().finish(), Digest::of(&[]));
+        let mut handed_empty = super::Hasher::new();
+        handed_empty.update(&[]);
+        assert_eq!(handed_empty.finish(), Digest::of(&[]));
+    }
 
     #[test]
     fn matches_the_known_vectors() {

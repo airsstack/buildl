@@ -858,7 +858,7 @@ not expand. The build flows declare their own workspaces.
 |`docs/architecture-building-blocks.md` §5.1 (`:147-150`), §5.2 (`:193-215`), §5.3 (`:232-245`, `:265-278`)|the new handoff and classification types; the five signatures of §4; the bundle with `Dispatcher` and `Clock + Sync`|
 |`docs/architecture-building-blocks.md` §5.4 (`:300-301`), §6 (`:314-318`), §8 (`:362-365`, `:372`, `:374`)|one `execute` row; the catalog's `ContentStore` and `ActionCache` rows; the fakes table; "cache write fails"; a wanted program outside the ceiling is a `Refused` error, not a `Refusal` class (D5)|
 |`README.md`, `CLAUDE.md`|only where they repeat a sentence amended above|
-|`docs/roadmap.md`|the I6 row and §4 on completion; §5 as §11 says|
+|`docs/roadmap.md`|the I8 row and §4 on completion; §5 as §11 says|
 
 Every section cross-reference survives.
 

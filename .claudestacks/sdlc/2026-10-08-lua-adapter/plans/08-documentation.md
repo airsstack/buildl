@@ -310,7 +310,7 @@ docs/roadmap.md                        — [modify] §5 follow-ups              
    and replace its last two cells
 
    ```markdown
-   |I1 review|each crate's first code slice (I-lua, adapters)|
+   |I1 review|each crate's first code slice (I5, adapters)|
    ```
 
    with
@@ -322,9 +322,9 @@ docs/roadmap.md                        — [modify] §5 follow-ups              
 3. Append these three rows after row `11`, at the end of the table:
 
    ```markdown
-   |13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs; which directories to skip is known only once `buildl.toml` is parsed.|I-lua spec §6.2|I4 Resolve (the `Manifest` port)|
-   |14|Reword `EvaluationLimit::Staging`'s rustdoc ("the cap on how many declarations one file may stage") to the byte budget `buildl-lua` enforces: the in-memory size of each staged record plus its text, up to the memory ceiling.|I-lua spec D3|the next slice that touches `buildl-core`|
-   |15|Address-derived text is still nondeterministic: `tostring` or `string.format` (`%s`, `%p`) of a table or function renders an address, and `check`'s double run sees it only when the two addresses differ. Closing it means replacing `tostring` and wrapping `string.format` in the `buildl` module.|I-lua spec D12|unassigned|
+   |13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs; which directories to skip is known only once `buildl.toml` is parsed.|I5 spec §6.2|I6 Resolve (the `Manifest` port)|
+   |14|Reword `EvaluationLimit::Staging`'s rustdoc ("the cap on how many declarations one file may stage") to the byte budget `buildl-lua` enforces: the in-memory size of each staged record plus its text, up to the memory ceiling.|I5 spec D3|the next slice that touches `buildl-core`|
+   |15|Address-derived text is still nondeterministic: `tostring` or `string.format` (`%s`, `%p`) of a table or function renders an address, and `check`'s double run sees it only when the two addresses differ. Closing it means replacing `tostring` and wrapping `string.format` in the `buildl` module.|I5 spec D12|unassigned|
    ```
 
 4. Verify the follow-up table now holds rows 3, 5–8, 10, 11 and 13–15, in that order:
@@ -344,9 +344,9 @@ docs/roadmap.md                        — [modify] §5 follow-ups              
    ```
 
    It exits `0`. Every step runs warnings-as-errors: fmt, clippy (with `guard-core-purity` and `guard-crate-edges`), rustdoc, tests and doctests.
-6. Commit: `docs(repo): close the I-lua follow-ups and record three new ones`.
+6. Commit: `docs(repo): close the I5 follow-ups and record three new ones`.
 
-The I-lua row in §3 and the §4 completed-intents table are updated when the chain is marked done,
+The I5 row in §3 and the §4 completed-intents table are updated when the chain is marked done,
 not here.
 
 ---
@@ -366,7 +366,7 @@ not here.
 - doc accuracy (🔵) — the sticky-refusal sentence was stated with no exception — `README.md:15`. **Fixed**: added that a call made while another buildl call is in progress raises an error without failing the file (the `WouldBlock` arm of `guarded`).
 - doc consistency (🔵) — the module table said `module` holds "its sticky refusals" — `lib.rs:37`. **Fixed**: it now says `module` "raises refusals".
 - doc precision (🔵) — "a directory that resolves outside the workspace" — `docs/design.md:148`. **Fixed**: it now reads "a declaring directory".
-- dangling citation (🔵) — "`buildl-lua` are done (§4)" pointed at a §4 row that did not exist yet — `docs/roadmap.md:100`. **Fixed** when the chain closed: §4 gained the I-lua row, and the §3 I-lua status changed to done.
+- dangling citation (🔵) — "`buildl-lua` are done (§4)" pointed at a §4 row that did not exist yet — `docs/roadmap.md:100`. **Fixed** when the chain closed: §4 gained the I5 row, and the §3 I5 status changed to done.
 - reversion (🔵) — the stale-claim greps run once and are not in the DoD. Acceptable for prose; no change.
 
 Blocking set: the three 🟡 items above, all fixed. The reviewer re-ran `cargo make dod` and it exited 0. Every factual claim was checked against the shipped code: the seven primitives, the curated surface, no grant, the 16 MiB / 10 000 000 defaults, budget = `memory_bytes`, the sources walk rules, splicing, and sticky refusals. After the fix round, `grep -rn -e 'read-only grant' -e 'fs read on workspace' -e 'single explicit grant' -e 'every resource' -e 'workspace-read grant' -e 'only grant is filesystem' docs crates/buildl-lua README.md` printed nothing, and the coder's `cargo make dod` gave `Build Done in 8.54 seconds`.

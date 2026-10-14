@@ -1,6 +1,6 @@
 # buildl — architecture building blocks
 
-**Status: draft for review.** Companion to [`design.md`](./design.md) and [`architecture.md`](./architecture.md): `design.md` says _what buildl is and why_, `architecture.md` says _how each part works_ — algorithms, types, determinism rules, runtime decision records — and this document says _how the parts are put together_: the C4 views of the system [2], the four crates, the ports between them, and the dependency rules that keep the logic of a build testable without any concrete implementation. It is the building block view of the architecture [8] and owns the workspace layout; `architecture.md` §1 defers to it.
+**Status: built for the core pipeline.** What this document describes exists, except what arrives with a later item of design §13: for grant negotiation the `Approver` port, the `Grants` value and the `grants` logic, and for the input sandbox the `InputSandbox` strategy. Companion to [`design.md`](./design.md) and [`architecture.md`](./architecture.md): `design.md` says _what buildl is and why_, `architecture.md` says _how each part works_ — algorithms, types, determinism rules, runtime decision records — and this document says _how the parts are put together_: the C4 views of the system [2], the four crates, the ports between them, and the dependency rules that keep the logic of a build testable without any concrete implementation. It is the building block view of the architecture [8] and owns the workspace layout; `architecture.md` §1 defers to it.
 
 **Author:** rstlix0x0 · **Date:** 2026-09-13 · **Reviewers:** —
 
@@ -85,7 +85,7 @@ graph TD
     subgraph SYS["buildl — system boundary"]
         CLIP["[Container: Rust binary]<br/>buildl CLI process<br/>Load → Resolve → Plan → Execute → Record"]
         DEFS["[Data]<br/>Build definitions<br/>buildl.toml, build.lua"]
-        STATE["[Data store]<br/>.buildl/<br/>cas/, cache.json, log.jsonl,<br/>statcache.json, graph.json"]
+        STATE["[Data store]<br/>.buildl/<br/>cas/, cache.json, cache.journal,<br/>log.jsonl, statcache.json,<br/>graph.json, lock"]
         OUT["[Data store]<br/>out/<br/>hard links into the cas"]
     end
     CHILD["[Container]<br/>Child processes<br/>one toolchain invocation per action"]
@@ -102,12 +102,12 @@ Inside the CLI process. Arrows point at the dependency: every adapter depends on
 ```mermaid
 %% C4 level 3 — components inside the CLI process
 graph TD
-    CLI["[Component: crate] buildl-cli<br/>clap argument surface<br/>maps OutcomeClass to exit codes"]
-    LIB["[Component: crate] buildl — composition root<br/>adapters: store, exec, digest, manifest,<br/>tools, approver, clock, reporter<br/>assembly: LocalPorts, Workspace facade"]
+    CLI["[Component: crate] buildl-cli<br/>clap argument surface<br/>maps outcome classes and<br/>error variants to exit codes"]
+    LIB["[Component: crate] buildl — composition root<br/>adapters: manifest, host, digest, tools,<br/>cas, cache, log, statcache, graph,<br/>exec, dispatch, clock, report<br/>shared: state, search_path<br/>assembly: LocalPorts, Workspace facade"]
     LUA["[Component: crate] buildl-lua<br/>implements DeclarationSource<br/>airsl Engine per build file<br/>buildl HostModule bound as a global"]
     subgraph CORE["[Component: crate] buildl-core — no I/O, no Lua, no threads"]
         DATA["domain data<br/>Label, Digest, NodeId, Provenance<br/>Declaration, TargetGraph, Plan<br/>KeyComponents, ActionKey<br/>ActionOutcome, OutcomeClass"]
-        PORTS["ports — traits<br/>DeclarationSource, Manifest, Host<br/>Digester, StatCache, ToolResolver<br/>ContentStore, ActionCache, EventLog<br/>ExecStrategy, Dispatcher<br/>Approver, Clock, Reporter"]
+        PORTS["ports — traits<br/>DeclarationSource, Manifest, Host<br/>Digester, StatCache, ToolResolver<br/>ContentStore, ActionCache, EventLog<br/>ExecStrategy, Dispatcher<br/>Clock, GraphRecord, Reporter<br/>later: Approver"]
         LOGIC["pure logic<br/>load, resolve, plan, grants<br/>Schedule, record<br/>canonical JSON"]
     end
     AIRSL["[External crate] airsl<br/>Engine, Policy, HostModule"]
@@ -126,10 +126,36 @@ graph TD
 |---|---|---|---|
 |`buildl-core`|domain data, ports, the pure logic of every phase|`serde`, `serde_json`, `thiserror`, `sha2`|any buildl crate, `airsl`, any I/O API|
 |`buildl-lua`|the `DeclarationSource` adapter: evaluates one build file through airsl|`buildl-core`, `airsl`|`buildl`|
-|`buildl`|every other adapter; `LocalPorts`; the `Workspace` facade; re-exports `buildl-core`|`buildl-core`, `buildl-lua`, plus each adapter's own dependencies|— (composition root, §7)|
+|`buildl`|every other adapter; `LocalPorts`; the `Workspace` facade; re-exports `buildl-core` as `buildl::buildl_core`|`buildl-core`, `buildl-lua`, `toml`, `rayon`, `serde`, `thiserror`, `tempfile`|— (composition root, §7)|
 |`buildl-cli`|argument surface and exit codes|`buildl`, `clap`|`buildl-core` and `buildl-lua` directly|
 
-Adapter dependencies are finalised as each adapter lands, following the per-dependency reasons recorded in the workspace `Cargo.toml`.
+Each adapter dependency has its reason recorded in the workspace `Cargo.toml`: `toml` reads `buildl.toml`; `rayon` hashes files, in the `Digester` adapter and nowhere else; `serde` derives the manifest's tables and the two lines the state adapters write; `thiserror` derives the state lock's error; and `tempfile` gives the temp-file-then-rename that every state file and blob is written by.
+
+Inside `buildl` there is one module per adapter, two shared modules that implement no port, and two composition modules (§7 rule 2):
+
+|Module|Holds|Implements|
+|---|---|---|
+|`manifest`|`buildl.toml`, and finding the workspace root|`Manifest`|
+|`host`|the OS, the architecture, environment values|`Host`|
+|`digest`|what stands at an input's path, and file hashing on rayon|`Digester`|
+|`tools`|a program's lookup and its fingerprint|`ToolResolver`|
+|`cas`|`.buildl/cas`, and the files placed under `out/`|`ContentStore`|
+|`cache`|`cache.json` and `cache.journal`|`ActionCache`|
+|`log`|`log.jsonl`|`EventLog`|
+|`statcache`|`statcache.json`|`StatCache`|
+|`graph`|`graph.json`|`GraphRecord`|
+|`exec`|tier 1, `bare`|`ExecStrategy`|
+|`dispatch`|worker threads|`Dispatcher`|
+|`clock`|the system clock|`Clock`|
+|`report`|terminal output, and every rendering of a value into text|`Reporter`|
+|`state`|shared: where each state file is, the state lock, writing a file whole, clearing a path|—|
+|`search_path`|shared: the lookup of a program name|—|
+|`local_ports`|composition: the `Ports` bundle and its wiring|—|
+|`workspace`|composition: the `Workspace` facade|—|
+
+`DeclarationSource` is `buildl_lua::LuaSource`. An `approver` module arrives with the `Approver` port (design §13 item 4); neither exists yet.
+
+`buildl` and `buildl-cli` build on Unix targets only, and the supported platforms are Linux and macOS, the two the CI matrix runs. `buildl` uses `std::os::unix` for file modes and for the signal that ended a process.
 
 ## 5. Code — C4 level 4: `buildl-core`
 
@@ -143,12 +169,16 @@ Every value is a validated newtype or a serializable handoff; field-level detail
 |---|---|
 |Names and identity|`Directory`, `TargetName`, `Label`, `NodeId`, `Provenance`|
 |Content|`Digest` — the single SHA-256 type for files, outputs, keys, and log blobs|
+|Outputs|`OutputManifest` — what one output is, a file or a directory of files, and the value an output's digest is taken of — with `StoredFile` and `FileMode` (a file's digest and whether it may be run), `Tree`, `TreeEntry` and `TreePath` (a directory's files, in path order); `Found`, `FoundEntry` and `FoundKind` — what a strategy reports at an output path|
 |Time|`Timestamp` — nanoseconds since the Unix epoch, the current one obtained only through the `Clock` port|
 |Phase handoffs|`Declaration`, `TargetGraph`, `Plan`, `ActionOutcome`|
-|Execution handoffs|`OutputPath` — where one output lives under `out/` — `ReadyAction` — one action with its command expanded — `RawOutcome` and `Exit` — how a run ended and what it printed — `OutcomeEvent` — one line of the log — `OnFailure`, `Summary`|
+|Execution handoffs|`OutputPath` — where one output lives under `out/` — `ReadyAction` — one action with its command expanded, and its rule's description expanded with it as an `ExpandedDescription` — `RawOutcome` and `Exit` — how a run ended and what it printed — `OutcomeEvent` — one line of the log — `OnFailure`, `Summary`|
 |Incrementality|`KeyComponents`, `ActionKey`|
 |Authority|`Ceiling`, `WantedSet`, `Want`, `Workspace`, `Grants`|
-|Classification|`OutcomeClass` and `InfraKind` (`#[non_exhaustive]`, `architecture.md` §4)|
+|Execution settings|`Execution` — the manifest's `[execution]` table, held in `Workspace` — with `Workers`, `Timeout` and `Isolation`, each validated at construction; none is a key component (`architecture.md` §6)|
+|A run and what it shows|`Scope` — what a run was asked for: the workspace, or named targets — `LiveOutput` — whether one action is shown as it prints — `Channel`, `LiveSink` and `Captured` — which stream an action wrote to, where its bytes go as they are read, and what it printed — `Turn` — what a dispatcher hands the scheduling thread|
+|Inputs|`InputStat` and `InputKind` — what stands at an input's path: nothing, a regular file, or a link, a directory or a special file; `Hasher` — `Digest::of` for bytes handed over in pieces|
+|Classification|`OutcomeClass`, `InfraKind` and `OutputRefusal` (`#[non_exhaustive]`, `architecture.md` §4); `TreeFault` — why a list of files is not a tree|
 
 ### 5.2 Ports
 
@@ -161,7 +191,9 @@ pub trait DeclarationSource {
     fn evaluate(&self, file: &BuildFile) -> Result<Evaluated>;
 }
 
-/// What the workspace's manifest says: its output and state directories, its ceiling.
+/// What the workspace's manifest says: its output and state directories, its ceiling,
+/// and its execution settings. The phases read the directories and the ceiling; the
+/// execution settings are for whoever assembles the dispatcher and the strategy.
 pub trait Manifest {
     fn workspace(&self) -> Result<Workspace>;
 }
@@ -172,10 +204,12 @@ pub trait Host {
     fn env(&self, name: &EnvName) -> Result<Option<EnvValue>>;
 }
 
-/// Metadata is asked of every input; digests only of those whose metadata changed,
-/// all in one call so an adapter may hash in parallel.
+/// What stands at its path is asked of every input, following no symbolic link:
+/// nothing, a regular file with its metadata, or something that is not a regular
+/// file. Digests are asked only of files whose metadata changed, all in one call so
+/// an adapter may hash in parallel.
 pub trait Digester {
-    fn stat(&self, path: &SourcePath) -> Result<Option<FileStat>>;
+    fn stat(&self, path: &SourcePath) -> Result<InputStat>;
     fn digest(&self, paths: &[SourcePath]) -> Result<Vec<Digest>>;
 }
 
@@ -191,12 +225,19 @@ pub trait ToolResolver {
     fn fingerprint(&self, program: &Program) -> Result<Option<Digest>>;
 }
 
-/// Workers write output blobs concurrently. `place` makes a stored blob the file at
-/// an output's path, replacing what is there.
+/// Workers write output blobs concurrently. What is held is bytes, by their digest
+/// alone: whether a file may be run is said each time it is placed.
 pub trait ContentStore: Send + Sync {
     fn put(&self, bytes: &[u8]) -> Result<Digest>;
     fn contains(&self, digest: &Digest) -> bool;
-    fn place(&self, digest: &Digest, at: &OutputPath) -> Result<()>;
+    /// The held content; `Ok(None)` when it is not held.
+    fn get(&self, digest: &Digest) -> Result<Option<Vec<u8>>>;
+    /// Removes whatever is at `at`, a file or a directory with everything below it.
+    /// Called before an output is placed, and again when it could not be placed whole.
+    fn clear(&self, at: &OutputPath) -> Result<()>;
+    /// Makes a stored blob the file at `at`, runnable or not as `mode` says, making
+    /// every missing directory above it and replacing a file already there.
+    fn place(&self, digest: &Digest, mode: FileMode, at: &OutputPath) -> Result<()>;
 }
 
 /// The scheduler side is the single writer. A row is durable once `record` returns
@@ -210,34 +251,73 @@ pub trait EventLog {
     fn append(&mut self, event: &OutcomeEvent) -> Result<()>;
 }
 
+/// When the command starts, the directory that will contain each declared output
+/// exists and nothing exists at an output path itself.
 pub trait ExecStrategy: Send + Sync {
     /// Each isolation tier materialises a differently shaped exec dir.
     type Dir;
     fn prepare(&self, action: &ReadyAction) -> Result<Self::Dir>;
-    fn run(&self, dir: &Self::Dir, action: &ReadyAction) -> Result<RawOutcome>;
-    /// One entry per declared output, in order: its digest once stored in `cas`,
-    /// `None` when the action left nothing there.
+    /// With `live`, every run of bytes the command writes is also handed to it as it
+    /// is read, with its channel. The outcome is the same with or without it.
+    fn run(
+        &self,
+        dir: &Self::Dir,
+        action: &ReadyAction,
+        live: Option<LiveSink<'_>>,
+    ) -> Result<RawOutcome>;
+    /// One entry per declared output, in order: what the action left there — nothing,
+    /// a file, a directory with everything below it, or something that is neither.
+    /// Stores the bytes of every regular file it reports, and follows no symbolic link.
     fn collect<C: ContentStore>(
         &self,
         dir: &Self::Dir,
         action: &ReadyAction,
         cas: &C,
-    ) -> Result<Vec<Option<Digest>>>;
+    ) -> Result<Vec<Found>>;
 }
 
-/// `work` runs one task, on any thread. `step` runs on the calling thread, first with
-/// `None` and then with each result, and returns the tasks that became ready.
+/// `work` runs one task, on any thread, and may send messages through its second
+/// argument while it runs. `step` runs on the calling thread: once with `Turn::Begin`,
+/// then with each message (`Turn::Told`) and each result (`Turn::Done`), a task's
+/// messages in the order sent and all before its result. It returns the tasks that
+/// became ready. Every task `step` returns is run, and every message and every result
+/// reaches `step`; a build over a dispatcher that loses a task or a result fails with
+/// `Error::DispatcherFault` instead of reporting success.
 pub trait Dispatcher {
-    fn dispatch<T, R, W, S>(&mut self, work: W, step: S) -> Result<()>
+    fn dispatch<T, M, R, W, S>(&mut self, work: W, step: S) -> Result<()>
     where
         T: Send,
+        M: Send,
         R: Send,
-        W: Fn(T) -> R + Sync,
-        S: FnMut(Option<R>) -> Vec<T>;
+        W: Fn(T, &(dyn Fn(M) + Sync)) -> R + Sync,
+        S: FnMut(Turn<M, R>) -> Vec<T>;
 }
 
 pub trait Clock {
     fn now(&self) -> Timestamp;
+}
+
+/// Keeps the graph a build resolved. `record` replaces what is kept with `graph`, and
+/// a reader finds the old record whole or the new one whole.
+pub trait GraphRecord {
+    fn record(&mut self, graph: &TargetGraph) -> Result<()>;
+}
+
+/// Shows a build as it runs. Every call is made on the thread that called `build`, and
+/// none can fail: `begun` once, first; then `started`, `printed` and `finished`;
+/// `summary` once, last, and never after an error.
+pub trait Reporter {
+    /// Every refusal check has passed, and `targets` targets are about to be built.
+    fn begun(&mut self, targets: usize);
+    /// A worker began `action`. Never called for a cached or a skipped target.
+    fn started(&mut self, action: &ReadyAction);
+    /// The action shown live wrote `bytes`.
+    fn printed(&mut self, label: &Label, channel: Channel, bytes: &[u8]);
+    /// A target has its outcome. `printed` is what it wrote that was not shown live:
+    /// for a cached target, what it wrote when it last ran.
+    fn finished(&mut self, event: &OutcomeEvent, printed: Captured<'_>);
+    /// Every target has its outcome.
+    fn summary(&mut self, summary: Summary);
 }
 ```
 
@@ -264,16 +344,21 @@ pub trait Ports {
     type Strategy: ExecStrategy;
     type Dispatcher: Dispatcher;
     type Clock: Clock + Sync;   // a worker reads the clock
-    // Approver, Reporter
+    type Graph: GraphRecord;
+    type Reporter: Reporter;
+    // `Approver` joins with grant negotiation (design §13 item 4)
 }
 
-/// One instance of each port the bundle names, with a public field per port.
+/// One instance of each port the bundle names, with a public field per port: `source`,
+/// `manifest`, `host`, `digester`, `stat_cache`, `tools`, `cache`, `cas`, `log`, `strategy`,
+/// `dispatcher`, `clock`, `graph` and `reporter`.
 pub struct PortSet<P: Ports> { pub source: P::Source, pub manifest: P::Manifest, /* ... */ }
 
 pub struct Pipeline<P: Ports> { /* ports: PortSet<P> */ }
 
-// in `buildl`:
-pub type LocalPipeline = Pipeline<LocalPorts>;
+// in `buildl`: the bundle is generic over the reporter a build is lent
+pub struct LocalPorts<R>(PhantomData<fn() -> R>);
+pub type LocalPipeline<R> = Pipeline<LocalPorts<R>>;
 ```
 
 ```mermaid
@@ -299,10 +384,13 @@ classDiagram
         Strategy: ExecStrategy
         Dispatcher: Dispatcher
         Clock: Clock + Sync
+        Graph: GraphRecord
+        Reporter: Reporter
     }
     class LocalPorts {
         crate buildl
         real adapters
+        generic over R, the reporter of one build
     }
     class FakePorts {
         crate buildl-core, tests only
@@ -319,36 +407,43 @@ classDiagram
 |---|---|---|
 |load|workspace root → `Vec<Declaration>` (queue, `subdir`, sorted merge)|`DeclarationSource`|
 |resolve|`Vec<Declaration>` → `TargetGraph` (validations, cycle detection)|—|
-|plan|`TargetGraph` and setting overrides → `Plan` (ceiling check, key assembly, a verdict per target)|`Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver`, `ActionCache`|
-|grants|wanted set ∩ ceiling → grants or refusal|`Manifest`, `Approver`|
-|execute|`TargetGraph`, `Plan` and the failure policy → `Vec<ActionOutcome>` (output layout, placeholder expansion, the program check, the `Schedule` state machine, cached or run, then cas, row, log)|`Manifest`, `Dispatcher`, `ExecStrategy`, `ContentStore`, `ActionCache`, `EventLog`, `Clock`|
-|canonical JSON|value → sorted-key bytes|—|
+|narrow|`TargetGraph` and a `Scope` → the graph of the targets a run was asked for and everything they depend on, or the whole graph for `Scope::Workspace`; a label nothing declares is `Error::UnknownTarget`|—|
+|plan|`TargetGraph` and setting overrides → `Plan` (the settings in force, ceiling check, key assembly, a verdict per target; the plan carries the settings it was made with, as `Plan::settings()`)|`Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver`, `ActionCache`|
+|grants — not built; arrives with design §13 item 4|wanted set ∩ ceiling → grants or refusal. Today the ceiling check is Plan's, and a want outside the ceiling refuses the plan|`Manifest`, and `Approver` once it exists|
+|execute|the whole `TargetGraph`, the narrowed one, its `Plan`, the failure policy and `LiveOutput` → `Vec<ActionOutcome>` (output layout, checked over the whole graph and used for the narrowed one; placeholder expansion of commands and descriptions under the plan's settings, the program check, the `Schedule` state machine, cached or run, what an action left judged into one manifest per output, then cas, row, log, with each step shown through the reporter; an outcome per target of the narrowed graph, or `Error::DispatcherFault`)|`Manifest`, `Dispatcher`, `ExecStrategy`, `ContentStore`, `ActionCache`, `EventLog`, `Clock`, `Reporter`|
+|canonical JSON|value → sorted-key bytes; those bytes, and no others, → the value|—|
+
+`Pipeline` strings these together, one method per command. `plan` and `build` take a `Scope` and narrow between Resolve and Plan; `build` also records the whole graph through `GraphRecord` before it narrows. `check` and `graph` read only the source of build files, so each also exists as a free function, `pipeline::check` and `pipeline::graph`, for a caller that holds a `DeclarationSource` and nothing else: a command that reads only build files then needs no state directory, takes no lock and is not stopped by a state file.
 
 ## 6. Port catalog
 
-|Port|`buildl-core` uses it for|v1 adapter|Crate|
-|---|---|---|---|
-|`DeclarationSource`|Load — one build file at a time|airsl engine per file, `buildl` module table|`buildl-lua`|
-|`Manifest`|the ceiling and the workspace's output and state directories; declaration limits, settings|`buildl.toml` reader|`buildl`|
-|`Host`|the platform in every key, and the values of the env names targets read|the running machine's OS, architecture and environment|`buildl`|
-|`Digester`|input content hashes|filesystem + rayon|`buildl`|
-|`StatCache`|reusing digests on unchanged mtime + size|`.buildl/statcache.json`|`buildl`|
-|`ToolResolver`|tool fingerprints in the key|`PATH` lookup + fingerprint|`buildl`|
-|`ContentStore`|the cas: storing a blob, asking whether one is held, and making a stored output the file at its path under `out/`|`.buildl/cas/ab/…`, temp file then rename; hard links into `out/`|`buildl`|
-|`ActionCache`|cache rows: reading the last build's, and recording one durably for each target that was built|`.buildl/cache.json`|`buildl`|
-|`EventLog`|one event per outcome|`.buildl/log.jsonl`|`buildl`|
-|`ExecStrategy`|running one action|`Bare` (tier 1), `InputSandbox` (tier 2)|`buildl`|
-|`Dispatcher`|running ready actions in parallel|std threads + `mpsc`|`buildl`|
-|`Approver`|turning the wanted set into grants|interactive, manifest|`buildl`|
-|`Clock`|log timestamps and durations|system clock|`buildl`|
-|`Reporter`|output blocks and the status line|TTY, plain|`buildl`|
+"Since" is the item of design §13 an adapter arrives with; item 1 is built, and a row with a later item describes what is designed.
+
+|Port|`buildl-core` uses it for|v1 adapter|Crate|Since|
+|---|---|---|---|---|
+|`DeclarationSource`|Load — one build file at a time|airsl engine per file, `buildl` module table|`buildl-lua`|1|
+|`Manifest`|the ceiling and the workspace's output and state directories; the `[execution]` settings, which no phase reads and the composition root hands to the dispatcher and the strategy|`buildl.toml` reader. The entry file's name and the declaration limits do not go through the port: the adapter hands them to the composition root, which makes the declaration source from them|`buildl`|1|
+|`Host`|the platform in every key, and the values of the env names targets read|the running machine's OS, architecture and environment|`buildl`|1|
+|`Digester`|what stands at each input's path, and input content hashes|filesystem + rayon, each file streamed in pieces|`buildl`|1|
+|`StatCache`|reusing digests on unchanged mtime + size|`.buildl/statcache.json`, keyed by path; keeps an entry only for a file modified more than 2 s before the run began, and discards a file it cannot read back|`buildl`|1|
+|`ToolResolver`|tool fingerprints in the key|`PATH` lookup + content hash|`buildl`|1|
+|`ContentStore`|the cas: storing a blob, asking whether one is held, reading a held one back (an output's manifest), clearing an output's path under `out/` — before the output is placed, and again when it cannot be placed whole — and making a stored blob a file there, runnable or not|`.buildl/cas/ab/…`, temp file then rename, nothing synced; read-only blobs, with an executable twin `….x` beside a blob that was placed executable; hard links into `out/` where a write through a read-only file is refused, copies elsewhere|`buildl`|1|
+|`ActionCache`|cache rows: reading the last build's, and recording one durably for each target that was built|`.buildl/cache.json`, written by the canonical serializer and read back by the canonical reader, with `.buildl/cache.journal`: one appended line per recorded row, folded into the snapshot once per build|`buildl`|1|
+|`EventLog`|one event per outcome|`.buildl/log.jsonl`, appended to across builds|`buildl`|1|
+|`ExecStrategy`|running one action, started with each output's containing directory in place and nothing at the output's own path, handing over what it prints as it prints when asked to, then reporting what the action left at each output path — a file, a directory with everything below it, or neither — and storing every regular file of it|`Bare` (tier 1)|`buildl`|1|
+|`ExecStrategy`|the same, with undeclared inputs absent|`InputSandbox` (tier 2)|`buildl`|3|
+|`Dispatcher`|running ready actions in parallel, and carrying what a running action says to the scheduling thread|std scoped threads + `mpsc`, started as tasks need them|`buildl`|1|
+|`Approver`|turning the wanted set into grants|interactive, manifest|`buildl`|4|
+|`Clock`|log timestamps and durations|system clock|`buildl`|1|
+|`GraphRecord`|keeping the graph a build resolved|`.buildl/graph.json`: the canonical bytes, written whole by every build|`buildl`|1|
+|`Reporter`|output blocks and the status line|one terminal reporter with a live and a plain mode|`buildl`|1|
 
 The `Clock` port is `architecture.md` §5 rule 4's quarantine of the wall clock. The crate boundary does not enforce it — `std::time` is in scope for every crate — so `crates/buildl-core/clippy.toml` bans `Instant`, `SystemTime` and `SystemTimeError` by name, and `cargo make guard-core-purity` fails the gate when one is used, when a ban stops resolving, when a source file suppresses the lint, and on three further ways the bans can be switched off that the task itself enumerates.
 
 ## 7. Dependency rules
 
 1. **`buildl-core` depends on no buildl crate, no airsl, and no I/O API** (§1.2).
-2. **Adapters depend on `buildl-core`.** `buildl-lua` never depends on `buildl`; inside `buildl`, adapter modules never import each other.
+2. **Adapters depend on `buildl-core`.** `buildl-lua` never depends on `buildl`; inside `buildl`, adapter modules never import each other. What several adapters need lives in two shared modules, `state` and `search_path`, which implement no port and name no module of the crate; adapters meet only in the two composition modules, `local_ports` and `workspace`.
 3. **`buildl` is the single composition root** — the only adapter crate that depends on another adapter crate (`buildl-lua`), and the only code that names more than one concrete adapter, through `LocalPorts`. This is dependency inversion applied, not violated: the principle constrains the logic, and a composition root is where concrete choices are made [3].
 4. **`buildl-cli` reaches core types through `buildl`'s re-exports**, so the binary has one library dependency.
 
@@ -357,7 +452,7 @@ The `Clock` port is `architecture.md` §5 rule 4's quarantine of the wall clock.
 |the dependency half of 1, rule 4, and the cross-crate half of 2|`deny.toml`'s `[bans].deny` wrapper lists, which name the only direct parents a crate may have, plus `cargo make guard-crate-edges`, which diffs every member's direct dependencies against `crates/expected-edges.txt`. The compiler covers only imports: it stops a crate using what its `[dependencies]` omits, but not a dependency being added, and not one being removed.|
 |the "no I/O API" half of 1|`crates/buildl-core/clippy.toml`, an enumerated ban on the filesystem, process, thread, network, environment, standard-stream and clock APIs, asserted by `cargo make guard-core-purity`|
 |"no phase module names another" (`architecture.md` §1.1)|`crates/expected-module-edges.txt`, a committed list of `buildl-core`'s module-to-module imports, diffed by `cargo make guard-module-edges`. A grouped `crate::{…}` import, a `super::` that climbs to the crate root and an item named through the crate root's re-export (`crate::<Item>`) are refused outright, because the listing cannot read them|
-|adapter isolation inside `buildl`|review, until an adapter earns its own crate (§11)|
+|adapter isolation inside `buildl`|`cargo make guard-adapter-isolation`, which reads every file under `crates/buildl/src` but `lib.rs`, test code included: an adapter module may name `crate::state` and `crate::search_path` and no other module of the crate, the two shared modules name none, and only `local_ports` and `workspace` name any module they like. A grouped `crate::{…}` import, `super::super`, a `super::` in a `mod.rs` or in a module that is one file, and an item named through the crate root (`crate::<Item>`) are refused outright, because each would hide an edge|
 
 ## 8. Testing layers
 
@@ -365,12 +460,23 @@ The `Clock` port is `architecture.md` §5 rule 4's quarantine of the wall clock.
 %% Testing layers — the widest coverage at the bottom
 graph BT
     CORE["buildl-core<br/>every flow against fake ports<br/>no Lua, no filesystem, no processes, no threads"]
-    ADP["buildl adapters<br/>cas atomicity, strategies against helper binaries"]
+    ADP["buildl adapters<br/>each module alone: a temp directory, system tools run by argv"]
     LUA["buildl-lua<br/>real airsl: build.lua fixtures to exact declarations"]
-    E2E["buildl/tests<br/>real adapters: a fixture workspace built twice, byte-identical"]
-    CLIT["buildl-cli<br/>argument parsing, exit-class mapping"]
+    E2E["buildl/tests/e2e<br/>real adapters through the Workspace facade:<br/>a fixture workspace built twice, byte-identical"]
+    CLIT["buildl-cli<br/>argument parsing and exit mapping in process,<br/>then the built binary"]
     CORE --> ADP --> LUA --> E2E --> CLIT
 ```
+
+The four layers that touch real I/O, in `buildl` and `buildl-cli`:
+
+|Layer|Lives in|May touch|Must not|
+|---|---|---|---|
+|Adapter unit|`crates/buildl/src/<module>/`, beside the code|its own module, `state`, `search_path`, `buildl-core`, one temp directory; `exec` starts system tools|name another adapter module; read the process's current directory; set an environment variable|
+|End to end|`crates/buildl/tests/e2e`, with fixtures in `crates/buildl/tests/fixtures`|`buildl`'s public API; a temp copy of a fixture|a private item; a path outside the package|
+|CLI unit|`crates/buildl-cli/src`, beside the code|argument parsing, the exit mapping, terminal detection, a command's flow over byte buffers and a temp workspace|a process; a terminal|
+|CLI binary|`crates/buildl-cli/tests/cli`|the built binary, with a chosen working directory and environment and its output piped|`buildl` internals; a terminal|
+
+The tools these tests run are system tools — `sh`, `cp`, `sort`, `true`, `false`, `sleep` and their like — run by argv; `sh -c` appears in tests only, never in buildl. There is no compiled helper program and no shared kit of fakes (§10, §11).
 
 The fakes live in `buildl-core`'s integration tests (`crates/buildl-core/tests/flows/common.rs`), not under `#[cfg(test)]`. They implement the public traits through the public API alone, so whatever a fake does an adapter crate can do too, and the compiler checks that on every test build. A port no flow reaches yet keeps a unit-test fake beside its trait; `Clock` still has the one it had before a build read it:
 
@@ -382,12 +488,14 @@ The fakes live in `buildl-core`'s integration tests (`crates/buildl-core/tests/f
 |`Digester`|files held as bytes with their metadata, counting every call|a filesystem|
 |`StatCache`|in-memory, counting commits|a filesystem|
 |`ToolResolver`|fixed fingerprints, recording every lookup|a `PATH`|
-|`ContentStore`|blobs and placed paths held in memory; digests it can be told to forget, paths and content it can be told to fail on|a filesystem|
+|`ContentStore`|blobs and placed paths held in memory, each placed path with its mode; digests it can be told to forget, paths and content it can be told to fail on|a filesystem|
 |`ActionCache`|rows held in memory, with labels it can be told to fail on|a filesystem|
 |`EventLog`|the events appended, and whether to fail|a filesystem|
-|`ExecStrategy`|scripted per label: how the action exits, what it prints, what each output holds or that it is missing|process spawning|
-|`Dispatcher`|inline, on the test thread, taking the oldest or the newest waiting task first|threads; results are deterministic|
+|`ExecStrategy`|scripted per label: how the action exits, what it prints, and what is at each output — a file, one that may be run, a directory of files and of things that are not, a symbolic link, something special, or nothing|process spawning|
+|`Dispatcher`|inline, on the test thread, taking the oldest or the newest waiting task first; tasks it can be told to lose, unrun or run with the result dropped|threads; results are deterministic|
 |`Clock`|a counter, one tick per read|wall-clock time|
+|`GraphRecord`|the graphs recorded, and whether to fail|a filesystem|
+|`Reporter`|every call kept as an owned value, in order|a terminal|
 
 Flows that run entirely in `buildl-core`'s tests:
 
@@ -396,9 +504,34 @@ Flows that run entirely in `buildl-core`'s tests:
 |`//:a` fails under `--keep-going`|summary `1 failed, 2 skipped, 2 built`|
 |cas write succeeds, cache write fails|no row for the target — the crash-safety invariant (design §8.5)|
 |rebuilt output byte-identical|downstream targets stay `Clean` — early cutoff|
+|an action leaves a directory at an output|stored file by file under one manifest; the next build puts it back whole without running|
+|a directory rebuilt to the same files, then with one file changed|its dependent is cached, then runs|
+|one file of a recorded directory has left the cas|the target is built again, never half put back|
+|one file of a directory cannot be placed, on a build or on a cache hit|the target fails and nothing of the directory is left at its path|
 |wanted program outside the ceiling|an `Error::Refused` before any strategy runs — an error of the build, not an outcome class|
 |one input changed|dirty reason is the `KeyComponents` diff|
+|a tool named through a build setting is replaced|the target is dirty for the tool, and runs again|
+|the `[execution]` settings all change after a build|every target stays `Clean`: none of them is in a key|
+|only a rule's `desc` is edited|every target is cached, and no action runs|
+|the dispatcher loses a task|`Error::DispatcherFault` naming every target left without an outcome; what ended before keeps its content, row and event|
 |a build file enqueues subdirectories out of order|merged declarations sorted by directory, then declared name|
+
+The same promises against the real adapters, through the `Workspace` facade (`crates/buildl/tests/e2e`):
+
+|Scenario|Assertion|
+|---|---|
+|a fixture built in two directories, with four workers and with one|`out/`, `cache.json`, `graph.json` and the cas are byte-identical; no journal and no staging file is left|
+|three targets produce the same bytes, one of them placed executable|one blob and its executable twin, in both copies|
+|a second build|every target cached; `cache.json` and `graph.json` unchanged; the log grew|
+|`out/` removed|every output put back without running, the executable bit kept|
+|one input edited|its dependents rebuilt and nothing else|
+|an edit that leaves an output's bytes unchanged|the rebuild stops there — early cutoff|
+|a named target, or an alias|that target and what it needs, nothing else; `graph.json` is still the whole graph|
+|a failure, without and with `--keep-going`|`1 failed, 4 skipped`, then `1 failed, 2 skipped, 2 built`; no row for the failed target, which runs again next time|
+|the states an interrupted build leaves: blobs with no row, rows in the journal, staging files, a partial output|the next build finishes: it trusts no blob without a row, folds the journal, sweeps the staging and clears the partial output|
+|a corrupt `cache.json`|`Error::CorruptState` naming the file, the file untouched, no action run; `check` and `graph` still work|
+|a workspace another buildl holds|`plan` and `build` refused; `check` and `graph` succeed|
+|a strategy other than `bare`; a state directory outside `fs.write`|`build` refused and `plan` not; `plan` refused before `.buildl/` is made|
 
 ## 9. Publishing
 
@@ -416,6 +549,13 @@ graph LR
 |version sync|each workspace dependency version matches the crate's own version|
 |metadata|`description` and `readme` per crate; `license` and `repository` inherited from the workspace|
 |crate `README.md`|written for crates.io readers of that crate|
+
+Nothing is published yet. Four rules keep publishing possible, and every change to the workspace follows them:
+
+1. Every dependency between members is `{ workspace = true }`, and no member depends, dev-dependencies included, on a member later in the publish order: `cargo package` fails on one, and a dev-dependency given by path alone is silently dropped from the packaged manifest.
+2. The workspace has no fifth member, and `buildl` gains no `[[bin]]`, `[[example]]` or `[features]` for the sake of tests.
+3. Fixtures and golden files live inside the package whose tests read them, reached through `CARGO_MANIFEST_DIR` or `include_str!`; no test reads another package's directory.
+4. No fixture path holds a component named `target` or `debug`.
 
 All four names were unclaimed on crates.io on 2026-09-13; a name is claimed only by its first publish.
 
@@ -439,12 +579,17 @@ Once published, the ports are a semver contract:
 |Port openness|**Open, unsealed traits**|Adapters are implemented in other crates [5]; ports grow through default methods.|
 |Scheduler|**Pure `Schedule` + `Dispatcher` port**|Keep-going and skip semantics are testable without threads; the scheduler was already the single writer (`architecture.md` §3.4), so counters need no atomics.|
 |Load granularity|**`DeclarationSource` evaluates one file**|The directory queue and the sorted merge are determinism-bearing logic, so they stay in `buildl-core` where fakes can test them.|
-|Source globbing|**Host-side in `buildl-lua`**|`b.sources()` walks with `globset` and `walkdir`, so the declaration engine holds no grant and `airsstack.glob.walk` is refused; sorting, symlink policy and the containment check are buildl's, in one place.|
+|Source globbing|**Host-side in `buildl-lua`**|`b.sources()` walks with `globset` and `walkdir`, so the declaration engine holds no grant and `airsstack.glob.walk` is refused; sorting, symlink policy and the containment check are buildl's, in one place. The directories the walk stays out of are a required argument of `LuaSource::new`, so a source cannot be built without them, and the composition root gives it the manifest's output and state directories: the skip list is the adapter's configuration, not part of the port, so `buildl-lua` reads no manifest.|
 |Diagram notation|**Mermaid `graph` with C4 element labels**|Renders wherever the other documents' Mermaid renders; Mermaid's dedicated C4 syntax is marked experimental.|
+|Re-exporting the core|**`pub use buildl_core;` — the crate under its own name, `buildl::buildl_core`**|`pub use buildl_core as core` is unusable: in a crate root that also names `core::fmt` it is `error[E0432]: unresolved import core::fmt`, and a downstream crate that glob-imports the re-export and names `core::fmt` gets `error[E0659]: core is ambiguous`. A third name would invent vocabulary. The facade `buildl::Workspace` and the manifest value `buildl::buildl_core::Workspace` stay apart.|
+|When ports are wired|**Per `plan` or `build` call; a source of build files alone for `check` and `graph`**|`Pipeline` needs every port, and a command that reads only build files must not need, lock or be stopped by a state file: a corrupt `cache.json` does not stop `check`. The state lock is held for one call, so an embedder that keeps a `Workspace` open does not hold the directory while idle.|
+|Who owns the reporter|**The caller: `Workspace::build` is lent `&mut R` for one build**|Only `build` reports, and an embedder supplies its own reporter. `LocalPorts<R>` is generic over it, and `&mut R` is a `Reporter` when `R` is, so the bundle needs no bound beyond that.|
+|Tools in tests|**System tools by argv; no compiled helper, no published kit of fakes**|Cargo sets `CARGO_BIN_EXE_<name>` only for integration tests of the package that owns the binary, so a helper would cost the published `buildl` crate a `[[bin]]` or a feature, or the workspace a fifth member (§9).|
+|Adapter isolation|**Checked by `cargo make guard-adapter-isolation`**|Thirteen adapter modules in one crate is where a cross-import slips in. What they share lives in `state` and `search_path`, which implement no port (§7 rule 2).|
 
 ## 11. Open questions
 
-- Whether a shared test kit of fake ports is published or kept internal, once `buildl` or `buildl-lua` tests need `buildl-core`'s fakes.
+- Settled: no test kit of fake ports is published, and none is shared between crates. `buildl`'s adapter tests need another port in one place only — collecting an action's outputs into a content store — and write a small in-memory store there (§8).
 - When an adapter inside `buildl` earns its own crate: an independent consumer, a heavy dependency, or a platform-specific build.
 
 ## References

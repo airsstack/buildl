@@ -56,7 +56,7 @@ docs/architecture.md                   — [modify] §2, §3, §3.3, §3.5, §8
 docs/architecture-building-blocks.md   — [modify] §4, §5.1, §5.2, §5.3, §5.4, §6, §8
 README.md                              — [modify] the status line, the action-key diagram and its paragraph
 CLAUDE.md                              — [modify] the incrementality paragraph
-docs/roadmap.md                        — [modify] the I5 row, the completed-intents row, the follow-ups
+docs/roadmap.md                        — [modify] the I7 row, the completed-intents row, the follow-ups
 ```
 
 ### Task 1 — Describe Plan in the crate docs
@@ -754,23 +754,23 @@ docs/roadmap.md                        — [modify] the I5 row, the completed-in
    $ git commit -m "docs(repo): restate the action-key rule in the README and CLAUDE.md"
    ```
 
-### Task 6 — Mark I5 Plan done in the roadmap
+### Task 6 — Mark I7 Plan done in the roadmap
 
 **Files:**
 - Modify `docs/roadmap.md`
 
 **Steps:**
 
-1. In the §3 table of `docs/roadmap.md`, replace the last cell of the **I5 Plan** row — everything after ``|the pipeline stops at `plan`|`` — with `**done**, <date> (§4)|`, where `<date>` is what this command prints:
+1. In the §3 table of `docs/roadmap.md`, replace the last cell of the **I7 Plan** row — everything after ``|the pipeline stops at `plan`|`` — with `**done**, <date> (§4)|`, where `<date>` is what this command prints:
 
    ```
    $ date +%Y-%m-%d
    ```
 
-2. In §4, add the chain's row directly below the I4 Resolve row. In the last cell, write the two hashes printed by the commands below in place of `FIRST` and `LAST`: the commit of plan `01`'s first task, and the latest commit.
+2. In §4, add the chain's row directly below the I6 Resolve row. In the last cell, write the two hashes printed by the commands below in place of `FIRST` and `LAST`: the commit of plan `01`'s first task, and the latest commit.
 
    ```markdown
-   |I5 Plan|`.claudestacks/sdlc/2026-10-10-core-plan/`|`01-small-values` (6 tasks), `02-action-key` (2 tasks), `03-authority-types` (1 task), `04-plan-types` (1 task), `05-plan-errors` (3 tasks), `06-ports` (5 tasks), `07-plan-checks` (3 tasks), `08-plan-gather` (2 tasks), `09-plan-verdicts` (3 tasks), `10-pipeline-plan` (3 tasks), `11-documentation` (6 tasks)|`FIRST` … `LAST`|
+   |I7 Plan|`.claudestacks/sdlc/2026-10-10-core-plan/`|`01-small-values` (6 tasks), `02-action-key` (2 tasks), `03-authority-types` (1 task), `04-plan-types` (1 task), `05-plan-errors` (3 tasks), `06-ports` (5 tasks), `07-plan-checks` (3 tasks), `08-plan-gather` (2 tasks), `09-plan-verdicts` (3 tasks), `10-pipeline-plan` (3 tasks), `11-documentation` (6 tasks)|`FIRST` … `LAST`|
    ```
 
    ```
@@ -781,31 +781,31 @@ docs/roadmap.md                        — [modify] the I5 row, the completed-in
 3. In §5, bring follow-up #13 up to date and add the four follow-ups this chain hands on. Replace:
 
    ```markdown
-   |13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs; which directories to skip is known only once `buildl.toml` is parsed. Split in the I5 intent: I5 makes the workspace's output directories known to `buildl-core` through the `Manifest` port; the change to `buildl-lua`'s walk follows where a manifest is first read.|I-lua spec §6.2|I5 Plan (the `Manifest` port), then the `buildl` adapters slice (the walk)|
+   |13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs; which directories to skip is known only once `buildl.toml` is parsed. Split in the I7 intent: I7 makes the workspace's output directories known to `buildl-core` through the `Manifest` port; the change to `buildl-lua`'s walk follows where a manifest is first read.|I5 spec §6.2|I7 Plan (the `Manifest` port), then the `buildl` adapters slice (the walk)|
    ```
 
    With:
 
    ```markdown
-   |13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs. I5 made both directories known to `buildl-core`: `Manifest::workspace` returns them as `Workspace::out` and `Workspace::state`. What remains is `buildl-lua`'s walk skipping them, where a manifest is first read.|I-lua spec §6.2|the `buildl` adapters slice|
-   |14|A command whose first argument holds a placeholder names no program at plan time, so it is neither checked against `proc.run` nor fingerprinted. Check it once the executor has expanded it.|I5 spec §2 (D6)|I6 Execute + Record|
-   |15|Confirm a clean target's outputs are present in the cas before they are linked into `out/`. A plan trusts the cache row.|I5 spec §11|I6 Execute + Record|
-   |16|`ActionCache` gains `upsert` and `commit`, and `CacheRow` gains `stdout` and `stderr`. I5 landed `row`, and a row holding the key and the output digests.|I5 spec §2 (D12)|I6 Execute + Record|
-   |17|Read a cache row back: `Deserialize` for `ActionKey` and the types it is made of, which I5 left `Serialize`-only.|I5 spec §3.2|the `buildl` adapters slice|
+   |13|Exclude the workspace's `out` and `.buildl` directories from `b.sources()`. It walks the declaring directory whole, so at the workspace root it also lists build outputs. I7 made both directories known to `buildl-core`: `Manifest::workspace` returns them as `Workspace::out` and `Workspace::state`. What remains is `buildl-lua`'s walk skipping them, where a manifest is first read.|I5 spec §6.2|the `buildl` adapters slice|
+   |14|A command whose first argument holds a placeholder names no program at plan time, so it is neither checked against `proc.run` nor fingerprinted. Check it once the executor has expanded it.|I7 spec §2 (D6)|I8 Execute + Record|
+   |15|Confirm a clean target's outputs are present in the cas before they are linked into `out/`. A plan trusts the cache row.|I7 spec §11|I8 Execute + Record|
+   |16|`ActionCache` gains `upsert` and `commit`, and `CacheRow` gains `stdout` and `stderr`. I7 landed `row`, and a row holding the key and the output digests.|I7 spec §2 (D12)|I8 Execute + Record|
+   |17|Read a cache row back: `Deserialize` for `ActionKey` and the types it is made of, which I7 left `Serialize`-only.|I7 spec §3.2|the `buildl` adapters slice|
    ```
 
-4. Confirm the four new follow-ups are there, that #13 no longer waits on I5, and that §4 has the chain's row. `grep -c` prints `0` and exits `1` when nothing matches, which is the expected result of the second command:
+4. Confirm the four new follow-ups are there, that #13 no longer waits on I7, and that §4 has the chain's row. `grep -c` prints `0` and exits `1` when nothing matches, which is the expected result of the second command:
 
    ```
    $ grep -c -e '^|14|' -e '^|15|' -e '^|16|' -e '^|17|' docs/roadmap.md
    4
    ```
    ```
-   $ grep -c -e 'I5 Plan (the `Manifest` port)' docs/roadmap.md
+   $ grep -c -e 'I7 Plan (the `Manifest` port)' docs/roadmap.md
    0
    ```
    ```
-   $ grep -c -e '^|I5 Plan|' docs/roadmap.md
+   $ grep -c -e '^|I7 Plan|' docs/roadmap.md
    1
    ```
 
@@ -813,7 +813,7 @@ docs/roadmap.md                        — [modify] the I5 row, the completed-in
 
    ```
    $ git add docs/roadmap.md
-   $ git commit -m "docs(repo): mark I5 Plan done in the roadmap"
+   $ git commit -m "docs(repo): mark I7 Plan done in the roadmap"
    ```
 
 ---
@@ -829,7 +829,7 @@ docs/roadmap.md                        — [modify] the I5 row, the completed-in
 - The architecture gives `Plan` its verdicts, `plan` its six ports, a cache row its whole key,
   and closes the question of where an override is checked.
 - The building blocks list `Host` and `PortSet`, and still describe `Grants` and `Approver`.
-- The roadmap shows I5 Plan done and carries follow-ups #13 to #17.
+- The roadmap shows I7 Plan done and carries follow-ups #13 to #17.
 - Every `mermaid` block is still a `mermaid` block.
 
 ## Review findings
@@ -857,9 +857,9 @@ No throwaway test was written: the plan changes documents and doc comments, and 
 - **Early cutoff is stated where the plan says.** `grep -c -i 'early cutoff' docs/design.md README.md CLAUDE.md` → `docs/design.md:3`, `README.md:1`, `CLAUDE.md:1`. Not against the plan.
 - **Every diagram is still Mermaid.** `grep -c '```mermaid' docs/design.md docs/architecture.md docs/architecture-building-blocks.md README.md` → `13`, `3`, `7`, `3`. Not against the plan.
 - **The line numbers the plan quotes hold.** `docs/architecture.md`: `128` `class Verdict`, `150` `Plan --> Verdict`, `151` `Verdict --> ActionKey`. `docs/architecture-building-blocks.md`: `235` `type Host: Host;`, `248` `pub struct PortSet`, `269` `Host: Host`; `Grants` and `Approver` counted `5`. `docs/design.md`: `grep -c -e 'Dep output hashes' -e 'the hashes of their outputs fold in'` → `2`. Not against the plan.
-- **The roadmap's checks hold.** `grep -c -e '^|14|' -e '^|15|' -e '^|16|' -e '^|17|' docs/roadmap.md` → `4`; ``grep -c -e 'I5 Plan (the `Manifest` port)' docs/roadmap.md`` → `0`, exit `1`; `grep -c -e '^|I5 Plan|' docs/roadmap.md` → `1`. Not against the plan.
+- **The roadmap's checks hold.** `grep -c -e '^|14|' -e '^|15|' -e '^|16|' -e '^|17|' docs/roadmap.md` → `4`; ``grep -c -e 'I7 Plan (the `Manifest` port)' docs/roadmap.md`` → `0`, exit `1`; `grep -c -e '^|I7 Plan|' docs/roadmap.md` → `1`. Not against the plan.
 - **The crate doc's links resolve.** The gate's rustdoc step ran with `-D warnings` and passed. Not against the plan.
-- **The plan's premise about the roadmap's I5 row did not hold.** Task 6 was written when the row's last cell read as the chain's intent step left it; by the time it ran, accepting plans `01` to `06` had changed that cell to "in progress …". The instruction is stated by position, everything after ``|the pipeline stops at `plan`|``, so it applied unchanged.
+- **The plan's premise about the roadmap's I7 row did not hold.** Task 6 was written when the row's last cell read as the chain's intent step left it; by the time it ran, accepting plans `01` to `06` had changed that cell to "in progress …". The instruction is stated by position, everything after ``|the pipeline stops at `plan`|``, so it applied unchanged.
 
 ## Deviations
 

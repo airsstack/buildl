@@ -17,7 +17,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use airsl::Script;
 use buildl_core::{
-    BuildFile, DeclarationSource, Diagnostic, Error, Evaluated, EvaluationFailure, Result,
+    BuildFile, DeclarationSource, Diagnostic, Directory, Error, Evaluated, EvaluationFailure,
+    Result,
 };
 
 use crate::classify::classify;
@@ -33,6 +34,10 @@ use crate::staging::Staging;
 /// the `buildl` module table as both `buildl` and `airsstack.buildl`, and the curated modules
 /// `json`, `path`, `regex`, `hash` and `glob` under `airsstack`.
 ///
+/// `buildl.sources` never lists a file under a directory the source was built to skip. A source
+/// built with the workspace's output and state directories therefore keeps a build file at the
+/// workspace root from seeing what the build wrote.
+///
 /// # Examples
 ///
 /// ```
@@ -46,7 +51,8 @@ use crate::staging::Staging;
 /// let root = fs::canonicalize(workspace.path())?;
 /// fs::write(root.join("build.lua"), "buildl.alias('default', 'app')")?;
 ///
-/// let source = LuaSource::new(&root, DeclarationLimits::default());
+/// let skipped = [Directory::parse("out")?, Directory::parse(".buildl")?];
+/// let source = LuaSource::new(&root, DeclarationLimits::default(), skipped);
 /// let file = BuildFile::new(Provenance::new(PathBuf::from("build.lua"), Directory::root()));
 /// assert!(matches!(
 ///     source.evaluate(&file)?,
@@ -58,18 +64,31 @@ use crate::staging::Staging;
 pub struct LuaSource {
     root: PathBuf,
     limits: DeclarationLimits,
+    skipped: Vec<Directory>,
 }
 
 impl LuaSource {
-    /// A source for the workspace at `root`, evaluating under `limits`.
+    /// A source for the workspace at `root`, evaluating under `limits`, whose `buildl.sources`
+    /// stays out of `skipped`.
     ///
     /// `root` must be the workspace root's canonical, absolute path. `buildl.sources` walks
     /// beneath it and refuses any directory that resolves outside it.
+    ///
+    /// `skipped` names workspace-relative directories. The walk neither lists, enters nor counts
+    /// anything inside one. Each is matched by its whole path from the workspace root, so `out`
+    /// skips `<root>/out` and not `<root>/lib/out`. A build file whose own directory is a skipped
+    /// directory, or lies inside one, gets an empty list from `buildl.sources`. An empty `skipped`
+    /// skips nothing: the walk then lists the workspace's own output and state directories too.
     #[must_use]
-    pub fn new(root: impl Into<PathBuf>, limits: DeclarationLimits) -> Self {
+    pub fn new(
+        root: impl Into<PathBuf>,
+        limits: DeclarationLimits,
+        skipped: impl IntoIterator<Item = Directory>,
+    ) -> Self {
         Self {
             root: root.into(),
             limits,
+            skipped: skipped.into_iter().collect(),
         }
     }
 }
@@ -105,7 +124,12 @@ impl DeclarationSource for LuaSource {
         let staging = Arc::new(Mutex::new(Staging::new(self.limits.memory_bytes().get())));
         let outcome = BuildlModule::new(
             Arc::clone(&staging),
-            Sources::new(&self.root, file.directory(), self.limits.walk_entries()),
+            Sources::new(
+                &self.root,
+                file.directory(),
+                self.limits.walk_entries(),
+                &self.skipped,
+            ),
         )
         .and_then(|module| engine::build(&self.limits, module))
         .and_then(|engine| {
@@ -150,6 +174,7 @@ mod tests {
 
     use buildl_core::{
         BuildFile, DeclarationSource, Directory, Error, Evaluated, EvaluationFailure, Provenance,
+        StagedItem,
     };
 
     use super::LuaSource;
@@ -170,7 +195,7 @@ mod tests {
     }
 
     fn failure(root: &Path) -> EvaluationFailure {
-        match LuaSource::new(root, DeclarationLimits::default()).evaluate(&root_file()) {
+        match LuaSource::new(root, DeclarationLimits::default(), []).evaluate(&root_file()) {
             Err(Error::Evaluation { failure, .. }) => failure,
             other => panic!("expected an evaluation failure, got {other:?}"),
         }
@@ -179,7 +204,7 @@ mod tests {
     #[test]
     fn a_missing_file_is_absent() {
         let dir = tempfile::tempdir().unwrap();
-        let source = LuaSource::new(dir.path(), DeclarationLimits::default());
+        let source = LuaSource::new(dir.path(), DeclarationLimits::default(), []);
         assert_eq!(source.evaluate(&root_file()).unwrap(), Evaluated::Absent);
     }
 
@@ -234,7 +259,7 @@ mod tests {
     #[test]
     fn evaluation_failures_carry_the_file_s_provenance() {
         let (_dir, root) = workspace(b"return (");
-        let error = LuaSource::new(&root, DeclarationLimits::default())
+        let error = LuaSource::new(&root, DeclarationLimits::default(), [])
             .evaluate(&root_file())
             .unwrap_err();
         assert!(
@@ -244,9 +269,47 @@ mod tests {
     }
 
     #[test]
+    fn a_source_keeps_the_directories_it_was_built_with() {
+        let skipped = [
+            Directory::parse("out").unwrap(),
+            Directory::parse(".buildl").unwrap(),
+        ];
+        let source = LuaSource::new("/ws", DeclarationLimits::default(), skipped.clone());
+        assert_eq!(source.skipped, skipped);
+        assert_eq!(
+            LuaSource::new("/ws", DeclarationLimits::default(), []).skipped,
+            []
+        );
+    }
+
+    #[test]
+    fn a_skipped_directory_is_kept_out_of_the_sources_a_file_lists() {
+        let (_dir, root) = workspace(
+            b"buildl.target('app', { run = { 'cc' }, inputs = buildl.sources('**/*.c') })",
+        );
+        fs::create_dir_all(root.join("out")).unwrap();
+        fs::write(root.join("out/o.c"), "").unwrap();
+        fs::write(root.join("a.c"), "").unwrap();
+        let Evaluated::Staged(staged) = LuaSource::new(
+            &root,
+            DeclarationLimits::default(),
+            [Directory::parse("out").unwrap()],
+        )
+        .evaluate(&root_file())
+        .unwrap() else {
+            panic!("the build file exists");
+        };
+        let StagedItem::Target(target) = &staged.declarations[0].item else {
+            panic!("the build file declares a target");
+        };
+        assert_eq!(target.inputs.len(), 1);
+        assert_eq!(target.inputs[0].as_written(), "a.c");
+    }
+
+    #[test]
     fn a_staged_file_is_returned_with_its_declarations() {
         let (_dir, root) = workspace(b"buildl.subdir('lib')\nbuildl.alias('default', 'app')");
-        let Evaluated::Staged(staged) = LuaSource::new(&root, DeclarationLimits::default())
+        let Evaluated::Staged(staged) = LuaSource::new(&root, DeclarationLimits::default(), [])
             .evaluate(&root_file())
             .unwrap()
         else {

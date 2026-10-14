@@ -4,7 +4,7 @@
 //! implementation of each port, and this struct holds one instance of each, so a pipeline is
 //! built from one argument and a phase that needs several ports borrows one value.
 //!
-//! Responsibilities: [`PortSet`], and its `Debug` rendering, which asks only that the twelve
+//! Responsibilities: [`PortSet`], and its `Debug` rendering, which asks only that the fourteen
 //! port types be `Debug`.
 //!
 //! Non-responsibilities: building the instances. A composition root does that.
@@ -42,10 +42,14 @@ pub struct PortSet<P: Ports> {
     pub dispatcher: P::Dispatcher,
     /// Reads the wall clock.
     pub clock: P::Clock,
+    /// Keeps the graph a build resolved.
+    pub graph: P::Graph,
+    /// Shows what a build is doing.
+    pub reporter: P::Reporter,
 }
 
 /// Written by hand because a derive would require the bundle type itself to be `Debug`, and a
-/// bundle is only a choice of port types. This asks only that the twelve port types be `Debug`.
+/// bundle is only a choice of port types. This asks only that the fourteen port types be `Debug`.
 impl<P: Ports> fmt::Debug for PortSet<P>
 where
     P::Source: fmt::Debug,
@@ -60,6 +64,8 @@ where
     P::Strategy: fmt::Debug,
     P::Dispatcher: fmt::Debug,
     P::Clock: fmt::Debug,
+    P::Graph: fmt::Debug,
+    P::Reporter: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PortSet")
@@ -75,6 +81,8 @@ where
             .field("strategy", &self.strategy)
             .field("dispatcher", &self.dispatcher)
             .field("clock", &self.clock)
+            .field("graph", &self.graph)
+            .field("reporter", &self.reporter)
             .finish()
     }
 }
@@ -92,12 +100,13 @@ mod tests {
     use crate::error::Result;
     use crate::ports::{
         ActionCache, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
-        ExecStrategy, Host, Manifest, Ports, StatCache, ToolResolver,
+        ExecStrategy, GraphRecord, Host, Manifest, Ports, Reporter, StatCache, ToolResolver,
     };
     use crate::types::{
-        BuildFile, CacheRow, Ceiling, Digest, Directory, EnvName, EnvValue, Evaluated, Exit,
-        FileStat, Label, OutcomeEvent, OutputPath, Platform, Program, RawOutcome, ReadyAction,
-        SourcePath, StatEntry, Timestamp, Workspace,
+        BuildFile, CacheRow, Captured, Ceiling, Channel, Digest, Directory, EnvName, EnvValue,
+        Evaluated, Exit, FileMode, Found, InputStat, Label, LiveSink, OutcomeEvent, OutputPath,
+        Platform, Program, RawOutcome, ReadyAction, SourcePath, StatEntry, Summary, TargetGraph,
+        Timestamp, Turn, Workspace,
     };
 
     /// One port type answering that there is nothing, standing in for every port.
@@ -121,6 +130,7 @@ mod tests {
                     read: BTreeSet::new(),
                     write: BTreeSet::new(),
                 },
+                execution: crate::types::Execution::default(),
             })
         }
     }
@@ -136,8 +146,8 @@ mod tests {
     }
 
     impl Digester for Stub {
-        fn stat(&self, _path: &SourcePath) -> Result<Option<FileStat>> {
-            Ok(None)
+        fn stat(&self, _path: &SourcePath) -> Result<InputStat> {
+            Ok(InputStat::Missing)
         }
 
         fn digest(&self, _paths: &[SourcePath]) -> Result<Vec<Digest>> {
@@ -182,7 +192,15 @@ mod tests {
             false
         }
 
-        fn place(&self, _digest: &Digest, _at: &OutputPath) -> Result<()> {
+        fn get(&self, _digest: &Digest) -> Result<Option<Vec<u8>>> {
+            Ok(None)
+        }
+
+        fn clear(&self, _at: &OutputPath) -> Result<()> {
+            Ok(())
+        }
+
+        fn place(&self, _digest: &Digest, _mode: FileMode, _at: &OutputPath) -> Result<()> {
             Ok(())
         }
     }
@@ -200,7 +218,12 @@ mod tests {
             Ok(())
         }
 
-        fn run(&self, _dir: &(), _action: &ReadyAction) -> Result<RawOutcome> {
+        fn run(
+            &self,
+            _dir: &(),
+            _action: &ReadyAction,
+            _live: Option<LiveSink<'_>>,
+        ) -> Result<RawOutcome> {
             Ok(RawOutcome {
                 exit: Exit::Exited(0),
                 stdout: Vec::new(),
@@ -213,21 +236,40 @@ mod tests {
             _dir: &(),
             _action: &ReadyAction,
             _cas: &C,
-        ) -> Result<Vec<Option<Digest>>> {
+        ) -> Result<Vec<Found>> {
             Ok(Vec::new())
         }
     }
 
     impl Dispatcher for Stub {
-        fn dispatch<T, R, W, S>(&mut self, _work: W, _step: S) -> Result<()>
+        fn dispatch<T, M, R, W, S>(&mut self, _work: W, _step: S) -> Result<()>
         where
             T: Send,
+            M: Send,
             R: Send,
-            W: Fn(T) -> R + Sync,
-            S: FnMut(Option<R>) -> Vec<T>,
+            W: Fn(T, &(dyn Fn(M) + Sync)) -> R + Sync,
+            S: FnMut(Turn<M, R>) -> Vec<T>,
         {
             Ok(())
         }
+    }
+
+    impl GraphRecord for Stub {
+        fn record(&mut self, _graph: &TargetGraph) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    impl Reporter for Stub {
+        fn begun(&mut self, _targets: usize) {}
+
+        fn started(&mut self, _action: &ReadyAction) {}
+
+        fn printed(&mut self, _label: &Label, _channel: Channel, _bytes: &[u8]) {}
+
+        fn finished(&mut self, _event: &OutcomeEvent, _printed: Captured<'_>) {}
+
+        fn summary(&mut self, _summary: Summary) {}
     }
 
     impl Clock for Stub {
@@ -253,6 +295,8 @@ mod tests {
         type Strategy = Stub;
         type Dispatcher = Stub;
         type Clock = Stub;
+        type Graph = Stub;
+        type Reporter = Stub;
     }
 
     #[test]
@@ -270,6 +314,8 @@ mod tests {
             strategy: Stub,
             dispatcher: Stub,
             clock: Stub,
+            graph: Stub,
+            reporter: Stub,
         };
 
         let text = format!("{set:?}");
@@ -288,6 +334,8 @@ mod tests {
             "strategy",
             "dispatcher",
             "clock",
+            "graph",
+            "reporter",
         ] {
             assert!(
                 text.contains(&format!("{field}: Stub")),

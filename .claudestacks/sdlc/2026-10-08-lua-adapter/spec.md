@@ -3,14 +3,14 @@ status: approved
 created: 2026-10-08
 ---
 
-# Spec: I-lua — evaluating a real `build.lua` through airsl
+# Spec: I5 — evaluating a real `build.lua` through airsl
 
 This spec delivers `buildl-lua`'s first code: `LuaSource`, the airsl-backed implementation of
 `buildl-core`'s `DeclarationSource` port. It evaluates one build file per call on a fresh, curated
 airsl engine. It installs the `buildl` module table under the `airsstack` root and binds the same
 table to the `buildl` global. The table records each declaration call as written, flattening one
 level of nested lists, and its `buildl.sources` is a host-side globbing read. Every failure maps onto
-I3's closed `EvaluationFailure` set. The spec closes the `math.random` determinism hole that design
+I4's closed `EvaluationFailure` set. The spec closes the `math.random` determinism hole that design
 §12.1 leaves open and records the one entropy source it does not close (address-derived text). It
 adds the per-file staging cap (roadmap follow-up #12), raises the airsl floor (#4), and refreshes
 `buildl-lua`'s crate documentation (#3). `buildl-core` is not changed.
@@ -218,7 +218,7 @@ Design §12.1 item 1 says dropping `os` removes `math.random`'s nondeterminism a
 ## 6. The `buildl` table
 
 Each primitive validates the **shape** of its Lua arguments (D8) and records the text as written.
-It never checks a name's grammar, resolves a label or joins a path. Those belong to Load (I3 D2).
+It never checks a name's grammar, resolves a label or joins a path. Those belong to Load (I4 D2).
 
 |Call|Positional parameters|Accepted option fields|Staged as|
 |---|---|---|---|
@@ -411,7 +411,7 @@ No test needs `buildl-core`'s `#[cfg(test)]` fakes. The flows run against the re
 |`docs/design.md` §12.1 (`:583`)|§5.3's amendment|
 |`docs/architecture-building-blocks.md` §11 (`:372`)|open question closed: globbing is host-side in `buildl-lua`|
 |`docs/architecture.md` (`:180`)|the staging buffer is `Arc<Mutex<Staging>>`, not `Arc<Mutex<StagedFile>>`|
-|`docs/roadmap.md`|the I-lua row and §4 on completion; close follow-ups #4 and #12, and #3 for `buildl-lua`. New follow-ups: exclude `out`/`.buildl` from `buildl.sources` once the manifest names them (target I4); reword `EvaluationLimit::Staging`'s rustdoc to a byte budget (target: the next slice touching `buildl-core`); close address-derived text (D12; unassigned)|
+|`docs/roadmap.md`|the I5 row and §4 on completion; close follow-ups #4 and #12, and #3 for `buildl-lua`. New follow-ups: exclude `out`/`.buildl` from `buildl.sources` once the manifest names them (target I6); reword `EvaluationLimit::Staging`'s rustdoc to a byte budget (target: the next slice touching `buildl-core`); close address-derived text (D12; unassigned)|
 
 Section cross-references stay intact (CLAUDE.md).
 
@@ -429,7 +429,7 @@ Section cross-references stay intact (CLAUDE.md).
 
 ## 14. Non-goals
 
-- `buildl.toml`, the `Manifest` port, the ceiling, grants and the wanted set (I4, milestone 4).
+- `buildl.toml`, the `Manifest` port, the ceiling, grants and the wanted set (I6, milestone 4).
   `DeclarationLimits` and the root arrive as constructor arguments until then.
 - Excluding `out`/`.buildl` from `buildl.sources` (needs the manifest; recorded follow-up).
 - Closing address-derived nondeterminism (D12; recorded follow-up).

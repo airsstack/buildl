@@ -96,3 +96,47 @@ fn a_root_declaration_is_named_over_a_subdirectory_one_it_sorts_before() {
         other => unreachable!("expected Nondeterministic, got {other:?}"),
     }
 }
+
+#[test]
+fn a_caller_holding_only_a_source_checks_like_a_pipeline() {
+    let agreeing = || {
+        FakeSource::new(workspace(vec![
+            ("", file(vec![target("b", &[]), target("a", &[])], &["lib"])),
+            ("lib", file(vec![target("text", &[])], &[])),
+        ]))
+    };
+    let alone = buildl_core::pipeline::check(&agreeing(), &entry()).unwrap();
+    let through = Pipeline::<FakePorts>::new(ports(agreeing()))
+        .check(&entry())
+        .unwrap();
+    assert_eq!(alone, through);
+
+    let first = workspace(vec![("", file(vec![target("app", &[])], &[]))]);
+    let second = workspace(vec![(
+        "",
+        file(vec![target("app", &[]), target("extra", &[])], &[]),
+    )]);
+    let differing = FakeSource::with_second_run(first, second);
+    assert!(matches!(
+        buildl_core::pipeline::check(&differing, &entry()),
+        Err(Error::Nondeterministic { .. })
+    ));
+}
+
+#[test]
+fn a_caller_holding_only_a_source_gets_the_graph_a_pipeline_gets() {
+    let fixture = || {
+        FakeSource::new(workspace(vec![
+            ("", file(vec![target("app", &["//lib:text"])], &["lib"])),
+            ("lib", file(vec![target("text", &[])], &[])),
+        ]))
+    };
+    let alone = buildl_core::pipeline::graph(&fixture(), &entry()).unwrap();
+    let through = Pipeline::<FakePorts>::new(ports(fixture()))
+        .graph(&entry())
+        .unwrap();
+    assert_eq!(
+        buildl_core::json::canonical::to_vec(&alone).unwrap(),
+        buildl_core::json::canonical::to_vec(&through).unwrap()
+    );
+}

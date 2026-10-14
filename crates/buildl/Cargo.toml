@@ -14,6 +14,19 @@ authors.workspace      = true
 buildl-core = { workspace = true }
 # The Lua build-file adapter, bound to the pipeline here alongside the others.
 buildl-lua  = { workspace = true }
+# Hashing many input files at once. Named by the `Digester` adapter and by no
+# other module, so the executor's plain threads stay the crate's one threading model.
+rayon       = { workspace = true }
+# Derives for what this crate reads and writes in a shape of its own: the tables
+# of `buildl.toml`, a line of the cache journal and an entry of the stat cache.
+serde       = { workspace = true }
+# Temp-file-then-rename in the shared `state` module, and the temp workspaces of
+# this crate's tests.
+tempfile    = { workspace = true }
+# The error of taking the state-directory lock.
+thiserror   = { workspace = true }
+# Parsing `buildl.toml` in the `Manifest` adapter.
+toml        = { workspace = true }
 
 [lints]
 workspace = true

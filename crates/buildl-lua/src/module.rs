@@ -250,6 +250,7 @@ mod tests {
                         &root,
                         &Directory::root(),
                         DeclarationLimits::default().walk_entries(),
+                        &[],
                     ),
                 )
                 .unwrap(),

@@ -20,6 +20,9 @@ pub trait StatCache {
     fn entry(&self, path: &SourcePath) -> Option<StatEntry>;
 
     /// Replaces the entry for `path`, in memory.
+    ///
+    /// An implementation may decline to keep an entry it cannot vouch for;
+    /// [`entry`](StatCache::entry) then returns `None` for that path.
     fn record(&mut self, path: SourcePath, entry: StatEntry);
 
     /// Persists every entry.

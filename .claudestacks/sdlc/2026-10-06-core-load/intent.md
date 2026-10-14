@@ -14,10 +14,10 @@ consumes:
 
 - **No declaration value.** `architecture.md` §2 names `Declaration` as the first phase handoff, and
   design §5 lists what a build file can declare (`target`, `rule`, `alias`, `test`, `option`), but no
-  type carries a declaration, so I4 Resolve has no input to resolve.
+  type carries a declaration, so I6 Resolve has no input to resolve.
 - **No port to evaluate a build file.** `architecture-building-blocks.md` §5.2 sketches
   `DeclarationSource::evaluate(&BuildFile) -> Result<StagedFile>`; neither the trait nor its two
-  argument types exist. I-lua, the airsl adapter, has nothing to implement until they do.
+  argument types exist. I5, the airsl adapter, has nothing to implement until they do.
 - **No traversal.** Only the root build file is known up front; every other one is discovered when an
   evaluated file calls `b.subdir`. `architecture.md` §3.1 assigns the directory queue, `subdir`
   handling and the sorted merge to Load logic in `buildl-core`. None of it is written.
@@ -25,8 +25,8 @@ consumes:
   by `architecture-building-blocks.md` §5.3 and §8 and by `docs/roadmap.md` §3. Until they exist no
   flow can be exercised end to end, and every later slice has nothing to extend.
 
-This is the next rung of the milestone 1 ladder (`docs/roadmap.md` §3): I4 Resolve consumes its output
-and I-lua implements its port, so both are blocked on it.
+This is the next rung of the milestone 1 ladder (`docs/roadmap.md` §3): I6 Resolve consumes its output
+and I5 implements its port, so both are blocked on it.
 
 Questions the documents leave open, which the design pass has to close:
 
@@ -59,7 +59,7 @@ resolving them, deduplicating, rejecting escapes, queueing and the sorted merge.
 - `crates/buildl-core` — new declaration and build-file types, the `DeclarationSource` port, the Load
   logic, the `Pipeline` / `Ports` / `FakePorts` skeleton, new error variants, the crate rustdoc and
   `README.md`
-- `docs/roadmap.md` — the I3 row and §4 on completion
+- `docs/roadmap.md` — the I4 row and §4 on completion
 - `docs/architecture.md`, `docs/architecture-building-blocks.md`, `docs/design.md` — only where a
   decision closed here contradicts or settles text there
 
@@ -75,7 +75,7 @@ resolving them, deduplicating, rejecting escapes, queueing and the sorted merge.
   byte of output.
 - `Pipeline<P: Ports>`, the `Ports` bundle and `FakePorts` exist, and the pipeline can be run up to the
   `check` handoff.
-- The `DeclarationSource` contract is complete enough for I-lua to implement against without amending
+- The `DeclarationSource` contract is complete enough for I5 to implement against without amending
   `buildl-core`.
 - Every new type and flow is unit-tested in `buildl-core` against fakes, with no Lua, filesystem,
   process or thread.
@@ -105,11 +105,11 @@ resolving them, deduplicating, rejecting escapes, queueing and the sorted merge.
 ## Non-goals
 
 - The airsl engine, the declaration policy, the `buildl` module table and its binding to the `buildl`
-  global — I-lua.
-- `b.sources()` globbing and where it runs (`architecture-building-blocks.md` §11) — I-lua.
-- Label resolution across files, duplicate and unknown-reference detection, cycles, `TargetGraph` — I4.
-- The `Manifest` port, the ceiling, the wanted set and grants — I4.
-- Expanding a `rule` into the targets that use it, and settings validation — I4 or I5, as their specs
+  global — I5.
+- `b.sources()` globbing and where it runs (`architecture-building-blocks.md` §11) — I5.
+- Label resolution across files, duplicate and unknown-reference detection, cycles, `TargetGraph` — I6.
+- The `Manifest` port, the ceiling, the wanted set and grants — I6.
+- Expanding a `rule` into the targets that use it, and settings validation — I6 or I7, as their specs
   decide.
 - Implicit `subdir` via file discovery, in any form — rejected, not deferred.
 - Parallel load. Load runs serially in `buildl-core`, which cannot name a thread.

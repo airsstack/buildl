@@ -54,9 +54,10 @@ pub(crate) struct Gathered<'g> {
 ///
 /// Inputs and outputs keep the order they were written in. The environment is keyed by name, so
 /// the order `node` lists its variables in does not reach the key. Only the settings the command
-/// names are kept. An input or a program `gathered` holds nothing for is left out, and a variable
-/// it holds nothing for is taken as unset; neither happens when `gathered` was built for the
-/// graph `node` belongs to.
+/// names are kept. The tool is the program the command names under the gathered settings, so
+/// one named through a setting is keyed like one written out. An input or a program `gathered`
+/// holds nothing for is left out, and a variable it holds nothing for is taken as unset; neither
+/// happens when `gathered` was built for the graph `node` belongs to.
 pub(crate) fn own(node: &Node, gathered: &Gathered<'_>) -> OwnComponents {
     let inputs = node
         .inputs
@@ -73,7 +74,7 @@ pub(crate) fn own(node: &Node, gathered: &Gathered<'_>) -> OwnComponents {
         .iter()
         .map(|name| (name.clone(), gathered.env.get(name).cloned().flatten()))
         .collect();
-    let tool = program_of(&node.run).and_then(|program| {
+    let tool = program_of(&node.run, &gathered.settings).and_then(|program| {
         let fingerprint = *gathered.fingerprints.get(&program)?;
         Some(ToolIdentity {
             program,
@@ -186,6 +187,27 @@ mod tests {
         );
         assert_eq!(components.network, NetworkAccess::Declared);
         assert_eq!(components.platform, gathered.platform);
+    }
+
+    #[test]
+    fn a_program_named_through_a_setting_is_the_tool_and_the_setting_is_kept_too() {
+        let mut gathered = gathered(&[], &[], &[]);
+        gathered.settings = settings(&[("compiler", "cc"), ("mode", "debug")]);
+        let node = node("//:app", |node| {
+            node.run = command(&["$opt:compiler", "-c", "$in"]);
+        });
+
+        let components = own(&node, &gathered);
+
+        assert_eq!(
+            components.tool,
+            Some(ToolIdentity {
+                program: program("cc"),
+                fingerprint: Digest::of(b"cc 14.2"),
+            })
+        );
+        assert_eq!(components.settings, settings(&[("compiler", "cc")]));
+        assert_eq!(components.command, node.run, "the command stays as written");
     }
 
     #[test]

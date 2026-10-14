@@ -6,9 +6,9 @@
 //!
 //! Responsibilities: [`RawOutcome`] and [`Exit`].
 //!
-//! Non-responsibilities: classifying the outcome, and the files the command produced, which a
-//! strategy stores separately. A command that could not be started at all is not an outcome:
-//! the strategy returns an error for it.
+//! Non-responsibilities: classifying the outcome, and what the command left at its output
+//! paths, which a strategy reports separately. A command that could not be started at all is
+//! not an outcome: the strategy returns an error for it.
 //!
 //! This file holds only type definitions, so it carries no logic to unit-test.
 
@@ -20,11 +20,13 @@
 pub enum Exit {
     /// It exited on its own, with this status. Zero is success.
     Exited(i32),
+    /// A signal ended it before it exited, with this number. It has no status.
+    Signaled(i32),
     /// It ran longer than it was allowed to and was stopped.
     TimedOut,
 }
 
-/// What running one command produced, apart from its output files.
+/// What running one command produced, apart from what it left at its output paths.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RawOutcome {
     /// How the command ended.

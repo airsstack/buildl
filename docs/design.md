@@ -1,6 +1,6 @@
 # buildl — design document
 
-**Status: draft for review.** Nothing described here is implemented. Every design decision builds on the shipped `airsl` runtime [1][2]; sections note where buildl depends on airsl work that is itself still proposed (the extension system).
+**Status: the core pipeline is implemented; the rest is design.** Item 1 of the sequence in §13 is built: Load, Resolve, Plan, Execute and Record, the `check`, `graph`, `plan` and `build` commands, the local cache and the cas, with actions run at isolation tier 1 (§12.2). Everything from item 2 on is described here and not built. Every design decision builds on the shipped `airsl` runtime [1][2]; sections note where buildl depends on airsl work that is itself still proposed (the extension system).
 
 **Author:** rstlix0x0 · **Date:** 2026-08-23 · **Reviewers:** —
 
@@ -63,22 +63,29 @@ buildl is delivered as a Cargo workspace of four crates: `crates/buildl-core` (d
 
 ```text
 myproject/
-  buildl.toml          # workspace manifest: ceiling, approver, limits
+  buildl.toml          # workspace manifest: ceiling, limits, execution (§4)
   build.lua            # root build file (declaration only)
   src/...
   lib/
     build.lua          # per-directory build files
   .buildl/             # buildl state — gitignored
-    graph.json         # last resolved DAG (sorted keys, diff-stable)
-    cache.json         # action cache: target -> action key -> output digests
-    cas/<sha256>       # content-addressed artifact store
+    lock               # held while a plan or a build uses the directory
+    graph.json         # the graph the last build resolved, written by every build (sorted keys, diff-stable)
+    cache.json         # action cache: per target, its action key and what its last build produced and printed
+    cache.journal      # rows recorded since cache.json was written; gone once a build has returned
+    statcache.json     # per input: its modification time, size and content digest (§8.3)
+    cas/ab/cdef…       # content-addressed artifact store: two hex digits of the SHA-256, then the other 62
+    cas/ab/cdef….x     # the same bytes as an executable file, kept for an output placed executable
+    cas/tmp/           # staging for the store
     log.jsonl          # one JSON event per action
-  out/                 # named outputs, linked from the cas: out/<directory>/<name>
+  out/                 # named outputs, out/<directory>/<name>: read-only links into the cas, copies where linking is not used
 ```
 
-All metadata files use airsl's sorted-key JSON encoding, so they are byte-stable across runs and diff cleanly in review. The `cas` + action-cache pairing deliberately matches the model of the Remote Execution API, where a content-addressed store is keyed by SHA-256 digests and an action cache maps action keys to results [6][7] — see §10.
+All metadata files are written by buildl's own canonical JSON serializer — object keys sorted at every level, no whitespace — so they diff cleanly in review. `graph.json` and `cache.json` are byte-identical across two builds of the same workspace on one machine, wherever the workspace stands; `log.jsonl` holds clock readings and `statcache.json` modification times, so those two are not. The cache is read back by the same rule it is written by: a file that is not byte for byte what buildl writes for the rows it holds — a field missing or unknown, a key out of order, a key digest that does not match its components — is refused as corrupt rather than trusted. The refusal is an error that names the file and the remedy: remove it and build again, and every target is built anew. `statcache.json` is the exception: one that fails to read is discarded and written again, since it holds nothing a hash cannot give back. The `cas` + action-cache pairing deliberately matches the model of the Remote Execution API, where a content-addressed store is keyed by SHA-256 digests and an action cache maps action keys to results [6][7] — see §10.
 
 An output lives at `out/<directory>/<name>`: the directory of its target's label, then the output's name, so `//lib:text` writes `out/lib/text` and `//:app` writes `out/app`. Two targets may not claim one path, and no target may claim a path another needs as a directory: either is an error before anything runs.
+
+An output is whatever its action leaves at that path: one regular file, or a directory of regular files, however deep. Each file's bytes go into the cas by their own digest, and the output itself is described by one **output manifest** — the file's digest and whether it may be run, or, for a directory, every file's path, digest and mode, in path order — stored in the cas like any other content. The digest of that manifest is the output's one digest: the cache row, the log and every dependent's action key hold it, for a file and for a directory alike. So two outputs share a digest exactly when they are the same files with the same bytes and modes at the same paths, a built program is still executable when a cache hit puts it back, and a directory is put back whole or not at all: when one of its files cannot be put in place, the files already placed are removed and the target fails (§8.5). What a directory may not contain is in §8.7.
 
 ## 4. The workspace manifest: `buildl.toml`
 
@@ -97,10 +104,6 @@ env.read = ["HOME", "PATH", "GOCACHE", "CARGO_HOME"]
 fs.read  = ["."]           # workspace-relative; expanded by the host, never by Lua
 fs.write = ["out", ".buildl", "target"]
 
-[approver]
-default = "interactive"    # prompt on the first build of a fresh clone
-ci      = "manifest"       # honour declarations silently when CI is detected
-
 [declaration]              # ceilings for the Lua phase — it only declares
 memory       = "16MB"
 instructions = 10_000_000
@@ -113,6 +116,20 @@ strategy = "sandbox"       # bare | sandbox | os-sandbox | container (§11)
 ```
 
 Two rules carried over from airsl's extension design deliberately: variables and relative roots are expanded **host-side** (a build file that could expand them could widen its own grant), and the ceiling can never be exceeded by anything a build file or plugin requests — requests are intersected with it, never unioned.
+
+The manifest is read strictly. A key this version of buildl does not read is an error that names the key with its line and column, so a misspelt `fs.wirte` cannot silently drop a grant. An `[approver]` table is such a key until grant negotiation ships (§13 item 4), which is why the example has none. Every table and every key is optional, and an empty file is a valid manifest: every default, and an empty ceiling, under which `check` and `graph` work and `plan` and `build` are refused, since an empty ceiling allows nothing. A directory with no `buildl.toml` in it or above it is not a workspace: that is an error, never a default ceiling (§7). `config` must be `1`. `out` may not be the workspace root, and may not be `.buildl`, contain it or lie inside it. The state directory is always `.buildl`; no key names it. A directory entry of the ceiling is workspace-relative, and `"."` is the workspace root. `memory` is a whole number directly followed by one unit — `B`, `KB`, `MB` or `GB`, each 1024 times the one before — and never zero.
+
+`[execution]` says how the workspace wants its actions run. Each key has one grammar and one meaning when it is left out, and a value outside its grammar makes the manifest invalid:
+
+|Key|Written as|When absent|
+|---|---|---|
+|`workers`|a whole number in digits; `0` is one worker per core|`0`|
+|`timeout`|a whole number directly followed by one unit — `ms`, `s`, `m` or `h` — and never zero: `500ms`, `90s`, `10m`, `2h`|`"10m"`|
+|`strategy`|exactly one of `bare`, `sandbox`, `os-sandbox`, `container`, in order of increasing isolation (§12.2)|`"sandbox"`|
+
+Until the input sandbox ships (§13 item 3) buildl runs `bare` alone. `build` refuses a manifest whose strategy is anything else, the default `sandbox` included, rather than run its actions under a weaker tier than the one asked for; the error names the line to write, `strategy = "bare"`. `check`, `graph` and `plan` run nothing, and work under any strategy.
+
+None of the three is an action-key component (§8.3): they decide how an action is run, never which action it is.
 
 ## 5. The Lua declaration API
 
@@ -147,16 +164,18 @@ b.test("app_test", { deps = { "app" }, run = { "$deps", "--self-test" } })
 The design decisions in those lines:
 
 - **Labels, not `require`.** Cross-directory references are graph names (`//lib:text`), resolved in Rust. airsl's confined `require` stops at the script's directory, and that is correct here: build files should not load each other's code, they should reference each other's _targets_. `b.subdir("dir")` asks the host to evaluate `dir/build.lua` in its own scope, so every declaration is namespaced by — and attributable to — the directory that made it.
-- **Placeholders expand host-side.** `$in`, `$out` and `$deps` are substituted by the executor, the ninja model [4]. Each is a list of paths: the target's inputs, its own outputs, and every output of its dependencies. An argument that is exactly one placeholder becomes one argument per path, and none when the list is empty; inside other text the paths are joined by one space. So `{ "$deps", "--self-test" }` above runs `out/app --self-test`. A placeholder is `$` and the longest run of letters after it: `$input` is plain text, and `$out/app` is the outputs followed by `/app`. Every command is expanded before any action runs. Lua never holds a real artifact path.
-- **`b.sources()` is the declaration phase's only filesystem read**, done host-side rather than through an engine grant. It returns the regular files under the declaring directory that match the pattern, relative to that directory and sorted by the host, so declaration is deterministic regardless of filesystem order. Symlinks are never followed, and a declaring directory that resolves outside the workspace is refused. Every list field accepts one level of nesting, spliced in order, so `inputs = { b.sources("src/*.c"), "go.mod" }` is one flat list.
+- **Placeholders expand host-side.** `$in`, `$out` and `$deps` are substituted by the executor, the ninja model [4]. Each is a list of paths: the target's inputs, its own outputs, and every output of its dependencies. An argument that is exactly one placeholder becomes one argument per path, and none when the list is empty; inside other text the paths are joined by one space. So `{ "$deps", "--self-test" }` above runs `out/app --self-test`. A placeholder is `$` and the longest run of letters after it: `$input` is plain text, and `$out/app` is the outputs followed by `/app`. Every command is expanded before any action runs. When a command starts, the directory that will contain each declared output exists and nothing exists at the output path itself: a command creates what it produces there, a file or a directory (§3). Lua never holds a real artifact path.
+- **A rule's `desc` is the line shown for an action.** It is expanded host-side with the command, from the same paths and the same setting values: `$opt:name` becomes the setting's value, and `$in`, `$out` and `$deps` become their paths, always joined by one space, since a line has no arguments to split a list across. A control character a substituted value brings in, such as a newline in a `--set` value, is shown as a space, so the text stays one line. A `$opt:` in a `desc` must name a declared setting, exactly as in a command (§8.2). A target with an inline `run`, or whose rule has no `desc`, has no description, and none is made up for it. The description is display text only: it is no part of the action key, so editing a `desc` rebuilds nothing, and it is not written to `log.jsonl`.
+- **`b.sources()` is the declaration phase's only filesystem read**, done host-side rather than through an engine grant. It returns the regular files under the declaring directory that match the pattern, relative to that directory and sorted by the host, so declaration is deterministic regardless of filesystem order. Symlinks are never followed, and a declaring directory that resolves outside the workspace is refused. The walk never enters the workspace's output directory or its state directory (`out` and `.buildl`, §3), so a pattern at the workspace root does not list what the build itself wrote. Each is matched by its whole path from the workspace root — `out` is skipped, `lib/out` is not — and a build file declared inside either gets an empty list. Every list field accepts one level of nesting, spliced in order, so `inputs = { b.sources("src/*.c"), "go.mod" }` is one flat list.
 - **`b.target` accepts a small closed table**: `rule` or inline `run`, `inputs`, `deps`, `outputs` (default: the target name), `env` (names checked against the ceiling), `network = true` (visible in `plan`, §11), and `always = true` for phony targets. Every field but `always` is an action-key component; the surface grows reluctantly.
-- **`b.option(name, { default })` declares a build setting** — an invocation-time parameter with an explicit default, referenced in argv as `$opt:name` and overridden with `--set name=value`. Settings fold into the action key, so differently-parameterised runs cache separately and correctly (§10.2).
+- **A declared input is a regular file inside the workspace.** A symbolic link, a directory or a special file at an input's path is refused at plan as a mistake of the build file, like an input that does not exist: the error names the target that declares the input and what stands at the path.
+- **`b.option(name, { default })` declares a build setting** — an invocation-time parameter with an explicit default, referenced in argv as `$opt:name` and overridden with `--set name=value`. The settings a command names fold into its action key, so differently-parameterised runs cache separately and correctly (§10.2). A setting may also name the tool: a first argument that is a complete program name once its `$opt:` references are replaced is a host tool like one written out — held to `proc.run` at plan, looked up, and fingerprinted into the key (§9.6).
 - **`b.alias(name, target)` gives a target a second name.** An alias names a target, never another alias or a rule. A dependency may name an alias, and resolves to the target behind it.
 - **A list keeps the order it was written in.** `deps`, `inputs`, `outputs` and `env` reach the graph in written order with repeats dropped, so `$deps` and `$in` expand in that order. Reordering `deps`, `inputs` or `outputs` changes the action key. Reordering `env` does not: an environment is a set of variables, and the key holds each one by name.
 
 ## 6. Grant negotiation: the DAG is the request
 
-buildl needs no per-file capability manifest, because the build's authority is **derived, not requested**. After Resolve, the host walks the DAG and computes what the build wants — every program in every `run`, every env name, every declared input, every output root — and checks each against its list in the ceiling: `proc.run`, `env.read`, `fs.read`, `fs.write`. The _wanted set_ a plan reports lists the programs, the env names, the output roots and the targets declaring `network = true`; the inputs stay in the graph, where each target declares them. That set flows through the same negotiation pipeline airsl's extension system defines [1]:
+buildl needs no per-file capability manifest, because the build's authority is **derived, not requested**. After Resolve, the host walks the DAG and computes what the build wants — every program in every `run`, written out or named through a build setting (§5), every env name, every declared input, every output root — and checks each against its list in the ceiling: `proc.run`, `env.read`, `fs.read`, `fs.write`. The _wanted set_ a plan reports lists the programs, the env names, the output roots and the targets declaring `network = true`; the inputs stay in the graph, where each target declares them. That set flows through the same negotiation pipeline airsl's extension system defines [1]:
 
 ```mermaid
 %% Grant negotiation
@@ -185,19 +204,22 @@ flowchart TD
 |Command|Stops after|Purpose|
 |---|---|---|
 |`buildl check`|Load|syntax-check every build file, run nothing|
-|`buildl graph`|Resolve|emit the DAG (`--json`, `--dot`)|
-|`buildl plan`|Plan|dry run: what would rebuild, and why|
-|`buildl build [target]`|Record|the full pipeline|
+|`buildl graph`|Resolve|emit the DAG (`--json`, the default, or `--dot`)|
+|`buildl plan [target]...`|Plan|dry run: what would rebuild, and why|
+|`buildl build [target]...`|Record|the full pipeline|
 |`buildl watch [target]`|loops|persistent process, re-plans on file change|
 |`buildl test` / `clean` / `gc`|—|run test targets; drop outputs; prune the cas|
+|`buildl log <target>`|—|show what a target printed when it last ran (§8.7)|
 |`buildl query <expr>`|Resolve|graph queries: `deps()`, `rdeps()` (§10.1)|
 |`buildl doctor`|—|print the effective ceiling, grants, workers|
+
+`check`, `graph`, `plan` and `build` are built; each other command arrives with the item of §13 that names it. `plan` and `build` take any number of targets and, with none, every target; `plan` takes exactly what `build` takes, because it is that build's dry run. Both accept `--set name=value`, repeated, to give a build setting a value for the run (§10.2); `build` adds `--keep-going` (§8.4) and `--stream` (§8.7). A command finds its workspace at the nearest `buildl.toml` at or above the current directory and prints paths relative to it. A target is written `//dir:name`, or `:name` and `name`, which are read against the current directory.
 
 Three workflow rules adopted deliberately:
 
 1. **`plan` explains itself.** Dirtiness is hash-based, so "why did this rebuild" has a mechanical answer; it is surfaced from day one.
 2. **Load and Resolve always run.** The graph is never cached across edits — only artifacts are. A build file reaches a key through what it declares, not through its own hash: every field of a target that changes what its action produces is a key component (§8.3), so an edit that changes a target rebuilds it and an edit that changes nothing rebuilds nothing.
-3. **The log is an artifact.** `log.jsonl` records one sorted-key JSON object per action: target, command, hashes, duration, cache hit or miss.
+3. **The log is an artifact.** `log.jsonl` records one sorted-key JSON object per action: target, command, hashes, duration, cache hit or miss. It grows across builds, and the newest line for a label is that target's current one.
 
 ## 8. Internal workflows
 
@@ -218,7 +240,7 @@ Every staged declaration carries provenance (the file that made it), which later
 
 ### 8.2 Resolve
 
-Pure in-memory Rust: intern names namespaced by directory, resolve labels, then three validations that each fail with provenance — duplicates (both declaration sites named), unknown references (with a did-you-mean from the interned set), and cycles (the whole cycle path reported, not just its existence). Output: the DAG, including the reverse edges. A node's dependency count is the length of its edge list; the counters that change during a build belong to the scheduler (§8.4).
+Pure in-memory Rust: intern names namespaced by directory, resolve labels, then three validations that each fail with provenance — duplicates (both declaration sites named), unknown references (with a did-you-mean from the interned set; a `$opt:` in a command or in a rule's `desc` that names no declared setting is one of them), and cycles (the whole cycle path reported, not just its existence). Output: the DAG, including the reverse edges. A node's dependency count is the length of its edge list; the counters that change during a build belong to the scheduler (§8.4).
 
 ### 8.3 Plan: the action key
 
@@ -237,7 +259,11 @@ graph TD
     CMP -- "a dep is not clean" --> COND["Conditional — runs only if<br/>that dep's output changes"]
 ```
 
-A key folds what each dependency _produced_ — the name and hash of each of its outputs — not the dependency's own key, so a dependency rebuilt to the same bytes leaves everything downstream clean (early cutoff, §8.5). A dirty dependency's new output does not exist at plan time, so a target whose only open question is that output is neither clean nor dirty but _conditional_: it runs only if the dependency produces something other than what the last build recorded. Two internals matter at scale: a **stat cache** (mtime + size unchanged since the last run means the recorded content hash is reused — the trick behind ninja-class no-op builds [4]), and parallel hashing, since files are independent. The mismatching component of the key is retained per dirty target — that is the entire implementation of `plan`'s explanations. The wanted-set ∩ ceiling check (§6) also runs here, so refusals precede execution.
+A key folds what each dependency _produced_ — the name of each of its outputs with the digest of that output's manifest (§3), which covers a file's bytes, its executable bit and every file of a directory — not the dependency's own key, so a dependency rebuilt to the same bytes leaves everything downstream clean (early cutoff, §8.5). A dirty dependency's new output does not exist at plan time, so a target whose only open question is that output is neither clean nor dirty but _conditional_: it runs only if the dependency produces something other than what the last build recorded. Two internals matter at scale: a **stat cache** (mtime + size unchanged since the last run means the recorded content hash is reused — the trick behind ninja-class no-op builds [4]), and parallel hashing, since files are independent. The mismatching component of the key is retained per dirty target — that is the entire implementation of `plan`'s explanations. The wanted-set ∩ ceiling check (§6) also runs here, so refusals precede execution.
+
+Plan first fixes the value every build setting has for the run — its default, or its `--set` override — and the plan carries those values, so Execute expands commands and descriptions from exactly what was planned. The tool a target runs is read from its command's first argument under those values (§9.6), which is why a tool named through a setting is checked, looked up and keyed here like one written out.
+
+What a key leaves out is as deliberate as what it holds. The `[execution]` settings (§4) are not components: `workers` is scheduling, which no artifact may observe; `timeout` bounds whether an action finishes, not what it produces, and an action that timed out is a failure, never cached (§8.7); `strategy` decides what an action can reach beyond its declared inputs, not what those inputs are, so one action has one key at every tier and a `sandbox` laptop shares cache entries with an `os-sandbox` CI runner. What does change an output at tier 4 is the image, and its digest joins the key per action (§11.2). A rule's `desc` is not a component either (§5).
 
 ### 8.4 Execute: the scheduler loop
 
@@ -253,7 +279,7 @@ graph TD
     WP --> LOG["log.jsonl<br/>one event per action"]
 ```
 
-On failure, either stop scheduling new work (default) or continue with everything not downstream of the failure (`--keep-going`, for CI). Each worker's output is captured and printed as a block on completion, never interleaved. Scheduling order cannot leak into results: an action's inputs are declared and materialised before it starts, so its position in the schedule is unobservable to it.
+On failure, either stop scheduling new work (default) or continue with everything not downstream of the failure (`--keep-going`, for CI). A build ends with one outcome per target or with an error, never with a target missing: a worker pool that returns having lost an action or its result fails the build, naming every target left without an outcome. What finished before that is already in the cas, the cache and the log, and stays. Each worker's output is captured and printed as a block on completion, never interleaved. Scheduling order cannot leak into results: an action's inputs are declared and materialised before it starts, so its position in the schedule is unobservable to it.
 
 ### 8.5 One action's lifecycle — the crash-safety invariant
 
@@ -263,7 +289,7 @@ stateDiagram-v2
     [*] --> Expand : take target from queue
     Expand : Expand placeholders — workspace-relative paths
     Spawn : Spawn process — granted env, no shell
-    Temp : Outputs to temp — never in place
+    Temp : Outputs written — in place at tier 1, in a temp dir from tier 2
     Cas : Hash into cas — then link into out/
     Rec : Record — cache row + log event
     Expand --> Spawn
@@ -273,7 +299,11 @@ stateDiagram-v2
     Rec --> [*]
 ```
 
-The ordering is the consistency story: **a cache row is written only after its outputs exist in the cas.** An interrupted build means some finished work is remembered and unfinished work is not; the next run re-plans and continues. No "corrupt cache, run clean" state is representable. The hash-into-cas step also yields early cutoff: a byte-identical rebuilt output leaves downstream action keys unchanged, so dependents stay clean.
+The ordering is the consistency story: **a cache row is written only after its outputs exist in the cas.** An interrupted build means some finished work is remembered and unfinished work is not; the next run re-plans and continues. For a build that is interrupted — stopped, killed, or ended with its terminal — no "corrupt cache, run clean" state is representable: every state file and every blob is renamed into place whole, and a row follows its content. Nothing is synced to disk, so that does not cover the machine itself dying mid-build; the remedy then is to remove `.buildl/` and `out/` and build again. The hash-into-cas step also yields early cutoff: a byte-identical rebuilt output leaves downstream action keys unchanged, so dependents stay clean.
+
+Where an action writes depends on the tier. At tier 1 it runs in the workspace root and writes its outputs in place under `out/`; what it left there is then hashed into the cas and placed again from the cas, so a finished output is always a link into the store or a copy of it. An action that fails or is interrupted can leave a partial output at its path: no cache row names it, nothing reads it as a result, and the next build clears the path before it runs the action again (§12.2). From tier 2 an action writes in a directory of its own, and nothing partial reaches `out/`.
+
+Hashing into the cas means every regular file the action left at an output path, then one manifest per output (§3). Linking into `out/` starts by removing whatever is at the output's path, so nothing an earlier build left there outlives it — a file where a directory now belongs, or a file a rebuilt directory no longer holds — and then places the file, or each file of the directory, with its mode. When a file cannot be placed, the output's path is cleared again before the target fails, so `out/` holds an output whole or not at all, and the failure reported is the placement's. Should that second clearing fail as well, it is not reported in the placement's stead: what was placed stays at the path until the next build, which removes it before placing anything there.
 
 Placeholders expand to workspace-relative paths — `lib/a.c`, `out/lib/text` — the same in every isolation tier (§12.2), so a command is one text whichever tier runs it. Each tier makes those paths true in the directory it runs the action in.
 
@@ -295,19 +325,43 @@ Events invalidate stat-cache entries for the touched paths. A changed build defi
 
 ### 8.7 Output capture and failure semantics
 
-**Output.** Each worker captures stdout and stderr separately via pipes — the same shape airsl's `proc.run` returns (`stdout`, `stderr`, `status`) [1]. Output is printed as one block per action on completion, under a header naming the target — never interleaved across workers. It is also persisted: output blobs go into the cas by digest, referenced from the action's `log.jsonl` event. That enables `buildl log <target>` (show the last real output), keeps large outputs out of the JSON, and lets a cache hit replay the warnings from when the action actually ran — otherwise warnings vanish on every incremental build. A TTY gets a live status line with blocks as actions finish; CI gets plain sequential blocks; `--stream` attaches a single long action's output live.
+**Output.** Each worker captures stdout and stderr separately via pipes — the same shape airsl's `proc.run` returns (`stdout`, `stderr`, `status`) [1]. Output is printed as one block per action on completion, under a header naming the target — never interleaved across workers. It is also persisted: output blobs go into the cas by digest, referenced from the action's `log.jsonl` event. That enables `buildl log <target>` (show the last real output), keeps large outputs out of the JSON, and lets a cache hit replay the warnings from when the action actually ran — otherwise warnings vanish on every incremental build. Everything a build prints about how it went — blocks, the status line, the summary — goes to stderr; stdout carries only what a command was asked for, the graph of `graph` and the plan of `plan`, so a pipe never mixes the two. A TTY gets a live status line with blocks as actions finish; CI gets plain sequential blocks. Under `--stream` one running action at a time is shown as it prints, under its header, and every other action prints as a block once that one has ended: output is still never interleaved, and what is stored is what a quiet build stores. A build ends with one summary line, and an interrupted build prints none.
 
 **Failure classification.** The airsl principle — a resource breach is not a script failure — applied to builds. Three classes, distinguished structurally (exit status, timeout flag, refusal origin — never message text):
 
 |Class|Meaning|Examples|
 |---|---|---|
-|Action failure|the build did its job by revealing it|compile error, test failure|
+|Action failure|the build did its job by revealing it|compile error, test failure, a command ended by a signal, a declared output left missing or left as something that cannot be kept|
 |Infrastructure failure|the builder is sick|missing tool, sandbox error, timeout|
-|Policy refusal|the build wants more than the ceiling|ungranted program or path, a program a command names only once its placeholders are expanded|
+|Policy refusal|the build wants more than the ceiling|ungranted program or path, a program a command first names through `$in`, `$out` or `$deps`|
 
-A policy refusal precedes execution in every case. Every command is expanded, and its program held to `proc.run`, before the first action starts, so a refusal is an error of the whole build and never the result of one action.
+A policy refusal precedes execution in every case. A program written out, or named through a build setting, is refused at plan. One a command first names through `$in`, `$out` or `$deps` — a test that runs what its dependency built — is known only once paths are: every command is expanded, and its program held to `proc.run`, before the first action starts. Either way a refusal is an error of the whole build and never the result of one action.
 
-Each class maps to a distinct process exit code, so CI distinguishes "fix your code" from "fix your builder" without parsing text.
+An action that exits zero has still failed when an output it declares is not there, or is something buildl cannot keep. An output holds regular files only (§3), because only those can be put back exactly by placing files. So four things are refused, and the failure report names which one and where:
+
+|Refused|Where|
+|---|---|
+|a symbolic link|at the output's path, or anywhere below it|
+|a device, a socket or a named pipe|at the output's path, or anywhere below it|
+|an empty directory|the output itself, or a directory inside it: a directory is part of an output only as the place a file lies in|
+|a name that is not valid Unicode|anywhere below the output's path|
+
+Such an output is refused rather than stored as something close to it, and no cache row is written for the target. Where a tool must leave a tree like that — one holding symbolic links, say — the target declares a stamp file instead (§9.2).
+
+Each class maps to a distinct process exit code, so CI distinguishes "fix your code" from "fix your builder" without parsing text:
+
+|Code|Means|Given for|
+|---|---|---|
+|0|done|a command that did what it was asked; for `build`, every target built or served from the cache|
+|1|fix your code|an action failure: a non-zero exit, a command ended by a signal, an output missing or refused|
+|2|fix the command line|a flag or argument that is wrong, a target nothing declares, `--set` on a setting nothing declares|
+|3|fix your builder, or run again|an infrastructure failure: a missing tool, a command that cannot be started or runs past the timeout, an output that cannot be stored, a file of the store or the state that cannot be read or written, a workspace another buildl is using|
+|4|the build wants more than the ceiling|a policy refusal|
+|5|fix your build files or `buildl.toml`|a build file that fails, is missing or declares differently twice; a duplicate, an unknown reference or a cycle; an input that is missing or is not a regular file; two outputs at one path; a command that names no program; no `buildl.toml`, an invalid one, or a strategy this version cannot run (§4)|
+|6|a state file is not what buildl writes|`cache.json`, or a line of its journal, that is damaged or was edited (§3)|
+|7|buildl is at fault|an internal error|
+
+When a build has both, an infrastructure failure decides the code over an action failure: a sick builder means the run says nothing reliable about the code. A skipped target never decides it; the failure that caused the skip does. The codes stay clear of 126, 127 and 128+n, to which a shell gives meanings of its own, and an action's own exit status is never buildl's: it is in the failure report.
 
 **Failure containment.** A failure never cancels actions already running (their results land in the cas and are kept). By default no _new_ work is scheduled; `--keep-going` builds everything not downstream of the failure. Downstream targets are **skipped** — reported distinctly from failed, since they were never attempted: `1 failed, 2 skipped, 2 built`. The failure report carries the target label, the declaring file (provenance from Load), the post-expansion argv, the captured stderr, and the classification — all mirrored in `log.jsonl` for structured consumption.
 
@@ -336,7 +390,7 @@ The action key covers every source plus the module files, so an untouched tree n
 b.target("deps", {
   inputs  = { "package.json", "bun.lock" },
   run     = { "bun", "install", "--frozen-lockfile" },
-  outputs = { "node_modules/.buildl-stamp" },   -- stamp-file idiom for directory outputs
+  outputs = { "node_modules/.buildl-stamp" },   -- stamp file: the lockfile already pins the tree
 })
 b.target("bundle", {
   deps   = { "deps" },
@@ -345,7 +399,9 @@ b.target("bundle", {
 })
 ```
 
-`bun install` is keyed on the lockfile — editing a `.ts` file never reruns it. A directory-shaped output is represented by a stamp file: the lockfile already _is_ the tree's hash.
+`bun install` is keyed on the lockfile — editing a `.ts` file never reruns it. Its output is a stamp file because that is what suits it, not because a directory cannot be an output: the lockfile already _is_ the tree's hash, so hashing and storing all of `node_modules` again would be waste. A stamp file is also the idiom for a tree buildl refuses to store, one holding symbolic links or empty directories (§8.7).
+
+`bundle` is the other case. Its `--outdir $out` makes `$out` a directory output: `bun build` creates the directory, and what it writes there is stored as a tree — file by file, under one manifest and one digest (§3) — so a later build puts the whole bundle back without running `bun`, and a dependent rebuilds only when some file of it changed.
 
 ### 9.3 Rust
 
@@ -391,7 +447,7 @@ One `.proto` edit rebuilds both columns in the right order, the columns running 
 
 An action's real dependency set is files, dep outputs, env values, **and the tools it runs**. buildl models tools at two levels, both expressed through the action key:
 
-**Level 1 — observed tools (default).** `run = { "go", ... }` names the tool; the host resolves it on `PATH` at plan time (missing tool → plan refusal, naming the target and declaring file), fingerprints the resolved binary (content hash or version string), and folds the **tool fingerprint into the action key**. A toolchain upgrade dirties every affected target; machines with different versions never share cache entries. `buildl doctor` reports each ceiling program, its resolved path, and its fingerprint.
+**Level 1 — observed tools (default).** `run = { "go", ... }` names the tool, and so does a first argument that names it through a build setting — `run = { "$opt:compiler", ... }` — once the setting's value for the run is put in (§10.2); the host resolves it on buildl's own `PATH` at plan time (missing tool → plan refusal, naming the target and declaring file), takes as its fingerprint the content hash of the file the name leads to, links followed, and folds the **tool fingerprint into the action key**. A name holding a `/` is not searched for: it is that path, taken from the workspace root when it is relative. The file run is the file fingerprinted, since one lookup serves both. A toolchain upgrade dirties every affected target; machines with different versions never share cache entries. A launcher that chooses the real tool when it runs — the `cc` stub of macOS, a `rustup` proxy — is fingerprinted as the launcher, so a change behind it is not seen, and neither is a change to a library a tool loads; a workspace that needs one seen names the real program by its path in the command and in `proc.run`, or declares the file that pins the version as an input. `buildl doctor` reports each ceiling program, its resolved path, and its fingerprint.
 
 **Level 3 — hermetic toolchains (opt-in, via plugins).** A toolchain is an ordinary target:
 
@@ -401,7 +457,10 @@ b.fetch("go_sdk", {
   url    = "https://go.dev/dl/go1.22.5.linux-amd64.tar.gz",
   sha256 = "904b924d435eaea086515bc63235b192ea441bd8c9b198c507e85009e6e4c7f0",
 })
-b.target("go", { deps = { "go_sdk" }, run = { "tar", "-xzf", "$deps", "-C", "$out" } })
+b.target("go", {
+  deps = { "go_sdk" },
+  run  = { "tar", "-xzf", "$deps", "--strip-components=1", "--one-top-level=$out" },
+})
 
 -- consuming action: the tool arrives as a dep
 b.target("server", {
@@ -411,7 +470,7 @@ b.target("server", {
 })
 ```
 
-The SDK checksum flows through the dep chain into every downstream action key — version pinning by the same mechanism that pins everything else. Nothing need be installed on the host; remote workers receive the toolchain as they receive any input; onboarding is "install buildl".
+`tar` creates `$out` itself and unpacks the SDK's contents directly into it (GNU tar, matching the archive's platform), so the toolchain is a directory output (§3) and `bin/go` lies where the consuming action names it. The SDK checksum flows through the dep chain into every downstream action key — version pinning by the same mechanism that pins everything else. Nothing need be installed on the host; remote workers receive the toolchain as they receive any input; onboarding is "install buildl".
 
 `b.fetch` is the one primitive that needs network (a declared, plan-visible exception), and the checksum makes it deterministic despite the network: the download matches the pinned hash or the action fails. Content-addressing turns an impure operation into a pure one — the `http_archive` + `sha256` pattern [5].
 
@@ -504,6 +563,10 @@ buildl test //services/api:go_test --set test_filter=TestLogin
 
 The setting is declared (name and default visible in `buildl graph`), the override is visible in the invocation, and the value folds into the action key — a filtered run caches separately from a full run, and nothing enters the build that is not in the ledger. This is Bazel's build-settings idea [5] expressed through the one mechanism buildl already has.
 
+A setting's value for a run — its default, or the override — is fixed when the plan is made, and an override naming no declared setting fails the plan. The plan carries the values, and Execute expands every command and every `desc` from them, so the run is the one that was planned.
+
+A setting can choose the tool as well as an argument. When a command's first argument is a complete program name once its `$opt:` references are replaced — `run = { "$opt:compiler", "-c", "$in" }` under `compiler = "clang"` — that program is a host tool exactly as if it were written out: it joins the wanted set and is held to `proc.run` at plan, a missing one refuses the plan, and its fingerprint is in the key (§9.6). Overriding the setting to another program therefore dirties the target twice over, for the tool and for the setting. A first argument that is empty after replacement, or still holds a `$`, names no tool at plan; one that runs a file of the build through `$in`, `$out` or `$deps` is held to the ceiling when the build expands its commands (§8.7), and a command that names no program even then is an error of the build.
+
 A pattern that often dissolves the need for filters entirely: **per-unit target generation**. `go.tests_per_package()` is a Lua loop declaring one test target per package, so "run only the auth tests" becomes `buildl test //services/api:auth_test` — and package-granular targets mean `rdeps` runs only the tests a diff actually touches.
 
 ### 10.3 Stack plugins: what each one encodes
@@ -527,7 +590,7 @@ The meta-observation the catalog exists to make: **the same few idioms recur acr
 |Idiom|go|bun|rust|docker|python|
 |---|---|---|---|---|---|
 |Lockfile-keyed environment|`go.sum`|`bun.lock`|`Cargo.lock`|base image digest|`uv.lock`|
-|Stamp file for directory outputs|—|`node_modules`|—|—|`.venv`|
+|Stamp file for a tree its lockfile already pins|—|`node_modules`|—|—|`.venv`|
 |Digest file as artifact|—|—|—|`--iidfile`|—|
 |Filter as build setting|`-run`|`--test-name-pattern`|`--test`|—|`-k`|
 |Per-unit target generation|per package|per workspace pkg|per crate|per Dockerfile|per module|
@@ -605,7 +668,9 @@ graph TD
     T3 --> T4["Tier 4 — Container<br/>pinned toolchain image in the key"]
 ```
 
-Tier 2 is Bazel's execroot discipline — undeclared inputs are simply absent, so hidden dependencies fail loudly [9]. Tier 3 seals network and system files. The strategy is set in `buildl.toml` with per-target overrides (`network = true` is a declared, plan-visible exception). Remote execution requires tier 2 or above. Parallel actions are isolated from each other by construction: own exec dir, own temp outputs, atomic landing in the cas.
+Tier 2 is Bazel's execroot discipline — undeclared inputs are simply absent, so hidden dependencies fail loudly [9]. Tier 3 seals network and system files. The strategy is set in `buildl.toml` with per-target overrides (`network = true` is a declared, plan-visible exception). Remote execution requires tier 2 or above. From tier 2, parallel actions are isolated from each other by construction: own exec dir, own temp outputs, atomic landing in the cas. At tier 1 they share the workspace root, and are kept apart only by each owning its own output paths (§3).
+
+**Tier 1, `bare`, runs an action as a plain process in the workspace root.** It guarantees five things: the command is started as an argument vector, never through a shell; its program, when the command writes it out or names it through a build setting, is the file the plan fingerprinted; its environment holds exactly the variables the target declared that have a value, and nothing of the host's; its standard input is empty; and its own process is stopped when it runs past the workspace's `timeout`. A program the command names through `$in`, `$out` or `$deps` has no fingerprint: it is known only once the command is expanded, when its expanded text is held to `proc.run` and the file is found by the rule every program is found by. Named through `$deps` it is a dependency's output under `out/`, the file that dependency's build placed, and its bytes are in this action's key. Named through `$in` it is the input file, its digest in the key, when the input's path holds a `/`; an input at the workspace root is a bare name, looked for on buildl's `PATH` like any other and never in the workspace. `$out` names the action's own output, which is not there when the action starts. Tier 1 confines nothing. An action can read any file the user can, declared or not, so a hidden input is silent instead of an error; it can reach the network whatever `network` says; it can write anywhere the user can, another target's output included; the processes it starts are not stopped with it, at a timeout or at its exit; and it writes its outputs in place, so an action that fails, times out or is interrupted can leave a partial output at its path. No cache row names such a file, buildl never reads it as a result, and the next build clears the path before it runs the action again. A dependency's output under `out/` is read-only, and a tool that changes its mode first can damage the store. The machine's clock, time zone and locale are the action's. Tier 2 is where an undeclared input becomes an error, and tier 3 where the network does.
 
 ### 12.3 Determinism: guarantee, mitigate, verify
 
@@ -613,7 +678,7 @@ Tier 2 is Bazel's execroot discipline — undeclared inputs are simply absent, s
 |---|---|
 |Same declared inputs → same action invoked|**guaranteed** — the action key|
 |Action sees only declared inputs|**enforced** from tier 2 up|
-|Hidden env, locale, timezone variation|**mitigated** — sandbox sets `TZ=UTC`, `LC_ALL=C`, `SOURCE_DATE_EPOCH` [3]|
+|Hidden env, locale, timezone variation|**mitigated** from tier 2 up — the sandbox sets `TZ=UTC`, `LC_ALL=C`, `SOURCE_DATE_EPOCH` [3]; at tier 1 the time zone, the locale and the clock are the machine's|
 |Network as a hidden input|**eliminated** at tier 3|
 |Same action → byte-identical output|**the tool's property** — verified, not promised|
 
@@ -636,6 +701,8 @@ The governing principle: **every behavioral difference between two builds must b
 
 What remains honestly implicit — the kernel version, libc, filesystem semantics, CPU microarchitecture as it affects codegen — is exactly the set that tier 4 (containers) and `verify` exist to contain. The ledger is finite and named; "surprise" is defined as any behavior difference not in it, and every such surprise is a bug in buildl, not in the user's build.
 
+Two things a workspace sets are deliberately outside the ledger, because neither changes what an action produces from its declared inputs: the `[execution]` settings — `workers`, `timeout`, `strategy` (§8.3) — and a rule's `desc` (§5).
+
 ## 13. Sequencing
 
 **Scope decision (2026-08-23): buildl is a build system first.** The defining capability is answering _"does this need to run at all?"_ — the action key, cas, and dirty check. Task-runner use (chores via `always = true`, alias-only graphs, cargo-make replacement) is a degenerate case the model yields for free and is explicitly not a v1 design driver. Nothing is designed _for_ it; nothing needs removing to allow it later.
@@ -645,10 +712,10 @@ What remains honestly implicit — the kernel version, libc, filesystem semantic
 Dependency-ordered, with the airsl extension work interleaved:
 
 1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `check`/`graph`/`plan`/`build`, local cache and cas. Needs only shipped airsl.
-2. **`query` / `rdeps`** — small work, transforms CI for large repos.
-3. **Local input sandbox (tier 2)** — the correctness discipline everything remote depends on.
-4. **Grant negotiation UX** — wanted set, ceiling intersection, approver. Consumes the airsl extension host's ceiling + `Approver` (buildl is their first consumer; the manifest parser and `ext.on` dispatcher are not needed yet).
-5. **Plugins** — manifest, attribution, `b.use()`. Consumes the extension manifest format.
+2. **`query` / `rdeps`** — small work, transforms CI for large repos. With it the commands around a build: `test`, `log`, `clean` and `gc` (§7). Demand-driven and parallel loading of build files (§11.1) land here.
+3. **Local input sandbox (tier 2)** — the correctness discipline everything remote depends on. `verify` (§12.3) lands here.
+4. **Grant negotiation UX** — wanted set, ceiling intersection, approver, and `doctor`, which prints the result (§7). Consumes the airsl extension host's ceiling + `Approver` (buildl is their first consumer; the manifest parser and `ext.on` dispatcher are not needed yet). Per-target grant narrowing (§14) is settled here.
+5. **Plugins** — manifest, attribution, `b.use()`. Consumes the extension manifest format. Discovery targets (§10) land here.
 6. **Remote cache via REAPI** — most of the remote value at a fraction of the complexity.
 7. **Watch mode** — full-reload variant first; persistent-engine dispatch (`ext.on`) only if profiling demands it.
 8. **Remote execution, toolchain containers** — when a repo has genuinely outgrown one machine.

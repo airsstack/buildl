@@ -9,22 +9,19 @@
 //! [`unplaced`], [`mismatched`] and [`skipped`]; [`event`] with [`Progress`]; and the three
 //! steps that reach a port, in the order that keeps a crash harmless: [`store`] puts a built
 //! target's outputs in place and only then records its row, [`restore`] puts a cached
-//! target's outputs in place, and [`append`] logs an outcome whatever it is.
+//! target's outputs in place, and [`append`] logs an outcome whatever it is. An output that
+//! cannot be put in place whole is removed from its path again. [`shown`] reads back what an
+//! action printed, for whoever shows its outcome.
 //!
 //! Non-responsibilities: how content is put in place, how a row is kept and how the log is
 //! written, which are the ports'.
 
-use crate::error::{Error, Result};
-use crate::execute::perform::{Printed, Span};
+use crate::error::{Error, PortName, Result};
+use crate::execute::perform::{Kept, NOT_STORED, Printed, Span};
 use crate::ports::{ActionCache, Clock, ContentStore, EventLog};
 use crate::types::{
-    ActionKey, ActionOutcome, CacheRow, Command, Diagnostic, Digest, InfraKind, Label,
-    OutcomeClass, OutcomeEvent, OutputPath, Provenance, Timestamp,
-};
-
-/// The class of a target whose outputs, or whose row, could not be stored or put in place.
-const NOT_STORED: OutcomeClass = OutcomeClass::InfraFailure {
-    kind: InfraKind::Store,
+    ActionKey, ActionOutcome, CacheRow, Command, Diagnostic, Digest, Label, OutcomeClass,
+    OutcomeEvent, OutputManifest, OutputPath, Provenance, Timestamp,
 };
 
 /// How far the build of one target got, which decides what its event can say.
@@ -47,8 +44,9 @@ pub(crate) enum Progress {
     Skipped,
 }
 
-/// The row to record for an action that ran under `key`, left `outputs` and printed `printed`;
-/// `None` when `outputs` does not hold one digest per output the key declares.
+/// The row to record for an action that ran under `key`, left outputs whose manifests have the
+/// digests `outputs`, and printed `printed`; `None` when `outputs` does not hold one digest per
+/// output the key declares.
 pub(crate) fn row(key: ActionKey, outputs: Vec<Digest>, printed: Printed) -> Option<CacheRow> {
     CacheRow::new(key, outputs, printed.stdout, printed.stderr)
 }
@@ -155,42 +153,51 @@ pub(crate) fn event(
 ///
 /// Each output is put at its path of `paths`, in the order the outputs were written, and only
 /// then is the row stored: a row therefore exists only for content the store already holds.
-/// A port that fails either step makes the outcome a failure to store, and no row is kept.
+/// A port that fails either step makes the outcome a failure to store, and no row is kept. An
+/// output the store could not place whole is cleared from its path first.
 pub(crate) fn store<A: ActionCache, C: ContentStore>(
     label: Label,
     key: ActionKey,
-    outputs: Vec<Digest>,
+    outputs: Vec<Kept>,
     printed: Printed,
     paths: &[OutputPath],
     cas: &C,
     cache: &mut A,
 ) -> ActionOutcome {
-    let Some(row) = row(key, outputs, printed) else {
+    let (digests, manifests): (Vec<Digest>, Vec<OutputManifest>) = outputs
+        .into_iter()
+        .map(|kept| (kept.digest, kept.manifest))
+        .unzip();
+    let Some(row) = row(key, digests, printed) else {
         return mismatched(label, printed);
     };
     let outcome = built(label.clone(), &row);
-    let stored = place(&row, paths, cas).and_then(|()| cache.record(label.clone(), row));
+    let stored = place(&manifests, paths, cas).and_then(|()| cache.record(label.clone(), row));
     match stored {
         Ok(()) => outcome,
         Err(error) => unstored(label, &error, printed),
     }
 }
 
-/// Puts the outputs of a target that need not run back in place, from what `row` recorded,
-/// and returns its outcome. Nothing is written to the cache.
+/// Puts the outputs of a target that need not run back in place, and returns its outcome:
+/// `manifests` says what each output `row` recorded is. Nothing is written to the cache. A
+/// store that fails makes the outcome a failure to store, and an output it could not place
+/// whole is cleared from its path first.
 pub(crate) fn restore<C: ContentStore>(
     label: Label,
     row: &CacheRow,
+    manifests: &[OutputManifest],
     paths: &[OutputPath],
     cas: &C,
 ) -> ActionOutcome {
-    match place(row, paths, cas) {
+    match place(manifests, paths, cas) {
         Ok(()) => cached(label, row),
         Err(error) => unplaced(label, &error, row),
     }
 }
 
-/// Appends the event for `outcome` to `log`, reading `clock` once for when it was recorded.
+/// Appends the event for `outcome` to `log`, reading `clock` once for when it was recorded, and
+/// returns the event once it is logged.
 ///
 /// # Errors
 ///
@@ -202,17 +209,80 @@ pub(crate) fn append<L: EventLog, K: Clock>(
     command: &Command,
     progress: Progress,
     outcome: ActionOutcome,
-) -> Result<()> {
-    log.append(&event(clock.now(), provenance, command, progress, outcome))
+) -> Result<OutcomeEvent> {
+    let event = event(clock.now(), provenance, command, progress, outcome);
+    log.append(&event)?;
+    Ok(event)
 }
 
-/// Puts each output `row` holds at its path of `paths`, pairwise, in the order the outputs
+/// What a reporter is still to be shown of what an action printed: the content `digest`
+/// names, read from `cas`.
+///
+/// Nothing is read, and nothing is returned, for an action that printed nothing or whose
+/// output was not stored.
+///
+/// # Errors
+///
+/// Returns whatever `cas` returns, and [`Error::Adapter`], naming
+/// [`PortName::ContentStore`], when the content is not held: an outcome names only content
+/// that was stored, or found stored, moments before.
+pub(crate) fn shown<C: ContentStore>(
+    cas: &C,
+    label: &Label,
+    digest: Option<Digest>,
+) -> Result<Vec<u8>> {
+    match digest {
+        Some(digest) if digest != Digest::of(&[]) => {
+            cas.get(&digest)?.ok_or_else(|| Error::Adapter {
+                port: PortName::ContentStore,
+                diagnostic: Diagnostic::new(format!("what {label} printed is not held: {digest}")),
+            })
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// Puts each output of `manifests` at its path of `paths`, pairwise, in the order the outputs
 /// were written.
-fn place<C: ContentStore>(row: &CacheRow, paths: &[OutputPath], cas: &C) -> Result<()> {
-    row.produced()
-        .iter()
-        .zip(paths)
-        .try_for_each(|(produced, at)| cas.place(&produced.digest, at))
+///
+/// Whatever is at an output's path is removed first, so that nothing a previous build left
+/// there outlives it: a file where a directory now belongs, or a file of a tree that no longer
+/// holds it. Then a file is placed at the path, and a tree file by file, in path order, each
+/// below the path.
+///
+/// When the store fails to place a file of an output, that output's path is cleared again and
+/// no later output is touched, so a failed placement leaves nothing of the output behind. The
+/// outputs placed before it stay.
+///
+/// # Errors
+///
+/// Returns the store's first failure. When clearing a part-placed output away fails too, that
+/// second failure is not reported: the part stays at the path, and the next placement there
+/// clears it before it places anything.
+fn place<C: ContentStore>(
+    manifests: &[OutputManifest],
+    paths: &[OutputPath],
+    cas: &C,
+) -> Result<()> {
+    manifests.iter().zip(paths).try_for_each(|(manifest, at)| {
+        cas.clear(at)?;
+        fill(manifest, at, cas).inspect_err(|_| {
+            // The placement failure is the one to report, whatever this second call returns.
+            let _cleared = cas.clear(at);
+        })
+    })
+}
+
+/// Places the files of one output at and below `at`, which holds nothing, stopping at the
+/// first the store fails on.
+fn fill<C: ContentStore>(manifest: &OutputManifest, at: &OutputPath, cas: &C) -> Result<()> {
+    match manifest {
+        OutputManifest::File(file) => cas.place(&file.digest, file.mode, at),
+        OutputManifest::Tree(tree) => tree
+            .entries()
+            .iter()
+            .try_for_each(|entry| cas.place(&entry.digest, entry.mode, &at.entry(&entry.path))),
+    }
 }
 
 /// The outcome of a target whose outputs are in place: `class`, with what `row` holds.
@@ -234,16 +304,130 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::sync::{Mutex, PoisonError};
+
     use super::{
-        Progress, built, cached, event, failed, mismatched, row, skipped, unplaced, unstored,
+        Progress, built, cached, event, failed, mismatched, place, row, shown, skipped, unplaced,
+        unstored,
     };
-    use crate::error::{Error, PortName};
-    use crate::execute::fixtures::{command, key, label, node, row as recorded};
+    use crate::error::{Error, PortName, Result};
+    use crate::execute::fixtures::{
+        command, file, key, label, node, output_path, row as recorded, tree,
+    };
     use crate::execute::perform::{Printed, Span};
+    use crate::ports::ContentStore;
     use crate::types::{
-        ActionOutcome, Diagnostic, Digest, InfraKind, OutcomeClass, OutcomeEvent, OutputName,
-        Timestamp,
+        ActionOutcome, Diagnostic, Digest, FileMode, InfraKind, OutcomeClass, OutcomeEvent,
+        OutputManifest, OutputName, OutputPath, StoredFile, Timestamp, Tree, TreeEntry, TreePath,
     };
+
+    /// A store that writes down what it is asked to clear and to place, whether or not it
+    /// does it.
+    #[derive(Default)]
+    struct Recording {
+        asked: Mutex<Vec<String>>,
+        /// The path it fails to place a file at.
+        unplaceable: Option<OutputPath>,
+        /// Whether it fails to clear a path once it was asked to place anything.
+        keeps_what_it_placed: bool,
+    }
+
+    impl Recording {
+        fn asked(&self) -> Vec<String> {
+            self.asked
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+
+        /// Writes `what` down and returns whether anything was asked to be placed before it.
+        fn ask(&self, what: String) -> bool {
+            let mut asked = self.asked.lock().unwrap_or_else(PoisonError::into_inner);
+            let placed = asked.iter().any(|earlier| earlier.starts_with("place "));
+            asked.push(what);
+            placed
+        }
+    }
+
+    impl ContentStore for Recording {
+        fn put(&self, bytes: &[u8]) -> Result<Digest> {
+            Ok(Digest::of(bytes))
+        }
+
+        fn contains(&self, _digest: &Digest) -> bool {
+            true
+        }
+
+        fn get(&self, _digest: &Digest) -> Result<Option<Vec<u8>>> {
+            Ok(None)
+        }
+
+        fn clear(&self, at: &OutputPath) -> Result<()> {
+            if self.ask(format!("clear {at}")) && self.keeps_what_it_placed {
+                return Err(store_error(&format!("{at} cannot be removed")));
+            }
+            Ok(())
+        }
+
+        fn place(&self, digest: &Digest, mode: FileMode, at: &OutputPath) -> Result<()> {
+            let content = [("app", "app"), ("page", "page"), ("script", "script")]
+                .into_iter()
+                .find_map(|(name, bytes)| (Digest::of(bytes.as_bytes()) == *digest).then_some(name))
+                .unwrap_or("?");
+            self.ask(format!("place {content} {mode:?} {at}"));
+            if self.unplaceable.as_ref() == Some(at) {
+                return Err(store_error(&format!("{at} cannot be written")));
+            }
+            Ok(())
+        }
+    }
+
+    /// A store that holds `held` and nothing else, and writes down every digest it is asked
+    /// to read.
+    #[derive(Default)]
+    struct Holding {
+        held: Vec<Vec<u8>>,
+        read: Mutex<Vec<Digest>>,
+    }
+
+    impl Holding {
+        fn read(&self) -> Vec<Digest> {
+            self.read
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+    }
+
+    impl ContentStore for Holding {
+        fn put(&self, bytes: &[u8]) -> Result<Digest> {
+            Ok(Digest::of(bytes))
+        }
+
+        fn contains(&self, digest: &Digest) -> bool {
+            self.held.iter().any(|bytes| Digest::of(bytes) == *digest)
+        }
+
+        fn get(&self, digest: &Digest) -> Result<Option<Vec<u8>>> {
+            self.read
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(*digest);
+            Ok(self
+                .held
+                .iter()
+                .find(|bytes| Digest::of(bytes) == *digest)
+                .cloned())
+        }
+
+        fn clear(&self, _at: &OutputPath) -> Result<()> {
+            Ok(())
+        }
+
+        fn place(&self, _digest: &Digest, _mode: FileMode, _at: &OutputPath) -> Result<()> {
+            Ok(())
+        }
+    }
 
     fn printed() -> Printed {
         Printed {
@@ -281,9 +465,10 @@ mod tests {
         let map = Digest::of(b"map");
         let row = row(key(&["app", "app.map"]), vec![app, map], printed()).unwrap();
         assert_eq!(row.key(), &key(&["app", "app.map"]));
+        assert_eq!(row.outputs(), [app, map]);
         assert_eq!(
-            row.digests().collect::<Vec<_>>(),
-            [app, map, printed().stdout, printed().stderr]
+            (row.stdout(), row.stderr()),
+            (printed().stdout, printed().stderr)
         );
     }
 
@@ -406,6 +591,155 @@ mod tests {
     }
 
     #[test]
+    fn a_file_is_placed_at_its_path_once_the_path_is_cleared() {
+        let store = Recording::default();
+        let app = OutputManifest::File(StoredFile {
+            digest: Digest::of(b"app"),
+            mode: FileMode::Executable,
+        });
+        let paths = [
+            output_path("//:app", "app"),
+            output_path("//:app", "app.html"),
+        ];
+
+        place(&[app, file("page")], &paths, &store).unwrap();
+
+        assert_eq!(
+            store.asked(),
+            [
+                "clear out/app",
+                "place app Executable out/app",
+                "clear out/app.html",
+                "place page Plain out/app.html",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tree_is_placed_file_by_file_below_its_path_in_path_order() {
+        let store = Recording::default();
+        let entry = |path: &str, content: &str, mode| TreeEntry {
+            path: TreePath::parse(path).unwrap(),
+            digest: Digest::of(content.as_bytes()),
+            mode,
+        };
+        let site = OutputManifest::Tree(
+            Tree::new(vec![
+                entry("index.html", "page", FileMode::Plain),
+                entry("bin/serve", "app", FileMode::Executable),
+                entry("assets/app.js", "script", FileMode::Plain),
+            ])
+            .unwrap(),
+        );
+
+        place(&[site], &[output_path("//web:site", "site")], &store).unwrap();
+
+        assert_eq!(
+            store.asked(),
+            [
+                "clear out/web/site",
+                "place script Plain out/web/site/assets/app.js",
+                "place app Executable out/web/site/bin/serve",
+                "place page Plain out/web/site/index.html",
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tree_that_cannot_be_placed_whole_is_cleared_and_nothing_after_it_is_placed() {
+        let site_path = output_path("//:site", "site");
+        let store = Recording {
+            unplaceable: Some(site_path.entry(&TreePath::parse("b").unwrap())),
+            ..Recording::default()
+        };
+        let site = tree(&[("a", "app"), ("b", "page"), ("c", "script")]);
+        let paths = [site_path, output_path("//:site", "app")];
+
+        let error = place(&[site, file("app")], &paths, &store).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "content store: out/site/b cannot be written"
+        );
+        assert_eq!(
+            store.asked(),
+            [
+                "clear out/site",
+                "place app Plain out/site/a",
+                "place page Plain out/site/b",
+                "clear out/site",
+            ],
+            "what was placed is removed, and nothing follows in this output or the next"
+        );
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_placed_has_its_path_cleared() {
+        let app = output_path("//:app", "app");
+        let store = Recording {
+            unplaceable: Some(app.clone()),
+            ..Recording::default()
+        };
+
+        let error = place(&[file("app")], &[app], &store).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "content store: out/app cannot be written"
+        );
+        assert_eq!(
+            store.asked(),
+            ["clear out/app", "place app Plain out/app", "clear out/app"]
+        );
+    }
+
+    #[test]
+    fn an_output_placed_whole_stays_when_a_later_one_fails() {
+        let app = output_path("//:app", "app");
+        let page = output_path("//:app", "app.html");
+        let store = Recording {
+            unplaceable: Some(page.clone()),
+            ..Recording::default()
+        };
+
+        place(&[file("app"), file("page")], &[app, page], &store).unwrap_err();
+
+        assert_eq!(
+            store.asked(),
+            [
+                "clear out/app",
+                "place app Plain out/app",
+                "clear out/app.html",
+                "place page Plain out/app.html",
+                "clear out/app.html",
+            ]
+        );
+    }
+
+    #[test]
+    fn the_placement_failure_is_the_one_reported_when_clearing_fails_too() {
+        let site_path = output_path("//:site", "site");
+        let store = Recording {
+            unplaceable: Some(site_path.entry(&TreePath::parse("b").unwrap())),
+            keeps_what_it_placed: true,
+            ..Recording::default()
+        };
+        let site = tree(&[("a", "app"), ("b", "page")]);
+
+        let error = place(&[site], &[site_path], &store).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "content store: out/site/b cannot be written"
+        );
+        assert_eq!(
+            store.asked().last().map(String::as_str),
+            Some("clear out/site"),
+            "the store was asked to remove what it placed"
+        );
+    }
+
+    #[test]
     fn a_skipped_target_names_the_failure_and_nothing_else() {
         assert_eq!(
             skipped(label("//:app"), label("//lib:text")),
@@ -452,5 +786,52 @@ mod tests {
             expected(None, None, None),
             "a skipped target has neither"
         );
+    }
+
+    #[test]
+    fn nothing_is_read_for_an_action_that_printed_nothing_or_whose_output_was_not_stored() {
+        let store = Holding::default();
+
+        assert_eq!(shown(&store, &label("//:app"), None).unwrap(), b"");
+        assert_eq!(
+            shown(&store, &label("//:app"), Some(Digest::of(b""))).unwrap(),
+            b""
+        );
+        assert!(store.read().is_empty(), "the store was not asked");
+    }
+
+    #[test]
+    fn what_an_action_printed_is_read_back_from_the_store() {
+        let store = Holding {
+            held: vec![b"compiling\n".to_vec()],
+            ..Holding::default()
+        };
+        let digest = Digest::of(b"compiling\n");
+
+        assert_eq!(
+            shown(&store, &label("//:app"), Some(digest)).unwrap(),
+            b"compiling\n"
+        );
+        assert_eq!(store.read(), [digest]);
+    }
+
+    #[test]
+    fn printed_content_that_is_not_held_is_the_content_stores_failure() {
+        let store = Holding::default();
+        let digest = Digest::of(b"compiling\n");
+
+        let error = shown(&store, &label("//:app"), Some(digest)).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!("content store: what //:app printed is not held: {digest}")
+        );
+        assert!(matches!(
+            error,
+            Error::Adapter {
+                port: PortName::ContentStore,
+                ..
+            }
+        ));
     }
 }

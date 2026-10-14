@@ -19,6 +19,8 @@
 //! - [`EventLog`] — the record of how each target of a build ended.
 //! - [`ExecStrategy`] — running one action in a directory of its own.
 //! - [`Dispatcher`] — having several tasks worked on at once.
+//! - [`GraphRecord`] — the graph a build resolved, kept where a later reader finds it.
+//! - [`Reporter`] — showing a person what a build is doing.
 //! - [`Ports`] — the bundle naming one implementation of each port, so a pipeline takes one type
 //!   parameter instead of one per port.
 //! - [`PortSet`] — one instance of each port a bundle names, so a pipeline is built from one
@@ -38,9 +40,11 @@ pub mod digester;
 pub mod dispatcher;
 pub mod event_log;
 pub mod exec_strategy;
+pub mod graph_record;
 pub mod host;
 pub mod manifest;
 pub mod port_set;
+pub mod reporter;
 pub mod stat_cache;
 pub mod tool_resolver;
 
@@ -53,8 +57,10 @@ pub use digester::Digester;
 pub use dispatcher::Dispatcher;
 pub use event_log::EventLog;
 pub use exec_strategy::ExecStrategy;
+pub use graph_record::GraphRecord;
 pub use host::Host;
 pub use manifest::Manifest;
 pub use port_set::PortSet;
+pub use reporter::Reporter;
 pub use stat_cache::StatCache;
 pub use tool_resolver::ToolResolver;

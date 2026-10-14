@@ -9,15 +9,17 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use buildl_core::{
-    ActionOutcome, Digest, EntryName, Error, EvaluationFailure, FileStat, Freshness, InfraKind,
-    Label, OnFailure, OutcomeClass, OutcomeEvent, OutputName, OutputPath, Pipeline, PortName,
-    SettingName, SettingValue, SourcePath, StagedItem, Summary, TargetRole, Timestamp, Want,
-    Written, json,
+    ActionOutcome, Digest, EntryName, Error, EvaluationFailure, FileMode, FileStat, Freshness,
+    InfraKind, Label, OnFailure, OutcomeClass, OutcomeEvent, OutputManifest, OutputName,
+    OutputPath, OutputRefusal, Pipeline, PortName, SettingName, SettingValue, SourcePath,
+    StagedItem, StagedSetting, StoredFile, Summary, TargetRole, Timestamp, TreePath, Want, Written,
+    json,
 };
+use buildl_core::{LiveOutput, Scope};
 
 use crate::common::{
-    Content, Ends, FakeContent, FakeFile, FakePorts, FakeSource, Order, Script, alias, dir, file,
-    ports, program, rule, setting, target, target_with, workspace,
+    Content, Ends, FakeContent, FakeFile, FakePorts, FakeSource, Leaf, Loss, Order, Script, alias,
+    dir, file, ports, program, rule, setting, target, target_with, tree, workspace,
 };
 
 /// The events of [`two_directories`] built once, one canonical JSON object per line, pinned.
@@ -59,7 +61,13 @@ fn put(pipeline: &mut Pipeline<FakePorts>, raw: &str, text: &str, modified: u64)
 /// A build of the workspace with no setting overridden.
 fn build(pipeline: &mut Pipeline<FakePorts>, on_failure: OnFailure) -> Vec<ActionOutcome> {
     pipeline
-        .build(&entry(), &Overrides::new(), on_failure)
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &Overrides::new(),
+            on_failure,
+            LiveOutput::Off,
+        )
         .unwrap()
 }
 
@@ -74,6 +82,32 @@ fn event<'p>(pipeline: &'p Pipeline<FakePorts>, raw: &str) -> &'p OutcomeEvent {
         .rev()
         .find(|event| event.outcome.label == wanted)
         .unwrap()
+}
+
+/// What the output with that digest is: its manifest, read back from the store.
+fn manifest(pipeline: &Pipeline<FakePorts>, digest: &Digest) -> OutputManifest {
+    let bytes = pipeline.ports().cas.blob(digest).unwrap();
+    OutputManifest::from_bytes(&bytes).unwrap()
+}
+
+/// The one file the output with that digest is.
+fn file_of(pipeline: &Pipeline<FakePorts>, digest: &Digest) -> StoredFile {
+    match manifest(pipeline, digest) {
+        OutputManifest::File(file) => file,
+        OutputManifest::Tree(tree) => unreachable!("expected a file, got {tree:?}"),
+    }
+}
+
+/// The files of the directory the output with that digest is, as `(path, digest, mode)`.
+fn tree_of(pipeline: &Pipeline<FakePorts>, digest: &Digest) -> Vec<(String, Digest, FileMode)> {
+    match manifest(pipeline, digest) {
+        OutputManifest::Tree(tree) => tree
+            .entries()
+            .iter()
+            .map(|entry| (entry.path.to_string(), entry.digest, entry.mode))
+            .collect(),
+        OutputManifest::File(file) => unreachable!("expected a tree, got {file:?}"),
+    }
 }
 
 /// `//:app` needs `//:lib`, which needs `//:gen`; `//:docs` stands alone. Each reads one file and
@@ -142,9 +176,11 @@ fn a_workspace_never_built_builds_every_target_after_what_it_depends_on() {
         assert_eq!(row.produced(), outcome.outputs, "{}", outcome.label);
         assert_eq!(outcome.outputs.len(), 1, "{}", outcome.label);
         for produced in &outcome.outputs {
-            assert!(ports.cas.blob(&produced.digest).is_some());
+            let file = file_of(&pipeline, &produced.digest);
+            assert_eq!(file.mode, FileMode::Plain);
+            assert!(ports.cas.blob(&file.digest).is_some());
             let at = OutputPath::of(&dir("out"), &outcome.label, &produced.name);
-            assert_eq!(placed.get(&at), Some(&produced.digest), "{at}");
+            assert_eq!(placed.get(&at), Some(&file.digest), "{at}");
         }
         let printed = format!("{}\n", outcome.label).into_bytes();
         assert_eq!(ports.cas.blob(&outcome.stdout.unwrap()), Some(printed));
@@ -712,7 +748,13 @@ fn a_log_that_cannot_be_written_fails_the_build_and_keeps_what_was_already_recor
     pipeline.ports_mut().log.broken = true;
 
     let error = pipeline
-        .build(&entry(), &Overrides::new(), OnFailure::KeepGoing)
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &Overrides::new(),
+            OnFailure::KeepGoing,
+            LiveOutput::Off,
+        )
         .unwrap_err();
 
     assert_eq!(error.to_string(), "event log: the log cannot be written");
@@ -752,7 +794,13 @@ fn assert_nothing_ran(pipeline: &Pipeline<FakePorts>) {
 /// The error a build of the workspace ends in.
 fn refused(pipeline: &mut Pipeline<FakePorts>) -> Error {
     pipeline
-        .build(&entry(), &Overrides::new(), OnFailure::Stop)
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &Overrides::new(),
+            OnFailure::Stop,
+            LiveOutput::Off,
+        )
         .unwrap_err()
 }
 
@@ -832,6 +880,66 @@ fn a_command_that_expands_to_nothing_names_no_program() {
         "build.lua: //:gen: the command names no program once expanded"
     );
     assert!(matches!(error, Error::NoProgram { .. }));
+    assert_nothing_ran(&pipeline);
+}
+
+/// `//:app`, running the program the setting `tool` names, which is `cc`.
+fn tool_by_setting() -> Pipeline<FakePorts> {
+    root_only(vec![
+        StagedItem::Setting(StagedSetting {
+            name: Written::new("tool"),
+            default: Written::new("cc"),
+        }),
+        target_with("app", |target| {
+            target.run = Some(["$opt:tool", "-o", "$out"].map(Written::new).to_vec());
+        }),
+    ])
+}
+
+#[test]
+fn a_tool_named_through_a_setting_runs_under_its_name_and_runs_again_once_replaced() {
+    let mut pipeline = tool_by_setting();
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[("//:app", OutcomeClass::Built)])
+    );
+    assert_eq!(
+        handed(&pipeline, "//:app")[0],
+        texts(&["cc", "-o", "out/app"])
+    );
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[("//:app", OutcomeClass::Cached)])
+    );
+
+    let tools = &mut pipeline.ports_mut().tools;
+    tools
+        .fingerprints
+        .insert(program("cc"), Digest::of(b"cc 15.1"));
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[("//:app", OutcomeClass::Built)])
+    );
+    assert_eq!(pipeline.ports().strategy.runs(&label("//:app")), 2);
+}
+
+#[test]
+fn a_tool_named_through_a_setting_that_cannot_be_found_is_refused_before_anything_runs() {
+    let mut pipeline = tool_by_setting();
+    pipeline.ports_mut().tools.fingerprints.clear();
+
+    let error = refused(&mut pipeline);
+
+    assert_eq!(
+        error.to_string(),
+        "build.lua: //:app: program cc was not found"
+    );
+    assert!(matches!(error, Error::MissingTool { .. }));
     assert_nothing_ran(&pipeline);
 }
 
@@ -972,7 +1080,13 @@ fn build_filtered(pipeline: &mut Pipeline<FakePorts>) -> Vec<ActionOutcome> {
         SettingValue::parse("Login").unwrap(),
     )]);
     pipeline
-        .build(&entry(), &overrides, OnFailure::Stop)
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &overrides,
+            OnFailure::Stop,
+            LiveOutput::Off,
+        )
         .unwrap()
 }
 
@@ -1080,4 +1194,877 @@ fn the_order_tasks_are_taken_in_changes_neither_a_row_nor_what_is_stored() {
     assert_eq!(oldest.ports().cache.rows, newest.ports().cache.rows);
     assert_eq!(oldest.ports().cas.digests(), newest.ports().cas.digests());
     assert_eq!(oldest.ports().cas.placed(), newest.ports().cas.placed());
+}
+
+/// The targets of the fault a build ended in, when it ended in a dispatcher that lost some.
+fn lost(error: Error) -> Vec<String> {
+    match error {
+        Error::DispatcherFault { targets } => targets.iter().map(ToString::to_string).collect(),
+        other => unreachable!("expected a dispatcher fault, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_dispatcher_that_loses_a_task_fails_the_build_naming_every_target_left_without_an_outcome() {
+    for loss in [Loss::Unrun, Loss::Unreported] {
+        for on_failure in [OnFailure::Stop, OnFailure::KeepGoing] {
+            let mut pipeline = chain();
+            // `//:docs` and `//:gen` start first, in that order: the second task is `//:gen`.
+            pipeline.ports_mut().dispatcher.lose = BTreeMap::from([(1, loss)]);
+
+            let error = pipeline
+                .build(
+                    &entry(),
+                    &Scope::Workspace,
+                    &Overrides::new(),
+                    on_failure,
+                    LiveOutput::Off,
+                )
+                .unwrap_err();
+
+            assert_eq!(
+                error.to_string(),
+                "dispatcher: returned without an outcome for //:app, //:gen, //:lib",
+                "{loss:?}, {on_failure:?}"
+            );
+            assert_eq!(
+                lost(error),
+                ["//:app", "//:gen", "//:lib"],
+                "the lost target, and what waited on it, in label order"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_targets_that_ended_before_a_task_was_lost_keep_their_content_row_and_event() {
+    for loss in [Loss::Unrun, Loss::Unreported] {
+        let mut pipeline = chain();
+        pipeline.ports_mut().dispatcher.lose = BTreeMap::from([(1, loss)]);
+
+        let error = pipeline
+            .build(
+                &entry(),
+                &Scope::Workspace,
+                &Overrides::new(),
+                OnFailure::Stop,
+                LiveOutput::Off,
+            )
+            .unwrap_err();
+
+        assert!(matches!(error, Error::DispatcherFault { .. }), "{loss:?}");
+        let ports = pipeline.ports();
+        let recorded: Vec<String> = ports.cache.rows.keys().map(ToString::to_string).collect();
+        assert_eq!(recorded, ["//:docs"], "{loss:?}: a row only for what ended");
+        let logged: Vec<String> = ports
+            .log
+            .events
+            .iter()
+            .map(|event| event.outcome.label.to_string())
+            .collect();
+        assert_eq!(
+            logged,
+            ["//:docs"],
+            "{loss:?}: an event only for what ended"
+        );
+        let row = ports.cache.rows.get(&label("//:docs")).unwrap();
+        let held = row.outputs().iter().copied();
+        for digest in held.chain([row.stdout(), row.stderr()]) {
+            assert!(ports.cas.blob(&digest).is_some(), "{loss:?}: {digest}");
+        }
+        assert_eq!(ports.cas.placed().len(), 1, "{loss:?}");
+
+        // The next build, with a dispatcher that loses nothing, finds `//:docs` where it was
+        // left and builds the rest.
+        pipeline.ports_mut().dispatcher.lose.clear();
+        let outcomes = build(&mut pipeline, OnFailure::Stop);
+        assert_eq!(
+            classes(&outcomes),
+            expected(&[
+                ("//:app", OutcomeClass::Built),
+                ("//:docs", OutcomeClass::Cached),
+                ("//:gen", OutcomeClass::Built),
+                ("//:lib", OutcomeClass::Built),
+            ]),
+            "{loss:?}"
+        );
+    }
+}
+
+#[test]
+fn a_dispatcher_that_loses_nothing_loses_no_target() {
+    let mut pipeline = chain();
+    pipeline.ports_mut().dispatcher.lose = BTreeMap::from([(99, Loss::Unrun)]);
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(outcomes.len(), 4);
+}
+
+/// The description the action of the target `raw` names was handed, as text.
+fn described(pipeline: &Pipeline<FakePorts>, raw: &str) -> Option<String> {
+    let wanted = label(raw);
+    let actions = pipeline.ports().strategy.handed();
+    let action = actions
+        .iter()
+        .find(|action| action.label == wanted)
+        .unwrap();
+    action.description.as_ref().map(ToString::to_string)
+}
+
+/// The declarations of one root build file: the rule `cc` running `cc -c $in -o $out` and shown
+/// as `description`, the setting `mode`, the target `lib` whose own command is inline, and the
+/// targets `one` and `two` using the rule, `one` over `inputs`.
+fn described_items(description: Option<&str>, inputs: &[&str]) -> Vec<StagedItem> {
+    let using = |name: &str, inputs: &[&str]| {
+        target_with(name, |target| {
+            target.run = None;
+            target.rule = Some(Written::new("cc"));
+            target.inputs = inputs.iter().map(|input| Written::new(*input)).collect();
+            if name == "two" {
+                target.deps = vec![Written::new("one"), Written::new("lib")];
+            }
+        })
+    };
+    vec![
+        rule("cc", &["cc", "-c", "$in", "-o", "$out"], description),
+        setting("mode"),
+        target("lib", &[]),
+        using("one", inputs),
+        using("two", &["z.c"]),
+    ]
+}
+
+/// A pipeline over [`described_items`], with the files they read.
+fn described_rule(description: Option<&str>, inputs: &[&str]) -> Pipeline<FakePorts> {
+    let mut pipeline = root_only(described_items(description, inputs));
+    for name in ["a.c", "b.c", "z.c"] {
+        put(&mut pipeline, name, name, 100);
+    }
+    pipeline
+}
+
+#[test]
+fn a_description_is_expanded_by_the_rules_of_a_command_and_handed_with_the_action() {
+    let mut pipeline = described_rule(
+        Some("cc $in as $out after $deps [$opt:mode] $input"),
+        &["b.c", "a.c"],
+    );
+    let overrides = Overrides::from([(
+        SettingName::parse("mode").unwrap(),
+        SettingValue::parse("fast").unwrap(),
+    )]);
+    pipeline
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &overrides,
+            OnFailure::Stop,
+            LiveOutput::Off,
+        )
+        .unwrap();
+
+    assert_eq!(
+        described(&pipeline, "//:one").as_deref(),
+        Some("cc b.c a.c as out/one after  [fast] $input"),
+        "lists in written order, joined by one space; `$deps` of nothing is empty"
+    );
+    assert_eq!(
+        described(&pipeline, "//:two").as_deref(),
+        Some("cc z.c as out/two after out/one out/lib [fast] $input"),
+        "every output of every dependency"
+    );
+    assert_eq!(
+        described(&pipeline, "//:lib"),
+        None,
+        "an inline command has no description, and none is made up"
+    );
+}
+
+#[test]
+fn a_description_naming_a_setting_its_command_does_not_is_expanded_with_the_overridden_value() {
+    let description = Some("compile $in [$opt:mode]");
+    let mut defaulted = described_rule(description, &["a.c"]);
+    let mut overridden = described_rule(description, &["a.c"]);
+    let overrides = Overrides::from([(
+        SettingName::parse("mode").unwrap(),
+        SettingValue::parse("fast").unwrap(),
+    )]);
+
+    build(&mut defaulted, OnFailure::Stop);
+    overridden
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &overrides,
+            OnFailure::Stop,
+            LiveOutput::Off,
+        )
+        .unwrap();
+
+    assert_eq!(
+        described(&defaulted, "//:one").as_deref(),
+        Some("compile a.c []"),
+        "the default, which is empty"
+    );
+    assert_eq!(
+        described(&overridden, "//:one").as_deref(),
+        Some("compile a.c [fast]")
+    );
+    let row = overridden.ports().cache.rows.get(&label("//:one")).unwrap();
+    assert!(
+        row.key().components().own.settings.is_empty(),
+        "the command names no setting, so the key holds none"
+    );
+    assert_eq!(
+        overridden.ports().cache.rows,
+        defaulted.ports().cache.rows,
+        "and the override changed no key"
+    );
+}
+
+#[test]
+fn a_target_using_a_rule_without_a_description_is_handed_none() {
+    let mut pipeline = described_rule(None, &["a.c"]);
+
+    build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(described(&pipeline, "//:one"), None);
+    assert_eq!(described(&pipeline, "//:two"), None);
+}
+
+#[test]
+fn a_setting_value_cannot_break_a_description_across_lines() {
+    let mut pipeline = described_rule(Some("mode $opt:mode."), &["a.c"]);
+    let overrides = Overrides::from([(
+        SettingName::parse("mode").unwrap(),
+        SettingValue::parse("fast\nand\tloose").unwrap(),
+    )]);
+
+    pipeline
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &overrides,
+            OnFailure::Stop,
+            LiveOutput::Off,
+        )
+        .unwrap();
+
+    assert_eq!(
+        described(&pipeline, "//:one").as_deref(),
+        Some("mode fast and loose."),
+        "a control character in a substituted value is shown as a space"
+    );
+}
+
+#[test]
+fn a_description_naming_an_undeclared_setting_is_refused_like_a_command_before_anything_runs() {
+    let mut pipeline = described_rule(Some("compile $in in $opt:mod"), &["a.c"]);
+
+    let error = refused(&mut pipeline);
+
+    match error {
+        Error::UnknownSetting {
+            site,
+            name,
+            suggestion,
+        } => {
+            assert_eq!(site.label, label("//:cc"), "the rule holds the reference");
+            assert_eq!(name, "mod");
+            assert_eq!(suggestion, Some(SettingName::parse("mode").unwrap()));
+        }
+        other => unreachable!("expected UnknownSetting, got {other:?}"),
+    }
+    assert_nothing_ran(&pipeline);
+}
+
+#[test]
+fn editing_only_a_description_leaves_every_target_cached() {
+    let mut pipeline = described_rule(Some("compile $in"), &["a.c"]);
+    build(&mut pipeline, OnFailure::Stop);
+    let rows = pipeline.ports().cache.rows.clone();
+    let ran = pipeline.ports().strategy.ran().len();
+
+    pipeline.ports_mut().source = FakeSource::new(workspace(vec![(
+        "",
+        file(
+            described_items(Some("building $in for $out"), &["a.c"]),
+            &[],
+        ),
+    )]));
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        Summary::of(&outcomes),
+        Summary {
+            failed: 0,
+            skipped: 0,
+            built: 0,
+            cached: 3
+        }
+    );
+    let ports = pipeline.ports();
+    assert_eq!(ports.strategy.ran().len(), ran, "no action ran again");
+    assert_eq!(ports.cache.rows, rows, "no key changed");
+}
+
+/// A script in which the action leaves `content` at `at` and is otherwise unscripted.
+fn leaving(at: OutputPath, content: Content) -> Script {
+    Script {
+        outputs: BTreeMap::from([(at, content)]),
+        ..Script::default()
+    }
+}
+
+/// What is at each workspace path now: the digest of the file there, by the path's text.
+fn placed(pipeline: &Pipeline<FakePorts>) -> BTreeMap<String, Digest> {
+    let placed = pipeline.ports().cas.placed();
+    placed
+        .iter()
+        .map(|(path, digest)| (path.to_string(), *digest))
+        .collect()
+}
+
+/// Files by path, as [`placed`] reports them: each `(path, text)` a file holding that text.
+fn files(pairs: &[(&str, &str)]) -> BTreeMap<String, Digest> {
+    pairs
+        .iter()
+        .map(|(path, text)| ((*path).to_owned(), Digest::of(text.as_bytes())))
+        .collect()
+}
+
+/// The digest of the one output the target `raw` names produced.
+fn output_of(outcomes: &[ActionOutcome], raw: &str) -> Digest {
+    let outputs = &outcome(outcomes, raw).outputs;
+    assert_eq!(outputs.len(), 1, "{raw}");
+    outputs.first().unwrap().digest
+}
+
+#[test]
+fn a_directory_output_is_stored_file_by_file_and_put_back_whole_without_running() {
+    let mut pipeline = root_only(vec![target("site", &[])]);
+    let listing = tree(&[
+        ("index.html", "page"),
+        ("assets/app.js", "script"),
+        ("assets/app.css", "style"),
+    ]);
+    script(
+        &mut pipeline,
+        "//:site",
+        leaving(out("//:site", "site"), listing),
+    );
+
+    let first = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&first),
+        expected(&[("//:site", OutcomeClass::Built)])
+    );
+    let digest = output_of(&first, "//:site");
+    let row = pipeline.ports().cache.rows.get(&label("//:site")).unwrap();
+    assert_eq!(row.outputs(), [digest], "one digest for the whole tree");
+    assert_eq!(
+        tree_of(&pipeline, &digest),
+        [
+            (
+                "assets/app.css".to_owned(),
+                Digest::of(b"style"),
+                FileMode::Plain
+            ),
+            (
+                "assets/app.js".to_owned(),
+                Digest::of(b"script"),
+                FileMode::Plain
+            ),
+            (
+                "index.html".to_owned(),
+                Digest::of(b"page"),
+                FileMode::Plain
+            ),
+        ],
+        "the manifest lists every file, in path order"
+    );
+    let whole = files(&[
+        ("out/site/assets/app.css", "style"),
+        ("out/site/assets/app.js", "script"),
+        ("out/site/index.html", "page"),
+    ]);
+    assert_eq!(placed(&pipeline), whole);
+    for text in ["page", "script", "style"] {
+        let held = pipeline.ports().cas.blob(&Digest::of(text.as_bytes()));
+        assert_eq!(held, Some(text.as_bytes().to_vec()));
+    }
+
+    let second = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&second),
+        expected(&[("//:site", OutcomeClass::Cached)])
+    );
+    assert_eq!(output_of(&second, "//:site"), digest);
+    let ports = pipeline.ports();
+    assert_eq!(ports.strategy.runs(&label("//:site")), 1, "it did not run");
+    assert_eq!(placed(&pipeline), whole);
+    assert_eq!(
+        ports.cas.placements().len(),
+        6,
+        "every file of the tree was placed again"
+    );
+}
+
+/// `//:gen` reads `gen.c` and leaves a directory; `//:lib` needs it.
+fn generating() -> Pipeline<FakePorts> {
+    let mut pipeline = root_only(vec![
+        target_with("gen", |target| {
+            target.inputs = vec![Written::new("gen.c")];
+        }),
+        target("lib", &["gen"]),
+    ]);
+    put(&mut pipeline, "gen.c", "v1", 100);
+    pipeline
+}
+
+#[test]
+fn a_directory_rebuilt_to_the_same_files_leaves_its_dependent_cached_and_one_changed_file_does_not()
+{
+    let mut pipeline = generating();
+    let at = out("//:gen", "gen");
+    let headers = tree(&[("a.h", "one"), ("sub/b.h", "two")]);
+    script(&mut pipeline, "//:gen", leaving(at.clone(), headers));
+    let first = build(&mut pipeline, OnFailure::Stop);
+
+    put(&mut pipeline, "gen.c", "v2", 200);
+    let reordered = tree(&[("sub/b.h", "two"), ("a.h", "one")]);
+    script(&mut pipeline, "//:gen", leaving(at.clone(), reordered));
+    let second = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&second),
+        expected(&[
+            ("//:gen", OutcomeClass::Built),
+            ("//:lib", OutcomeClass::Cached),
+        ])
+    );
+    assert_eq!(
+        output_of(&second, "//:gen"),
+        output_of(&first, "//:gen"),
+        "the same files in another order are the same output"
+    );
+    assert_eq!(
+        pipeline.ports().strategy.runs(&label("//:lib")),
+        1,
+        "early cutoff"
+    );
+
+    put(&mut pipeline, "gen.c", "v3", 300);
+    let edited = tree(&[("a.h", "one"), ("sub/b.h", "two, edited")]);
+    script(&mut pipeline, "//:gen", leaving(at, edited));
+    let third = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&third),
+        expected(&[
+            ("//:gen", OutcomeClass::Built),
+            ("//:lib", OutcomeClass::Built),
+        ])
+    );
+    assert_ne!(output_of(&third, "//:gen"), output_of(&first, "//:gen"));
+    assert_eq!(pipeline.ports().strategy.runs(&label("//:lib")), 2);
+}
+
+#[test]
+fn a_recorded_directory_missing_one_file_is_built_again_and_never_half_put_back() {
+    let mut pipeline = root_only(vec![target("docs", &[]), target("site", &[])]);
+    let at = out("//:site", "site");
+    let listing = tree(&[("index.html", "page"), ("assets/app.js", "script")]);
+    script(
+        &mut pipeline,
+        "//:site",
+        leaving(at.clone(), listing.clone()),
+    );
+    let first = build(&mut pipeline, OnFailure::KeepGoing);
+    let digest = output_of(&first, "//:site");
+    let before = pipeline.ports().cas.placements().len();
+
+    pipeline.ports().cas.forget(&Digest::of(b"script"));
+    assert!(
+        pipeline.ports().cas.blob(&digest).is_some(),
+        "the manifest is still held"
+    );
+    script(&mut pipeline, "//:site", ending(Ends::Exits(1)));
+    let second = build(&mut pipeline, OnFailure::KeepGoing);
+
+    assert_eq!(
+        classes(&second),
+        expected(&[
+            ("//:docs", OutcomeClass::Cached),
+            ("//:site", OutcomeClass::ActionFailure { status: 1 }),
+        ]),
+        "the row was no reason to skip the action"
+    );
+    {
+        let ports = pipeline.ports();
+        assert_eq!(ports.strategy.runs(&label("//:site")), 2);
+        let since: Vec<String> = ports
+            .cas
+            .placements()
+            .iter()
+            .skip(before)
+            .map(|(path, _)| path.to_string())
+            .collect();
+        assert_eq!(since, ["out/docs"], "no file of the tree was put back");
+    }
+
+    script(&mut pipeline, "//:site", leaving(at, listing));
+    let third = build(&mut pipeline, OnFailure::KeepGoing);
+
+    assert_eq!(
+        classes(&third),
+        expected(&[
+            ("//:docs", OutcomeClass::Cached),
+            ("//:site", OutcomeClass::Built),
+        ])
+    );
+    assert_eq!(output_of(&third, "//:site"), digest);
+    assert!(
+        pipeline.ports().cas.blob(&Digest::of(b"script")).is_some(),
+        "the missing file is stored again"
+    );
+}
+
+#[test]
+fn a_target_may_leave_a_file_and_a_directory_side_by_side() {
+    let mut pipeline = root_only(vec![target_with("app", |target| {
+        target.outputs = Some(vec![Written::new("app"), Written::new("share")]);
+    })]);
+    let both = Script {
+        outputs: BTreeMap::from([
+            (out("//:app", "app"), Content::Runs(b"binary".to_vec())),
+            (out("//:app", "share"), tree(&[("man/app.1", "manual")])),
+        ]),
+        ..Script::default()
+    };
+    script(&mut pipeline, "//:app", both);
+
+    let first = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&first),
+        expected(&[("//:app", OutcomeClass::Built)])
+    );
+    let outputs = &outcome(&first, "//:app").outputs;
+    let names: Vec<String> = outputs
+        .iter()
+        .map(|output| output.name.to_string())
+        .collect();
+    assert_eq!(names, ["app", "share"]);
+    let digests: Vec<Digest> = outputs.iter().map(|output| output.digest).collect();
+    assert_eq!(
+        file_of(&pipeline, &digests[0]),
+        StoredFile {
+            digest: Digest::of(b"binary"),
+            mode: FileMode::Executable,
+        }
+    );
+    assert_eq!(
+        tree_of(&pipeline, &digests[1]),
+        [(
+            "man/app.1".to_owned(),
+            Digest::of(b"manual"),
+            FileMode::Plain
+        )]
+    );
+    let both_placed = files(&[("out/app", "binary"), ("out/share/man/app.1", "manual")]);
+    assert_eq!(placed(&pipeline), both_placed);
+
+    let second = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&second),
+        expected(&[("//:app", OutcomeClass::Cached)])
+    );
+    assert_eq!(outcome(&second, "//:app").outputs, *outputs);
+    assert_eq!(placed(&pipeline), both_placed);
+    assert_eq!(pipeline.ports().strategy.runs(&label("//:app")), 1);
+}
+
+#[test]
+fn a_file_that_may_be_run_keeps_that_through_the_store_and_back() {
+    let mut pipeline = root_only(vec![
+        target_with("app", |target| {
+            target.inputs = vec![Written::new("main.c")];
+        }),
+        target("check", &["app"]),
+    ]);
+    put(&mut pipeline, "main.c", "v1", 100);
+    let at = out("//:app", "app");
+    let runnable = Content::Runs(b"binary".to_vec());
+    script(&mut pipeline, "//:app", leaving(at.clone(), runnable));
+
+    let first = build(&mut pipeline, OnFailure::Stop);
+
+    let digest = output_of(&first, "//:app");
+    assert_eq!(
+        file_of(&pipeline, &digest),
+        StoredFile {
+            digest: Digest::of(b"binary"),
+            mode: FileMode::Executable,
+        }
+    );
+    let mode = |pipeline: &Pipeline<FakePorts>| pipeline.ports().cas.modes().get(&at).copied();
+    assert_eq!(mode(&pipeline), Some(FileMode::Executable));
+
+    let second = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&second),
+        expected(&[
+            ("//:app", OutcomeClass::Cached),
+            ("//:check", OutcomeClass::Cached),
+        ])
+    );
+    assert_eq!(
+        mode(&pipeline),
+        Some(FileMode::Executable),
+        "put back from the store as a file that may be run"
+    );
+
+    put(&mut pipeline, "main.c", "v2", 200);
+    let inert = Content::Holds(b"binary".to_vec());
+    script(&mut pipeline, "//:app", leaving(at.clone(), inert));
+    let third = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&third),
+        expected(&[
+            ("//:app", OutcomeClass::Built),
+            ("//:check", OutcomeClass::Built),
+        ]),
+        "the same bytes that may no longer be run are another output"
+    );
+    assert_ne!(output_of(&third, "//:app"), digest);
+    assert_eq!(mode(&pipeline), Some(FileMode::Plain));
+}
+
+#[test]
+fn a_directory_put_in_place_leaves_nothing_of_what_was_there_before() {
+    let mut pipeline = root_only(vec![target_with("site", |target| {
+        target.inputs = vec![Written::new("site.md")];
+    })]);
+    let at = out("//:site", "site");
+    put(&mut pipeline, "site.md", "v1", 100);
+    let two = tree(&[("index.html", "page"), ("old.html", "old")]);
+    script(&mut pipeline, "//:site", leaving(at.clone(), two));
+    build(&mut pipeline, OnFailure::Stop);
+    assert_eq!(
+        placed(&pipeline),
+        files(&[
+            ("out/site/index.html", "page"),
+            ("out/site/old.html", "old")
+        ])
+    );
+
+    put(&mut pipeline, "site.md", "v2", 200);
+    let one = tree(&[("index.html", "page")]);
+    script(&mut pipeline, "//:site", leaving(at.clone(), one));
+    build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        placed(&pipeline),
+        files(&[("out/site/index.html", "page")]),
+        "the file the tree no longer holds is gone"
+    );
+
+    put(&mut pipeline, "site.md", "v3", 300);
+    let flat = Content::Holds(b"page".to_vec());
+    script(&mut pipeline, "//:site", leaving(at, flat));
+    build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        placed(&pipeline),
+        files(&[("out/site", "page")]),
+        "a file where the directory was"
+    );
+}
+
+/// The path of the file `entry` below the directory output `name` of the target `raw`.
+fn below(raw: &str, name: &str, entry: &str) -> OutputPath {
+    out(raw, name).entry(&TreePath::parse(entry).unwrap())
+}
+
+#[test]
+fn a_built_directory_that_cannot_be_placed_whole_leaves_nothing_at_its_path() {
+    let mut pipeline = root_only(vec![target("site", &[])]);
+    let listing = tree(&[("assets/app.js", "script"), ("index.html", "page")]);
+    script(
+        &mut pipeline,
+        "//:site",
+        leaving(out("//:site", "site"), listing),
+    );
+    let page = below("//:site", "site", "index.html");
+    pipeline.ports().cas.fail_place(page);
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[("//:site", infra(InfraKind::Store))])
+    );
+    assert_eq!(
+        diagnostic(outcome(&outcomes, "//:site")).as_deref(),
+        Some("content store: out/site/index.html cannot be written"),
+        "the failure reported is the placement's"
+    );
+    let ports = pipeline.ports();
+    assert_eq!(
+        ports.cas.placements(),
+        [(
+            below("//:site", "site", "assets/app.js"),
+            Digest::of(b"script")
+        )],
+        "the file before the failure was placed"
+    );
+    assert_eq!(placed(&pipeline), files(&[]), "and then removed again");
+    assert_eq!(ports.cache.rows.len(), 0, "no row is recorded");
+}
+
+#[test]
+fn a_cached_directory_that_cannot_be_put_back_whole_leaves_nothing_at_its_path() {
+    let mut pipeline = root_only(vec![target("docs", &[]), target("site", &[])]);
+    let listing = tree(&[("assets/app.js", "script"), ("index.html", "page")]);
+    script(
+        &mut pipeline,
+        "//:site",
+        leaving(out("//:site", "site"), listing),
+    );
+    build(&mut pipeline, OnFailure::KeepGoing);
+    let rows = pipeline.ports().cache.rows.clone();
+    let page = below("//:site", "site", "index.html");
+    pipeline.ports().cas.fail_place(page);
+
+    let outcomes = build(&mut pipeline, OnFailure::KeepGoing);
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[
+            ("//:docs", OutcomeClass::Cached),
+            ("//:site", infra(InfraKind::Store)),
+        ])
+    );
+    assert_eq!(
+        diagnostic(outcome(&outcomes, "//:site")).as_deref(),
+        Some("content store: out/site/index.html cannot be written")
+    );
+    let docs = pipeline.ports().cas.placed();
+    assert_eq!(
+        docs.keys().map(ToString::to_string).collect::<Vec<_>>(),
+        ["out/docs"],
+        "nothing of the directory is left, from this build or the last"
+    );
+    let ports = pipeline.ports();
+    assert_eq!(ports.cache.rows, rows, "its row is unchanged");
+    assert_eq!(ports.strategy.runs(&label("//:site")), 1, "it did not run");
+}
+
+#[test]
+fn an_output_that_cannot_be_put_back_exactly_is_refused_and_never_recorded() {
+    let names = [
+        "empty", "escape", "hollow", "link", "linked", "pipe", "unnamed",
+    ];
+    let mut pipeline = root_only(names.iter().map(|name| target(name, &[])).collect());
+    let page = || Leaf::Holds(b"page".to_vec());
+    let scripts = [
+        ("empty", Content::Tree(Vec::new())),
+        ("escape", tree(&[("../stolen", "page")])),
+        (
+            "hollow",
+            Content::Tree(vec![
+                ("index.html".to_owned(), page()),
+                ("cache".to_owned(), Leaf::Empty),
+            ]),
+        ),
+        ("link", Content::Link),
+        (
+            "linked",
+            Content::Tree(vec![
+                ("index.html".to_owned(), page()),
+                ("bin/tool".to_owned(), Leaf::Link),
+            ]),
+        ),
+        ("pipe", Content::Special),
+        (
+            "unnamed",
+            Content::Tree(vec![("caf\u{fffd}".to_owned(), Leaf::NotText)]),
+        ),
+    ];
+    for (name, content) in scripts {
+        let raw = format!("//:{name}");
+        script(&mut pipeline, &raw, leaving(out(&raw, name), content));
+    }
+
+    let outcomes = build(&mut pipeline, OnFailure::KeepGoing);
+
+    let refused = |name: &str, refusal| OutcomeClass::OutputRefused {
+        name: OutputName::parse(name).unwrap(),
+        refusal,
+    };
+    let table = [
+        (
+            "//:empty",
+            refused("empty", OutputRefusal::EmptyDirectory),
+            "empty is an empty directory",
+        ),
+        (
+            "//:escape",
+            infra(InfraKind::Store),
+            "the strategy reported escape: invalid tree path: \"../stolen\" — \
+             must not contain a '.' or '..' segment",
+        ),
+        (
+            "//:hollow",
+            refused("hollow", OutputRefusal::EmptyDirectory),
+            "hollow/cache is an empty directory",
+        ),
+        (
+            "//:link",
+            refused("link", OutputRefusal::Symlink),
+            "link is a symbolic link",
+        ),
+        (
+            "//:linked",
+            refused("linked", OutputRefusal::Symlink),
+            "linked/bin/tool is a symbolic link",
+        ),
+        (
+            "//:pipe",
+            refused("pipe", OutputRefusal::Special),
+            "pipe is neither a file nor a directory",
+        ),
+        (
+            "//:unnamed",
+            refused("unnamed", OutputRefusal::NotText),
+            "unnamed/caf\u{fffd} has a name that is not valid Unicode",
+        ),
+    ];
+    assert_eq!(
+        Summary::of(&outcomes),
+        Summary {
+            failed: 7,
+            skipped: 0,
+            built: 0,
+            cached: 0
+        }
+    );
+    for (raw, class, message) in table {
+        let outcome = outcome(&outcomes, raw);
+        assert_eq!(outcome.class, class, "{raw}");
+        assert_eq!(diagnostic(outcome).as_deref(), Some(message), "{raw}");
+        assert_eq!(outcome.outputs, [], "{raw}");
+        assert!(outcome.stdout.is_some(), "what {raw} printed was stored");
+        assert_eq!(&event(&pipeline, raw).outcome, outcome, "{raw}");
+    }
+    let ports = pipeline.ports();
+    assert_eq!(ports.cache.rows.len(), 0, "a refusal is never recorded");
+    assert_eq!(ports.cas.placements(), [], "and nothing is put in place");
 }
