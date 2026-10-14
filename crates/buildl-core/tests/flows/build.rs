@@ -15,6 +15,7 @@ use buildl_core::{
     StagedItem, StagedSetting, StoredFile, Summary, TargetRole, Timestamp, TreePath, Want, Written,
     json,
 };
+use buildl_core::{LiveOutput, Scope};
 
 use crate::common::{
     Content, Ends, FakeContent, FakeFile, FakePorts, FakeSource, Leaf, Loss, Order, Script, alias,
@@ -60,7 +61,13 @@ fn put(pipeline: &mut Pipeline<FakePorts>, raw: &str, text: &str, modified: u64)
 /// A build of the workspace with no setting overridden.
 fn build(pipeline: &mut Pipeline<FakePorts>, on_failure: OnFailure) -> Vec<ActionOutcome> {
     pipeline
-        .build(&entry(), &Overrides::new(), on_failure)
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &Overrides::new(),
+            on_failure,
+            LiveOutput::Off,
+        )
         .unwrap()
 }
 
@@ -741,7 +748,13 @@ fn a_log_that_cannot_be_written_fails_the_build_and_keeps_what_was_already_recor
     pipeline.ports_mut().log.broken = true;
 
     let error = pipeline
-        .build(&entry(), &Overrides::new(), OnFailure::KeepGoing)
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &Overrides::new(),
+            OnFailure::KeepGoing,
+            LiveOutput::Off,
+        )
         .unwrap_err();
 
     assert_eq!(error.to_string(), "event log: the log cannot be written");
@@ -781,7 +794,13 @@ fn assert_nothing_ran(pipeline: &Pipeline<FakePorts>) {
 /// The error a build of the workspace ends in.
 fn refused(pipeline: &mut Pipeline<FakePorts>) -> Error {
     pipeline
-        .build(&entry(), &Overrides::new(), OnFailure::Stop)
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &Overrides::new(),
+            OnFailure::Stop,
+            LiveOutput::Off,
+        )
         .unwrap_err()
 }
 
@@ -1061,7 +1080,13 @@ fn build_filtered(pipeline: &mut Pipeline<FakePorts>) -> Vec<ActionOutcome> {
         SettingValue::parse("Login").unwrap(),
     )]);
     pipeline
-        .build(&entry(), &overrides, OnFailure::Stop)
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &overrides,
+            OnFailure::Stop,
+            LiveOutput::Off,
+        )
         .unwrap()
 }
 
@@ -1188,7 +1213,13 @@ fn a_dispatcher_that_loses_a_task_fails_the_build_naming_every_target_left_witho
             pipeline.ports_mut().dispatcher.lose = BTreeMap::from([(1, loss)]);
 
             let error = pipeline
-                .build(&entry(), &Overrides::new(), on_failure)
+                .build(
+                    &entry(),
+                    &Scope::Workspace,
+                    &Overrides::new(),
+                    on_failure,
+                    LiveOutput::Off,
+                )
                 .unwrap_err();
 
             assert_eq!(
@@ -1212,7 +1243,13 @@ fn the_targets_that_ended_before_a_task_was_lost_keep_their_content_row_and_even
         pipeline.ports_mut().dispatcher.lose = BTreeMap::from([(1, loss)]);
 
         let error = pipeline
-            .build(&entry(), &Overrides::new(), OnFailure::Stop)
+            .build(
+                &entry(),
+                &Scope::Workspace,
+                &Overrides::new(),
+                OnFailure::Stop,
+                LiveOutput::Off,
+            )
             .unwrap_err();
 
         assert!(matches!(error, Error::DispatcherFault { .. }), "{loss:?}");
@@ -1318,7 +1355,13 @@ fn a_description_is_expanded_by_the_rules_of_a_command_and_handed_with_the_actio
         SettingValue::parse("fast").unwrap(),
     )]);
     pipeline
-        .build(&entry(), &overrides, OnFailure::Stop)
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &overrides,
+            OnFailure::Stop,
+            LiveOutput::Off,
+        )
         .unwrap();
 
     assert_eq!(
@@ -1350,7 +1393,13 @@ fn a_description_naming_a_setting_its_command_does_not_is_expanded_with_the_over
 
     build(&mut defaulted, OnFailure::Stop);
     overridden
-        .build(&entry(), &overrides, OnFailure::Stop)
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &overrides,
+            OnFailure::Stop,
+            LiveOutput::Off,
+        )
         .unwrap();
 
     assert_eq!(
@@ -1393,7 +1442,13 @@ fn a_setting_value_cannot_break_a_description_across_lines() {
     )]);
 
     pipeline
-        .build(&entry(), &overrides, OnFailure::Stop)
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &overrides,
+            OnFailure::Stop,
+            LiveOutput::Off,
+        )
         .unwrap();
 
     assert_eq!(

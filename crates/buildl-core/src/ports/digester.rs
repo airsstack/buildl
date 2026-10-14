@@ -12,17 +12,21 @@
 //! This file holds only a trait definition, so it carries no logic to unit-test.
 
 use crate::error::Result;
-use crate::types::{Digest, FileStat, SourcePath};
+use crate::types::{Digest, InputStat, SourcePath};
 
 /// Reads the metadata and the content digests of workspace files.
 pub trait Digester {
-    /// The metadata of the file at `path`; `Ok(None)` when no file is there.
+    /// What stands at `path`, following no symbolic link: nothing, a regular file with its
+    /// metadata, or something that is not a regular file, with what it is.
+    ///
+    /// Only a regular file is an input. The other two answers are not failures of this port:
+    /// the caller turns each into the error naming the target that declared the input.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Adapter`](crate::Error::Adapter), naming
     /// [`PortName::Digester`](crate::PortName::Digester), when the metadata cannot be read.
-    fn stat(&self, path: &SourcePath) -> Result<Option<FileStat>>;
+    fn stat(&self, path: &SourcePath) -> Result<InputStat>;
 
     /// The content digest of each file in `paths`, in the order given.
     ///

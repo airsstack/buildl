@@ -30,10 +30,12 @@ pub trait ContentStore: Send + Sync {
     /// [`PortName::ContentStore`](crate::PortName::ContentStore), when the bytes cannot be stored.
     fn put(&self, bytes: &[u8]) -> Result<Digest>;
 
-    /// Whether content with that digest is held.
+    /// Whether content with that digest is held. An implementation that cannot tell answers
+    /// `false`, which makes the target that needs the content run again.
     fn contains(&self, digest: &Digest) -> bool;
 
-    /// The content held under that digest; `None` when it is not held.
+    /// The content held under that digest; `None` when it is not held. Content that no longer
+    /// has that digest is not held.
     ///
     /// # Errors
     ///

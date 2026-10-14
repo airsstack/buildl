@@ -5,9 +5,10 @@
 //! How the action ended is decided here from what the worker saw, in a fixed order, so the
 //! same exit and the same collected outputs always end the same way.
 //!
-//! Responsibilities: [`Task`], [`Worked`], [`Performed`], [`Span`], [`Printed`], [`Kept`] and
-//! [`Ended`]; the decisions [`exited`], [`collected`] with [`Unkept`], and [`failed_to`]; and
-//! [`perform`], which takes one task through the ports in that fixed order.
+//! Responsibilities: [`Task`], [`Told`], [`Shared`], [`Worked`], [`Performed`], [`Span`],
+//! [`Printed`], [`Kept`] and [`Ended`]; the decisions [`exited`], [`collected`] with
+//! [`Unkept`], and [`failed_to`]; and [`perform`], which takes one task through the ports in
+//! that fixed order and says what it is doing while it does.
 //!
 //! Non-responsibilities: how an action is run and where what it left is stored, which are the
 //! ports'; and recording the result, which happens on the thread that schedules the build.
@@ -17,10 +18,37 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use crate::error::{Error, Result};
 use crate::ports::{Clock, ContentStore, ExecStrategy};
 use crate::types::{
-    ActionKey, Diagnostic, Digest, Exit, Found, FoundEntry, FoundKind, InfraKind, NodeId,
-    OutcomeClass, OutputManifest, OutputName, OutputRefusal, RawOutcome, ReadyAction, Timestamp,
-    Tree, TreeEntry, TreePath,
+    ActionKey, Channel, Diagnostic, Digest, Exit, Found, FoundEntry, FoundKind, InfraKind,
+    LiveSink, NodeId, OutcomeClass, OutputManifest, OutputName, OutputRefusal, RawOutcome,
+    ReadyAction, Timestamp, Tree, TreeEntry, TreePath,
 };
+
+/// What a worker says about an action while it is still running it.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Told {
+    /// It began the action of this target.
+    Began(NodeId),
+    /// The action of this target wrote these bytes. Said only for the action shown live.
+    Printed {
+        /// The target.
+        node: NodeId,
+        /// Which output it wrote to.
+        channel: Channel,
+        /// What it wrote.
+        bytes: Vec<u8>,
+    },
+}
+
+/// What the thread that schedules a build shares with its workers.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Shared<'a> {
+    /// Set once nothing more may begin.
+    pub(crate) stop: &'a AtomicBool,
+    /// The one place of the action shown live, taken while set; `None` when no action is shown
+    /// live. A worker takes it as it begins an action, and only the scheduling thread gives it
+    /// back, once that action's outcome has been reported.
+    pub(crate) live: Option<&'a AtomicBool>,
+}
 
 /// One action to run, as it is handed to a worker.
 #[derive(Debug, PartialEq, Eq)]
@@ -53,6 +81,8 @@ pub(crate) struct Performed {
     pub(crate) key: ActionKey,
     /// When the worker began and when it was done.
     pub(crate) span: Span,
+    /// Whether the action held the place of the action shown live.
+    pub(crate) live: bool,
     /// How the action ended.
     pub(crate) ended: Ended,
 }
@@ -123,11 +153,13 @@ pub(crate) fn failed_to(kind: InfraKind, error: &Error, printed: Option<Printed>
 /// How an action that ended with `exit` ended, when the exit alone decides it.
 ///
 /// `None` for an exit with status zero: what the action left then decides. An action that ran
-/// out of time is the builder's failure; any other status is the action's own.
+/// out of time is the builder's failure; any other status, and a signal that ended the action,
+/// is the action's own.
 pub(crate) const fn exited(exit: Exit, printed: Printed) -> Option<Ended> {
     let class = match exit {
         Exit::Exited(0) => return None,
         Exit::Exited(status) => OutcomeClass::ActionFailure { status },
+        Exit::Signaled(signal) => OutcomeClass::Killed { signal },
         Exit::TimedOut => OutcomeClass::InfraFailure {
             kind: InfraKind::TimedOut,
         },
@@ -270,32 +302,52 @@ fn misreported(name: &OutputName, error: &Error) -> Unkept {
 
 /// Runs one task on the thread it is called from, and returns what came of it.
 ///
-/// A task handed over after `stop` was set is not begun: the clock is not read and no port is
-/// asked anything. Otherwise the clock is read, the action is taken through `strategy` and
-/// `cas`, and the clock is read again, however the action ended: an action a worker began
-/// always carries both instants.
+/// A task handed over once `shared` says nothing more may begin is not begun: the clock is not
+/// read and no port is asked anything. Otherwise the clock is read, the action is taken through
+/// `strategy` and `cas`, and the clock is read again, however the action ended: an action a
+/// worker began always carries both instants.
+///
+/// A worker that begins an action says so through `tell`. When an action may be shown live and
+/// no other is, this one takes that place: everything it writes is said through `tell` as it is
+/// written, and the result says the place was taken. The place is not given back here.
 pub(crate) fn perform<S, C, K>(
     task: Task,
     strategy: &S,
     cas: &C,
     clock: &K,
-    stop: &AtomicBool,
+    shared: Shared<'_>,
+    tell: &(dyn Fn(Told) + Sync),
 ) -> Worked
 where
     S: ExecStrategy,
     C: ContentStore,
     K: Clock,
 {
-    if stop.load(Ordering::SeqCst) {
+    if shared.stop.load(Ordering::SeqCst) {
         return Worked::NotBegun(task.node);
     }
+    let live = shared.live.is_some_and(|place| {
+        place
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    });
+    let node = task.node;
+    tell(Told::Began(node));
+    let printed: LiveSink<'_> = &|channel, bytes| {
+        tell(Told::Printed {
+            node,
+            channel,
+            bytes: bytes.to_vec(),
+        });
+    };
     let started = clock.now();
-    let ended = run(&task, strategy, cas);
+    let ended = run(&task, strategy, cas, live.then_some(printed));
     let finished = clock.now();
     Worked::Performed(Box::new(Performed {
-        node: task.node,
+        node,
         key: task.key,
         span: Span { started, finished },
+        live,
         ended,
     }))
 }
@@ -303,13 +355,18 @@ where
 /// Takes the action of `task` through its steps, and says how it ended at the first step that
 /// decides it: a directory to run in, the run, storing what it printed, its exit, storing the
 /// files it left, what those are, and storing the manifest of each output.
-fn run<S: ExecStrategy, C: ContentStore>(task: &Task, strategy: &S, cas: &C) -> Ended {
+fn run<S: ExecStrategy, C: ContentStore>(
+    task: &Task,
+    strategy: &S,
+    cas: &C,
+    live: Option<LiveSink<'_>>,
+) -> Ended {
     let action = &task.action;
     let dir = match strategy.prepare(action) {
         Ok(dir) => dir,
         Err(error) => return failed_to(InfraKind::Prepare, &error, None),
     };
-    let raw = match strategy.run(&dir, action) {
+    let raw = match strategy.run(&dir, action, live) {
         Ok(raw) => raw,
         Err(error) => return failed_to(InfraKind::Run, &error, None),
     };
@@ -446,6 +503,20 @@ mod tests {
                 exited(Exit::Exited(status), printed()),
                 Some(Ended::Failed {
                     class: OutcomeClass::ActionFailure { status },
+                    diagnostic: None,
+                    printed: Some(printed()),
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn a_signal_is_the_actions_failure_and_carries_its_number() {
+        for signal in [9, 11, 15] {
+            assert_eq!(
+                exited(Exit::Signaled(signal), printed()),
+                Some(Ended::Failed {
+                    class: OutcomeClass::Killed { signal },
                     diagnostic: None,
                     printed: Some(printed()),
                 })
@@ -763,6 +834,7 @@ mod tests {
             node: task.node,
             key: task.key,
             span,
+            live: false,
             ended: ended.clone(),
         })));
         match worked {

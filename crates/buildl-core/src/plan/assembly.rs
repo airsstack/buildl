@@ -55,7 +55,8 @@ use crate::types::{Plan, SettingName, SettingValue, TargetGraph};
 /// 3. [`Error::Refused`](crate::Error::Refused) for a want outside the workspace's ceiling;
 ///    nothing is asked of any other port before this check has passed;
 /// 4. [`Error::MissingTool`](crate::Error::MissingTool) for a program that cannot be found;
-/// 5. [`Error::MissingInput`](crate::Error::MissingInput) for an input that does not exist;
+/// 5. [`Error::MissingInput`](crate::Error::MissingInput) for an input that does not exist, and
+///    [`Error::InputNotAFile`](crate::Error::InputNotAFile) for one that is not a regular file;
 /// 6. whatever the host port returns for an environment variable.
 ///
 /// A port's own failure is returned from the step that met it.

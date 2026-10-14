@@ -5,7 +5,8 @@
 //! Execute.
 //!
 //! Responsibilities: [`Pipeline`], its ports, [`Pipeline::check`], [`Pipeline::graph`],
-//! [`Pipeline::plan`] and [`Pipeline::build`].
+//! [`Pipeline::plan`] and [`Pipeline::build`]; and [`check`] and [`graph`], the two commands
+//! that reach nothing but build files, for a caller that holds only a source of them.
 //!
 //! Non-responsibilities: the phases' own logic, which each phase's module holds.
 
@@ -17,10 +18,11 @@ use crate::error::{Error, Result};
 use crate::execute::execute;
 use crate::load::{declaration_order, load};
 use crate::plan::plan;
-use crate::ports::{PortSet, Ports};
-use crate::resolve::resolve;
+use crate::ports::{DeclarationSource, GraphRecord, PortSet, Ports};
+use crate::resolve::{narrow, resolve};
 use crate::types::{
-    ActionOutcome, Declaration, EntryName, OnFailure, Plan, SettingName, SettingValue, TargetGraph,
+    ActionOutcome, Declaration, EntryName, LiveOutput, OnFailure, Plan, Scope, SettingName,
+    SettingValue, TargetGraph,
 };
 
 /// The pipeline over one chosen implementation of each port.
@@ -69,9 +71,7 @@ impl<P: Ports> Pipeline<P> {
     /// Returns whatever either load returns, and [`Error::Nondeterministic`] when the two loads
     /// declare different things.
     pub fn check(&self, entry: &EntryName) -> Result<Vec<Declaration>> {
-        let first = load(&self.ports.source, entry)?;
-        let second = load(&self.ports.source, entry)?;
-        first_difference(&first, &second).map_or(Ok(first), Err)
+        check(&self.ports.source, entry)
     }
 
     /// Loads the workspace once and resolves its declarations into the target graph.
@@ -85,50 +85,95 @@ impl<P: Ports> Pipeline<P> {
     /// declared more than once, a reference that names nothing or the wrong kind of thing, or a
     /// dependency cycle.
     pub fn graph(&self, entry: &EntryName) -> Result<TargetGraph> {
-        resolve(load(&self.ports.source, entry)?)
+        graph(&self.ports.source, entry)
     }
 
-    /// Loads the workspace once, resolves it, and plans a build of the graph.
+    /// Loads the workspace once, resolves it, and plans a build of the part of the graph `scope`
+    /// asks for.
     ///
-    /// `overrides` gives values to build settings for this run. Takes `&mut self` because a plan
-    /// records the digest of every file it had to hash.
+    /// `overrides` gives values to build settings for this run. A target outside `scope` is not
+    /// planned, so nothing it reads has to exist. Takes `&mut self` because a plan records the
+    /// digest of every file it had to hash.
     ///
     /// # Errors
     ///
-    /// Returns whatever the load returns, then whatever [`resolve`] returns, and otherwise
-    /// whatever [`plan`](fn@plan) returns: an override naming no setting, a want outside the
-    /// workspace's ceiling, a program or an input that cannot be found, or a port's own failure.
+    /// Returns whatever the load returns, then whatever [`resolve`] returns, then
+    /// [`Error::UnknownTarget`] for a label of `scope` that names neither a target nor an alias,
+    /// and otherwise whatever [`plan`](fn@plan) returns: an override naming no setting, a want
+    /// outside the workspace's ceiling, a program that cannot be found, an input that is missing
+    /// or is not a regular file, or a port's own failure.
     pub fn plan(
         &mut self,
         entry: &EntryName,
+        scope: &Scope,
         overrides: &BTreeMap<SettingName, SettingValue>,
     ) -> Result<Plan> {
-        let graph = resolve(load(&self.ports.source, entry)?)?;
+        let whole = resolve(load(&self.ports.source, entry)?)?;
+        let graph = narrow(&whole, scope)?;
         plan(&graph, overrides, &mut self.ports)
     }
 
-    /// Loads the workspace once, resolves it, plans a build of the graph, and builds it.
+    /// Loads the workspace once, resolves it, records the graph of the whole workspace, plans a
+    /// build of the part of the graph `scope` asks for, and builds that part.
     ///
-    /// `overrides` gives values to build settings for this run, and `on_failure` says what a
-    /// failed action does to the rest of the build. The outcomes are one per target, in id
-    /// order; a target that failed or was skipped is an outcome, not an error.
+    /// `overrides` gives values to build settings for this run, `on_failure` says what a failed
+    /// action does to the rest of the build, and `live` whether one running action at a time is
+    /// shown as it prints. The outcomes are one per target of that part, in id order; a target
+    /// that failed or was skipped is an outcome, not an error. A target outside `scope` is left
+    /// alone: it has no outcome, and its row and outputs stay.
+    ///
+    /// The graph is recorded through the graph-record port before anything is planned, and it is
+    /// the whole workspace's whatever `scope` asks for, so the record never depends on which
+    /// targets one build was asked for.
     ///
     /// # Errors
     ///
-    /// Returns whatever the load returns, then whatever [`resolve`] returns, then whatever
-    /// [`plan`](fn@plan) returns, and otherwise whatever [`execute`](fn@execute) returns: two
-    /// outputs that would be written to one place, a command that names no program or one
+    /// Returns the first of: whatever the load returns; whatever [`resolve`] returns; the
+    /// graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope` that names
+    /// neither a target nor an alias; whatever [`plan`](fn@plan) returns; and whatever
+    /// [`execute`](fn@execute) returns: two outputs of the workspace that would be written to one
+    /// place, whether or not both targets were asked for, a command that names no program or one
     /// outside the workspace's ceiling once it is expanded, or a port's own failure.
     pub fn build(
         &mut self,
         entry: &EntryName,
+        scope: &Scope,
         overrides: &BTreeMap<SettingName, SettingValue>,
         on_failure: OnFailure,
+        live: LiveOutput,
     ) -> Result<Vec<ActionOutcome>> {
-        let graph = resolve(load(&self.ports.source, entry)?)?;
+        let whole = resolve(load(&self.ports.source, entry)?)?;
+        self.ports.graph.record(&whole)?;
+        let graph = narrow(&whole, scope)?;
         let plan = plan(&graph, overrides, &mut self.ports)?;
-        execute(&graph, &plan, on_failure, &mut self.ports)
+        execute(&whole, &graph, &plan, on_failure, live, &mut self.ports)
     }
+}
+
+/// Loads the workspace twice through `source` and returns its declarations when both loads
+/// agree: what [`Pipeline::check`] does, for a caller that holds a source and no other port.
+///
+/// A command that only evaluates build files reads no state a build keeps, so it needs none of
+/// the ports that hold it.
+///
+/// # Errors
+///
+/// Returns whatever either load returns, and [`Error::Nondeterministic`] when the two loads
+/// declare different things.
+pub fn check<S: DeclarationSource>(source: &S, entry: &EntryName) -> Result<Vec<Declaration>> {
+    let first = load(source, entry)?;
+    let second = load(source, entry)?;
+    first_difference(&first, &second).map_or(Ok(first), Err)
+}
+
+/// Loads the workspace once through `source` and resolves its declarations into the target
+/// graph: what [`Pipeline::graph`] does, for a caller that holds a source and no other port.
+///
+/// # Errors
+///
+/// Returns whatever the load returns, and otherwise whatever [`resolve`] returns.
+pub fn graph<S: DeclarationSource>(source: &S, entry: &EntryName) -> Result<TargetGraph> {
+    resolve(load(source, entry)?)
 }
 
 /// The error naming the first place two sorted declaration lists differ, if they do.

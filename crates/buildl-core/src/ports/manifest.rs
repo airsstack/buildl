@@ -28,6 +28,9 @@ pub trait Manifest {
     /// [`Isolation::parse`](crate::Isolation::parse) — and gives a setting the manifest leaves
     /// out its type's default. Text a type rejects makes the manifest not valid.
     ///
+    /// Every call on one instance returns the same value: Plan and Execute each ask, and the
+    /// directories a build writes under are the ones its ceiling was checked for.
+    ///
     /// # Errors
     ///
     /// Returns [`Error::Adapter`](crate::Error::Adapter), naming

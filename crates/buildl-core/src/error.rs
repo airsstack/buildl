@@ -21,14 +21,14 @@
 //! - [`Result`] — the crate-wide alias.
 //!
 //! Non-responsibilities: presentation. [`Error`]'s `Display` renders one diagnostic, on one line
-//! unless an adapter's own message spans several; how a
-//! command surfaces it belongs to the `Reporter` port.
+//! unless an adapter's own message spans several. An error is returned, and its caller shows it.
 
 use core::fmt;
+use std::path::PathBuf;
 
 use crate::types::{
-    Ceiling, Declaration, DeclarationOrder, Diagnostic, Directory, FieldName, Label, Node,
-    OutputPath, Program, Provenance, SettingName, SourcePath, TreePath, Want, Written,
+    Ceiling, Declaration, DeclarationOrder, Diagnostic, Directory, FieldName, InputKind, Label,
+    Node, OutputPath, Program, Provenance, SettingName, SourcePath, TreePath, Want, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -77,6 +77,20 @@ pub enum Error {
     NonCanonicalJson {
         /// The index of the first byte that differs from the canonical form of the value.
         offset: usize,
+    },
+    /// A file an adapter keeps a workspace's state in does not hold what the adapter writes
+    /// there.
+    ///
+    /// Distinct from [`Error::Adapter`], which is a file that could not be read at all: this
+    /// one was read, and its content is refused. `source` is the reading failure,
+    /// [`Error::UnreadableJson`] or [`Error::NonCanonicalJson`].
+    #[error("{} is not a file buildl wrote: {source}", .file.display())]
+    CorruptState {
+        /// The file, as the adapter opened it.
+        file: PathBuf,
+        /// Why its content was refused.
+        #[source]
+        source: Box<Self>,
     },
     /// An adapter could not evaluate a build file.
     #[error("{provenance}: {failure}: {diagnostic}")]
@@ -248,11 +262,36 @@ pub enum Error {
         /// The file.
         path: SourcePath,
     },
+    /// A target reads a workspace path that holds something other than a regular file.
+    #[error(
+        "{}: {}: input {path} is {found}; an input must be a regular file",
+        .site.provenance,
+        .site.label
+    )]
+    InputNotAFile {
+        /// The lowest-labelled target declaring the input, and its build file.
+        site: Box<DeclarationSite>,
+        /// The path.
+        path: SourcePath,
+        /// What stands there.
+        found: InputKind,
+    },
     /// A setting was given a value for this run, but nothing declares it.
     #[error("setting {name} is overridden but not declared")]
     UnknownOverride {
         /// The setting that was named.
         name: SettingName,
+    },
+    /// A run was asked for a target, and no target or alias has that label.
+    #[error(
+        "target {label} was asked for but is not declared{}",
+        suggestion_suffix(.suggestion.as_ref())
+    )]
+    UnknownTarget {
+        /// The label that was asked for.
+        label: Label,
+        /// The nearest declared target or alias, if one is near enough.
+        suggestion: Option<Label>,
     },
     /// A plan was handed over with a graph it was not made from.
     #[error("the plan was not made from this graph")]
@@ -483,6 +522,8 @@ pub enum PortName {
     ExecStrategy,
     /// What hands actions to workers.
     Dispatcher,
+    /// The record of the graph a build resolved.
+    GraphRecord,
 }
 
 impl fmt::Display for PortName {
@@ -498,6 +539,7 @@ impl fmt::Display for PortName {
             Self::EventLog => "event log",
             Self::ExecStrategy => "exec strategy",
             Self::Dispatcher => "dispatcher",
+            Self::GraphRecord => "graph record",
         })
     }
 }
@@ -759,8 +801,8 @@ mod tests {
     };
     use crate::types::{
         Argument, Ceiling, Command, DeclarationOrder, Diagnostic, Directory, EnvName, FieldName,
-        Freshness, Label, NetworkAccess, Node, OutputName, OutputPath, Program, Provenance,
-        SettingName, SourcePath, TargetName, TargetRole, TreePath, Want, Written,
+        Freshness, InputKind, Label, NetworkAccess, Node, OutputName, OutputPath, Program,
+        Provenance, SettingName, SourcePath, TargetName, TargetRole, TreePath, Want, Written,
     };
 
     fn lib_file() -> Provenance {
@@ -984,6 +1026,31 @@ mod tests {
         );
     }
 
+    #[test]
+    fn an_input_that_is_not_a_file_names_the_site_the_path_and_what_was_found() {
+        for (found, text) in [
+            (
+                InputKind::Directory,
+                "build.lua: //:app: input src is a directory; an input must be a regular file",
+            ),
+            (
+                InputKind::Symlink,
+                "build.lua: //:app: input src is a symbolic link; an input must be a regular file",
+            ),
+            (
+                InputKind::Special,
+                "build.lua: //:app: input src is a pipe, a socket or a device; an input must be a regular file",
+            ),
+        ] {
+            let err = Error::InputNotAFile {
+                site: Box::new(root_site("//:app")),
+                path: SourcePath::parse("src").unwrap(),
+                found,
+            };
+            assert_eq!(err.to_string(), text);
+        }
+    }
+
     /// A ceiling allowing `cc` and `ld`, `HOME` and `PATH`, reads under `src`, and no write.
     fn ceiling() -> Ceiling {
         Ceiling {
@@ -1090,6 +1157,30 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "setting test_fliter is overridden but not declared"
+        );
+    }
+
+    #[test]
+    fn unknown_target_names_the_label_and_the_nearest_one() {
+        let err = Error::UnknownTarget {
+            label: label("//:libs"),
+            suggestion: Some(label("//:lib")),
+        };
+        assert_eq!(
+            err.to_string(),
+            "target //:libs was asked for but is not declared (did you mean //:lib?)"
+        );
+    }
+
+    #[test]
+    fn unknown_target_without_a_near_label_offers_nothing() {
+        let err = Error::UnknownTarget {
+            label: label("//:nope"),
+            suggestion: None,
+        };
+        assert_eq!(
+            err.to_string(),
+            "target //:nope was asked for but is not declared"
         );
     }
 
@@ -1203,6 +1294,7 @@ mod tests {
             (PortName::EventLog, "event log"),
             (PortName::ExecStrategy, "exec strategy"),
             (PortName::Dispatcher, "dispatcher"),
+            (PortName::GraphRecord, "graph record"),
         ];
         for (port, rendered) in cases {
             assert_eq!(port.to_string(), rendered);
@@ -1290,6 +1382,27 @@ mod tests {
             err.to_string(),
             "JSON is not in canonical form: it differs from it at byte 36"
         );
+    }
+
+    #[test]
+    fn corrupt_state_names_the_file_and_keeps_the_reading_failure() {
+        let err = Error::CorruptState {
+            file: PathBuf::from("/ws/.buildl/cache.json"),
+            source: Box::new(Error::NonCanonicalJson { offset: 36 }),
+        };
+        assert_eq!(
+            err.to_string(),
+            "/ws/.buildl/cache.json is not a file buildl wrote: JSON is not in canonical form: \
+             it differs from it at byte 36"
+        );
+        assert_eq!(
+            std::error::Error::source(&err).unwrap().to_string(),
+            "JSON is not in canonical form: it differs from it at byte 36"
+        );
+        let Error::CorruptState { source, .. } = err else {
+            unreachable!("built as CorruptState above")
+        };
+        assert!(matches!(*source, Error::NonCanonicalJson { offset: 36 }));
     }
 
     #[test]

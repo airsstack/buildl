@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 
 use crate::error::{DeclarationSite, Error, PortName, Result};
 use crate::ports::{Digester, StatCache};
-use crate::types::{Diagnostic, Digest, FileStat, Node, SourcePath, StatEntry};
+use crate::types::{Diagnostic, Digest, FileStat, InputStat, Node, SourcePath, StatEntry};
 
 /// The content digest of every input in `inputs`.
 ///
@@ -24,8 +24,9 @@ use crate::types::{Diagnostic, Digest, FileStat, Node, SourcePath, StatEntry};
 ///
 /// # Errors
 ///
-/// Returns [`Error::MissingInput`] for the first input that does not exist, naming the
-/// lowest-labelled target declaring it; [`Error::Adapter`] when the digester's reply does not
+/// Returns, for the first input in path order that is not a regular file, naming the
+/// lowest-labelled target declaring it, [`Error::MissingInput`] when nothing is there and
+/// [`Error::InputNotAFile`] when something else is; [`Error::Adapter`] when the digester's reply does not
 /// hold one digest per file; and whatever either port returns.
 pub(crate) fn digests<'g, D: Digester, S: StatCache>(
     inputs: &BTreeMap<&'g SourcePath, &'g Node>,
@@ -34,11 +35,21 @@ pub(crate) fn digests<'g, D: Digester, S: StatCache>(
 ) -> Result<BTreeMap<&'g SourcePath, Digest>> {
     let mut read = Vec::with_capacity(inputs.len());
     for (path, node) in inputs {
-        let Some(stat) = digester.stat(path)? else {
-            return Err(Error::MissingInput {
-                site: Box::new(DeclarationSite::from(*node)),
-                path: (*path).clone(),
-            });
+        let stat = match digester.stat(path)? {
+            InputStat::File(stat) => stat,
+            InputStat::Missing => {
+                return Err(Error::MissingInput {
+                    site: Box::new(DeclarationSite::from(*node)),
+                    path: (*path).clone(),
+                });
+            }
+            InputStat::Other(found) => {
+                return Err(Error::InputNotAFile {
+                    site: Box::new(DeclarationSite::from(*node)),
+                    path: (*path).clone(),
+                    found,
+                });
+            }
         };
         read.push(Read {
             path,

@@ -13,7 +13,7 @@
 
 use crate::ports::{
     ActionCache, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
-    ExecStrategy, Host, Manifest, StatCache, ToolResolver,
+    ExecStrategy, GraphRecord, Host, Manifest, Reporter, StatCache, ToolResolver,
 };
 
 /// One implementation of each port, chosen together.
@@ -24,13 +24,15 @@ use crate::ports::{
 ///
 /// ```
 /// use std::collections::BTreeSet;
+/// use std::sync::{Mutex, PoisonError};
 ///
 /// use buildl_core::{
-///     ActionCache, BuildFile, CacheRow, Ceiling, Clock, ContentStore, DeclarationSource,
-///     Diagnostic, Digest, Digester, Directory, Dispatcher, EnvName, EnvValue, Error, Evaluated,
-///     EventLog, ExecStrategy, FileMode, FileStat, Found, Host, Label, Manifest, OutcomeEvent,
-///     OutputPath, Platform, PortName, Ports, Program, RawOutcome, ReadyAction, Result,
-///     SourcePath, StatCache, StatEntry, Timestamp, ToolResolver, Workspace,
+///     ActionCache, BuildFile, CacheRow, Captured, Ceiling, Channel, Clock, ContentStore,
+///     DeclarationSource, Diagnostic, Digest, Digester, Directory, Dispatcher, EnvName, EnvValue,
+///     Error, Evaluated, EventLog, ExecStrategy, FileMode, Found, GraphRecord, Host, InputStat,
+///     Label, LiveSink, Manifest, OutcomeEvent, OutputPath, Platform, PortName, Ports, Program,
+///     RawOutcome, ReadyAction, Reporter, Result, SourcePath, StatCache, StatEntry, Summary,
+///     TargetGraph, Timestamp, ToolResolver, Turn, Workspace,
 /// };
 ///
 /// /// Every port at once, each answering that there is nothing.
@@ -77,8 +79,8 @@ use crate::ports::{
 /// }
 ///
 /// impl Digester for Nothing {
-///     fn stat(&self, _path: &SourcePath) -> Result<Option<FileStat>> {
-///         Ok(None)
+///     fn stat(&self, _path: &SourcePath) -> Result<InputStat> {
+///         Ok(InputStat::Missing)
 ///     }
 ///
 ///     fn digest(&self, _paths: &[SourcePath]) -> Result<Vec<Digest>> {
@@ -149,7 +151,12 @@ use crate::ports::{
 ///         Err(nothing(PortName::ExecStrategy))
 ///     }
 ///
-///     fn run(&self, _dir: &(), _action: &ReadyAction) -> Result<RawOutcome> {
+///     fn run(
+///         &self,
+///         _dir: &(),
+///         _action: &ReadyAction,
+///         _live: Option<LiveSink<'_>>,
+///     ) -> Result<RawOutcome> {
 ///         Err(nothing(PortName::ExecStrategy))
 ///     }
 ///
@@ -163,21 +170,48 @@ use crate::ports::{
 ///     }
 /// }
 ///
-/// /// Runs every task on the calling thread, one at a time.
+/// /// Runs every task on the calling thread, one at a time, and hands over what a task said
+/// /// once the task is done.
 /// impl Dispatcher for Nothing {
-///     fn dispatch<T, R, W, S>(&mut self, work: W, mut step: S) -> Result<()>
+///     fn dispatch<T, M, R, W, S>(&mut self, work: W, mut step: S) -> Result<()>
 ///     where
 ///         T: Send,
+///         M: Send,
 ///         R: Send,
-///         W: Fn(T) -> R + Sync,
-///         S: FnMut(Option<R>) -> Vec<T>,
+///         W: Fn(T, &(dyn Fn(M) + Sync)) -> R + Sync,
+///         S: FnMut(Turn<M, R>) -> Vec<T>,
 ///     {
-///         let mut waiting = step(None);
+///         let mut waiting = step(Turn::Begin);
 ///         while let Some(task) = waiting.pop() {
-///             waiting.extend(step(Some(work(task))));
+///             let said = Mutex::new(Vec::new());
+///             let result = work(task, &|message| {
+///                 said.lock().unwrap_or_else(PoisonError::into_inner).push(message);
+///             });
+///             for message in said.into_inner().unwrap_or_else(PoisonError::into_inner) {
+///                 waiting.extend(step(Turn::Told(message)));
+///             }
+///             waiting.extend(step(Turn::Done(result)));
 ///         }
 ///         Ok(())
 ///     }
+/// }
+///
+/// impl GraphRecord for Nothing {
+///     fn record(&mut self, _graph: &TargetGraph) -> Result<()> {
+///         Err(nothing(PortName::GraphRecord))
+///     }
+/// }
+///
+/// impl Reporter for Nothing {
+///     fn begun(&mut self, _targets: usize) {}
+///
+///     fn started(&mut self, _action: &ReadyAction) {}
+///
+///     fn printed(&mut self, _label: &Label, _channel: Channel, _bytes: &[u8]) {}
+///
+///     fn finished(&mut self, _event: &OutcomeEvent, _printed: Captured<'_>) {}
+///
+///     fn summary(&mut self, _summary: Summary) {}
 /// }
 ///
 /// impl Clock for Nothing {
@@ -202,6 +236,8 @@ use crate::ports::{
 ///     type Strategy = Nothing;
 ///     type Dispatcher = Nothing;
 ///     type Clock = Nothing;
+///     type Graph = Nothing;
+///     type Reporter = Nothing;
 /// }
 /// ```
 pub trait Ports {
@@ -230,4 +266,8 @@ pub trait Ports {
     /// How the wall clock is read. `Sync` because an action's start and end are read from the
     /// thread that runs it.
     type Clock: Clock + Sync;
+    /// Where the graph a build resolved is kept.
+    type Graph: GraphRecord;
+    /// How a build shows what it is doing. Called only from the thread that called the build.
+    type Reporter: Reporter;
 }

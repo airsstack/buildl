@@ -11,3 +11,4 @@ mod check;
 mod graph;
 mod load;
 mod plan;
+mod report;

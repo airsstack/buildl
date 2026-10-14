@@ -13,31 +13,42 @@
 //! This file holds only a trait definition, so it carries no logic to unit-test.
 
 use crate::error::Result;
+use crate::types::Turn;
 
 /// Runs tasks, possibly several at once, and hands each result back one at a time.
 pub trait Dispatcher {
     /// Runs every task `step` yields through `work`, until none is left.
     ///
-    /// `step(None)` is called once, first, and each task it returns is run through `work`. Each
-    /// result is handed to `step(Some(result))`, one at a time, and the tasks that returns are run
-    /// in turn. The call returns when no task is running and none is waiting.
+    /// `step(Turn::Begin)` is called once, first, and each task it returns is run through
+    /// `work`. Each result is handed to `step(Turn::Done(result))`, one at a time, and the
+    /// tasks that returns are run in turn. The call returns when no task is running and none is
+    /// waiting.
+    ///
+    /// `work` is handed, with its task, a way to tell `step` something while the task is still
+    /// running. Each message it is given reaches `step` as `Turn::Told(message)`: the messages
+    /// of one task in the order that task sent them, and all of them before that task's result.
+    /// Messages of different tasks reach `step` in any order. The tasks `step` returns for a
+    /// message are run like any other.
     ///
     /// `step` is always called on the calling thread. `work` may be called on any thread, several
-    /// calls at once. Every task `step` returns is run, and every result reaches `step`. Neither
-    /// can happen twice, and no result can be made up: a task and a result are each handed over
-    /// by value, and the port asks for no way to copy or to build one. A dispatcher that loses a
-    /// task or its result breaks the contract: a build over it fails with
-    /// [`Error::DispatcherFault`](crate::Error::DispatcherFault) instead of reporting success.
+    /// calls at once, and what it is handed to tell with may be called from any thread until
+    /// `work` returns. Every task `step` returns is run, and every message and every result
+    /// reaches `step`. None can happen twice, and none can be made up: a task, a message and a
+    /// result are each handed over by value, and the port asks for no way to copy or to build
+    /// one. A dispatcher that loses a task or its result breaks the contract: a build over it
+    /// fails with [`Error::DispatcherFault`](crate::Error::DispatcherFault) instead of reporting
+    /// success.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Adapter`](crate::Error::Adapter), naming
     /// [`PortName::Dispatcher`](crate::PortName::Dispatcher), for the adapter's own failure.
     /// Neither `work` nor `step` can fail here: a task that fails says so in its result.
-    fn dispatch<T, R, W, S>(&mut self, work: W, step: S) -> Result<()>
+    fn dispatch<T, M, R, W, S>(&mut self, work: W, step: S) -> Result<()>
     where
         T: Send,
+        M: Send,
         R: Send,
-        W: Fn(T) -> R + Sync,
-        S: FnMut(Option<R>) -> Vec<T>;
+        W: Fn(T, &(dyn Fn(M) + Sync)) -> R + Sync,
+        S: FnMut(Turn<M, R>) -> Vec<T>;
 }

@@ -11,10 +11,14 @@ use buildl_core::{
     ActionCache, BuildFile, CacheRow, Ceiling, Clock, ContentStore, DeclarationOrder,
     DeclarationSource, Diagnostic, Digest, Digester, Directory, Dispatcher, EnvName, EnvValue,
     Error, Evaluated, EvaluationFailure, EventLog, ExecStrategy, Exit, FileStat, Freshness, Host,
-    Label, Manifest, NetworkAccess, OutcomeEvent, OutputPath, Platform, PortName, PortSet, Ports,
-    Program, RawOutcome, ReadyAction, Result, SourcePath, StagedAlias, StagedDeclaration,
-    StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, StatCache,
-    StatEntry, TargetRole, Timestamp, ToolResolver, Workspace, Written,
+    InputKind, InputStat, Label, Manifest, NetworkAccess, OutcomeEvent, OutputPath, Platform,
+    PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, SourcePath, StagedAlias,
+    StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir,
+    StagedTarget, StatCache, StatEntry, TargetRole, Timestamp, ToolResolver, Workspace, Written,
+};
+use buildl_core::{
+    Captured, Channel, GraphRecord, LiveSink, OutcomeClass, Reporter, Summary, TargetGraph, Turn,
+    json,
 };
 use buildl_core::{FileMode, Found, FoundEntry, FoundKind, StoredFile};
 
@@ -153,6 +157,9 @@ pub struct FakeContent {
 pub struct FakeDigester {
     /// The files that exist.
     pub files: BTreeMap<SourcePath, FakeContent>,
+    /// The paths that hold something other than a regular file. One named here is reported as
+    /// that, whatever `files` holds for it.
+    pub others: BTreeMap<SourcePath, InputKind>,
     stat_calls: Cell<u32>,
     digest_calls: Cell<u32>,
     digested: RefCell<Vec<SourcePath>>,
@@ -179,9 +186,15 @@ impl FakeDigester {
 }
 
 impl Digester for FakeDigester {
-    fn stat(&self, path: &SourcePath) -> Result<Option<FileStat>> {
+    fn stat(&self, path: &SourcePath) -> Result<InputStat> {
         self.stat_calls.set(self.stat_calls.get() + 1);
-        Ok(self.files.get(path).map(|file| file.stat))
+        if let Some(kind) = self.others.get(path) {
+            return Ok(InputStat::Other(*kind));
+        }
+        Ok(self
+            .files
+            .get(path)
+            .map_or(InputStat::Missing, |file| InputStat::File(file.stat)))
     }
 
     fn digest(&self, paths: &[SourcePath]) -> Result<Vec<Digest>> {
@@ -466,6 +479,8 @@ impl Clock for FakeClock {
 pub enum Ends {
     /// The command runs and exits with this status.
     Exits(i32),
+    /// The command runs and this signal ends it.
+    Signaled(i32),
     /// The command runs longer than it is allowed to.
     TimesOut,
     /// No directory can be made to run it in.
@@ -623,7 +638,12 @@ impl ExecStrategy for FakeStrategy {
         Ok(FakeDir)
     }
 
-    fn run(&self, _dir: &FakeDir, action: &ReadyAction) -> Result<RawOutcome> {
+    fn run(
+        &self,
+        _dir: &FakeDir,
+        action: &ReadyAction,
+        live: Option<LiveSink<'_>>,
+    ) -> Result<RawOutcome> {
         self.ran
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -638,14 +658,31 @@ impl ExecStrategy for FakeStrategy {
             }
             Ends::TimesOut => Exit::TimedOut,
             Ends::Exits(status) => Exit::Exited(status),
+            Ends::Signaled(signal) => Exit::Signaled(signal),
             Ends::PrepareFails | Ends::CollectFails | Ends::CollectShort => Exit::Exited(0),
         };
+        let stdout = script
+            .stdout
+            .unwrap_or_else(|| format!("{}\n", action.label).into_bytes());
+        let stderr = script.stderr.unwrap_or_default();
+        if let Some(live) = live {
+            // Written a byte at a time and a line at a time, to show that only the joined
+            // bytes are promised.
+            let (first, rest) = stdout.split_at(stdout.len().min(1));
+            for (channel, bytes) in [
+                (Channel::Stdout, first),
+                (Channel::Stderr, stderr.as_slice()),
+                (Channel::Stdout, rest),
+            ] {
+                if !bytes.is_empty() {
+                    live(channel, bytes);
+                }
+            }
+        }
         Ok(RawOutcome {
             exit,
-            stdout: script
-                .stdout
-                .unwrap_or_else(|| format!("{}\n", action.label).into_bytes()),
-            stderr: script.stderr.unwrap_or_default(),
+            stdout,
+            stderr,
         })
     }
 
@@ -723,7 +760,19 @@ pub enum Loss {
     Unreported,
 }
 
-/// A dispatcher that runs every task on the calling thread, one at a time.
+/// How many tasks a [`FakeDispatcher`] has under way before it hands anything back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Pace {
+    /// One: what a task said and its result are handed over before the next task is taken.
+    #[default]
+    OneAtATime,
+    /// Every waiting task: all are run, then what each said is handed over in the order they
+    /// were taken, then their results, the task taken last first. It is what a build sees when
+    /// several actions run at once and the first to begin is the last to end.
+    Together,
+}
+
+/// A dispatcher that runs every task on the calling thread.
 ///
 /// It breaks the port's contract only where told to: `lose` names tasks by the position at which
 /// they are taken, counting from zero.
@@ -731,36 +780,159 @@ pub enum Loss {
 pub struct FakeDispatcher {
     /// Which waiting task is taken next.
     pub order: Order,
+    /// How many tasks are under way at once.
+    pub pace: Pace,
     /// The tasks to lose, by the position at which they are taken, and how.
     pub lose: BTreeMap<usize, Loss>,
 }
 
 impl Dispatcher for FakeDispatcher {
-    fn dispatch<T, R, W, S>(&mut self, work: W, mut step: S) -> Result<()>
+    fn dispatch<T, M, R, W, S>(&mut self, work: W, mut step: S) -> Result<()>
     where
         T: Send,
+        M: Send,
         R: Send,
-        W: Fn(T) -> R + Sync,
-        S: FnMut(Option<R>) -> Vec<T>,
+        W: Fn(T, &(dyn Fn(M) + Sync)) -> R + Sync,
+        S: FnMut(Turn<M, R>) -> Vec<T>,
     {
-        let mut waiting: VecDeque<T> = step(None).into();
+        let mut waiting: VecDeque<T> = step(Turn::Begin).into();
         let mut taken = 0_usize;
         loop {
-            let next = match self.order {
-                Order::OldestFirst => waiting.pop_front(),
-                Order::NewestFirst => waiting.pop_back(),
-            };
-            let Some(task) = next else {
+            let mut ran = Vec::new();
+            loop {
+                let next = match self.order {
+                    Order::OldestFirst => waiting.pop_front(),
+                    Order::NewestFirst => waiting.pop_back(),
+                };
+                let Some(task) = next else {
+                    break;
+                };
+                let loss = self.lose.get(&taken).copied();
+                taken += 1;
+                if loss == Some(Loss::Unrun) {
+                    continue;
+                }
+                let said = Mutex::new(Vec::new());
+                let result = work(task, &|message| {
+                    said.lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push(message);
+                });
+                if loss == Some(Loss::Unreported) {
+                    continue;
+                }
+                ran.push((
+                    said.into_inner().unwrap_or_else(PoisonError::into_inner),
+                    result,
+                ));
+                if self.pace == Pace::OneAtATime {
+                    break;
+                }
+            }
+            if ran.is_empty() {
                 return Ok(());
-            };
-            let loss = self.lose.get(&taken).copied();
-            taken += 1;
-            match loss {
-                Some(Loss::Unrun) => {}
-                Some(Loss::Unreported) => drop(work(task)),
-                None => waiting.extend(step(Some(work(task)))),
+            }
+            let mut results = Vec::new();
+            for (said, result) in ran {
+                for message in said {
+                    waiting.extend(step(Turn::Told(message)));
+                }
+                results.push(result);
+            }
+            if self.pace == Pace::Together {
+                results.reverse();
+            }
+            for result in results {
+                waiting.extend(step(Turn::Done(result)));
             }
         }
+    }
+}
+
+/// A graph record held in memory: the bytes of every graph handed to it, in order.
+#[derive(Debug, Default)]
+pub struct FakeGraphRecord {
+    /// The canonical bytes of each graph recorded.
+    pub recorded: Vec<Vec<u8>>,
+    /// Whether recording fails.
+    pub broken: bool,
+}
+
+impl GraphRecord for FakeGraphRecord {
+    fn record(&mut self, graph: &TargetGraph) -> Result<()> {
+        if self.broken {
+            return Err(Error::Adapter {
+                port: PortName::GraphRecord,
+                diagnostic: Diagnostic::new("the graph cannot be written"),
+            });
+        }
+        self.recorded.push(json::canonical::to_vec(graph)?);
+        Ok(())
+    }
+}
+
+/// One call a [`FakeReporter`] received.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Reported {
+    /// `begun`, with the number of targets.
+    Begun(usize),
+    /// `started`, with the action's label and its description.
+    Started(Label, Option<String>),
+    /// `printed`.
+    Printed(Label, Channel, Vec<u8>),
+    /// `finished`, with the outcome's label and class and what was left to show.
+    Finished {
+        /// The target.
+        label: Label,
+        /// How it ended.
+        class: OutcomeClass,
+        /// What it wrote to standard output, as handed over.
+        stdout: Vec<u8>,
+        /// What it wrote to standard error, as handed over.
+        stderr: Vec<u8>,
+    },
+    /// `summary`.
+    Summary(Summary),
+}
+
+/// A reporter that shows nothing and keeps every call it received, in order.
+#[derive(Debug, Default)]
+pub struct FakeReporter {
+    /// The calls.
+    pub calls: Vec<Reported>,
+}
+
+impl Reporter for FakeReporter {
+    fn begun(&mut self, targets: usize) {
+        self.calls.push(Reported::Begun(targets));
+    }
+
+    fn started(&mut self, action: &ReadyAction) {
+        self.calls.push(Reported::Started(
+            action.label.clone(),
+            action
+                .description
+                .as_ref()
+                .map(|description| description.as_str().to_owned()),
+        ));
+    }
+
+    fn printed(&mut self, label: &Label, channel: Channel, bytes: &[u8]) {
+        self.calls
+            .push(Reported::Printed(label.clone(), channel, bytes.to_vec()));
+    }
+
+    fn finished(&mut self, event: &OutcomeEvent, printed: Captured<'_>) {
+        self.calls.push(Reported::Finished {
+            label: event.outcome.label.clone(),
+            class: event.outcome.class.clone(),
+            stdout: printed.stdout.to_vec(),
+            stderr: printed.stderr.to_vec(),
+        });
+    }
+
+    fn summary(&mut self, summary: Summary) {
+        self.calls.push(Reported::Summary(summary));
     }
 }
 
@@ -781,6 +953,8 @@ impl Ports for FakePorts {
     type Strategy = FakeStrategy;
     type Dispatcher = FakeDispatcher;
     type Clock = FakeClock;
+    type Graph = FakeGraphRecord;
+    type Reporter = FakeReporter;
 }
 
 /// A workspace that writes to `out` and `.buildl`, under a ceiling allowing `cc` to run, any
@@ -804,8 +978,8 @@ pub fn open_workspace() -> Workspace {
 ///
 /// An [`open_workspace`]; a `linux/x86_64` machine with no variable set; no workspace file,
 /// nothing recorded, no program and no row; an empty content store and an empty log; a strategy
-/// with no script; a dispatcher taking the oldest task first; and a clock that has not been
-/// read.
+/// with no script; a dispatcher taking the oldest task first, one at a time; a clock that has
+/// not been read; no graph recorded; and a reporter that has received no call.
 #[must_use]
 pub fn ports(source: FakeSource) -> PortSet<FakePorts> {
     PortSet {
@@ -828,6 +1002,8 @@ pub fn ports(source: FakeSource) -> PortSet<FakePorts> {
         strategy: FakeStrategy::default(),
         dispatcher: FakeDispatcher::default(),
         clock: FakeClock::default(),
+        graph: FakeGraphRecord::default(),
+        reporter: FakeReporter::default(),
     }
 }
 
@@ -973,21 +1149,27 @@ mod tests {
 
     use std::collections::{BTreeMap, BTreeSet};
     use std::path::PathBuf;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicU32, Ordering};
 
     use buildl_core::{
-        ActionCache, ActionKey, ActionOutcome, Argument, CacheRow, Clock, Command, ContentStore,
-        Digest, Directory, Dispatcher, Error, EventLog, ExecStrategy, Exit, KeyComponents, Label,
-        NetworkAccess, OutcomeClass, OutcomeEvent, OutputName, OutputPath, OwnComponents, Platform,
-        PortName, Provenance, ReadyAction, SourcePath, Timestamp,
+        ActionCache, ActionKey, ActionOutcome, Argument, CacheRow, Captured, Channel, Clock,
+        Command, ContentStore, Digest, Directory, Dispatcher, EntryName, Error, EventLog,
+        ExecStrategy, Exit, GraphRecord, KeyComponents, Label, NetworkAccess, OutcomeClass,
+        OutcomeEvent, OutputName, OutputPath, OwnComponents, Platform, PortName, Provenance,
+        ReadyAction, Reporter, SourcePath, Summary, TargetGraph, Timestamp, json, load, resolve,
     };
 
     use super::{
-        Content, Ends, FakeCache, FakeCas, FakeClock, FakeDispatcher, FakeLog, FakeStrategy, Loss,
-        Order, Script, dir,
+        Content, Ends, FakeCache, FakeCas, FakeClock, FakeDispatcher, FakeGraphRecord, FakeLog,
+        FakeReporter, FakeSource, FakeStrategy, Loss, Order, Pace, Reported, Script, dir, file,
+        target, workspace,
     };
-    use super::{Leaf, tree};
-    use buildl_core::{FileMode, Found, FoundEntry, FoundKind, StoredFile, TreePath};
+    use super::{FakeContent, FakeDigester, Leaf, tree};
+    use buildl_core::{
+        Digester, FileMode, FileStat, Found, FoundEntry, FoundKind, InputKind, InputStat,
+        StoredFile, TreePath, Turn,
+    };
 
     fn label(raw: &str) -> Label {
         Label::parse(raw).unwrap()
@@ -1070,6 +1252,49 @@ mod tests {
         .unwrap();
         let nothing = Digest::of(b"");
         CacheRow::new(key, vec![Digest::of(content.as_bytes())], nothing, nothing).unwrap()
+    }
+
+    #[test]
+    fn a_digester_reports_a_file_nothing_and_what_is_not_a_file() {
+        let stat = FileStat {
+            modified: Timestamp::from_unix_nanos(7),
+            size: 4,
+        };
+        let mut digester = FakeDigester::default();
+        digester.files.insert(
+            path("main.c"),
+            FakeContent {
+                bytes: b"main".to_vec(),
+                stat,
+            },
+        );
+        digester.others.insert(path("src"), InputKind::Directory);
+        digester
+            .others
+            .insert(path("main.c.link"), InputKind::Symlink);
+
+        assert_eq!(
+            digester.stat(&path("main.c")).unwrap(),
+            InputStat::File(stat)
+        );
+        assert_eq!(digester.stat(&path("gone.c")).unwrap(), InputStat::Missing);
+        assert_eq!(
+            digester.stat(&path("src")).unwrap(),
+            InputStat::Other(InputKind::Directory)
+        );
+        assert_eq!(
+            digester.stat(&path("main.c.link")).unwrap(),
+            InputStat::Other(InputKind::Symlink)
+        );
+        assert_eq!(digester.stat_calls(), 4);
+    }
+
+    /// The graph of a workspace whose root build file declares a target for each of `names`.
+    fn graph_of(names: &[&str]) -> TargetGraph {
+        let targets = names.iter().map(|name| target(name, &[])).collect();
+        let source = FakeSource::new(workspace(vec![("", file(targets, &[]))]));
+        let entry = EntryName::parse("build.lua").unwrap();
+        resolve(load(&source, &entry).unwrap()).unwrap()
     }
 
     #[test]
@@ -1244,6 +1469,77 @@ mod tests {
     }
 
     #[test]
+    fn a_graph_record_keeps_the_bytes_of_every_graph_until_it_is_broken() {
+        let one = graph_of(&["app"]);
+        let two = graph_of(&["app", "lib"]);
+        let mut record = FakeGraphRecord::default();
+
+        record.record(&one).unwrap();
+        record.record(&two).unwrap();
+
+        assert_eq!(
+            record.recorded,
+            [
+                json::canonical::to_vec(&one).unwrap(),
+                json::canonical::to_vec(&two).unwrap()
+            ],
+            "the canonical bytes of each graph, in the order recorded"
+        );
+
+        record.broken = true;
+        let error = record.record(&one).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "graph record: the graph cannot be written"
+        );
+        match error {
+            Error::Adapter { port, .. } => assert_eq!(port, PortName::GraphRecord),
+            other => unreachable!("expected Adapter, got {other:?}"),
+        }
+        assert_eq!(record.recorded.len(), 2, "a broken record keeps nothing");
+    }
+
+    #[test]
+    fn a_reporter_keeps_every_call_it_receives_in_order() {
+        let counts = Summary {
+            failed: 0,
+            skipped: 0,
+            built: 1,
+            cached: 1,
+        };
+        let mut reporter = FakeReporter::default();
+
+        reporter.begun(2);
+        reporter.started(&action("//:app", &[], &["app"]));
+        reporter.printed(&label("//:app"), Channel::Stderr, b"warn\n");
+        reporter.finished(
+            &event("//:lib"),
+            Captured {
+                stdout: b"out",
+                stderr: b"err",
+            },
+        );
+        reporter.summary(counts);
+
+        assert_eq!(
+            reporter.calls,
+            [
+                Reported::Begun(2),
+                Reported::Started(label("//:app"), None),
+                Reported::Printed(label("//:app"), Channel::Stderr, b"warn\n".to_vec()),
+                Reported::Finished {
+                    label: label("//:lib"),
+                    class: OutcomeClass::Cached,
+                    stdout: b"out".to_vec(),
+                    stderr: b"err".to_vec(),
+                },
+                Reported::Summary(counts),
+            ]
+        );
+    }
+
+    #[test]
     fn every_read_of_the_clock_is_one_tick_later() {
         let clock = FakeClock::default();
         assert_eq!(clock.reads(), 0);
@@ -1261,7 +1557,7 @@ mod tests {
         let app = action("//:app", &[], &["app", "app.map"]);
 
         let dir = strategy.prepare(&app).unwrap();
-        let ran = strategy.run(&dir, &app).unwrap();
+        let ran = strategy.run(&dir, &app, None).unwrap();
         let collected = strategy.collect(&dir, &app, &cas).unwrap();
 
         assert_eq!(ran.exit, Exit::Exited(0));
@@ -1315,15 +1611,68 @@ mod tests {
             ends: Ends::TimesOut,
             ..Script::default()
         });
+        let killed = scripted(Script {
+            ends: Ends::Signaled(11),
+            ..Script::default()
+        });
 
-        let failed = failing.run(&failing.prepare(&app).unwrap(), &app).unwrap();
-        let timed_out = slow.run(&slow.prepare(&app).unwrap(), &app).unwrap();
+        let failed = failing
+            .run(&failing.prepare(&app).unwrap(), &app, None)
+            .unwrap();
+        let timed_out = slow.run(&slow.prepare(&app).unwrap(), &app, None).unwrap();
+        let signaled = killed
+            .run(&killed.prepare(&app).unwrap(), &app, None)
+            .unwrap();
 
         assert_eq!(failed.exit, Exit::Exited(3));
         assert_eq!(failed.stdout, b"compiling");
         assert_eq!(failed.stderr, b"no such file");
         assert_eq!(timed_out.exit, Exit::TimedOut);
         assert_eq!(timed_out.stdout, b"//:app\n");
+        assert_eq!(signaled.exit, Exit::Signaled(11));
+        assert_eq!(signaled.stdout, b"//:app\n");
+    }
+
+    #[test]
+    fn what_a_run_hands_over_live_joins_to_exactly_what_it_returns() {
+        let app = action("//:app", &[], &["app"]);
+        let strategy = scripted(Script {
+            stdout: Some(b"one\ntwo\n".to_vec()),
+            stderr: Some(b"warn\n".to_vec()),
+            ..Script::default()
+        });
+        let handed = Mutex::new(Vec::new());
+        let live = |channel: Channel, bytes: &[u8]| {
+            handed.lock().unwrap().push((channel, bytes.to_vec()));
+        };
+
+        let dir = strategy.prepare(&app).unwrap();
+        let shown = strategy.run(&dir, &app, Some(&live)).unwrap();
+        let quiet = strategy.run(&dir, &app, None).unwrap();
+
+        let handed = handed.into_inner().unwrap();
+        assert_eq!(
+            handed,
+            [
+                (Channel::Stdout, b"o".to_vec()),
+                (Channel::Stderr, b"warn\n".to_vec()),
+                (Channel::Stdout, b"ne\ntwo\n".to_vec()),
+            ],
+            "a run of bytes at a time, each with the output it was written to"
+        );
+        let joined = |wanted: Channel| -> Vec<u8> {
+            handed
+                .iter()
+                .filter(|(channel, _)| *channel == wanted)
+                .flat_map(|(_, bytes)| bytes.clone())
+                .collect()
+        };
+        assert_eq!(joined(Channel::Stdout), shown.stdout);
+        assert_eq!(joined(Channel::Stderr), shown.stderr);
+        assert_eq!(
+            shown, quiet,
+            "what is returned is the same with or without it"
+        );
     }
 
     #[test]
@@ -1353,14 +1702,17 @@ mod tests {
         let no_start = with(Ends::RunFails);
         let dir = no_start.prepare(&app).unwrap();
         assert_eq!(
-            no_start.run(&dir, &app).unwrap_err().to_string(),
+            no_start.run(&dir, &app, None).unwrap_err().to_string(),
             "exec strategy: //:app: the command cannot be started"
         );
         assert_eq!(no_start.runs(&label("//:app")), 1);
 
         let unreadable = with(Ends::CollectFails);
         let dir = unreadable.prepare(&app).unwrap();
-        assert_eq!(unreadable.run(&dir, &app).unwrap().exit, Exit::Exited(0));
+        assert_eq!(
+            unreadable.run(&dir, &app, None).unwrap().exit,
+            Exit::Exited(0)
+        );
         assert_eq!(
             unreadable
                 .collect(&dir, &app, &cas)
@@ -1400,7 +1752,7 @@ mod tests {
         assert_eq!(cas.digests(), BTreeSet::from([Digest::of(b"binary")]));
 
         let dir = short.prepare(&app).unwrap();
-        assert_eq!(short.run(&dir, &app).unwrap().exit, Exit::Exited(0));
+        assert_eq!(short.run(&dir, &app, None).unwrap().exit, Exit::Exited(0));
         assert_eq!(
             short.collect(&dir, &app, &cas).unwrap(),
             [plain(Digest::of(b"binary"))]
@@ -1501,6 +1853,7 @@ mod tests {
     fn dispatched(order: Order) -> Vec<u32> {
         let worked = AtomicU32::new(0);
         let mut results = Vec::new();
+        let mut said = Vec::new();
         let mut dispatcher = FakeDispatcher {
             order,
             ..FakeDispatcher::default()
@@ -1508,18 +1861,26 @@ mod tests {
 
         dispatcher
             .dispatch(
-                |task: u32| {
+                |task: u32, tell: &(dyn Fn(u32) + Sync)| {
                     worked.fetch_add(1, Ordering::SeqCst);
+                    tell(task);
                     task * 10
                 },
-                |result| {
-                    result.map_or_else(
-                        || vec![1, 2, 3],
-                        |result| {
-                            results.push(result);
-                            if result == 10 { vec![4] } else { Vec::new() }
-                        },
-                    )
+                |turn| match turn {
+                    Turn::Begin => vec![1, 2, 3],
+                    Turn::Told(task) => {
+                        said.push(task);
+                        Vec::new()
+                    }
+                    Turn::Done(result) => {
+                        results.push(result);
+                        assert_eq!(
+                            said.last().map(|task| task * 10),
+                            Some(result),
+                            "what a task said comes before its result"
+                        );
+                        if result == 10 { vec![4] } else { Vec::new() }
+                    }
                 },
             )
             .unwrap();
@@ -1540,18 +1901,17 @@ mod tests {
 
             dispatcher
                 .dispatch(
-                    |task: u32| {
+                    |task: u32, _tell: &(dyn Fn(()) + Sync)| {
                         ran.fetch_add(1, Ordering::SeqCst);
                         task * 10
                     },
-                    |result| {
-                        result.map_or_else(
-                            || vec![1, 2, 3],
-                            |result| {
-                                results.push(result);
-                                Vec::new()
-                            },
-                        )
+                    |turn| match turn {
+                        Turn::Begin => vec![1, 2, 3],
+                        Turn::Told(()) => Vec::new(),
+                        Turn::Done(result) => {
+                            results.push(result);
+                            Vec::new()
+                        }
                     },
                 )
                 .unwrap();
@@ -1566,5 +1926,54 @@ mod tests {
         assert_eq!(FakeDispatcher::default().order, Order::OldestFirst);
         assert_eq!(dispatched(Order::OldestFirst), [10, 20, 30, 40]);
         assert_eq!(dispatched(Order::NewestFirst), [30, 20, 10, 40]);
+    }
+
+    #[test]
+    fn tasks_run_together_say_everything_first_and_end_last_taken_first() {
+        let mut turns = Vec::new();
+        let mut dispatcher = FakeDispatcher {
+            pace: Pace::Together,
+            ..FakeDispatcher::default()
+        };
+
+        dispatcher
+            .dispatch(
+                |task: u32, tell: &(dyn Fn(String) + Sync)| {
+                    tell(format!("{task} began"));
+                    tell(format!("{task} printed"));
+                    task * 10
+                },
+                |turn| match turn {
+                    Turn::Begin => vec![1, 2, 3],
+                    Turn::Told(said) => {
+                        turns.push(said);
+                        Vec::new()
+                    }
+                    Turn::Done(result) => {
+                        turns.push(format!("{result} done"));
+                        if result == 10 { vec![4] } else { Vec::new() }
+                    }
+                },
+            )
+            .unwrap();
+
+        assert_eq!(FakeDispatcher::default().pace, Pace::OneAtATime);
+        assert_eq!(
+            turns,
+            [
+                "1 began",
+                "1 printed",
+                "2 began",
+                "2 printed",
+                "3 began",
+                "3 printed",
+                "30 done",
+                "20 done",
+                "10 done",
+                "4 began",
+                "4 printed",
+                "40 done",
+            ]
+        );
     }
 }

@@ -20,6 +20,8 @@
 pub enum Exit {
     /// It exited on its own, with this status. Zero is success.
     Exited(i32),
+    /// A signal ended it before it exited, with this number. It has no status.
+    Signaled(i32),
     /// It ran longer than it was allowed to and was stopped.
     TimedOut,
 }

@@ -10,12 +10,13 @@
 //! steps that reach a port, in the order that keeps a crash harmless: [`store`] puts a built
 //! target's outputs in place and only then records its row, [`restore`] puts a cached
 //! target's outputs in place, and [`append`] logs an outcome whatever it is. An output that
-//! cannot be put in place whole is removed from its path again.
+//! cannot be put in place whole is removed from its path again. [`shown`] reads back what an
+//! action printed, for whoever shows its outcome.
 //!
 //! Non-responsibilities: how content is put in place, how a row is kept and how the log is
 //! written, which are the ports'.
 
-use crate::error::{Error, Result};
+use crate::error::{Error, PortName, Result};
 use crate::execute::perform::{Kept, NOT_STORED, Printed, Span};
 use crate::ports::{ActionCache, Clock, ContentStore, EventLog};
 use crate::types::{
@@ -195,7 +196,8 @@ pub(crate) fn restore<C: ContentStore>(
     }
 }
 
-/// Appends the event for `outcome` to `log`, reading `clock` once for when it was recorded.
+/// Appends the event for `outcome` to `log`, reading `clock` once for when it was recorded, and
+/// returns the event once it is logged.
 ///
 /// # Errors
 ///
@@ -207,8 +209,37 @@ pub(crate) fn append<L: EventLog, K: Clock>(
     command: &Command,
     progress: Progress,
     outcome: ActionOutcome,
-) -> Result<()> {
-    log.append(&event(clock.now(), provenance, command, progress, outcome))
+) -> Result<OutcomeEvent> {
+    let event = event(clock.now(), provenance, command, progress, outcome);
+    log.append(&event)?;
+    Ok(event)
+}
+
+/// What a reporter is still to be shown of what an action printed: the content `digest`
+/// names, read from `cas`.
+///
+/// Nothing is read, and nothing is returned, for an action that printed nothing or whose
+/// output was not stored.
+///
+/// # Errors
+///
+/// Returns whatever `cas` returns, and [`Error::Adapter`], naming
+/// [`PortName::ContentStore`], when the content is not held: an outcome names only content
+/// that was stored, or found stored, moments before.
+pub(crate) fn shown<C: ContentStore>(
+    cas: &C,
+    label: &Label,
+    digest: Option<Digest>,
+) -> Result<Vec<u8>> {
+    match digest {
+        Some(digest) if digest != Digest::of(&[]) => {
+            cas.get(&digest)?.ok_or_else(|| Error::Adapter {
+                port: PortName::ContentStore,
+                diagnostic: Diagnostic::new(format!("what {label} printed is not held: {digest}")),
+            })
+        }
+        _ => Ok(Vec::new()),
+    }
 }
 
 /// Puts each output of `manifests` at its path of `paths`, pairwise, in the order the outputs
@@ -276,7 +307,8 @@ mod tests {
     use std::sync::{Mutex, PoisonError};
 
     use super::{
-        Progress, built, cached, event, failed, mismatched, place, row, skipped, unplaced, unstored,
+        Progress, built, cached, event, failed, mismatched, place, row, shown, skipped, unplaced,
+        unstored,
     };
     use crate::error::{Error, PortName, Result};
     use crate::execute::fixtures::{
@@ -346,6 +378,53 @@ mod tests {
             if self.unplaceable.as_ref() == Some(at) {
                 return Err(store_error(&format!("{at} cannot be written")));
             }
+            Ok(())
+        }
+    }
+
+    /// A store that holds `held` and nothing else, and writes down every digest it is asked
+    /// to read.
+    #[derive(Default)]
+    struct Holding {
+        held: Vec<Vec<u8>>,
+        read: Mutex<Vec<Digest>>,
+    }
+
+    impl Holding {
+        fn read(&self) -> Vec<Digest> {
+            self.read
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone()
+        }
+    }
+
+    impl ContentStore for Holding {
+        fn put(&self, bytes: &[u8]) -> Result<Digest> {
+            Ok(Digest::of(bytes))
+        }
+
+        fn contains(&self, digest: &Digest) -> bool {
+            self.held.iter().any(|bytes| Digest::of(bytes) == *digest)
+        }
+
+        fn get(&self, digest: &Digest) -> Result<Option<Vec<u8>>> {
+            self.read
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(*digest);
+            Ok(self
+                .held
+                .iter()
+                .find(|bytes| Digest::of(bytes) == *digest)
+                .cloned())
+        }
+
+        fn clear(&self, _at: &OutputPath) -> Result<()> {
+            Ok(())
+        }
+
+        fn place(&self, _digest: &Digest, _mode: FileMode, _at: &OutputPath) -> Result<()> {
             Ok(())
         }
     }
@@ -707,5 +786,52 @@ mod tests {
             expected(None, None, None),
             "a skipped target has neither"
         );
+    }
+
+    #[test]
+    fn nothing_is_read_for_an_action_that_printed_nothing_or_whose_output_was_not_stored() {
+        let store = Holding::default();
+
+        assert_eq!(shown(&store, &label("//:app"), None).unwrap(), b"");
+        assert_eq!(
+            shown(&store, &label("//:app"), Some(Digest::of(b""))).unwrap(),
+            b""
+        );
+        assert!(store.read().is_empty(), "the store was not asked");
+    }
+
+    #[test]
+    fn what_an_action_printed_is_read_back_from_the_store() {
+        let store = Holding {
+            held: vec![b"compiling\n".to_vec()],
+            ..Holding::default()
+        };
+        let digest = Digest::of(b"compiling\n");
+
+        assert_eq!(
+            shown(&store, &label("//:app"), Some(digest)).unwrap(),
+            b"compiling\n"
+        );
+        assert_eq!(store.read(), [digest]);
+    }
+
+    #[test]
+    fn printed_content_that_is_not_held_is_the_content_stores_failure() {
+        let store = Holding::default();
+        let digest = Digest::of(b"compiling\n");
+
+        let error = shown(&store, &label("//:app"), Some(digest)).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            format!("content store: what //:app printed is not held: {digest}")
+        );
+        assert!(matches!(
+            error,
+            Error::Adapter {
+                port: PortName::ContentStore,
+                ..
+            }
+        ));
     }
 }

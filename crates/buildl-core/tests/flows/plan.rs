@@ -10,12 +10,12 @@ use std::path::Path;
 
 use buildl_core::{
     ActionKey, CacheRow, DepProducts, Difference, Digest, DirtyReason, EntryName, EnvName,
-    EnvValue, Error, EvaluationFailure, FileStat, Freshness, KeyComponents, Label, NodeId,
-    OwnComponents, Pipeline, Plan, PlannedKey, Platform, PortName, SettingName, SettingValue,
-    SourcePath, StagedItem, StagedSetting, TargetGraph, Timestamp, ToolIdentity, Verdict, Want,
-    Written, json,
+    EnvValue, Error, EvaluationFailure, FileStat, Freshness, InputKind, KeyComponents, Label,
+    NodeId, OwnComponents, Pipeline, Plan, PlannedKey, Platform, PortName, SettingName,
+    SettingValue, SourcePath, StagedItem, StagedSetting, TargetGraph, Timestamp, ToolIdentity,
+    Verdict, Want, Written, json,
 };
-use buildl_core::{Execution, Isolation, Manifest, Timeout, Workers};
+use buildl_core::{Execution, Isolation, Manifest, Scope, Timeout, Workers};
 
 use crate::common::{
     FakeContent, FakeFile, FakePorts, FakeSource, dir, file, ports, program, setting, target,
@@ -58,7 +58,9 @@ fn put(pipeline: &mut Pipeline<FakePorts>, raw: &str, text: &str, modified: u64)
 
 /// A plan of the workspace with no setting overridden.
 fn planned(pipeline: &mut Pipeline<FakePorts>) -> Plan {
-    pipeline.plan(&entry(), &Overrides::new()).unwrap()
+    pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap()
 }
 
 /// What a verdict says, without its key: the reason, and the labels of the targets awaited.
@@ -154,7 +156,9 @@ fn record(
 /// so it also works for a workspace holding a target that is never clean.
 fn build(pipeline: &mut Pipeline<FakePorts>, overrides: &Overrides, version: &str) {
     let graph = pipeline.graph(&entry()).unwrap();
-    let plan = pipeline.plan(&entry(), overrides).unwrap();
+    let plan = pipeline
+        .plan(&entry(), &Scope::Workspace, overrides)
+        .unwrap();
     let mut built = BTreeSet::new();
     while built.len() < graph.len() {
         let ready: Vec<NodeId> = (0_u32..)
@@ -398,7 +402,9 @@ fn root_only(items: Vec<StagedItem>) -> Pipeline<FakePorts> {
 fn site_of(error: &Error) -> Option<(String, &Path)> {
     let site = match error {
         Error::Refused { site, .. } => site.as_deref(),
-        Error::MissingTool { site, .. } | Error::MissingInput { site, .. } => Some(&**site),
+        Error::MissingTool { site, .. }
+        | Error::MissingInput { site, .. }
+        | Error::InputNotAFile { site, .. } => Some(&**site),
         _ => None,
     };
     site.map(|site| (site.label.to_string(), site.provenance.file()))
@@ -415,7 +421,11 @@ fn an_override_dirties_exactly_the_targets_whose_commands_name_the_setting() {
     build(&mut pipeline, &Overrides::new(), "v1");
 
     let plan = pipeline
-        .plan(&entry(), &overrides(&[("mode", "release")]))
+        .plan(
+            &entry(),
+            &Scope::Workspace,
+            &overrides(&[("mode", "release")]),
+        )
         .unwrap();
 
     let mode = SettingName::parse("mode").unwrap();
@@ -515,7 +525,9 @@ fn a_program_outside_the_ceiling_is_refused_before_anything_is_read() {
     let mut pipeline = chain();
     pipeline.ports_mut().manifest.workspace.ceiling.run.clear();
 
-    let error = pipeline.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
 
     assert_eq!(
         error.to_string(),
@@ -544,7 +556,9 @@ fn a_variable_an_input_and_a_directory_outside_the_ceiling_are_each_refused() {
     let mut reads_secret = root_only(vec![target_with("app", |target| {
         target.env = vec![Written::new("AWS_SECRET")];
     })]);
-    let error = reads_secret.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = reads_secret
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
     assert_eq!(
         error.to_string(),
         "build.lua: //:app: environment variable AWS_SECRET is outside the ceiling \
@@ -554,7 +568,9 @@ fn a_variable_an_input_and_a_directory_outside_the_ceiling_are_each_refused() {
     let mut reads_outside = chain();
     let ceiling = &mut reads_outside.ports_mut().manifest.workspace.ceiling;
     ceiling.read = BTreeSet::from([dir("src")]);
-    let error = reads_outside.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = reads_outside
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
     assert_eq!(
         error.to_string(),
         "build.lua: //:docs: input README is outside the ceiling (fs.read allows: src)"
@@ -564,7 +580,7 @@ fn a_variable_an_input_and_a_directory_outside_the_ceiling_are_each_refused() {
     let ceiling = &mut writes_outside.ports_mut().manifest.workspace.ceiling;
     ceiling.write = BTreeSet::from([dir(".buildl")]);
     let error = writes_outside
-        .plan(&entry(), &Overrides::new())
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
         .unwrap_err();
     assert_eq!(
         error.to_string(),
@@ -578,7 +594,9 @@ fn a_program_that_cannot_be_found_names_the_lowest_labelled_target_running_it() 
     let mut pipeline = chain();
     pipeline.ports_mut().tools.fingerprints.clear();
 
-    let error = pipeline.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
 
     assert_eq!(
         error.to_string(),
@@ -594,11 +612,54 @@ fn a_program_that_cannot_be_found_names_the_lowest_labelled_target_running_it() 
 }
 
 #[test]
+fn an_input_that_is_not_a_regular_file_names_the_target_declaring_it_and_what_it_is() {
+    for (found, text) in [
+        (
+            InputKind::Directory,
+            "build.lua: //:lib: input lib.c is a directory; an input must be a regular file",
+        ),
+        (
+            InputKind::Symlink,
+            "build.lua: //:lib: input lib.c is a symbolic link; an input must be a regular file",
+        ),
+        (
+            InputKind::Special,
+            "build.lua: //:lib: input lib.c is a pipe, a socket or a device; an input must be a regular file",
+        ),
+    ] {
+        let mut pipeline = chain();
+        pipeline
+            .ports_mut()
+            .digester
+            .others
+            .insert(path("lib.c"), found);
+
+        let error = pipeline
+            .plan(&entry(), &Scope::Workspace, &Overrides::new())
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), text);
+        assert_eq!(
+            site_of(&error),
+            Some(("//:lib".to_owned(), Path::new("build.lua")))
+        );
+        assert!(matches!(
+            error,
+            Error::InputNotAFile { path: named, found: kind, .. }
+                if named == path("lib.c") && kind == found
+        ));
+        assert_eq!(pipeline.ports().digester.digest_calls(), 0);
+    }
+}
+
+#[test]
 fn an_input_that_does_not_exist_names_the_target_declaring_it() {
     let mut pipeline = chain();
     pipeline.ports_mut().digester.files.remove(&path("lib.c"));
 
-    let error = pipeline.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
 
     assert_eq!(
         error.to_string(),
@@ -631,7 +692,9 @@ fn of_two_variables_the_host_cannot_report_the_lower_name_is_the_error() {
         ports.host.unreportable = names;
     }
 
-    let error = pipeline.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
 
     assert_eq!(error.to_string(), "host: ALPHA does not hold valid text");
     assert!(matches!(error, Error::Adapter { port, .. } if port == PortName::Host));
@@ -654,10 +717,14 @@ fn several_faults_are_reported_one_at_a_time_in_a_fixed_order() {
     let mut pipeline = Pipeline::<FakePorts>::new(ports(source));
 
     let unknown = overrides(&[("bogus", "1")]);
-    let error = pipeline.plan(&entry(), &unknown).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &unknown)
+        .unwrap_err();
     assert!(matches!(error, Error::UnknownOverride { .. }), "{error}");
 
-    let error = pipeline.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
     assert!(
         matches!(&error, Error::Refused { want, .. } if want == &Want::Program(program("docker"))),
         "{error}"
@@ -665,7 +732,9 @@ fn several_faults_are_reported_one_at_a_time_in_a_fixed_order() {
 
     let ceiling = &mut pipeline.ports_mut().manifest.workspace.ceiling;
     ceiling.run.insert(program("docker"));
-    let error = pipeline.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
     assert!(
         matches!(&error, Error::MissingTool { program: missing, .. } if missing == &program("cc")),
         "{error}"
@@ -677,7 +746,9 @@ fn several_faults_are_reported_one_at_a_time_in_a_fixed_order() {
             .fingerprints
             .insert(program(name), Digest::of(name.as_bytes()));
     }
-    let error = pipeline.plan(&entry(), &Overrides::new()).unwrap_err();
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
     assert!(
         matches!(&error, Error::MissingInput { path: missing, .. } if missing == &path("missing.c")),
         "{error}"
@@ -692,7 +763,11 @@ fn an_override_naming_no_setting_is_refused() {
     let mut pipeline = root_only(vec![setting("mode"), running("a", &["cc", "$opt:mode"])]);
 
     let error = pipeline
-        .plan(&entry(), &overrides(&[("mod", "release")]))
+        .plan(
+            &entry(),
+            &Scope::Workspace,
+            &overrides(&[("mod", "release")]),
+        )
         .unwrap_err();
 
     assert_eq!(
@@ -720,6 +795,7 @@ fn a_plan_holds_every_declared_setting_with_its_override_or_else_its_default() {
     let plan = pipeline
         .plan(
             &entry(),
+            &Scope::Workspace,
             &overrides(&[("mode", "release"), ("unused", "busy")]),
         )
         .unwrap();
@@ -855,7 +931,11 @@ fn a_setting_changed_to_another_program_dirties_its_targets_for_the_tool_and_the
     build(&mut pipeline, &Overrides::new(), "v1");
 
     let plan = pipeline
-        .plan(&entry(), &overrides(&[("tool", "clang")]))
+        .plan(
+            &entry(),
+            &Scope::Workspace,
+            &overrides(&[("tool", "clang")]),
+        )
         .unwrap();
 
     let tool = SettingName::parse("tool").unwrap();
@@ -881,7 +961,11 @@ fn a_tool_named_through_a_setting_is_held_to_the_ceiling_before_anything_is_read
     let mut pipeline = tool_by_setting();
 
     let error = pipeline
-        .plan(&entry(), &overrides(&[("tool", "docker")]))
+        .plan(
+            &entry(),
+            &Scope::Workspace,
+            &overrides(&[("tool", "docker")]),
+        )
         .unwrap_err();
 
     assert_eq!(
@@ -906,7 +990,11 @@ fn a_tool_named_through_a_setting_that_cannot_be_found_names_the_lowest_labelled
     tools.fingerprints.remove(&program("clang"));
 
     let error = pipeline
-        .plan(&entry(), &overrides(&[("tool", "clang")]))
+        .plan(
+            &entry(),
+            &Scope::Workspace,
+            &overrides(&[("tool", "clang")]),
+        )
         .unwrap_err();
 
     assert_eq!(
@@ -952,7 +1040,10 @@ fn a_build_file_that_fails_to_evaluate_is_the_load_error_unchanged() {
     ]));
     let mut pipeline = Pipeline::<FakePorts>::new(ports(source));
 
-    match pipeline.plan(&entry(), &Overrides::new()).unwrap_err() {
+    match pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err()
+    {
         Error::Evaluation {
             provenance,
             failure,

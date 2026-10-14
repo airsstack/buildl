@@ -67,6 +67,11 @@ pub enum OutcomeClass {
         /// The exit status.
         status: i32,
     },
+    /// It ran and a signal ended it before it exited.
+    Killed {
+        /// The signal's number.
+        signal: i32,
+    },
     /// It ran and exited with status zero, and left nothing where an output it declares should
     /// be.
     OutputMissing {
@@ -124,8 +129,8 @@ pub struct ActionOutcome {
 /// How many targets of one build ended in each way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Summary {
-    /// Targets whose action failed, whose output was missing or refused, or that the builder
-    /// could not build.
+    /// Targets whose action failed or was ended by a signal, whose output was missing or
+    /// refused, or that the builder could not build.
     pub failed: usize,
     /// Targets never begun because another target failed.
     pub skipped: usize,
@@ -150,6 +155,7 @@ impl Summary {
                 OutcomeClass::Cached => summary.cached += 1,
                 OutcomeClass::Built => summary.built += 1,
                 OutcomeClass::ActionFailure { .. }
+                | OutcomeClass::Killed { .. }
                 | OutcomeClass::OutputMissing { .. }
                 | OutcomeClass::OutputRefused { .. }
                 | OutcomeClass::InfraFailure { .. } => summary.failed += 1,
@@ -172,11 +178,12 @@ mod tests {
     use crate::types::{Label, OutputName};
 
     /// One class of every kind, in the order the enum declares them.
-    fn every_class() -> [OutcomeClass; 7] {
+    fn every_class() -> [OutcomeClass; 8] {
         [
             OutcomeClass::Cached,
             OutcomeClass::Built,
             OutcomeClass::ActionFailure { status: 2 },
+            OutcomeClass::Killed { signal: 11 },
             OutcomeClass::OutputMissing {
                 name: OutputName::parse("bin/app").unwrap(),
             },
@@ -208,7 +215,10 @@ mod tests {
     #[test]
     fn only_a_cached_and_a_built_target_succeeded() {
         let succeeded = every_class().map(|class| class.succeeded());
-        assert_eq!(succeeded, [true, true, false, false, false, false, false]);
+        assert_eq!(
+            succeeded,
+            [true, true, false, false, false, false, false, false]
+        );
     }
 
     #[test]
@@ -229,7 +239,7 @@ mod tests {
         assert_eq!(
             Summary::of(&outcomes),
             Summary {
-                failed: 4,
+                failed: 5,
                 skipped: 1,
                 built: 1,
                 cached: 1,
@@ -293,6 +303,7 @@ mod tests {
             rendered,
             [
                 r#"{"ActionFailure":{"status":2}}"#,
+                r#"{"Killed":{"signal":11}}"#,
                 r#"{"OutputMissing":{"name":"bin/app"}}"#,
                 r#"{"OutputRefused":{"name":"dist","refusal":"Symlink"}}"#,
                 r#"{"InfraFailure":{"kind":"Store"}}"#,

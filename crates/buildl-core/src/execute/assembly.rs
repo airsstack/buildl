@@ -7,9 +7,11 @@
 //! start and recorded when it is done.
 //!
 //! Responsibilities: [`execute`]; the flag that keeps workers from beginning anything once the
-//! build has stopped; the bookkeeping between two results — which targets wait to be settled,
-//! which have their outcome, and the one error that fails the whole build; and refusing to
-//! report a build whose dispatcher returned with a target left without an outcome.
+//! build has stopped, and the place of the one action shown as it prints; the bookkeeping
+//! between two results — which targets wait to be settled, which have their outcome, and the
+//! one error that fails the whole build; having the build reported as it goes, an outcome only
+//! once its event is logged; and refusing to report a build whose dispatcher returned with a
+//! target left without an outcome.
 //!
 //! Non-responsibilities: what each step decides. Each has its own sibling file.
 
@@ -20,14 +22,15 @@ use crate::error::{Error, Result};
 use crate::execute::admission::admit;
 use crate::execute::expand::{Lists, expand, expand_description};
 use crate::execute::layout::Layout;
-use crate::execute::perform::{Ended, Performed, Task, Worked, perform};
-use crate::execute::record::{Progress, append, failed, restore, skipped, store};
+use crate::execute::perform::{Ended, Performed, Shared, Task, Told, Worked, perform};
+use crate::execute::record::{Progress, append, failed, restore, shown, skipped, store};
 use crate::execute::schedule::{Finish, Schedule};
 use crate::execute::settle::{Settled, settle};
-use crate::ports::{Dispatcher, Manifest, PortSet, Ports};
+use crate::ports::{Dispatcher, Manifest, PortSet, Ports, Reporter};
 use crate::types::{
-    ActionOutcome, Ceiling, Command, EnvName, EnvValue, ExpandedDescription, Label, Node, NodeId,
-    OnFailure, OutputPath, OwnComponents, Plan, PlannedKey, ReadyAction, TargetGraph, Verdict,
+    ActionOutcome, Captured, Ceiling, Command, EnvName, EnvValue, ExpandedDescription, Label,
+    LiveOutput, Node, NodeId, OnFailure, OutcomeEvent, OutputPath, OwnComponents, Plan, PlannedKey,
+    ReadyAction, Summary, TargetGraph, Turn, Verdict,
 };
 
 /// Builds every target of `graph` as `plan` says, and returns one outcome per target, in id
@@ -55,37 +58,57 @@ use crate::types::{
 /// settings `plan` holds, and handed to the strategy with it; expanding one cannot fail, and it
 /// is no part of the key.
 ///
+/// `whole` is the graph of the whole workspace, the one `graph` was narrowed from, or `graph`
+/// itself. A target of `whole` that `graph` leaves out is no part of the build: it has no
+/// outcome, no event and no row, and whatever it left in the workspace stays.
+///
+/// The build is shown through the reporter port, always from the calling thread: that it begins,
+/// once nothing can refuse it any more; each action as a worker begins it; each target's outcome,
+/// once its event is logged; and the count of the outcomes last, unless the build ends in an
+/// error. An outcome is reported with what its action printed, read back from the content store,
+/// for a target that ran as for one that is cached.
+///
+/// Under [`LiveOutput::OneAction`] one running action at a time is shown as it prints: what it
+/// writes is reported while it runs, and its outcome is then reported with nothing left to show.
+/// The outcome of a target that ends meanwhile is logged at once and reported after that
+/// action's. What is stored and what is returned are the same under either choice.
+///
 /// # Errors
 ///
 /// Before anything runs, returns the first failure met, in this order:
 ///
 /// 1. [`Error::ForeignPlan`] when `plan` was not made from `graph`;
 /// 2. whatever the manifest port returns;
-/// 3. [`Error::OutputConflict`] when two outputs would be written to one place;
+/// 3. [`Error::OutputConflict`] when two outputs of `whole` would be written to one place;
 /// 4. for the first target, in id order, whose expanded command cannot run:
 ///    [`Error::NoProgram`] when it names no program, and [`Error::Refused`] when the program
 ///    is outside the workspace's ceiling.
 ///
 /// Once the build is under way, returns the first of: the log port's failure to append an
 /// event; [`Error::CanonicalJson`] for a key that cannot be serialized; [`Error::Adapter`],
-/// naming the action cache, for a dependency that succeeded and has no row; and the content
-/// store's failure to read the manifest of a recorded output. After such an error no port is
-/// asked anything more. Otherwise returns whatever the dispatcher port itself returns.
+/// naming the action cache, for a dependency that succeeded and has no row; the content
+/// store's failure to read the manifest of a recorded output; and its failure to read what a
+/// target printed, which is [`Error::Adapter`] naming the content store when that content is
+/// no longer held. After such an error no port is asked anything more, and no count is
+/// reported. Otherwise returns whatever the dispatcher port itself returns.
 ///
 /// When the dispatcher returns success and a target has no outcome, returns
 /// [`Error::DispatcherFault`] naming those targets: the port's contract is that every task is
 /// run and every result reaches the build, so a build never reports success, or a summary,
 /// with a target missing. What ended before is recorded and logged already, and stays.
 pub fn execute<P: Ports>(
+    whole: &TargetGraph,
     graph: &TargetGraph,
     plan: &Plan,
     on_failure: OnFailure,
+    live: LiveOutput,
     ports: &mut PortSet<P>,
 ) -> Result<Vec<ActionOutcome>> {
     if !made_from(plan, graph) {
         return Err(Error::ForeignPlan);
     }
     let workspace = ports.manifest.workspace()?;
+    Layout::of(whole, &workspace.out)?;
     let layout = Layout::of(graph, &workspace.out)?;
     let targets = prepared(graph, plan, &layout, &workspace.ceiling)?;
 
@@ -96,10 +119,19 @@ pub fn execute<P: Ports>(
         strategy,
         dispatcher,
         clock,
+        reporter,
         ..
     } = ports;
     let (cas, strategy, clock) = (&*cas, &*strategy, &*clock);
     let stop = AtomicBool::new(false);
+    let place = AtomicBool::new(false);
+    let shared = Shared {
+        stop: &stop,
+        live: match live {
+            LiveOutput::Off => None,
+            LiveOutput::OneAction => Some(&place),
+        },
+    };
     let mut build = Build::<P> {
         graph,
         targets,
@@ -112,11 +144,15 @@ pub fn execute<P: Ports>(
         cas,
         log,
         clock,
-        stop: &stop,
+        reporter,
+        shared,
+        live: None,
+        held: Vec::new(),
     };
+    build.reporter.begun(graph.len());
     let dispatched = dispatcher.dispatch(
-        |task| perform(task, strategy, cas, clock, &stop),
-        |worked| build.step(worked),
+        |task, tell| perform(task, strategy, cas, clock, shared, tell),
+        |turn| build.step(turn),
     );
     build.outcomes(dispatched)
 }
@@ -285,29 +321,42 @@ struct Build<'a, P: Ports> {
     log: &'a mut P::Log,
     /// The clock, shared with the workers.
     clock: &'a P::Clock,
-    /// Set once nothing more may begin; the workers read it.
-    stop: &'a AtomicBool,
+    /// What shows the build. Only this thread calls it.
+    reporter: &'a mut P::Reporter,
+    /// What the workers read: whether anything more may begin, and the place of the action
+    /// shown live.
+    shared: Shared<'a>,
+    /// The target whose action is being shown live: set when the first of what it printed is
+    /// reported, cleared when its outcome is.
+    live: Option<NodeId>,
+    /// The events of targets that ended while another was being shown live, oldest first:
+    /// logged already, and reported once that one has ended.
+    held: Vec<OutcomeEvent>,
 }
 
 impl<P: Ports> Build<'_, P> {
-    /// Takes one turn: `None` to begin the build, then the result of each task. Returns the
-    /// tasks that became ready.
+    /// Takes one turn: the beginning of the build, then each thing a worker says and the result
+    /// of each task. Returns the tasks that became ready.
     ///
     /// Once an error has failed the build, a turn does nothing: no port is asked anything, a
-    /// result is dropped, and no task is returned.
-    fn step(&mut self, worked: Option<Worked>) -> Vec<Task> {
+    /// message or a result is dropped, and no task is returned.
+    fn step(&mut self, turn: Turn<Told, Worked>) -> Vec<Task> {
         if self.fatal.is_some() {
             return Vec::new();
         }
         let mut tasks = Vec::new();
-        let stepped = match worked {
-            None => {
+        let stepped = match turn {
+            Turn::Begin => {
                 let started = self.schedule.start();
                 self.queue.extend(started);
                 self.drain(&mut tasks)
             }
-            Some(Worked::NotBegun(node)) => self.abandon(node),
-            Some(Worked::Performed(performed)) => self
+            Turn::Told(told) => {
+                self.told(told);
+                Ok(())
+            }
+            Turn::Done(Worked::NotBegun(node)) => self.abandon(node),
+            Turn::Done(Worked::Performed(performed)) => self
                 .record(*performed)
                 .and_then(|()| self.drain(&mut tasks)),
         };
@@ -315,8 +364,30 @@ impl<P: Ports> Build<'_, P> {
             Ok(()) => tasks,
             Err(error) => {
                 self.fatal = Some(error);
-                self.stop.store(true, Ordering::SeqCst);
+                self.shared.stop.store(true, Ordering::SeqCst);
                 Vec::new()
+            }
+        }
+    }
+
+    /// Reports what a worker said about an action it is running: that it began, or what the
+    /// action shown live just wrote.
+    fn told(&mut self, told: Told) {
+        match told {
+            Told::Began(node) => {
+                if let Some(target) = self.targets.get(node.index()) {
+                    self.reporter.started(&target.action);
+                }
+            }
+            Told::Printed {
+                node,
+                channel,
+                bytes,
+            } => {
+                if let Some(target) = self.targets.get(node.index()) {
+                    self.live = Some(node);
+                    self.reporter.printed(&target.node.label, channel, &bytes);
+                }
             }
         }
     }
@@ -374,6 +445,7 @@ impl<P: Ports> Build<'_, P> {
             return Ok(());
         };
         let label = target.node.label.clone();
+        let was_live = performed.live;
         let progress = Progress::Began {
             key: performed.key.digest(),
             span: performed.span,
@@ -394,7 +466,13 @@ impl<P: Ports> Build<'_, P> {
                 printed,
             } => failed(label, class, diagnostic, printed),
         };
-        self.finish(node, progress, outcome)
+        self.finish(node, progress, outcome)?;
+        if was_live && let Some(place) = self.shared.live {
+            // Given back only now, with the outcome reported: the next action to take the
+            // place cannot have anything it prints shown before this one has ended.
+            place.store(false, Ordering::SeqCst);
+        }
+        Ok(())
     }
 
     /// Gives `node` its outcome, and tells the schedule how it finished: every target that
@@ -412,7 +490,7 @@ impl<P: Ports> Build<'_, P> {
             self.skip(skipped_node, node)?;
         }
         if self.schedule.stopped().is_some() {
-            self.stop.store(true, Ordering::SeqCst);
+            self.shared.stop.store(true, Ordering::SeqCst);
         }
         self.queue.extend(effects.started);
         Ok(())
@@ -441,7 +519,8 @@ impl<P: Ports> Build<'_, P> {
         self.conclude(node, Progress::Skipped, outcome)
     }
 
-    /// Keeps `outcome` as the outcome of `node`, and appends its event to the log.
+    /// Keeps `outcome` as the outcome of `node`, appends its event to the log, and only then
+    /// has it reported.
     fn conclude(&mut self, node: NodeId, progress: Progress, outcome: ActionOutcome) -> Result<()> {
         let (Some(target), Some(slot)) = (
             self.targets.get(node.index()),
@@ -450,14 +529,53 @@ impl<P: Ports> Build<'_, P> {
             return Ok(());
         };
         *slot = Some(outcome.clone());
-        append(
+        let event = append(
             self.log,
             self.clock,
             &target.node.provenance,
             &target.action.command,
             progress,
             outcome,
-        )
+        )?;
+        self.show(node, event)
+    }
+
+    /// Reports the event of `node`, at once unless another target is being shown live.
+    ///
+    /// While one is, the event is held, so that nothing is shown in the middle of what that
+    /// action prints. When `node` is the one shown live, its event is reported with nothing
+    /// left to show, since all of it was shown as it was written, and then every held event is
+    /// reported, oldest first.
+    fn show(&mut self, node: NodeId, event: OutcomeEvent) -> Result<()> {
+        match self.live {
+            Some(live) if live != node => {
+                self.held.push(event);
+                Ok(())
+            }
+            Some(_) => {
+                self.reporter.finished(&event, Captured::default());
+                self.live = None;
+                let held = core::mem::take(&mut self.held);
+                held.iter().try_for_each(|event| self.report(event))
+            }
+            None => self.report(&event),
+        }
+    }
+
+    /// Reports `event` with what its action printed, read back from the content store: for a
+    /// target that ran as for one that is cached.
+    fn report(&mut self, event: &OutcomeEvent) -> Result<()> {
+        let label = &event.outcome.label;
+        let stdout = shown(self.cas, label, event.outcome.stdout)?;
+        let stderr = shown(self.cas, label, event.outcome.stderr)?;
+        self.reporter.finished(
+            event,
+            Captured {
+                stdout: &stdout,
+                stderr: &stderr,
+            },
+        );
+        Ok(())
     }
 
     /// What the build comes to, once the dispatcher has returned with `dispatched`: the error
@@ -476,7 +594,9 @@ impl<P: Ports> Build<'_, P> {
         if !targets.is_empty() {
             return Err(Error::DispatcherFault { targets });
         }
-        Ok(self.outcomes.into_iter().flatten().collect())
+        let outcomes: Vec<ActionOutcome> = self.outcomes.into_iter().flatten().collect();
+        self.reporter.summary(Summary::of(&outcomes));
+        Ok(outcomes)
     }
 }
 

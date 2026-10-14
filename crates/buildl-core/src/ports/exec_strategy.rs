@@ -14,7 +14,7 @@
 
 use crate::error::Result;
 use crate::ports::ContentStore;
-use crate::types::{Found, RawOutcome, ReadyAction};
+use crate::types::{Found, LiveSink, RawOutcome, ReadyAction};
 
 /// Runs one action in a directory of its own, says what the action left at its output paths,
 /// and stores the regular files among it.
@@ -55,14 +55,26 @@ pub trait ExecStrategy: Send + Sync {
     /// them, and nothing but the command writes there before
     /// [`collect`](ExecStrategy::collect) looks.
     ///
-    /// A command that ran and failed is not an error: it is an outcome with a non-zero status.
+    /// A command that ran and failed is not an error: it is an outcome with a non-zero status,
+    /// or with the signal that ended it.
+    ///
+    /// With `live`, every run of bytes the command writes is also handed to it as it is read,
+    /// with the output it was written to, before the command has ended. `live` may be called
+    /// from any thread, until this call returns. What is returned is the same with or without
+    /// it: for each of the two outputs, the bytes handed to `live`, joined in the order they
+    /// were handed over, are exactly the bytes of that output in the result.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Adapter`](crate::Error::Adapter), naming
     /// [`PortName::ExecStrategy`](crate::PortName::ExecStrategy), when the command cannot be
     /// started.
-    fn run(&self, dir: &Self::Dir, action: &ReadyAction) -> Result<RawOutcome>;
+    fn run(
+        &self,
+        dir: &Self::Dir,
+        action: &ReadyAction,
+        live: Option<LiveSink<'_>>,
+    ) -> Result<RawOutcome>;
 
     /// Says what the action left at each path of its `outputs`, one entry per path, in order,
     /// and stores into `cas` the bytes of every regular file it reports.

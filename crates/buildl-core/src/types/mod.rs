@@ -8,6 +8,7 @@
 //! Responsibilities:
 //!
 //! - [`Digest`] — the single SHA-256 identity for files, outputs, keys and log blobs.
+//! - [`Hasher`] — that digest, taken over bytes handed in pieces.
 //! - [`Directory`] — a workspace-relative directory path.
 //! - [`TargetName`] — the name half of a label.
 //! - [`Label`] — a target's absolute name.
@@ -22,6 +23,7 @@
 //! - [`Program`] — the name of a program a command runs; [`EnvValue`] — an environment
 //!   variable's value; [`Platform`] — the operating system and architecture actions run on.
 //! - [`FileStat`] and [`StatEntry`] — a file's metadata, and a digest recorded beside it.
+//! - [`InputStat`] and [`InputKind`] — what stands at the path of a declared input.
 //! - [`Diagnostic`] — an adapter's message for a failure, carried for display only.
 //! - [`Written`] — text exactly as a build file wrote it, typed by what it is meant to become.
 //! - [`Declaration`] and its parts — what a build file declared, validated.
@@ -42,10 +44,17 @@
 //!   output path.
 //! - [`ReadyAction`] — one action as an execution strategy is handed it; [`RawOutcome`] and
 //!   [`Exit`] — what the strategy reports back.
+//! - [`Channel`] — which of its two outputs a command wrote to; [`LiveSink`] — where a strategy
+//!   hands what a running command writes; [`Captured`] — what an action printed, as whoever
+//!   shows it is handed it.
 //! - [`OnFailure`] — what a build does with the rest of its targets once one has failed.
+//! - [`Scope`] — which targets of a workspace one run works on; [`LiveOutput`] — whether a build
+//!   shows what an action prints while the action is still running.
 //! - [`ActionOutcome`], [`OutcomeClass`], [`InfraKind`] and [`OutputRefusal`] — how the build of
 //!   one target ended; [`Summary`] — the count of a build's outcomes.
 //! - [`OutcomeEvent`] — one line of the build log: an outcome, with when and under which key.
+//! - [`Turn`] — what a dispatcher hands the thread that schedules a build, each time it hands
+//!   it something.
 //!
 //! Non-responsibilities: decisions between different concepts. A type here validates and renders
 //! itself, and may combine values of its own kind; logic that needs two different concepts to
@@ -61,6 +70,8 @@ pub mod argument;
 pub mod authority;
 pub mod build_file;
 pub mod cache_row;
+pub mod captured;
+pub mod channel;
 pub mod declaration;
 pub mod description;
 pub mod diagnostic;
@@ -72,8 +83,11 @@ pub mod env_value;
 pub mod field_name;
 pub mod file_stat;
 pub mod found;
+pub mod input_stat;
 pub mod isolation;
 pub mod label;
+pub mod live_output;
+pub mod live_sink;
 pub mod node_id;
 pub mod on_failure;
 pub mod outcome;
@@ -87,6 +101,7 @@ pub mod program;
 pub mod provenance;
 pub mod raw_outcome;
 pub mod ready_action;
+pub mod scope;
 pub mod setting;
 pub mod source_path;
 pub mod stored_file;
@@ -96,6 +111,7 @@ pub mod timeout;
 pub mod timestamp;
 pub mod tree;
 pub mod tree_path;
+pub mod turn;
 pub mod workers;
 pub mod workspace;
 pub mod written;
@@ -110,13 +126,15 @@ pub use build_file::{
     StagedRule, StagedSetting, StagedSubdir, StagedTarget,
 };
 pub use cache_row::CacheRow;
+pub use captured::Captured;
+pub use channel::Channel;
 pub use declaration::{
     Action, Alias, Declaration, Declared, Freshness, NetworkAccess, Rule, Setting, Target,
     TargetRole,
 };
 pub use description::{Description, ExpandedDescription};
 pub use diagnostic::Diagnostic;
-pub use digest::Digest;
+pub use digest::{Digest, Hasher};
 pub use directory::Directory;
 pub use entry_name::EntryName;
 pub use env_name::EnvName;
@@ -124,8 +142,11 @@ pub use env_value::EnvValue;
 pub use field_name::FieldName;
 pub use file_stat::{FileStat, StatEntry};
 pub use found::{Found, FoundEntry, FoundKind};
+pub use input_stat::{InputKind, InputStat};
 pub use isolation::Isolation;
 pub use label::Label;
+pub use live_output::LiveOutput;
+pub use live_sink::LiveSink;
 pub use node_id::NodeId;
 pub use on_failure::OnFailure;
 pub use outcome::{ActionOutcome, InfraKind, OutcomeClass, OutputRefusal, Summary};
@@ -139,6 +160,7 @@ pub use program::Program;
 pub use provenance::Provenance;
 pub use raw_outcome::{Exit, RawOutcome};
 pub use ready_action::ReadyAction;
+pub use scope::Scope;
 pub use setting::{SettingName, SettingValue};
 pub use source_path::SourcePath;
 pub use stored_file::{FileMode, StoredFile};
@@ -148,6 +170,7 @@ pub use timeout::Timeout;
 pub use timestamp::Timestamp;
 pub use tree::{Tree, TreeEntry};
 pub use tree_path::TreePath;
+pub use turn::Turn;
 pub use workers::Workers;
 pub use workspace::{Execution, Workspace};
 pub use written::Written;
