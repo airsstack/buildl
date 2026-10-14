@@ -3,7 +3,7 @@
 //! Its own directory because it is the only module that names more than one phase: the phases
 //! communicate through values, and the pipeline is what passes each one's output to the next.
 //!
-//! Responsibilities: [`Pipeline`], [`check`] and [`graph`].
+//! Responsibilities: [`Pipeline`], [`check`], [`graph`] and [`query`].
 //!
 //! Non-responsibilities: any phase's logic, and any port's implementation.
 //!
@@ -11,4 +11,4 @@
 
 pub mod driver;
 
-pub use driver::{Pipeline, check, graph};
+pub use driver::{Pipeline, check, graph, query};

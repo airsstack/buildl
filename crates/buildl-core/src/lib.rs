@@ -26,10 +26,10 @@
 //! | [`json`] | the one canonical serializer every byte of output goes through, and the one reader that takes such bytes back |
 //! | [`ports`] | every trait in the crate: the ports through which everything outside it is reached, and the bundle that names one implementation of each, with the set that holds one instance of each |
 //! | [`load`](mod@load) | Load, the first phase: build files to validated, sorted declarations |
-//! | [`resolve`](mod@resolve) | Resolve, the second phase: declarations to the target graph, and that graph cut down to the targets one run was asked for |
+//! | [`resolve`](mod@resolve) | Resolve, the second phase: declarations to the target graph, that graph cut down to the targets one run was asked for, and the targets a query reaches |
 //! | [`plan`](mod@plan) | Plan, the third phase: the target graph to a verdict per target, with what the build wants |
 //! | [`execute`](mod@execute) | Execute and Record, the last phase: a plan to one outcome per target, each result recorded as the last step of its action and reported once it is logged |
-//! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command, and the two commands that reach only build files as functions over a source alone |
+//! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command, and the three commands that reach only build files as functions over a source alone |
 //!
 //! Each phase has its own module, named for the phase. Five rules keep that arrangement
 //! navigable:
@@ -86,9 +86,11 @@
 //! last. Under [`LiveOutput::OneAction`] one running action at a time is shown as it prints. An
 //! action a signal ended fails its target as [`OutcomeClass::Killed`], and an input that is not a
 //! regular file is refused by Plan from what the [`Digester`] reports as an [`InputStat`].
-//! [`Hasher`] takes the digest of bytes handed in pieces. [`pipeline::check`] and
-//! [`pipeline::graph`] run the first two commands for a caller that holds only a
-//! [`DeclarationSource`].
+//! [`Hasher`] takes the digest of bytes handed in pieces. A [`Query`], `deps` or `rdeps` of one
+//! target, asks which targets that target needs or which need it: [`reach`](fn@reach) answers it
+//! over a [`TargetGraph`], in the [`Direction`] it names. [`pipeline::check`], [`pipeline::graph`]
+//! and [`pipeline::query`] run the three commands that reach only build files for a caller that
+//! holds only a [`DeclarationSource`].
 //!
 //! This file holds only module declarations and re-exports, so it carries no logic to
 //! unit-test.
@@ -115,16 +117,16 @@ pub use ports::{
     ActionCache, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
     ExecStrategy, GraphRecord, Host, Manifest, PortSet, Ports, Reporter, StatCache, ToolResolver,
 };
-pub use resolve::{narrow, resolve};
+pub use resolve::{narrow, reach, resolve};
 pub use types::{
     Action, ActionKey, ActionOutcome, Alias, Argument, BuildFile, CacheRow, Captured, Ceiling,
     Channel, Command, Declaration, DeclarationOrder, Declared, DepProducts, Description,
-    Diagnostic, Difference, Digest, Directory, DirtyReason, EntryName, EnvName, EnvValue,
-    Evaluated, Execution, Exit, ExpandedDescription, FieldName, FileMode, FileStat, Found,
-    FoundEntry, FoundKind, Freshness, Hasher, InfraKind, InputDigest, InputKind, InputStat,
+    Diagnostic, Difference, Digest, Direction, Directory, DirtyReason, EntryName, EnvName,
+    EnvValue, Evaluated, Execution, Exit, ExpandedDescription, FieldName, FileMode, FileStat,
+    Found, FoundEntry, FoundKind, Freshness, Hasher, InfraKind, InputDigest, InputKind, InputStat,
     Isolation, KeyComponents, Label, LiveOutput, LiveSink, NetworkAccess, Node, NodeId, OnFailure,
     OutcomeClass, OutcomeEvent, OutputManifest, OutputName, OutputPath, OutputRefusal,
-    OwnComponents, Plan, PlannedKey, Platform, Produced, Program, Provenance, RawOutcome,
+    OwnComponents, Plan, PlannedKey, Platform, Produced, Program, Provenance, Query, RawOutcome,
     ReadyAction, Rule, Scope, Setting, SettingName, SettingValue, SourcePath, StagedAlias,
     StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir,
     StagedTarget, StatEntry, StoredFile, Summary, Target, TargetGraph, TargetName, TargetRole,

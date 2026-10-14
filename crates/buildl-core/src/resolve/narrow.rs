@@ -12,9 +12,9 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use crate::error::{Error, Result};
-use crate::resolve::suggest::nearest;
-use crate::types::{Label, NodeId, Scope, TargetGraph};
+use crate::error::Result;
+use crate::resolve::reach::{closure, unknown_target};
+use crate::types::{NodeId, Scope, TargetGraph};
 
 /// The graph of what `scope` asks for: `graph` itself for [`Scope::Workspace`], and otherwise
 /// the targets its labels name, each directly or as an alias, with everything they depend on.
@@ -26,25 +26,21 @@ use crate::types::{Label, NodeId, Scope, TargetGraph};
 ///
 /// # Errors
 ///
-/// Returns [`Error::UnknownTarget`] for the first label of `scope`, in label order, that names
-/// neither a target nor an alias of `graph`.
+/// Returns [`Error::UnknownTarget`](crate::Error::UnknownTarget) for the first label of `scope`,
+/// in label order, that names neither a target nor an alias of `graph`.
 pub fn narrow<'g>(graph: &'g TargetGraph, scope: &Scope) -> Result<Cow<'g, TargetGraph>> {
     let Scope::Targets(labels) = scope else {
         return Ok(Cow::Borrowed(graph));
     };
-    let mut wanted = vec![false; graph.len()];
-    let mut stack = labels
+    let starts = labels
         .iter()
-        .map(|label| graph.id_of(label).ok_or_else(|| unknown(graph, label)))
+        .map(|label| {
+            graph
+                .id_of(label)
+                .ok_or_else(|| unknown_target(graph, label))
+        })
         .collect::<Result<Vec<NodeId>>>()?;
-    while let Some(id) = stack.pop() {
-        if let Some(seen) = wanted.get_mut(id.index())
-            && !*seen
-        {
-            *seen = true;
-            stack.extend(graph.deps(id).unwrap_or_default());
-        }
-    }
+    let wanted = closure(graph, starts, TargetGraph::deps);
 
     let renumbered: BTreeMap<NodeId, NodeId> = (0_u32..)
         .map(NodeId::new)
@@ -81,19 +77,6 @@ pub fn narrow<'g>(graph: &'g TargetGraph, scope: &Scope) -> Result<Cow<'g, Targe
         aliases,
         graph.settings().clone(),
     )))
-}
-
-/// The error for `label`, which names nothing in `graph`, with the nearest label that does.
-fn unknown(graph: &TargetGraph, label: &Label) -> Error {
-    let declared = graph
-        .nodes()
-        .iter()
-        .map(|node| &node.label)
-        .chain(graph.aliases().keys());
-    Error::UnknownTarget {
-        label: label.clone(),
-        suggestion: nearest(&label.to_string(), declared).cloned(),
-    }
 }
 
 #[cfg(test)]

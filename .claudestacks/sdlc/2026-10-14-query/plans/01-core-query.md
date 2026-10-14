@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-14
 built-on: 050ed7322c38
 ---
@@ -281,3 +281,29 @@ green, and `cargo deny check` is green. Commit
   with `//:main.o`, `//lib:text`.
 - `git diff --stat main -- crates/expected-module-edges.txt crates/expected-edges.txt` is empty:
   no new edge.
+
+## Review findings
+
+- doc-comment-discipline — `driver.rs` module doc named the three commands twice — `crates/buildl-core/src/pipeline/driver.rs:8` — fixed; verified by `cargo fmt --all -- --check` (clean) and `RUSTDOCFLAGS="-D warnings" cargo doc -p buildl-core --no-deps` (Generated …/buildl_core/index.html)
+- doc-comment-discipline — `narrow`'s `# Errors` line ran to 127 columns — `crates/buildl-core/src/resolve/narrow.rs:29` — fixed (rewrapped at 100); same doc run as above
+- doc-comment-discipline — a `reach.rs` module-doc line ran past 100 columns — `crates/buildl-core/src/resolve/reach.rs:4` — fixed (rewrapped); same doc run as above
+- unit-test-mandate — no test covers clearing the start's own flag in `closure`; the line cannot run, since `TargetGraph::new` admits no cycle — `crates/buildl-core/src/resolve/reach.rs:42` — kept as spec §3.2 asks; no change
+- style — test imports grouped out of order — `crates/buildl-core/src/resolve/reach.rs:96` — fixed (std first, crate groups merged); `cargo test -p buildl-core --lib resolve::` → `test result: ok. 73 passed; 0 failed`
+- unit-test-mandate — `assert!(matches!(…))` had no failure message — `crates/buildl-core/src/resolve/reach.rs:216` — fixed (`"{err:?}"`); same test run as above
+- strict-quality — `assert!(answer.is_empty())` instead of the house `assert_eq!` form — `crates/buildl-core/tests/flows/query.rs:77` — fixed; `cargo test -p buildl-core --test flows query` → `test result: ok. 5 passed; 0 failed`, and `cargo clippy -p buildl-core --all-targets --all-features -- -D warnings` finished clean
+- amendment hygiene — the accepted `narrow.rs` import deviation was not written into the plan — Task 3 — recorded under Deviations below
+- spec drift, allowed by the plan — `pipeline::query`'s parameter is `asked`, not spec §3.3's `query` — Task 5 — no change; Task 5 directs it
+
+## Probe results
+
+No throwaway probe was needed: every behavioural claim the tasks rest on sits under a test the plan names, and each coder's red-green run of it was the probe.
+
+- `TargetGraph::deps` / `TargetGraph::dependents` coerce to `fn(&TargetGraph, NodeId) -> Option<&[NodeId]>` under elision (Risks) — settled by compiling `closure`'s callers in Task 3; `cargo clippy -p buildl-core --all-targets --all-features -- -D warnings` clean. Holds.
+- `//:tpo` suggests `//:top` within `suggest::nearest`'s limit — `a_target_naming_nothing_is_refused_with_the_nearest_one` passes. Holds.
+- Full gate after Task 5: `cargo make dod` → exit 0, 1225 tests passed, 0 failed, 0 warnings; `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`.
+
+## Deviations
+
+- 2026-10-14 — Task 3: the plan said `narrow.rs` keeps its `Error` import for the doc link at `narrow.rs:29`. With the private `unknown` moved out, that link was the import's only use, and clippy's `-D warnings` failed it as unused. The import was dropped and the link written as the explicit path `[`Error::UnknownTarget`](crate::Error::UnknownTarget)`, as `output_manifest.rs` does. Behaviour unchanged. The claim belonged to the plan alone, not to the spec, so no `disproves` marker was written.
+- 2026-10-14 — Execution order: the plan's tasks ran one coder at a time in plan order; the Definition of Done and the review ran once over all five tasks rather than per task. Tasks 2 and 3 have disjoint files but share a crate, so a red test in one would stop the other compiling.
+- 2026-10-14 — Commits: the plan asks for one commit per task. Nothing was committed during execution; committing is left to the author.

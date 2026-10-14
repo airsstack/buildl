@@ -5,24 +5,25 @@
 //! Execute.
 //!
 //! Responsibilities: [`Pipeline`], its ports, [`Pipeline::check`], [`Pipeline::graph`],
-//! [`Pipeline::plan`] and [`Pipeline::build`]; and [`check`] and [`graph`], the two commands
-//! that reach nothing but build files, for a caller that holds only a source of them.
+//! [`Pipeline::query`], [`Pipeline::plan`] and [`Pipeline::build`]; and [`check`], [`graph`] and
+//! [`query`], the three commands that reach only build files, for a caller that holds only a
+//! source of them.
 //!
 //! Non-responsibilities: the phases' own logic, which each phase's module holds.
 
 use core::cmp::min_by;
 use core::fmt;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{Error, Result};
 use crate::execute::execute;
 use crate::load::{declaration_order, load};
 use crate::plan::plan;
 use crate::ports::{DeclarationSource, GraphRecord, PortSet, Ports};
-use crate::resolve::{narrow, resolve};
+use crate::resolve::{narrow, reach, resolve};
 use crate::types::{
-    ActionOutcome, Declaration, EntryName, LiveOutput, OnFailure, Plan, Scope, SettingName,
-    SettingValue, TargetGraph,
+    ActionOutcome, Declaration, EntryName, Label, LiveOutput, OnFailure, Plan, Query, Scope,
+    SettingName, SettingValue, TargetGraph,
 };
 
 /// The pipeline over one chosen implementation of each port.
@@ -86,6 +87,17 @@ impl<P: Ports> Pipeline<P> {
     /// dependency cycle.
     pub fn graph(&self, entry: &EntryName) -> Result<TargetGraph> {
         graph(&self.ports.source, entry)
+    }
+
+    /// Loads the workspace once, resolves it, and answers `asked`: the targets it reaches, in
+    /// label order, without the target it names.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever [`Pipeline::graph`] returns, and [`Error::UnknownTarget`] when the target
+    /// `asked` names is neither a target nor an alias.
+    pub fn query(&self, entry: &EntryName, asked: &Query) -> Result<BTreeSet<Label>> {
+        query(&self.ports.source, entry, asked)
     }
 
     /// Loads the workspace once, resolves it, and plans a build of the part of the graph `scope`
@@ -174,6 +186,23 @@ pub fn check<S: DeclarationSource>(source: &S, entry: &EntryName) -> Result<Vec<
 /// Returns whatever the load returns, and otherwise whatever [`resolve`] returns.
 pub fn graph<S: DeclarationSource>(source: &S, entry: &EntryName) -> Result<TargetGraph> {
     resolve(load(source, entry)?)
+}
+
+/// Loads the workspace once through `source`, resolves it, and answers `asked`: what
+/// [`Pipeline::query`] does, for a caller that holds a source and no other port.
+///
+/// The answer is in label order and does not hold the target `asked` names.
+///
+/// # Errors
+///
+/// Returns whatever [`graph`] returns, and [`Error::UnknownTarget`] when the target `asked` names
+/// is neither a target nor an alias.
+pub fn query<S: DeclarationSource>(
+    source: &S,
+    entry: &EntryName,
+    asked: &Query,
+) -> Result<BTreeSet<Label>> {
+    reach(&graph(source, entry)?, asked)
 }
 
 /// The error naming the first place two sorted declaration lists differ, if they do.
