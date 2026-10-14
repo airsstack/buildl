@@ -100,7 +100,7 @@ graph LR
 
 |Intent|Crate|Scope|Done when|Status|
 |---|---|---|---|---|
-|I10|`buildl-core`, `buildl`, `buildl-cli`|`buildl query` with `deps()` and `rdeps()` over the whole graph, the start target and aliases left out, no lock and no state|the binary answers both functions on a fixture workspace|**in progress**|
+|I10|`buildl-core`, `buildl`, `buildl-cli`|`buildl query` with `deps()` and `rdeps()` over the whole graph, the start target and aliases left out, no lock and no state|the binary answers both functions on a fixture workspace|**done**, 2026-10-15 (§4)|
 |I11|`—`|`buildl test`, building and running the test targets (design §7, §9.1)|`—`|not started|
 |I12|`—`|`buildl log <target>`, what a target printed when it last ran (design §7, §8.7), which needs the build log read back|`—`|not started|
 |I13|`—`|`clean` drops outputs; `gc` prunes the cas by mark and sweep (architecture §3.5)|`—`|not started|
@@ -127,6 +127,7 @@ Ground rules for the ladder:
 |I7 Plan|`.claudestacks/sdlc/2026-10-10-core-plan/`|`01-small-values` (6 tasks), `02-action-key` (2 tasks), `03-authority-types` (1 task), `04-plan-types` (1 task), `05-plan-errors` (3 tasks), `06-ports` (5 tasks), `07-plan-checks` (3 tasks), `08-plan-gather` (2 tasks), `09-plan-verdicts` (3 tasks), `10-pipeline-plan` (3 tasks), `11-documentation` (6 tasks)|`05dbe53` … `4f130d5`|
 |I8 Execute + Record|`.claudestacks/sdlc/2026-10-11-core-execute-record/`|`01-handoff-types` (2 tasks), `02-outcome-types` (2 tasks), `03-cache-row` (1 task), `04-errors` (2 tasks), `05-ports` (7 tasks), `06-before-run` (3 tasks), `07-schedule` (2 tasks), `08-decisions` (3 tasks), `09-pipeline-build` (5 tasks), `10-documentation` (6 tasks)|`f88cd77` … `6e39019`|
 |I9 adapters + CLI|`.claudestacks/sdlc/2026-10-13-adapters-cli/`|`01-core-values` (11 tasks), `02-core-ports` (11 tasks), `03-core-pipeline` (11 tasks), `04-buildl-foundation` (8 tasks), `05-input-adapters` (10 tasks), `06-state-adapters` (10 tasks), `07-run-adapters` (15 tasks), `08-reporter` (14 tasks), `09-composition` (12 tasks), `10-end-to-end` (13 tasks), `11-cli` (10 tasks), `12-documentation` (32 tasks)|`538f21d` … `7801bfa`|
+|I10 query|`.claudestacks/sdlc/2026-10-14-query/`|`01-core-query` (5 tasks), `02-facade-query` (2 tasks), `03-cli-query` (5 tasks), `04-documentation` (5 tasks)|`d425500` … `e1a1113`|
 
 The plan file's `## Review findings`, `## Probe results` and `## Deviations` sections hold the full execution record. None of them leaves a follow-up open (§5).
 

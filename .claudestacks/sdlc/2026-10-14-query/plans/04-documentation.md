@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-14
 depends-on: [03]
 built-on: 050ed7322c38
@@ -232,3 +232,26 @@ As with earlier slices, the range in §4 does not include the commit that writes
 - `grep -rn '`query` / `rdeps`' docs README.md CLAUDE.md` and `grep -n '(§10.1)' docs/design.md`
   print nothing.
 - `grep -n '^### 3' docs/roadmap.md` shows `3.1` and `3.2`, and §3.2 shows I10 done.
+
+## Review findings
+
+- spec contradiction — `design.md`'s status line still said "Everything from item 2 on is described here and not built" while §7 now says `query` (item 2) is built — `docs/design.md:3` — fixed: "Of item 2, the `query` command is built. Everything else from item 2 on is described here and not built."
+- stale wording — under an empty ceiling "`check` and `graph` work" left out `query` — `docs/design.md:120` — fixed: "`check`, `graph` and `query` work".
+- stale wording — "`check`, `graph` and `plan` run nothing, and work under any strategy" left out `query`, unlike its README counterpart — `docs/design.md:130` — fixed: `query` added.
+- diagram gap — the `Pipeline~P~` class diagram listed no `query()` though `Pipeline::query` exists — `docs/architecture-building-blocks.md:367` — fixed: `query()` added between `graph()` and `plan()`.
+- stale cross-reference — milestone 1's row cited "(§3)"; its ladder is now §3.1 — `docs/roadmap.md:36` — fixed: "(§3.1)".
+- drift — "That is the first item of the roadmap" followed a command list that includes item 2's `query` — `README.md:7` — fixed: "the first item of the roadmap, with `query` from the second".
+- Verified after the fixes: `cargo make dod` → exit 0, 1239 tests passed, 0 failed, 0 warnings; `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`.
+
+## Probe results
+
+No throwaway probe was needed: every task's proof is a grep over the edited documents, run and shown.
+
+- Tasks 1–4 greps: `` `query` / `rdeps` `` and `(§10.1)` print nothing; `grep -c '|reach|'` is `1`; `query` in `CLAUDE.md` on lines 7 and 26 only, `I10–I15` on line 17; roadmap headings in order `## 1.`, `## 2.`, `## 3. Intent ladders`, `### 3.1 Milestone 1`, `### 3.2 Milestone 2`, `## 4.`, `## 5.`, `## 6.`, `## References`. Holds.
+- Task 5: `git log --reverse --format=%h main..HEAD` → `d425500` … `e1a1113`; both resolve as `commit`; §3.2 I10 row reads **done**, 2026-10-15 (§4), and §4 has the I10 row. Holds.
+
+## Deviations
+
+- 2026-10-15 — Task 4: the roadmap's opening line said the slices "break the first milestone" into units of work; it now says "each milestone", since milestone 2 has a ladder. Neither the plan nor spec §4 named this line.
+- 2026-10-15 — Review: spec §4's document table missed `design.md:3`, `:120`, `:130` and the ABB `Pipeline` class diagram; all four were fixed here (Review findings).
+- 2026-10-15 — Commits: tasks 1–4 landed as one commit (`e1a1113`) rather than one per task, after plan 03's commit (`eb12a1b`); task 5 is its own commit, outside the range it records.
