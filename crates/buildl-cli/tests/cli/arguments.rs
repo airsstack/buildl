@@ -87,6 +87,7 @@ fn help_names_every_command_and_flag() {
             "Commands:\n",
             "  check  Evaluate every build file twice and run nothing\n",
             "  graph  Print the target graph\n",
+            "  query  Ask what a target needs, or what needs it\n",
             "  plan   Say what a build would run, and why\n",
             "  build  Build targets and what they need\n",
             "  help   Print this message or the help of the given subcommand(s)\n",
@@ -125,6 +126,24 @@ fn each_command_has_its_help() {
                 "\n",
                 "      --dot\n",
                 "          Print the graph in Graphviz DOT\n",
+                "\n",
+                HELP_AND_VERSION,
+            ]
+            .concat(),
+        ),
+        (
+            "query",
+            [
+                "Ask what a target needs, or what needs it\n\n",
+                "Usage: buildl query [OPTIONS] <EXPR>\n\n",
+                "Arguments:\n",
+                "  <EXPR>\n",
+                "          deps(TARGET) for what TARGET needs, or rdeps(TARGET) for what needs it; TARGET as //dir:name, :name or name\n",
+                "\n",
+                "Options:\n",
+                COLOR,
+                "      --json\n",
+                "          Print the answer as canonical JSON\n",
                 "\n",
                 HELP_AND_VERSION,
             ]
@@ -183,6 +202,7 @@ fn no_command_prints_the_short_help_on_stderr() {
             "Commands:\n",
             "  check  Evaluate every build file twice and run nothing\n",
             "  graph  Print the target graph\n",
+            "  query  Ask what a target needs, or what needs it\n",
             "  plan   Say what a build would run, and why\n",
             "  build  Build targets and what they need\n",
             "  help   Print this message or the help of the given subcommand(s)\n",
@@ -246,6 +266,18 @@ fn a_refused_command_line_says_why_and_how_to_get_help() {
                 "  tip: a similar argument exists: '--keep-going'\n",
                 "\n",
                 "Usage: buildl build --keep-going [TARGET]...\n",
+                "\n",
+                "For more information, try '--help'.\n",
+            )
+            .to_owned(),
+        ),
+        (
+            &["query"][..],
+            concat!(
+                "error: the following required arguments were not provided:\n",
+                "  <EXPR>\n",
+                "\n",
+                "Usage: buildl query <EXPR>\n",
                 "\n",
                 "For more information, try '--help'.\n",
             )
@@ -405,6 +437,22 @@ fn the_workspace_is_found_from_a_subdirectory() {
     assert_eq!(fs::read(root.join("out/lib/words")).unwrap(), b"pear\n");
     assert!(!lib.join("out").exists());
     assert!(!lib.join(".buildl").exists());
+
+    // A target named without its directory is read against where the command started.
+    let from_lib = run(&lib, &["query", "deps(words)"], &[]);
+    assert_eq!(code(&from_lib), 0);
+    assert_eq!(stdout(&from_lib), "");
+    let rooted = run(&root, &["query", "rdeps(//lib:words)"], &[]);
+    assert_eq!(code(&rooted), 0);
+    assert_eq!(stdout(&rooted), "");
+    // `//lib:words` is 3 edits from `//:words`, past the suggestion limit, so none is made.
+    let bare = run(&root, &["query", "deps(words)"], &[]);
+    assert_eq!(code(&bare), 2);
+    assert_eq!(stdout(&bare), "");
+    assert_eq!(
+        stderr(&bare),
+        "error: target //:words was asked for but is not declared\n"
+    );
 }
 
 #[test]

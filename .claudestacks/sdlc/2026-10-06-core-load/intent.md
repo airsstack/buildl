@@ -1,6 +1,7 @@
 ---
 status: done
 created: 2026-10-06
+milestone: buildl/01
 ---
 
 # Intent: Load — from a workspace root to `Vec<Declaration>`

@@ -8,7 +8,8 @@
 //!
 //! - [`Cli`] and [`Command`] — the commands and the flags of each.
 //! - [`Color`] — when to colour what is printed, as asked for.
-//! - [`GraphArgs`], [`PlanArgs`], [`BuildArgs`] and [`Selection`] — the arguments of a command.
+//! - [`GraphArgs`], [`QueryArgs`], [`PlanArgs`], [`BuildArgs`] and [`Selection`] — the arguments
+//!   of a command.
 //! - [`Override`] and [`overrides`] — `--set NAME=VALUE`, and the settings of one run.
 //!
 //! Non-responsibilities: running a command, which the `run` module does; reading a target
@@ -53,6 +54,8 @@ pub(crate) enum Command {
     Check,
     /// Print the target graph
     Graph(GraphArgs),
+    /// Ask what a target needs, or what needs it
+    Query(QueryArgs),
     /// Say what a build would run, and why
     Plan(PlanArgs),
     /// Build targets and what they need
@@ -77,6 +80,17 @@ pub(crate) struct GraphFormat {
     /// Print the graph in Graphviz DOT
     #[arg(long)]
     pub dot: bool,
+}
+
+/// The arguments of `query`.
+#[derive(Debug, Args)]
+pub(crate) struct QueryArgs {
+    /// deps(TARGET) for what TARGET needs, or rdeps(TARGET) for what needs it; TARGET as //dir:name, :name or name
+    #[arg(value_name = "EXPR")]
+    pub expression: String,
+    /// Print the answer as canonical JSON
+    #[arg(long)]
+    pub json: bool,
 }
 
 /// What `plan` and `build` share: which targets, under which settings.

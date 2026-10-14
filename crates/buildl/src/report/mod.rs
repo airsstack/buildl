@@ -17,13 +17,14 @@
 //!   stream it is given, with [`Mode`] saying whether a status line is kept.
 //! - [`Silent`] — the reporter that shows nothing.
 //! - [`plan_text`] — a plan as lines for a person.
+//! - [`query_text`] — the answer to a query as lines for a person.
 //! - [`graph_dot`] — a target graph as Graphviz DOT.
 //! - [`check_line`] — what a check of the build files says when they are sound.
 //! - [`error_text`] — an error as a command shows it.
 //!
 //! Non-responsibilities: deciding what is reported and when, which the build does; choosing
 //! the stream, the mode and the colour, which the caller does; and the canonical JSON of a
-//! graph or a plan, which is the value's own serialized form.
+//! graph, a plan or a query's answer, which is the value's own serialized form.
 //!
 //! This file holds only module declarations and re-exports, so it carries no logic to unit-test.
 
@@ -32,6 +33,7 @@ mod dot;
 mod message;
 mod paint;
 mod plan_text;
+mod query_text;
 mod silent;
 mod terminal;
 
@@ -40,5 +42,6 @@ pub use dot::graph_dot;
 pub use message::{check_line, error_text};
 pub use paint::Paint;
 pub use plan_text::plan_text;
+pub use query_text::query_text;
 pub use silent::Silent;
 pub use terminal::{Mode, TerminalReporter};

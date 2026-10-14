@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-buildl is a sandboxed, deterministic build system whose build files are written in Lua and evaluated on the [airsl](https://github.com/airsstack/airsl) embedded runtime. The workspace holds four crates — `buildl-core`, `buildl-lua`, `buildl`, `buildl-cli` — with their dependency edges wired per `architecture-building-blocks.md` §7 (airsl `0.1`, only in `buildl-lua`; toolchain `stable`, `rust-version` 1.94), and the `cargo make dod` gate, `cargo deny` check and CI matrix are live. Milestone 1 is done: the `buildl` binary runs `check`, `graph`, `plan` and `build` on a real workspace, at isolation tier 1. What comes next is tracked in `docs/roadmap.md` §2; read it there rather than inferring a state from this file.
+buildl is a sandboxed, deterministic build system whose build files are written in Lua and evaluated on the [airsl](https://github.com/airsstack/airsl) embedded runtime. The workspace holds four crates — `buildl-core`, `buildl-lua`, `buildl`, `buildl-cli` — with their dependency edges wired per `architecture-building-blocks.md` §7 (airsl `0.1`, only in `buildl-lua`; toolchain `stable`, `rust-version` 1.94), and the `cargo make dod` gate, `cargo deny` check and CI matrix are live. Milestone 1 is done: the `buildl` binary runs `check`, `graph`, `plan` and `build` on a real workspace, at isolation tier 1. Milestone 2 has begun: `query` answers `deps()` and `rdeps()` over the target graph. What comes next is on the claudestacks-sdlc status board (`/claudestacks-sdlc:status`), which counts it from the roadmap under `.claudestacks/sdlc/roadmaps/buildl/` and the chains that name its milestones; read it there rather than inferring a state from this file.
 
 The pre-development blocker is **resolved** (2026-09-13): fine-grained per-file C/C++ compilation is out of scope for v1, and buildl's mechanism for dynamic input discovery is the **discovery target** (design §10) — a cached action whose output a later declaration pass consumes — not depfile parsing. See `docs/fundamental-walkthrough.md` §6 for the reasoning and design §13 for the scope note. Implementation may begin.
 
@@ -14,7 +14,7 @@ The pre-development blocker is **resolved** (2026-09-13): fine-grained per-file 
 - `docs/architecture.md` — how each part works in Rust: core types, phase implementations, error architecture, decision records (§6), determinism engineering rules (§5).
 - `docs/architecture-building-blocks.md` — how the parts are put together: C4 views, the four crates, ports and adapters, dependency rules, testing layers, publishing. Owns the workspace layout.
 - `docs/fundamental-walkthrough.md` — maps the design onto build-system theory (Build Systems à la Carte); names the depfile gap.
-- `docs/roadmap.md` — how the design §13 sequence is being built: milestone status, the milestone 1 intent ladder (I1–I9) with each slice's status, and the rule that findings are closed inside the slice that finds them, with nothing carried to a later slice. Update it whenever an SDLC chain changes state.
+- `.claudestacks/sdlc/roadmaps/buildl/` — the claudestacks-sdlc roadmap: `roadmap.md` (vision, non-goals) and one file per milestone — design §13 items 1–8 as `01`–`08`, and `09-first-publish`. A chain joins a milestone through the `milestone:` key in its `intent.md`. Progress is never written down: the status board counts it from the chains each time it runs.
 - `README.md` — condensed public summary of the design and architecture documents. Keep it consistent with the docs when either changes.
 
 Section cross-references between the docs (e.g. "design §8.5", "§12.4 ledger") are load-bearing — preserve them when renumbering or restructuring.
@@ -23,7 +23,7 @@ Section cross-references between the docs (e.g. "design §8.5", "§12.4 ledger")
 
 **Declare, then execute.** Build files (Lua) only *declare* targets; the Rust host schedules, sandboxes, parallelizes, and caches. Lua never runs a compiler or holds a real artifact path. The founding constraint, inherited from airsl: **nothing is ambient** — authority is derived from the build graph (the "wanted set"), intersected with the workspace ceiling in `buildl.toml`, never requested per-file.
 
-**Pipeline:** Load → Resolve → Plan → Execute → Record. Phases communicate through serializable values (`Vec<Declaration>` → `TargetGraph` → `Plan` → `Vec<ActionOutcome>`), never by calling each other; each CLI command (`check`/`graph`/`plan`/`build`) is the pipeline truncated at a handoff.
+**Pipeline:** Load → Resolve → Plan → Execute → Record. Phases communicate through serializable values (`Vec<Declaration>` → `TargetGraph` → `Plan` → `Vec<ActionOutcome>`), never by calling each other; each CLI command (`check`/`graph`/`query`/`plan`/`build`) is the pipeline truncated at a handoff.
 
 **Incrementality:** the action key — SHA-256 over command, input hashes, each dependency's output hashes, env values, tool fingerprints, settings, os/arch. A key folds what a dependency *produced*, not the dependency's key, so a dependency rebuilt to the same bytes leaves downstream targets clean (early cutoff), and a target downstream of a dirty one is *conditional* until that output is known; `KeyComponents` is kept beside the digest so `plan` explains dirtiness as a struct diff. Crash-safety invariant: **cas first, cache row after, log always** — failures are never cached.
 
@@ -46,6 +46,18 @@ Determinism house rules (architecture.md §5) apply to any future code: no `Hash
 
 - Both spec docs carry `**Author:** rstlix0x0 · **Date:** … · **Reviewers:** —` headers and numbered reference lists; new design content should cite into those lists.
 - License is Apache-2.0, following airsstack convention. buildl is part of the airsstack ecosystem and the first consumer of airsl's policy model and host-module seam.
+
+## Development process
+
+Every slice of work is a claudestacks-sdlc chain under `.claudestacks/sdlc/<date>-<topic>/`, taken through intent → spec → plans → execution.
+
+|Topic|Practice|
+|---|---|
+|Where work happens|a git worktree on its own branch, never `main`|
+|Commits|Conventional Commits, `type(scope): summary`; scope is the crate name, or `repo` for cross-cutting changes; one commit per plan task|
+|Gates|`cargo make dod` (fmt, clippy `-D warnings`, doc `-D warnings`, tests, doctests) and `cargo deny check`, both green before each commit|
+|Review|one reviewer pass per batch of tasks and one fix round; a disproven plan premise is amended in the plan, not only in the code|
+|Findings|closed inside the slice that finds them: a slice is not done while a finding of its own is open, and nothing is carried forward to a later slice, plan or milestone|
 
 ## Response style
 

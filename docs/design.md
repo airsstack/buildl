@@ -1,6 +1,6 @@
 # buildl — design document
 
-**Status: the core pipeline is implemented; the rest is design.** Item 1 of the sequence in §13 is built: Load, Resolve, Plan, Execute and Record, the `check`, `graph`, `plan` and `build` commands, the local cache and the cas, with actions run at isolation tier 1 (§12.2). Everything from item 2 on is described here and not built. Every design decision builds on the shipped `airsl` runtime [1][2]; sections note where buildl depends on airsl work that is itself still proposed (the extension system).
+**Status: the core pipeline is implemented; the rest is design.** Item 1 of the sequence in §13 is built: Load, Resolve, Plan, Execute and Record, the `check`, `graph`, `plan` and `build` commands, the local cache and the cas, with actions run at isolation tier 1 (§12.2). Of item 2, the `query` command is built. Everything else from item 2 on is described here and not built. Every design decision builds on the shipped `airsl` runtime [1][2]; sections note where buildl depends on airsl work that is itself still proposed (the extension system).
 
 **Author:** rstlix0x0 · **Date:** 2026-08-23 · **Reviewers:** —
 
@@ -117,7 +117,7 @@ strategy = "sandbox"       # bare | sandbox | os-sandbox | container (§11)
 
 Two rules carried over from airsl's extension design deliberately: variables and relative roots are expanded **host-side** (a build file that could expand them could widen its own grant), and the ceiling can never be exceeded by anything a build file or plugin requests — requests are intersected with it, never unioned.
 
-The manifest is read strictly. A key this version of buildl does not read is an error that names the key with its line and column, so a misspelt `fs.wirte` cannot silently drop a grant. An `[approver]` table is such a key until grant negotiation ships (§13 item 4), which is why the example has none. Every table and every key is optional, and an empty file is a valid manifest: every default, and an empty ceiling, under which `check` and `graph` work and `plan` and `build` are refused, since an empty ceiling allows nothing. A directory with no `buildl.toml` in it or above it is not a workspace: that is an error, never a default ceiling (§7). `config` must be `1`. `out` may not be the workspace root, and may not be `.buildl`, contain it or lie inside it. The state directory is always `.buildl`; no key names it. A directory entry of the ceiling is workspace-relative, and `"."` is the workspace root. `memory` is a whole number directly followed by one unit — `B`, `KB`, `MB` or `GB`, each 1024 times the one before — and never zero.
+The manifest is read strictly. A key this version of buildl does not read is an error that names the key with its line and column, so a misspelt `fs.wirte` cannot silently drop a grant. An `[approver]` table is such a key until grant negotiation ships (§13 item 4), which is why the example has none. Every table and every key is optional, and an empty file is a valid manifest: every default, and an empty ceiling, under which `check`, `graph` and `query` work and `plan` and `build` are refused, since an empty ceiling allows nothing. A directory with no `buildl.toml` in it or above it is not a workspace: that is an error, never a default ceiling (§7). `config` must be `1`. `out` may not be the workspace root, and may not be `.buildl`, contain it or lie inside it. The state directory is always `.buildl`; no key names it. A directory entry of the ceiling is workspace-relative, and `"."` is the workspace root. `memory` is a whole number directly followed by one unit — `B`, `KB`, `MB` or `GB`, each 1024 times the one before — and never zero.
 
 `[execution]` says how the workspace wants its actions run. Each key has one grammar and one meaning when it is left out, and a value outside its grammar makes the manifest invalid:
 
@@ -127,7 +127,7 @@ The manifest is read strictly. A key this version of buildl does not read is an 
 |`timeout`|a whole number directly followed by one unit — `ms`, `s`, `m` or `h` — and never zero: `500ms`, `90s`, `10m`, `2h`|`"10m"`|
 |`strategy`|exactly one of `bare`, `sandbox`, `os-sandbox`, `container`, in order of increasing isolation (§12.2)|`"sandbox"`|
 
-Until the input sandbox ships (§13 item 3) buildl runs `bare` alone. `build` refuses a manifest whose strategy is anything else, the default `sandbox` included, rather than run its actions under a weaker tier than the one asked for; the error names the line to write, `strategy = "bare"`. `check`, `graph` and `plan` run nothing, and work under any strategy.
+Until the input sandbox ships (§13 item 3) buildl runs `bare` alone. `build` refuses a manifest whose strategy is anything else, the default `sandbox` included, rather than run its actions under a weaker tier than the one asked for; the error names the line to write, `strategy = "bare"`. `check`, `graph`, `query` and `plan` run nothing, and work under any strategy.
 
 None of the three is an action-key component (§8.3): they decide how an action is run, never which action it is.
 
@@ -210,10 +210,10 @@ flowchart TD
 |`buildl watch [target]`|loops|persistent process, re-plans on file change|
 |`buildl test` / `clean` / `gc`|—|run test targets; drop outputs; prune the cas|
 |`buildl log <target>`|—|show what a target printed when it last ran (§8.7)|
-|`buildl query <expr>`|Resolve|graph queries: `deps()`, `rdeps()` (§10.1)|
+|`buildl query <expr>`|Resolve|graph queries: `deps()`, `rdeps()` (§10.2, §10.3, §11.1)|
 |`buildl doctor`|—|print the effective ceiling, grants, workers|
 
-`check`, `graph`, `plan` and `build` are built; each other command arrives with the item of §13 that names it. `plan` and `build` take any number of targets and, with none, every target; `plan` takes exactly what `build` takes, because it is that build's dry run. Both accept `--set name=value`, repeated, to give a build setting a value for the run (§10.2); `build` adds `--keep-going` (§8.4) and `--stream` (§8.7). A command finds its workspace at the nearest `buildl.toml` at or above the current directory and prints paths relative to it. A target is written `//dir:name`, or `:name` and `name`, which are read against the current directory.
+`check`, `graph`, `query`, `plan` and `build` are built; each other command arrives with the item of §13 that names it. `plan` and `build` take any number of targets and, with none, every target; `plan` takes exactly what `build` takes, because it is that build's dry run. Both accept `--set name=value`, repeated, to give a build setting a value for the run (§10.2); `build` adds `--keep-going` (§8.4) and `--stream` (§8.7). A command finds its workspace at the nearest `buildl.toml` at or above the current directory and prints paths relative to it. A target is written `//dir:name`, or `:name` and `name`, which are read against the current directory. `query` takes one expression, `deps(<target>)` or `rdeps(<target>)`, and prints the targets the named one depends on, or that depend on it, any number of steps away and without the target itself: one label a line in label order, or with `--json` as canonical JSON. Like `check` and `graph` it takes no lock and writes nothing.
 
 Three workflow rules adopted deliberately:
 
@@ -712,7 +712,7 @@ Two things a workspace sets are deliberately outside the ledger, because neither
 Dependency-ordered, with the airsl extension work interleaved:
 
 1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `check`/`graph`/`plan`/`build`, local cache and cas. Needs only shipped airsl.
-2. **`query` / `rdeps`** — small work, transforms CI for large repos. With it the commands around a build: `test`, `log`, `clean` and `gc` (§7). Demand-driven and parallel loading of build files (§11.1) land here.
+2. **`query` (`deps()`, `rdeps()`)** — small work, transforms CI for large repos. With it the commands around a build: `test`, `log`, `clean` and `gc` (§7). Demand-driven and parallel loading of build files (§11.1) land here.
 3. **Local input sandbox (tier 2)** — the correctness discipline everything remote depends on. `verify` (§12.3) lands here.
 4. **Grant negotiation UX** — wanted set, ceiling intersection, approver, and `doctor`, which prints the result (§7). Consumes the airsl extension host's ceiling + `Approver` (buildl is their first consumer; the manifest parser and `ext.on` dispatcher are not needed yet). Per-target grant narrowing (§14) is settled here.
 5. **Plugins** — manifest, attribution, `b.use()`. Consumes the extension manifest format. Discovery targets (§10) land here.

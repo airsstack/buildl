@@ -11,6 +11,7 @@
 //! |---|---|---|
 //! | `buildl check` | nothing | `ok: 7 declarations in 2 build files` |
 //! | `buildl graph [--json \| --dot]` | the target graph: canonical JSON (the default) or Graphviz DOT | nothing |
+//! | `buildl query <EXPR> [--json]` | the targets the expression reaches, one per line, or as canonical JSON | nothing |
 //! | `buildl plan [TARGET]... [--set NAME=VALUE]... [--json]` | what a build would run and why, or the plan as canonical JSON | nothing |
 //! | `buildl build [TARGET]... [--set NAME=VALUE]... [-k \| --keep-going] [--stream]` | nothing | a block for each action that printed or failed, and a summary |
 //!
@@ -21,6 +22,10 @@
 //! command takes `--color auto|always|never`: under `auto`, what is printed is coloured only
 //! when standard error is a terminal whose `TERM` is set and not `dumb`, and `NO_COLOR` is
 //! unset or empty.
+//!
+//! An expression is `deps(TARGET)`, every target TARGET depends on, or `rdeps(TARGET)`, every
+//! target that depends on TARGET. Either reaches any number of steps away, and TARGET itself is
+//! not in the answer. `query`, like `check` and `graph`, takes no lock and writes nothing.
 //!
 //! # Exit status
 //!

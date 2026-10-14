@@ -282,7 +282,7 @@ pub enum Error {
         /// The setting that was named.
         name: SettingName,
     },
-    /// A run was asked for a target, and no target or alias has that label.
+    /// A run or a query was asked for a target, and no target or alias has that label.
     #[error(
         "target {label} was asked for but is not declared{}",
         suggestion_suffix(.suggestion.as_ref())
@@ -292,6 +292,12 @@ pub enum Error {
         label: Label,
         /// The nearest declared target or alias, if one is near enough.
         suggestion: Option<Label>,
+    },
+    /// A query was written in neither of the two forms a query takes.
+    #[error("query `{expression}` is not deps(<target>) or rdeps(<target>)")]
+    InvalidQuery {
+        /// The query as it was written.
+        expression: String,
     },
     /// A plan was handed over with a graph it was not made from.
     #[error("the plan was not made from this graph")]
@@ -1181,6 +1187,17 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "target //:nope was asked for but is not declared"
+        );
+    }
+
+    #[test]
+    fn invalid_query_names_the_query_and_the_two_forms() {
+        let err = Error::InvalidQuery {
+            expression: "dep(//:a)".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "query `dep(//:a)` is not deps(<target>) or rdeps(<target>)"
         );
     }
 

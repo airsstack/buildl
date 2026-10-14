@@ -1,6 +1,7 @@
 ---
 status: done
 created: 2026-09-18
+milestone: buildl/01
 ---
 
 # Intent: The `buildl-core` foundation — names, content identity, errors, determinism

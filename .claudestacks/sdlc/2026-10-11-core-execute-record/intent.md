@@ -1,6 +1,7 @@
 ---
 status: done
 created: 2026-10-11
+milestone: buildl/01
 ---
 
 # Intent: Execute and Record — from `Plan` to a finished build

@@ -233,6 +233,40 @@ fn an_unknown_target_is_a_usage_error() {
 }
 
 #[test]
+fn a_query_in_neither_form_or_for_an_unknown_target_is_a_usage_error() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        (
+            "build.lua",
+            "buildl.target(\"lib\", { run = { \"cp\" } })\n",
+        ),
+    ]);
+    assert_eq!(
+        failed(&root, &["query", "dep(//:lib)"]),
+        (
+            2,
+            concat!(
+                "error: invalid value 'dep(//:lib)' for '<EXPR>': ",
+                "query `dep(//:lib)` is not deps(<target>) or rdeps(<target>)\n",
+                "\n",
+                "Usage: buildl [OPTIONS] <COMMAND>\n",
+                "\n",
+                "For more information, try '--help'.\n",
+            )
+            .to_owned()
+        )
+    );
+    assert_eq!(
+        failed(&root, &["query", "deps(//:libs)"]),
+        (
+            2,
+            "error: target //:libs was asked for but is not declared (did you mean //:lib?)\n"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
 fn an_undeclared_setting_is_a_usage_error() {
     let (_dir, root) = workspace(&[
         ("buildl.toml", &manifest(&["cp"])),
