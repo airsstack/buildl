@@ -25,7 +25,7 @@ graph TD
 |`spec.md`|draft → approved (or superseded)|approved by the author after one review round|
 |`plans/NN-*.md`|draft → approved → executing → done (or superseded)|approved by the author; executing when task 1 starts; done once the author accepts the completion report|
 
-Only milestone 1 is broken into intents so far. Later milestones get intents when milestone 1 is close to done.
+Milestone 1 was cut into nine intents (§3). No later milestone has an intent yet; milestone 2 is next.
 
 ## 2. Milestones
 
@@ -33,14 +33,15 @@ The order and rationale are in design §13; this table adds status only.
 
 |#|Milestone|Status|
 |---|---|---|
-|1|**Core pipeline**: Load/Resolve/Plan/Execute/Record, the `check`/`graph`/`plan`/`build` commands, local cache and cas|**in progress** (§3)|
-|2|**`query` / `rdeps`**|not started|
-|3|**Local input sandbox (tier 2)**|not started|
-|4|**Grant negotiation UX**: wanted set, ceiling intersection, approver|not started|
-|5|**Plugins**: manifest, attribution, `b.use()`|not started|
+|1|**Core pipeline**: Load/Resolve/Plan/Execute/Record, the `check`/`graph`/`plan`/`build` commands, local cache and cas|**done**, 2026-10-14 (§3)|
+|2|**`query` / `rdeps`**, and the commands `test`, `log`, `clean`, `gc`. Demand-driven and parallel loading of build files (design §11.1) land here.|not started|
+|3|**Local input sandbox (tier 2)**. `verify` (design §12.3) lands here.|not started|
+|4|**Grant negotiation UX**: wanted set, ceiling intersection, approver, and the `doctor` command. Per-target grant narrowing (design §14) is settled here.|not started|
+|5|**Plugins**: manifest, attribution, `b.use()`. Discovery targets (design §10) land here.|not started|
 |6|**Remote cache via REAPI**|not started|
 |7|**Watch mode**|not started|
 |8|**Remote execution, toolchain containers**|not started|
+|—|**First publish to crates.io**: the four crates, in the order of architecture-building-blocks §9|not started; after milestone 1, with an intent of its own|
 
 ## 3. Milestone 1 — the intent ladder
 
@@ -56,7 +57,7 @@ graph LR
     I4 --> I6["I6 Resolve<br/>graph"]
     I6 --> I7["I7 Plan<br/>plan"]
     I7 --> I8["I8 Execute + Record<br/>build"]
-    I8 --> I9["I9 adapters + CLI<br/>not yet sliced"]
+    I8 --> I9["I9 adapters + CLI"]
     I5 --> I9
 ```
 
@@ -70,14 +71,14 @@ graph LR
 |**I6 Resolve**|`buildl-core`|the `TargetGraph` arena, duplicate, unknown-reference and cycle detection; the guard that no phase module imports another|the pipeline stops at `graph`|**done**, 2026-10-10 (§4)|
 |**I7 Plan**|`buildl-core`|the action key, `KeyComponents`, why-dirty; the wanted set ∩ ceiling as a plan-time refusal; setting overrides; the manifest, digest, stat, tool and cache-read ports|the pipeline stops at `plan`|**done**, 2026-10-11 (§4)|
 |**I8 Execute + Record**|`buildl-core`|`Schedule`, `Dispatcher`, `ExecStrategy`; cas, cache and log writes; the crash-safety invariant (design §8.5)|a full `build` runs against fakes|**done**, 2026-10-12 (§4)|
-|**I9 adapters + CLI**|`buildl`, `buildl-cli`|`LocalPorts`, the `Workspace` facade and the adapters for every port except `DeclarationSource` (architecture-building-blocks §6); the `Reporter` port; the `check`/`graph`/`plan`/`build` commands and exit codes in `buildl-cli`|the `buildl` binary builds a fixture workspace twice, byte-identical|**not started**, not sliced yet|
+|**I9 adapters + CLI**|`buildl`, `buildl-cli`, `buildl-core`|`LocalPorts`, the `Workspace` facade and an adapter for every port milestone 1 uses: all of architecture-building-blocks §6 but `DeclarationSource` (I5) and `Approver` (milestone 4), with bare execution only; the `Reporter` and `GraphRecord` ports; building one named target; the `check`/`graph`/`plan`/`build` commands and exit codes in `buildl-cli`; the adapter-isolation guard; a milestone for every command of design §7|the `buildl` binary builds a fixture workspace twice, byte-identical|**done**, 2026-10-14 (§4)|
 
 Ground rules for the ladder:
 
 - **I2 guard is ordered independently.** It is the only slice that is not a pipeline handoff: it touches `deny.toml`, `Makefile.toml`, `ci.yml` and the workspace lint tables, no crate source, and needs nothing from I3 onward. Running it before the first `buildl-core` code means each guard starts green rather than being retrofitted against code that already violates it.
 - **`Pipeline<P: Ports>` and `FakePorts` start in I4**, and every later slice extends them (architecture-building-blocks §5.3, §8).
 - **The port assignment above is a first guess.** Each slice's spec settles which ports it introduces.
-- **I9 comes after I8 and I5** and is not sliced yet: `LocalPorts`, the storage, exec, digest and manifest adapters (architecture-building-blocks §6), and argument parsing in `buildl-cli`.
+- **I9 came after I8 and I5** and was the last slice of milestone 1: `LocalPorts`, the storage, exec, digest and manifest adapters (architecture-building-blocks §6), the `Reporter` and `GraphRecord` ports, and the commands in `buildl-cli`. It took everything milestone 1 still owed; its intent lists it.
 - **Publishing is out of scope** until the adapters exist. The publish order stays as documented in architecture-building-blocks §9.
 - **airsl stays on the `0.1` series.** Moving to `0.2` is a breaking change and gets its own decision.
 
@@ -93,6 +94,7 @@ Ground rules for the ladder:
 |I6 Resolve|`.claudestacks/sdlc/2026-10-10-core-resolve/`|`01-graph-types` (1 task), `02-setting-references` (2 tasks), `03-resolve-errors` (2 tasks), `04-suggest` (1 task), `05-cycle` (1 task), `06-resolve` (4 tasks), `07-pipeline-graph` (2 tasks), `08-module-edge-guard` (1 task), `09-documentation` (4 tasks)|`46a8164` … `c8b84e8`|
 |I7 Plan|`.claudestacks/sdlc/2026-10-10-core-plan/`|`01-small-values` (6 tasks), `02-action-key` (2 tasks), `03-authority-types` (1 task), `04-plan-types` (1 task), `05-plan-errors` (3 tasks), `06-ports` (5 tasks), `07-plan-checks` (3 tasks), `08-plan-gather` (2 tasks), `09-plan-verdicts` (3 tasks), `10-pipeline-plan` (3 tasks), `11-documentation` (6 tasks)|`05dbe53` … `4f130d5`|
 |I8 Execute + Record|`.claudestacks/sdlc/2026-10-11-core-execute-record/`|`01-handoff-types` (2 tasks), `02-outcome-types` (2 tasks), `03-cache-row` (1 task), `04-errors` (2 tasks), `05-ports` (7 tasks), `06-before-run` (3 tasks), `07-schedule` (2 tasks), `08-decisions` (3 tasks), `09-pipeline-build` (5 tasks), `10-documentation` (6 tasks)|`f88cd77` … `6e39019`|
+|I9 adapters + CLI|`.claudestacks/sdlc/2026-10-13-adapters-cli/`|`01-core-values` (11 tasks), `02-core-ports` (11 tasks), `03-core-pipeline` (11 tasks), `04-buildl-foundation` (8 tasks), `05-input-adapters` (10 tasks), `06-state-adapters` (10 tasks), `07-run-adapters` (15 tasks), `08-reporter` (14 tasks), `09-composition` (12 tasks), `10-end-to-end` (13 tasks), `11-cli` (10 tasks), `12-documentation` (32 tasks)|`538f21d` … `7801bfa`|
 
 The plan file's `## Review findings`, `## Probe results` and `## Deviations` sections hold the full execution record. None of them leaves a follow-up open (§5).
 

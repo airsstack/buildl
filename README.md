@@ -4,7 +4,7 @@
 
 The positioning in one sentence: Lua where Starlark sits in Bazel [5], ninja's execution discipline underneath [4], and airsl's capability model as the trust layer neither of them has.
 
-> **Status: design settled, implementation under way.** `buildl-core` ships the validated domain vocabulary, the one error enum, the canonical JSON serializer and the reader that takes back only what it writes, the twelve ports the pipeline reaches everything outside it through, and every pipeline phase — Load, Resolve, Plan, Execute and Record, with `check`, `graph`, `plan` and `build`, whose flows run against in-memory fakes; the adapters that run a real build are not implemented yet. `buildl-lua` evaluates build files on airsl, and no command composes it with the pipeline yet. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
+> **Status: the core pipeline is built.** The `buildl` binary runs `check`, `graph`, `plan` and `build` on a real workspace: it evaluates build files on airsl, keys every target, runs what is dirty in parallel with its output captured, and keeps results in a local content-addressed store and action cache, so a second build runs nothing and a build repeated in another directory is byte-identical. Actions run at isolation tier 1, a plain process holding only its declared environment. That is the first item of the [roadmap](#roadmap); the input sandbox, grant negotiation, plugins, the remote cache and watch mode are designed and not built. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
 
 ---
 
@@ -113,16 +113,46 @@ Tier 2 is Bazel's execroot discipline — undeclared inputs are simply absent, s
 
 Each CLI command is the Load → Resolve → Plan → Execute → Record pipeline truncated at a different point:
 
-| Command | Stops after | Purpose |
-|---|---|---|
-| `buildl check` | Load | syntax-check every build file, run nothing |
-| `buildl graph` | Resolve | emit the DAG (`--json`, `--dot`) |
-| `buildl plan` | Plan | dry run: what would rebuild, and why |
-| `buildl build [target]` | Record | the full pipeline |
-| `buildl watch [target]` | loops | persistent process, re-plans on file change |
-| `buildl query <expr>` | Resolve | graph queries: `deps()`, `rdeps()` |
-| `buildl test` / `clean` / `gc` | — | run test targets; drop outputs; prune the cas |
-| `buildl doctor` | — | print the effective ceiling, grants, workers |
+| Command | Stops after | Purpose | Built |
+|---|---|---|---|
+| `buildl check` | Load | syntax-check every build file, run nothing | yes |
+| `buildl graph` | Resolve | emit the DAG (`--json`, the default, or `--dot`) | yes |
+| `buildl plan [target]...` | Plan | dry run: what would rebuild, and why | yes |
+| `buildl build [target]...` | Record | the full pipeline | yes |
+| `buildl watch [target]` | loops | persistent process, re-plans on file change | not yet |
+| `buildl query <expr>` | Resolve | graph queries: `deps()`, `rdeps()` | not yet |
+| `buildl test` / `clean` / `gc` | — | run test targets; drop outputs; prune the cas | not yet |
+| `buildl log <target>` | — | show what a target printed when it last ran | not yet |
+| `buildl doctor` | — | print the effective ceiling, grants, workers | not yet |
+
+`plan` and `build` take any number of targets and `--set name=value`; `build` adds `--keep-going` and `--stream`. A command finds its workspace at the nearest `buildl.toml` at or above the current directory. The exit code says what kind of end it was, so CI need not read text: `0` done, `1` an action failed, `2` a wrong command line, `3` a sick builder, `4` the build wants more than the ceiling, `5` a mistake in a build file or in `buildl.toml`, `6` a state file that is not what buildl writes, `7` a fault in buildl.
+
+## Running it
+
+buildl builds and runs on Linux and macOS. From a checkout:
+
+```sh
+cargo make install            # installs the buildl binary from crates/buildl-cli
+```
+
+Then, in a directory that holds a `buildl.toml`, or below one:
+
+```sh
+buildl check                  # evaluate every build file, run nothing
+buildl graph --dot            # the target graph; canonical JSON without the flag
+buildl plan                   # what would run, and why
+buildl build                  # build every target
+buildl build //lib:text -k    # one target and what it needs, carrying on past a failure
+```
+
+Only the first isolation tier is built, and a manifest has to say so:
+
+```toml
+[execution]
+strategy = "bare"
+```
+
+Without that line `build` refuses to run, rather than run actions under a weaker tier than the default asks for; `check`, `graph` and `plan` work either way.
 
 ## Repository layout
 
@@ -150,10 +180,10 @@ Workspace policy is inherited verbatim from airsl [1]: `unsafe_code = "forbid"`,
 Dependency-ordered, from [`design.md` §13](./docs/design.md); progress and the development ladder are tracked in [`roadmap.md`](./docs/roadmap.md). buildl is a **build system first** — the defining capability is answering *"does this need to run at all?"*; task-runner use is a degenerate case the model yields for free.
 
 1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `check`/`graph`/`plan`/`build`, local cache and cas
-2. **`query` / `rdeps`** — small work, transforms CI for large repos
-3. **Local input sandbox (tier 2)** — the correctness discipline everything remote depends on
-4. **Grant negotiation UX** — wanted set, ceiling intersection, approver
-5. **Plugins** — manifest, attribution, `b.use()`
+2. **`query` / `rdeps`** — small work, transforms CI for large repos; with it the `test`, `log`, `clean` and `gc` commands, and demand-driven and parallel loading of build files
+3. **Local input sandbox (tier 2)** — the correctness discipline everything remote depends on; with it `verify`
+4. **Grant negotiation UX** — wanted set, ceiling intersection, approver, and the `doctor` command; per-target grant narrowing is settled here
+5. **Plugins** — manifest, attribution, `b.use()`; with them discovery targets
 6. **Remote cache via REAPI** [7] — most of the remote value at a fraction of the complexity
 7. **Watch mode** — full-reload variant first
 8. **Remote execution, toolchain containers** — when a repo has genuinely outgrown one machine

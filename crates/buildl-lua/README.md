@@ -14,7 +14,7 @@ This is the only buildl crate that depends on a Lua runtime. It implements [`bui
 | Sandbox | airsl's minimal Lua surface with no grants; only `json`, `path` (without `absolute`), `regex`, `hash` and `glob`; no `math.random`, `math.randomseed` or `print`; `tostring` and `string.format` refuse address-derived text (a table, function, thread or userdata without `__tostring`, and `%p`) with an ordinary Lua error. `buildl.sources` is the only filesystem read: regular files under the declaring directory, sorted, symlinks never followed, and nothing under a directory `LuaSource::new` was given to skip — matched by its whole path from the workspace root, neither listed, entered nor counted; a build file inside one gets an empty list |
 | Refusals | a refused primitive call fails the whole file, even when the build file catches it with `pcall`; the one exception is a call made while another `buildl` call is in progress (for example from a finalizer), which raises an error without failing the file |
 
-**Status:** pre-release. The adapter is complete for the declaration phase; nothing in buildl composes it into a command yet.
+**Status:** pre-release. The adapter is complete for the declaration phase; [`buildl`](../buildl) composes it with the pipeline, and the `check`, `graph`, `plan` and `build` commands evaluate build files through it.
 
 ## License
 
