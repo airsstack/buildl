@@ -1,6 +1,7 @@
 ---
 status: done
 created: 2026-10-10
+milestone: buildl/01
 ---
 
 # Intent: Resolve — from `Vec<Declaration>` to `TargetGraph`

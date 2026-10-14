@@ -1,6 +1,7 @@
 ---
 status: done
 created: 2026-09-18
+milestone: buildl/01
 ---
 
 # Intent: Make the workspace's architectural rules fail the gate

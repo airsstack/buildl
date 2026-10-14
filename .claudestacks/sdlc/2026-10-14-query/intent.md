@@ -1,6 +1,7 @@
 ---
 status: done
 created: 2026-10-14
+milestone: buildl/02
 ---
 
 # Intent: query — ask the graph what a target needs and what needs it

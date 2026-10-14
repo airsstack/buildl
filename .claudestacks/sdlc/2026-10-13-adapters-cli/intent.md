@@ -1,6 +1,7 @@
 ---
 status: done
 created: 2026-10-13
+milestone: buildl/01
 ---
 
 # Intent: adapters and CLI — from a pipeline that passes its tests to a `buildl` that builds

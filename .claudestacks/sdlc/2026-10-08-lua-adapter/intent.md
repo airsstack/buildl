@@ -1,6 +1,7 @@
 ---
 status: done
 created: 2026-10-08
+milestone: buildl/01
 ---
 
 # Intent: I5 — evaluating a real `build.lua` through airsl
