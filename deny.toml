@@ -87,18 +87,20 @@ deny = [
         directly""" },
     { crate = "mlua", wrappers = ["airsl"], reason = """\
         the Lua runtime is airsl's implementation detail; no buildl crate names it directly""" },
-    { crate = "toml", wrappers = ["airsl"], reason = """\
+    { crate = "toml", wrappers = ["airsl", "buildl"], reason = """\
         ABB §1.2: buildl-core must never depend on toml; §6 places buildl.toml parsing in the \
         Manifest adapter inside buildl""" },
     { crate = "walkdir", wrappers = ["airsl", "buildl-lua"], reason = """\
         ABB §1.2: buildl-core does no filesystem traversal; buildl-lua walks the declaring \
         directory for b.sources()""" },
-    { crate = "tempfile", wrappers = ["airsl", "buildl-lua"], reason = """\
-        ABB §1.2: temp-file-then-rename is a storage-adapter concern; buildl-lua uses it only \
-        to build symlink fixtures in its tests""" },
+    { crate = "tempfile", wrappers = ["airsl", "buildl-lua", "buildl"], reason = """\
+        ABB §1.2: temp-file-then-rename is a storage concern of buildl's shared state module; \
+        buildl-lua and buildl also use it for the temp workspaces of their tests""" },
     { crate = "globset", wrappers = ["airsl", "buildl-lua"], reason = """\
         ABB §1.2: b.sources() globbing is a filesystem read, not core logic; buildl-lua \
         matches it host-side""" },
+    { crate = "rayon", wrappers = ["buildl"], reason = """\
+        architecture.md §6: rayon is confined to the Digester adapter inside buildl""" },
 ]
 skip = []
 skip-tree = []

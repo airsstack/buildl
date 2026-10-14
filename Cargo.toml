@@ -33,23 +33,29 @@ serde_json = "1.0.150"
 thiserror  = "2.0.18"
 # SHA-256 for the Digest type — files, outputs, action keys, log blobs. SHA-256
 # over blake3 for REAPI compatibility (decision record, architecture.md §6); the
-# stat cache makes hashing rare on warm builds anyway.
+# stat cache makes hashing rare on warm builds anyway. A dependency of
+# `buildl-core` only: an adapter that hashes a file streams it through the core's
+# `Hasher`, so every digest in the workspace comes from one implementation.
 sha2       = "0.10"
 # Parallel file hashing in the Plan phase. Confined to the `Digester` adapter in
 # `buildl` (decision record §6) so the executor's plain-threads model stays singular.
-rayon      = "1"
+rayon      = "1.12.0"
 # buildl.toml (the ceiling) parsing in the `Manifest` adapter. Read-only, like
 # airsl's extension manifests: the `display` (serialization) default feature is dropped.
-toml       = { version = "0.8", default-features = false, features = ["parse"] }
+# Held on 0.8 because airsl depends on 0.8: a second `toml` tree would fail
+# cargo-deny's duplicate-version check.
+toml       = { version = "0.8.23", default-features = false, features = ["parse"] }
 # Source globbing for `b.sources()` — the declaration phase's only filesystem
 # read; results are sorted host-side so declaration is deterministic regardless
 # of filesystem order (design.md).
 globset    = "0.4"
 walkdir    = "2.5"
-# Exec-dir materialisation for the tier-2 input sandbox and temp-file-then-rename
-# atomic writes in the storage adapters (architecture.md §3.5,
-# architecture-building-blocks.md §6).
-tempfile   = "3.23.0"
+# Temp-file-then-rename writes in `buildl`'s shared `state` module, which every
+# storage adapter writes a whole file through (architecture.md §3.5,
+# architecture-building-blocks.md §6), and the temp workspaces of tests. The floor
+# is the release whose source was read for what those writes rely on:
+# `Builder::permissions` hands the mode to `open(2)`, and `persist` is a rename.
+tempfile   = "3.27.0"
 # CLI argument parsing (buildl-cli).
 clap       = { version = "4", features = ["derive"] }
 # Internal workspace members, in dependency order — path for local builds, version

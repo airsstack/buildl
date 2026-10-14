@@ -7,24 +7,162 @@
 //! a serializable value.
 //!
 //! This crate is the composition root: its role is to choose a concrete
-//! implementation for every port the `buildl-core` pipeline needs.
+//! implementation for every port the `buildl-core` pipeline needs, and to offer the result as
+//! one type, [`Workspace`].
 //!
-//! # Responsibilities
+//! # Using it
 //!
-//! - The adapters for every port except `DeclarationSource`: `Manifest`,
-//!   `Digester`, `StatCache`, `ToolResolver`, `ContentStore`, `ActionCache`,
-//!   `EventLog`, `ExecStrategy`, `Dispatcher`, `Approver`, `Clock` and
-//!   `Reporter`.
-//! - Binding those adapters, together with the Lua adapter from `buildl-lua`
-//!   (the `DeclarationSource`), to the `buildl-core` pipeline through
-//!   `LocalPorts`, and exposing the result as the `Workspace` facade.
-//! - Re-exporting `buildl-core`, so the binary reaches core types through this
-//!   crate alone.
+//! A caller opens a [`Workspace`] and calls a command on it: [`Workspace::check`],
+//! [`Workspace::graph`], [`Workspace::plan`] or [`Workspace::build`]. It names no adapter. A
+//! build is lent the caller's own [`Reporter`]: [`report::TerminalReporter`] writes what the
+//! `buildl` binary shows, and [`report::Silent`] shows nothing. The values a command takes and
+//! returns are `buildl-core`'s, re-exported here as [`buildl_core`], so a caller depends on this
+//! crate alone.
+//!
+//! ```
+//! use std::collections::BTreeMap;
+//! use std::fs;
+//!
+//! use buildl::Workspace;
+//! use buildl::buildl_core::{LiveOutput, OnFailure, OutcomeClass, Scope};
+//! use buildl::report::Silent;
+//!
+//! let dir = tempfile::tempdir()?;
+//! fs::write(
+//!     dir.path().join("buildl.toml"),
+//!     r#"
+//! [ceiling]
+//! proc.run = ["cp"]
+//! fs.read  = ["."]
+//! fs.write = ["out", ".buildl"]
+//!
+//! [execution]
+//! strategy = "bare"
+//! "#,
+//! )?;
+//! fs::write(
+//!     dir.path().join("build.lua"),
+//!     r#"buildl.target("copy", { inputs = { "a.txt" }, run = { "cp", "$in", "$out" } })"#,
+//! )?;
+//! fs::write(dir.path().join("a.txt"), "a\n")?;
+//!
+//! let workspace = Workspace::open(dir.path())?;
+//! assert_eq!(workspace.check()?.len(), 1);
+//!
+//! let (everything, settings) = (Scope::Workspace, BTreeMap::new());
+//! let built = workspace.build(
+//!     &everything,
+//!     &settings,
+//!     OnFailure::Stop,
+//!     LiveOutput::Off,
+//!     &mut Silent,
+//! )?;
+//! assert_eq!(built[0].class, OutcomeClass::Built);
+//! assert_eq!(fs::read(workspace.root().join("out/copy"))?, b"a\n");
+//!
+//! let again = workspace.build(
+//!     &everything,
+//!     &settings,
+//!     OnFailure::Stop,
+//!     LiveOutput::Off,
+//!     &mut Silent,
+//! )?;
+//! assert_eq!(again[0].class, OutcomeClass::Cached);
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! Actions run as plain processes in the workspace, the strategy a manifest names `bare`. A
+//! build of a workspace that asks for any other strategy is refused, never run under less
+//! isolation than its manifest asked for.
+//!
+//! # Where things live
+//!
+//! Each port a local build is served through has a module of its own here, named after its
+//! concern.
+//!
+//! | Module | Concern | Port |
+//! |---|---|---|
+//! | [`manifest`] | `buildl.toml` and the workspace root | [`Manifest`] |
+//! | [`host`] | the platform, and the environment values a target reads | [`Host`] |
+//! | [`digest`] | hashing the files a build reads | [`Digester`] |
+//! | [`tools`] | fingerprinting the programs a command names | [`ToolResolver`] |
+//! | [`cas`] | content held by digest, and the files of the output directory | [`ContentStore`] |
+//! | [`cache`] | the row a built target leaves behind | [`ActionCache`] |
+//! | [`log`] | one line for every action that ended | [`EventLog`] |
+//! | [`statcache`] | the digest of a file that has not changed since it was hashed | [`StatCache`] |
+//! | [`graph`] | the graph of the last build | [`GraphRecord`] |
+//! | [`exec`] | running one action as a process | [`ExecStrategy`] |
+//! | [`dispatch`] | the threads actions run on | [`Dispatcher`] |
+//! | [`clock`] | the wall clock | [`Clock`] |
+//! | [`report`] | what a build shows while it runs, and every rendering of a value as text | [`Reporter`] |
+//!
+//! [`DeclarationSource`] has no module here: its adapter is the `buildl-lua` crate.
+//!
+//! No module in the table names another module in the table. What two of them would otherwise
+//! each need from the other belongs to neither, so each can be read, tested and replaced alone.
+//! It lives in a module that serves no port and names no module of this crate:
+//!
+//! | Module | Shared by its users |
+//! |---|---|
+//! | [`state`] | where each file of the state directory is, the lock on it, and writing a file whole |
+//! | [`search_path`] | the rule that leads from a program's name to a file |
+//!
+//! The adapters meet in two modules and nowhere else. Neither is public: what they hold is
+//! exported from the crate root.
+//!
+//! | Module | Holds |
+//! |---|---|
+//! | `local_ports` | [`LocalPorts`], the choice of an adapter for every port; [`LocalPipeline`], the pipeline over that choice; and [`Wiring`], which makes the adapters from a workspace's manifest |
+//! | `workspace` | [`Workspace`], the facade: one method per command |
+//!
+//! # Platforms
+//!
+//! The crate builds on Unix targets only, and is tested on Linux and macOS. File modes and the
+//! signal that ended a process are read through `std::os::unix`.
 //!
 //! # Non-responsibilities
 //!
 //! - Pipeline logic, which lives in `buildl-core`.
 //! - Lua evaluation, which lives in `buildl-lua`.
+//! - Parsing a command line and choosing an exit code, which the `buildl-cli` crate does.
 //!
-//! The crate does not implement any of this yet: this file declares no
-//! modules and re-exports nothing, so there is no logic to unit-test.
+//! This file holds only module declarations and re-exports, so it carries no logic to
+//! unit-test.
+//!
+//! [`ActionCache`]: buildl_core::ActionCache
+//! [`Clock`]: buildl_core::Clock
+//! [`ContentStore`]: buildl_core::ContentStore
+//! [`DeclarationSource`]: buildl_core::DeclarationSource
+//! [`Digester`]: buildl_core::Digester
+//! [`Dispatcher`]: buildl_core::Dispatcher
+//! [`EventLog`]: buildl_core::EventLog
+//! [`ExecStrategy`]: buildl_core::ExecStrategy
+//! [`GraphRecord`]: buildl_core::GraphRecord
+//! [`Host`]: buildl_core::Host
+//! [`Manifest`]: buildl_core::Manifest
+//! [`Reporter`]: buildl_core::Reporter
+//! [`StatCache`]: buildl_core::StatCache
+//! [`ToolResolver`]: buildl_core::ToolResolver
+
+pub mod cache;
+pub mod cas;
+pub mod clock;
+pub mod digest;
+pub mod dispatch;
+pub mod exec;
+pub mod graph;
+pub mod host;
+pub mod log;
+pub mod manifest;
+pub mod report;
+pub mod search_path;
+pub mod statcache;
+pub mod state;
+pub mod tools;
+
+mod local_ports;
+mod workspace;
+
+pub use buildl_core;
+pub use local_ports::{LocalPipeline, LocalPorts, Wiring};
+pub use workspace::Workspace;

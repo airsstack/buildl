@@ -57,7 +57,12 @@ description = "Lint every target, warnings are errors"
 # the `deny` task's comment). Hanging them off `clippy` puts both in front of
 # anyone about to commit, because `cargo make`, `cargo make dod` and
 # `cargo make clippy` all run them.
-dependencies = ["guard-core-purity", "guard-crate-edges", "guard-module-edges"]
+dependencies = [
+  "guard-core-purity",
+  "guard-crate-edges",
+  "guard-module-edges",
+  "guard-adapter-isolation",
+]
 # `--all-targets` covers tests, examples and benches — a lint living only in
 # test code passes silently without it. `-D warnings` also promotes plain rustc
 # warnings, which is why the gate has no separate `cargo build` step.
@@ -199,6 +204,85 @@ if ! diff -u "${expected}" "${actual}"; then
     echo "       remove the import, or update the golden file if the edge is intended" >&2
     exit 1
 fi
+'''
+
+[tasks.guard-adapter-isolation]
+category = "Gate"
+description = "Assert no adapter module of buildl names another module of the crate"
+# The compiler lets any module of a crate import any other, so nothing stops one
+# adapter from leaning on another — and adapters that lean on each other can no
+# longer be read, tested or replaced alone (architecture-building-blocks.md §7
+# rule 2). What several adapters need lives in the two shared modules, `state`
+# and `search_path`, which implement no port; adapters meet only in the
+# composition modules, `local_ports` and `workspace`.
+#
+# A rule check with no golden file: the rule is "no edge", so a committed list
+# would record nothing but the composition root's own imports.
+#
+# The listing reads the text `crate::<module>` on lines that are not comments,
+# test code included. Three spellings cross modules without that text, so each
+# is refused outright: a grouped `crate::{...}`; `super::` climbing to the crate
+# root — twice from a nested file, once from a module's own mod.rs or from a
+# module that is a single file; and `crate::<Item>`, an item named through the
+# crate root, which hides the module it lives in.
+script_runner = "@shell"
+script = '''
+src="crates/buildl/src"
+# The modules that wire adapters together, and the modules adapters may share.
+composition="local_ports workspace"
+support="state search_path"
+export LC_ALL=C
+
+if grep -rnE 'crate::\{|super::super' "${src}"; then
+    echo "guard: the imports above cross modules in a spelling the edge listing cannot read" >&2
+    echo "       write each one as crate::<module>::<item>" >&2
+    exit 1
+fi
+
+# In a module's mod.rs, and in a module that is one file, super is the crate root.
+if grep -n 'super::' "${src}"/*.rs "${src}"/*/mod.rs; then
+    echo "guard: super:: in a mod.rs or in a single-file module names the crate root" >&2
+    echo "       write crate::<module>::<item>, in that file's tests too" >&2
+    exit 1
+fi
+
+if grep -rnE 'crate::[A-Z]' "${src}" | grep -vE '^[^:]*:[0-9]+:[[:space:]]*//'; then
+    echo "guard: the lines above name an item through the crate root, which hides its module" >&2
+    echo "       name a buildl-core item as buildl_core::<item>, and a module's as crate::<module>::<item>" >&2
+    exit 1
+fi
+
+edges="$(mktemp)"
+trap 'rm -f "${edges}"' EXIT
+for entry in "${src}"/*; do
+    module="$(basename "${entry}" .rs)"
+    if [ "${module}" = "lib" ]; then
+        continue
+    fi
+    grep -rhv '^[[:space:]]*//' "${entry}" \
+        | grep -oE 'crate::[a-z_]+' \
+        | sort -u \
+        | sed "s|^crate::|${module} -> |" \
+        | grep -v "^${module} -> ${module}$" >> "${edges}" || true
+done
+
+status=0
+while read -r from arrow to; do
+    case " ${composition} " in *" ${from} "*) continue ;; esac
+    case " ${support} " in *" ${to} "*)
+        case " ${support} " in *" ${from} "*) ;; *) continue ;; esac ;;
+    esac
+    echo "guard: ${from} ${arrow} ${to}: a module of buildl names a module it may not" >&2
+    status=1
+done < "${edges}"
+
+if [ "${status}" -ne 0 ]; then
+    echo "       an adapter module may name state and search_path and no other module of the crate;" >&2
+    echo "       state and search_path name none; adapters meet only in local_ports and workspace" >&2
+    echo "       (architecture-building-blocks §7 rule 2)" >&2
+    exit 1
+fi
+echo "guard-adapter-isolation: OK ($(wc -l < "${edges}" | tr -d ' ') edges)"
 '''
 
 [tasks.guard-core-purity]

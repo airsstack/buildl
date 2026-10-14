@@ -12,5 +12,10 @@ tempfile
 # buildl
 buildl_core
 buildl_lua
+rayon
+serde
+tempfile
+thiserror
+toml
 # buildl-cli
 buildl
