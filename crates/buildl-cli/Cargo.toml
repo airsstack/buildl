@@ -20,6 +20,12 @@ doc  = false
 # The binary's only library dependency. All build logic lives in the library
 # crates, and core types reach the binary through `buildl`, never directly.
 buildl = { workspace = true }
+# The argument surface: the commands, their flags, `--help` and the usage errors.
+clap   = { workspace = true }
+
+[dev-dependencies]
+# The temporary workspaces the tests run the commands in.
+tempfile = { workspace = true }
 
 [lints]
 workspace = true

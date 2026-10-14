@@ -93,14 +93,16 @@ deny = [
     { crate = "walkdir", wrappers = ["airsl", "buildl-lua"], reason = """\
         ABB §1.2: buildl-core does no filesystem traversal; buildl-lua walks the declaring \
         directory for b.sources()""" },
-    { crate = "tempfile", wrappers = ["airsl", "buildl-lua", "buildl"], reason = """\
+    { crate = "tempfile", wrappers = ["airsl", "buildl-lua", "buildl", "buildl-cli"], reason = """\
         ABB §1.2: temp-file-then-rename is a storage concern of buildl's shared state module; \
-        buildl-lua and buildl also use it for the temp workspaces of their tests""" },
+        buildl-lua, buildl and buildl-cli also use it for the temp workspaces of their tests""" },
     { crate = "globset", wrappers = ["airsl", "buildl-lua"], reason = """\
         ABB §1.2: b.sources() globbing is a filesystem read, not core logic; buildl-lua \
         matches it host-side""" },
     { crate = "rayon", wrappers = ["buildl"], reason = """\
         architecture.md §6: rayon is confined to the Digester adapter inside buildl""" },
+    { crate = "clap", wrappers = ["buildl-cli"], reason = """\
+        ABB §1.2 and §4: the argument surface is the binary's alone""" },
 ]
 skip = []
 skip-tree = []

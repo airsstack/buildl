@@ -56,8 +56,14 @@ walkdir    = "2.5"
 # is the release whose source was read for what those writes rely on:
 # `Builder::permissions` hands the mode to `open(2)`, and `persist` is a rename.
 tempfile   = "3.27.0"
-# CLI argument parsing (buildl-cli).
-clap       = { version = "4", features = ["derive"] }
+# The argument surface of the `buildl` binary: a dependency of `buildl-cli` only.
+# Default features are off and six are named: `std`; `derive` for the definitions;
+# `help` and `usage` for `--help` and the usage line of an error; `error-context`
+# for the argument and the value an error names; `suggestions` for "a similar
+# argument exists". `color` is left out on purpose: it would bring in `anstream`
+# and its tree, and whether anything is coloured is decided in one place, by the
+# binary, from `--color`, `NO_COLOR` and the terminal.
+clap       = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
 # Internal workspace members, in dependency order — path for local builds, version
 # for publish-readiness. Members inherit these with `{ workspace = true }`. Cargo
 # strips the path and keeps the version when packaging, so a published crate

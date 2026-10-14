@@ -1,0 +1,383 @@
+//! What each command writes, byte for byte, and to which stream.
+//!
+//! Most tests here build one workspace: an application `//:app` linked from `//:main.o` and
+//! `//lib:text`, its documentation `//:docs`, and an alias `//:default`. Its two programs are
+//! scripts this file writes into a directory of their own, which is the whole search path the
+//! binary is given: `cc`, which copies a source and complains about what the source asks it
+//! to, and `mkdoc`, which prints two lines, the second not UTF-8.
+
+use std::ffi::OsStr;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Output;
+
+use crate::common::{append, code, manifest, program, run, stderr, stdout, workspace};
+
+/// The root build file of the workspace.
+const BUILD: &str = r#"local b = buildl
+b.subdir("lib")
+b.option("mode", { default = "debug" })
+b.alias("default", "app")
+b.target("app", { deps = { "main.o", "//lib:text" }, run = { "cc", "$deps", "-o", "$out" } })
+b.target("docs", { inputs = { "README" }, run = { "mkdoc", "--doc", "$in", "a b" } })
+b.target("main.o", { inputs = { "main.c" }, run = { "cc", "-c", "$in", "-o", "$out", "$opt:mode" } })
+"#;
+
+/// The build file of `lib/`.
+const LIB: &str = "buildl.target(\"text\", { inputs = { \"text.c\" }, run = { \"cc\", \"-c\", \"$in\", \"-o\", \"$out\" } })\n";
+
+/// `cc -c <source> -o <output> [mode]` copies the source, warns about one that holds `unused`
+/// and refuses one that holds `broken`; `cc <object> <object> -o <output>` joins the two.
+const CC: &str = r#"#!/bin/sh
+if [ "$1" = "-c" ]; then
+    case "$(/bin/cat "$2")" in
+    *broken*)
+        echo "$2:3:1: error: expected ';'" >&2
+        exit 1
+        ;;
+    *unused*) echo "$2:4:9: warning: unused variable 'n'" >&2 ;;
+    esac
+    /bin/cp "$2" "$4"
+else
+    /bin/cat "$1" "$2" > "$4"
+fi
+"#;
+
+/// `mkdoc --doc <source> <title>` says what it wrote, the byte 0xE9 included, and copies the
+/// source.
+const MKDOC: &str = "#!/bin/sh\nprintf 'wrote 3 pages\\ncaf\\351\\n'\n/bin/cp \"$2\" out/docs\n";
+
+/// The workspace, and the directory that holds its two programs.
+struct Shop {
+    _dir: tempfile::TempDir,
+    root: PathBuf,
+    _tools: tempfile::TempDir,
+    bin: PathBuf,
+}
+
+impl Shop {
+    fn new() -> Self {
+        let (dir, root) = workspace(&[
+            ("buildl.toml", &manifest(&["cc", "mkdoc"])),
+            ("build.lua", BUILD),
+            ("lib/build.lua", LIB),
+            ("main.c", "int main(void) { int unused; return 0; }\n"),
+            ("lib/text.c", "const char *text = \"text\";\n"),
+            ("README", "three pages\n"),
+        ]);
+        let tools = tempfile::tempdir().unwrap();
+        let bin = fs::canonicalize(tools.path()).unwrap();
+        program(&bin, "cc", CC);
+        program(&bin, "mkdoc", MKDOC);
+        Self {
+            _dir: dir,
+            root,
+            _tools: tools,
+            bin,
+        }
+    }
+
+    /// Runs the binary with `args` at the workspace root, its two programs the only ones it
+    /// can find.
+    fn run(&self, args: &[&str]) -> Output {
+        run(&self.root, args, &[("PATH", self.bin.as_os_str())])
+    }
+
+    /// Runs the binary with `args` and returns its status, after checking that it wrote
+    /// nothing to standard output, and what it wrote to standard error.
+    fn built(&self, args: &[&str]) -> (i32, Vec<u8>) {
+        let output = self.run(args);
+        assert_eq!(stdout(&output), "", "{args:?}");
+        (code(&output), output.stderr)
+    }
+}
+
+#[test]
+fn check_prints_one_line_on_stderr_and_nothing_on_stdout() {
+    let shop = Shop::new();
+    let output = shop.run(&["check"]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(stderr(&output), "ok: 6 declarations in 2 build files\n");
+    assert_eq!(stdout(&output), "");
+}
+
+#[test]
+fn check_writes_nothing() {
+    let shop = Shop::new();
+    for args in [&["check"][..], &["graph"][..], &["graph", "--dot"][..]] {
+        assert_eq!(code(&shop.run(args)), 0, "{args:?}");
+    }
+    assert!(!shop.root.join("out").exists());
+    assert!(!shop.root.join(".buildl").exists());
+}
+
+#[test]
+fn graph_json_equals_the_graph_file() {
+    let shop = Shop::new();
+    assert_eq!(shop.built(&["build"]).0, 0);
+    let file = fs::read(shop.root.join(".buildl/graph.json")).unwrap();
+    for args in [&["graph"][..], &["graph", "--json"][..]] {
+        let output = shop.run(args);
+        assert_eq!(code(&output), 0, "{args:?}");
+        assert_eq!(output.stdout.last(), Some(&b'\n'), "{args:?}");
+        assert_eq!(
+            output.stdout[..output.stdout.len() - 1],
+            file[..],
+            "{args:?}"
+        );
+        assert_eq!(stderr(&output), "", "{args:?}");
+    }
+}
+
+#[test]
+fn graph_dot_is_stable() {
+    let shop = Shop::new();
+    let first = shop.run(&["graph", "--dot"]);
+    assert_eq!(code(&first), 0);
+    assert_eq!(
+        stdout(&first),
+        concat!(
+            "digraph buildl {\n",
+            "  \"//:app\";\n",
+            "  \"//:docs\";\n",
+            "  \"//:main.o\";\n",
+            "  \"//lib:text\";\n",
+            "  \"//:app\" -> \"//:main.o\";\n",
+            "  \"//:app\" -> \"//lib:text\";\n",
+            "  \"//:default\" [shape=plaintext];\n",
+            "  \"//:default\" -> \"//:app\" [style=dashed];\n",
+            "}\n",
+        )
+    );
+    assert_eq!(shop.run(&["graph", "--dot"]).stdout, first.stdout);
+}
+
+#[test]
+fn plan_says_why_each_target_would_run() {
+    let shop = Shop::new();
+    let never = shop.run(&["plan"]);
+    assert_eq!(code(&never), 0);
+    assert_eq!(
+        stdout(&never),
+        concat!(
+            "run    //:app: never built\n",
+            "run    //:docs: never built\n",
+            "run    //:main.o: never built\n",
+            "run    //lib:text: never built\n",
+            "4 to run, 0 conditional, 0 clean\n",
+        )
+    );
+
+    assert_eq!(shop.built(&["build"]).0, 0);
+    append(&shop.root, "main.c", "// grown\n");
+    let output = shop.run(&["plan"]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(
+        stdout(&output),
+        concat!(
+            "maybe  //:app: runs only if //:main.o produces something else\n",
+            "clean  //:docs\n",
+            "run    //:main.o: input main.c changed\n",
+            "clean  //lib:text\n",
+            "1 to run, 1 conditional, 2 clean\n",
+        )
+    );
+    assert_eq!(stderr(&output), "");
+}
+
+#[test]
+fn plan_names_every_difference_of_a_target() {
+    let shop = Shop::new();
+    assert_eq!(shop.built(&["build"]).0, 0);
+    append(&shop.root, "main.c", "// grown\n");
+    append(&shop.bin, "cc", "# a newer compiler\n");
+    let output = shop.run(&["plan", "--set", "mode=release"]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(
+        stdout(&output),
+        concat!(
+            "run    //:app: tool cc changed\n",
+            "clean  //:docs\n",
+            "run    //:main.o: input main.c changed; tool cc changed; setting mode changed\n",
+            "run    //lib:text: tool cc changed\n",
+            "3 to run, 0 conditional, 1 clean\n",
+        )
+    );
+}
+
+#[test]
+fn plan_json_is_one_canonical_line() {
+    let shop = Shop::new();
+    let first = shop.run(&["plan", "--json"]);
+    assert_eq!(code(&first), 0);
+    let text = stdout(&first);
+    assert!(
+        text.starts_with("{\"settings\":{\"mode\":\"debug\"},\"targets\":{\"//:app\":{"),
+        "{text}"
+    );
+    assert!(text.ends_with("}\n"), "{text}");
+    assert_eq!(text.lines().count(), 1);
+    assert_eq!(shop.run(&["plan", "--json"]).stdout, first.stdout);
+}
+
+#[test]
+fn build_prints_one_block_per_action_and_a_summary() {
+    let shop = Shop::new();
+    assert_eq!(
+        shop.built(&["build"]),
+        (
+            0,
+            [
+                &b"--- //:docs\n"[..],
+                b"wrote 3 pages\n",
+                b"caf\xe9\n",
+                b"--- //:main.o\n",
+                b"main.c:4:9: warning: unused variable 'n'\n",
+                b"4 built\n",
+            ]
+            .concat()
+        )
+    );
+}
+
+#[test]
+fn a_cache_hit_shows_what_the_action_printed() {
+    let shop = Shop::new();
+    assert_eq!(shop.built(&["build"]).0, 0);
+    assert_eq!(
+        shop.built(&["build"]),
+        (
+            0,
+            [
+                &b"--- //:docs (cached)\n"[..],
+                b"wrote 3 pages\n",
+                b"caf\xe9\n",
+                b"--- //:main.o (cached)\n",
+                b"main.c:4:9: warning: unused variable 'n'\n",
+                b"4 cached\n",
+            ]
+            .concat()
+        )
+    );
+}
+
+/// The workspace after a full build, with `//:docs` unable to start and `//lib:text` broken.
+fn broken() -> Shop {
+    let shop = Shop::new();
+    assert_eq!(shop.built(&["build"]).0, 0);
+    program(&shop.bin, "mkdoc", "#!/nonexistent/interpreter\n");
+    append(&shop.root, "lib/text.c", "broken\n");
+    shop
+}
+
+/// What a build of [`broken`] reports about `//:docs`.
+fn docs_failed(bin: &Path) -> String {
+    format!(
+        concat!(
+            "FAILED //:docs: infrastructure failure (the command could not be started)\n",
+            "    exec strategy: //:docs: running {}: No such file or directory (os error 2)\n",
+            "    declared in build.lua\n",
+            "    command: mkdoc --doc README \"a b\"\n",
+        ),
+        bin.join("mkdoc").display()
+    )
+}
+
+#[test]
+fn a_failure_report_names_the_class_the_file_and_the_command() {
+    let shop = broken();
+    let (status, said) = shop.built(&["build", "--keep-going"]);
+    assert_eq!(status, 3);
+    assert_eq!(
+        String::from_utf8(said).unwrap(),
+        [
+            "--- //:main.o (cached)\n",
+            "main.c:4:9: warning: unused variable 'n'\n",
+            &docs_failed(&shop.bin),
+            "--- //lib:text\n",
+            "lib/text.c:3:1: error: expected ';'\n",
+            "FAILED //lib:text: action failure (exit status 1)\n",
+            "    declared in lib/build.lua\n",
+            "    command: cc -c lib/text.c -o out/lib/text\n",
+            "2 failed, 1 skipped, 1 cached\n",
+        ]
+        .concat()
+    );
+}
+
+#[test]
+fn without_keep_going_the_build_stops_at_its_first_failure() {
+    let shop = broken();
+    let (status, said) = shop.built(&["build"]);
+    assert_eq!(status, 3);
+    // With one worker `//:docs` fails first, so `//lib:text` is never begun and is skipped
+    // with `//:app`.
+    assert_eq!(
+        String::from_utf8(said).unwrap(),
+        [
+            "--- //:main.o (cached)\n",
+            "main.c:4:9: warning: unused variable 'n'\n",
+            &docs_failed(&shop.bin),
+            "1 failed, 2 skipped, 1 cached\n",
+        ]
+        .concat()
+    );
+}
+
+#[test]
+fn stream_shows_the_action_output() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["sh"])),
+        (
+            "build.lua",
+            concat!(
+                "buildl.target(\"loud\", { run = { \"sh\", \"-c\", \"echo one; echo two; exit 3\" } })\n",
+                "buildl.target(\"partial\", { run = { \"sh\", \"-c\", \"printf partial; echo > out/partial\" } })\n",
+            ),
+        ),
+    ]);
+    let output = run(&root, &["build", "--stream", "--keep-going"], &[]);
+    assert_eq!(code(&output), 1);
+    assert_eq!(
+        stderr(&output),
+        concat!(
+            "--- //:loud\n",
+            "one\n",
+            "two\n",
+            "FAILED //:loud: action failure (exit status 3)\n",
+            "    declared in build.lua\n",
+            "    command: sh -c \"echo one; echo two; exit 3\"\n",
+            "--- //:partial\n",
+            "partial\n",
+            "1 failed, 1 built\n",
+        )
+    );
+    assert_eq!(stdout(&output), "");
+}
+
+#[test]
+fn colour_is_written_only_when_asked_for() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["false"])),
+        (
+            "build.lua",
+            "buildl.target(\"bad\", { run = { \"false\" } })\n",
+        ),
+    ]);
+    let terminal = [("TERM", OsStr::new("xterm-256color"))];
+    let plain = run(&root, &["build"], &terminal);
+    assert!(!plain.stderr.contains(&0x1b), "{}", stderr(&plain));
+
+    let asked = run(
+        &root,
+        &["build", "--color", "always"],
+        &[("NO_COLOR", OsStr::new("1"))],
+    );
+    assert_eq!(code(&asked), 1);
+    assert!(
+        stderr(&asked)
+            .starts_with("\x1b[1;31mFAILED\x1b[0m //:bad: action failure (exit status 1)\n"),
+        "{}",
+        stderr(&asked)
+    );
+}
