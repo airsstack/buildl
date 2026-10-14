@@ -1,6 +1,6 @@
 # buildl — development roadmap
 
-**Status: living document.** Companion to [`design.md`](./design.md), [`architecture.md`](./architecture.md) and [`architecture-building-blocks.md`](./architecture-building-blocks.md). `design.md` §13 fixes _what ships in which order_; this document tracks _how that order is being built_: the milestone ladder, the intent slices that break the first milestone into reviewable units of work, each slice's status, and the rule that a slice closes what it finds and hands nothing on. Update it whenever a chain changes state.
+**Status: living document.** Companion to [`design.md`](./design.md), [`architecture.md`](./architecture.md) and [`architecture-building-blocks.md`](./architecture-building-blocks.md). `design.md` §13 fixes _what ships in which order_; this document tracks _how that order is being built_: the milestone ladder, the intent slices that break each milestone into reviewable units of work, each slice's status, and the rule that a slice closes what it finds and hands nothing on. Update it whenever a chain changes state.
 
 **Author:** rstlix0x0 · **Date:** 2026-09-15 · **Reviewers:** —
 
@@ -25,7 +25,7 @@ graph TD
 |`spec.md`|draft → approved (or superseded)|approved by the author after one review round|
 |`plans/NN-*.md`|draft → approved → executing → done (or superseded)|approved by the author; executing when task 1 starts; done once the author accepts the completion report|
 
-Milestone 1 was cut into nine intents (§3). No later milestone has an intent yet; milestone 2 is next.
+Milestone 1 was cut into nine intents (§3.1). Milestone 2 is cut into six intents (§3.2); no later milestone has an intent yet.
 
 ## 2. Milestones
 
@@ -33,8 +33,8 @@ The order and rationale are in design §13; this table adds status only.
 
 |#|Milestone|Status|
 |---|---|---|
-|1|**Core pipeline**: Load/Resolve/Plan/Execute/Record, the `check`/`graph`/`plan`/`build` commands, local cache and cas|**done**, 2026-10-14 (§3)|
-|2|**`query` / `rdeps`**, and the commands `test`, `log`, `clean`, `gc`. Demand-driven and parallel loading of build files (design §11.1) land here.|not started|
+|1|**Core pipeline**: Load/Resolve/Plan/Execute/Record, the `check`/`graph`/`plan`/`build` commands, local cache and cas|**done**, 2026-10-14 (§3.1)|
+|2|**`query` (`deps()`, `rdeps()`)**, and the commands `test`, `log`, `clean`, `gc`. Demand-driven and parallel loading of build files (design §11.1) land here.|**in progress** (§3.2)|
 |3|**Local input sandbox (tier 2)**. `verify` (design §12.3) lands here.|not started|
 |4|**Grant negotiation UX**: wanted set, ceiling intersection, approver, and the `doctor` command. Per-target grant narrowing (design §14) is settled here.|not started|
 |5|**Plugins**: manifest, attribution, `b.use()`. Discovery targets (design §10) land here.|not started|
@@ -43,7 +43,9 @@ The order and rationale are in design §13; this table adds status only.
 |8|**Remote execution, toolchain containers**|not started|
 |—|**First publish to crates.io**: the four crates, in the order of architecture-building-blocks §9|not started; after milestone 1, with an intent of its own|
 
-## 3. Milestone 1 — the intent ladder
+## 3. Intent ladders
+
+### 3.1 Milestone 1
 
 Milestone 1 is cut along the pipeline's handoffs (architecture-building-blocks §5.4). Every phase's logic lands in `buildl-core` against fake ports first. The Lua adapter follows once its port exists. Each slice after I3 ends at a command's handoff, so every slice leaves the pipeline runnable up to a new point. Intents are numbered in the order they were taken, I1 to I9.
 
@@ -81,6 +83,36 @@ Ground rules for the ladder:
 - **I9 came after I8 and I5** and was the last slice of milestone 1: `LocalPorts`, the storage, exec, digest and manifest adapters (architecture-building-blocks §6), the `Reporter` and `GraphRecord` ports, and the commands in `buildl-cli`. It took everything milestone 1 still owed; its intent lists it.
 - **Publishing is out of scope** until the adapters exist. The publish order stays as documented in architecture-building-blocks §9.
 - **airsl stays on the `0.1` series.** Moving to `0.2` is a breaking change and gets its own decision.
+
+### 3.2 Milestone 2
+
+Milestone 2 is design §13 item 2 — `query`, the commands around a build, and the two changes to how build files are loaded — and its intents continue §3.1's numbering.
+
+```mermaid
+%% Milestone 2 — intent ladder; arrows point from a slice to the slice that follows it
+graph LR
+    I10["I10 query<br/>deps / rdeps"] --> I11["I11 test"]
+    I11 --> I12["I12 log"]
+    I12 --> I13["I13 clean + gc"]
+    I13 --> I14["I14 parallel load"]
+    I14 --> I15["I15 demand-driven load"]
+```
+
+|Intent|Crate|Scope|Done when|Status|
+|---|---|---|---|---|
+|I10|`buildl-core`, `buildl`, `buildl-cli`|`buildl query` with `deps()` and `rdeps()` over the whole graph, the start target and aliases left out, no lock and no state|the binary answers both functions on a fixture workspace|**in progress**|
+|I11|`—`|`buildl test`, building and running the test targets (design §7, §9.1)|`—`|not started|
+|I12|`—`|`buildl log <target>`, what a target printed when it last ran (design §7, §8.7), which needs the build log read back|`—`|not started|
+|I13|`—`|`clean` drops outputs; `gc` prunes the cas by mark and sweep (architecture §3.5)|`—`|not started|
+|I14|`—`|build files evaluated across workers and merged to the order serial load gives (architecture §3.1)|`—`|not started|
+|I15|`—`|a command that names targets loads only the directories those targets and their dependencies need (design §11.1)|`—`|not started|
+
+Ground rules for the ladder:
+
+- **The crate and done-when cells of I11–I15 are left to each slice's intent and spec**, as §3.1's port assignment was.
+- **I13 follows I12**, so `gc` keeps the blobs `log` reads.
+- **I15 covers only commands that name targets.** `query`, `graph`, `check` and a command run without targets load the whole workspace, because `rdeps` needs every reverse edge, `graph.json` is the whole graph, and a build file is still evaluated only because an evaluated one named its directory (design §14).
+- **The first publish to crates.io (§2) is not part of this ladder**, and gets an intent of its own.
 
 ## 4. Completed intents
 

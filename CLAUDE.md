@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-buildl is a sandboxed, deterministic build system whose build files are written in Lua and evaluated on the [airsl](https://github.com/airsstack/airsl) embedded runtime. The workspace holds four crates — `buildl-core`, `buildl-lua`, `buildl`, `buildl-cli` — with their dependency edges wired per `architecture-building-blocks.md` §7 (airsl `0.1`, only in `buildl-lua`; toolchain `stable`, `rust-version` 1.94), and the `cargo make dod` gate, `cargo deny` check and CI matrix are live. Milestone 1 is done: the `buildl` binary runs `check`, `graph`, `plan` and `build` on a real workspace, at isolation tier 1. What comes next is tracked in `docs/roadmap.md` §2; read it there rather than inferring a state from this file.
+buildl is a sandboxed, deterministic build system whose build files are written in Lua and evaluated on the [airsl](https://github.com/airsstack/airsl) embedded runtime. The workspace holds four crates — `buildl-core`, `buildl-lua`, `buildl`, `buildl-cli` — with their dependency edges wired per `architecture-building-blocks.md` §7 (airsl `0.1`, only in `buildl-lua`; toolchain `stable`, `rust-version` 1.94), and the `cargo make dod` gate, `cargo deny` check and CI matrix are live. Milestone 1 is done: the `buildl` binary runs `check`, `graph`, `plan` and `build` on a real workspace, at isolation tier 1. Milestone 2 has begun: `query` answers `deps()` and `rdeps()` over the target graph. What comes next is tracked in `docs/roadmap.md` §2–§3; read it there rather than inferring a state from this file.
 
 The pre-development blocker is **resolved** (2026-09-13): fine-grained per-file C/C++ compilation is out of scope for v1, and buildl's mechanism for dynamic input discovery is the **discovery target** (design §10) — a cached action whose output a later declaration pass consumes — not depfile parsing. See `docs/fundamental-walkthrough.md` §6 for the reasoning and design §13 for the scope note. Implementation may begin.
 
@@ -14,7 +14,7 @@ The pre-development blocker is **resolved** (2026-09-13): fine-grained per-file 
 - `docs/architecture.md` — how each part works in Rust: core types, phase implementations, error architecture, decision records (§6), determinism engineering rules (§5).
 - `docs/architecture-building-blocks.md` — how the parts are put together: C4 views, the four crates, ports and adapters, dependency rules, testing layers, publishing. Owns the workspace layout.
 - `docs/fundamental-walkthrough.md` — maps the design onto build-system theory (Build Systems à la Carte); names the depfile gap.
-- `docs/roadmap.md` — how the design §13 sequence is being built: milestone status, the milestone 1 intent ladder (I1–I9) with each slice's status, and the rule that findings are closed inside the slice that finds them, with nothing carried to a later slice. Update it whenever an SDLC chain changes state.
+- `docs/roadmap.md` — how the design §13 sequence is being built: milestone status, the intent ladders (milestone 1: I1–I9; milestone 2: I10–I15) with each slice's status, and the rule that findings are closed inside the slice that finds them, with nothing carried to a later slice. Update it whenever an SDLC chain changes state.
 - `README.md` — condensed public summary of the design and architecture documents. Keep it consistent with the docs when either changes.
 
 Section cross-references between the docs (e.g. "design §8.5", "§12.4 ledger") are load-bearing — preserve them when renumbering or restructuring.
@@ -23,7 +23,7 @@ Section cross-references between the docs (e.g. "design §8.5", "§12.4 ledger")
 
 **Declare, then execute.** Build files (Lua) only *declare* targets; the Rust host schedules, sandboxes, parallelizes, and caches. Lua never runs a compiler or holds a real artifact path. The founding constraint, inherited from airsl: **nothing is ambient** — authority is derived from the build graph (the "wanted set"), intersected with the workspace ceiling in `buildl.toml`, never requested per-file.
 
-**Pipeline:** Load → Resolve → Plan → Execute → Record. Phases communicate through serializable values (`Vec<Declaration>` → `TargetGraph` → `Plan` → `Vec<ActionOutcome>`), never by calling each other; each CLI command (`check`/`graph`/`plan`/`build`) is the pipeline truncated at a handoff.
+**Pipeline:** Load → Resolve → Plan → Execute → Record. Phases communicate through serializable values (`Vec<Declaration>` → `TargetGraph` → `Plan` → `Vec<ActionOutcome>`), never by calling each other; each CLI command (`check`/`graph`/`query`/`plan`/`build`) is the pipeline truncated at a handoff.
 
 **Incrementality:** the action key — SHA-256 over command, input hashes, each dependency's output hashes, env values, tool fingerprints, settings, os/arch. A key folds what a dependency *produced*, not the dependency's key, so a dependency rebuilt to the same bytes leaves downstream targets clean (early cutoff), and a target downstream of a dirty one is *conditional* until that output is known; `KeyComponents` is kept beside the digest so `plan` explains dirtiness as a struct diff. Crash-safety invariant: **cas first, cache row after, log always** — failures are never cached.
 

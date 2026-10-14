@@ -4,7 +4,7 @@
 
 The positioning in one sentence: Lua where Starlark sits in Bazel [5], ninja's execution discipline underneath [4], and airsl's capability model as the trust layer neither of them has.
 
-> **Status: the core pipeline is built.** The `buildl` binary runs `check`, `graph`, `plan` and `build` on a real workspace: it evaluates build files on airsl, keys every target, runs what is dirty in parallel with its output captured, and keeps results in a local content-addressed store and action cache, so a second build runs nothing and a build repeated in another directory is byte-identical. Actions run at isolation tier 1, a plain process holding only its declared environment. That is the first item of the [roadmap](#roadmap); the input sandbox, grant negotiation, plugins, the remote cache and watch mode are designed and not built. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
+> **Status: the core pipeline is built.** The `buildl` binary runs `check`, `graph`, `query`, `plan` and `build` on a real workspace: it evaluates build files on airsl, keys every target, runs what is dirty in parallel with its output captured, and keeps results in a local content-addressed store and action cache, so a second build runs nothing and a build repeated in another directory is byte-identical. Actions run at isolation tier 1, a plain process holding only its declared environment. That is the first item of the [roadmap](#roadmap), with `query` from the second; the input sandbox, grant negotiation, plugins, the remote cache and watch mode are designed and not built. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
 
 ---
 
@@ -120,7 +120,7 @@ Each CLI command is the Load → Resolve → Plan → Execute → Record pipelin
 | `buildl plan [target]...` | Plan | dry run: what would rebuild, and why | yes |
 | `buildl build [target]...` | Record | the full pipeline | yes |
 | `buildl watch [target]` | loops | persistent process, re-plans on file change | not yet |
-| `buildl query <expr>` | Resolve | graph queries: `deps()`, `rdeps()` | not yet |
+| `buildl query <expr>` | Resolve | graph queries: `deps()`, `rdeps()` | yes |
 | `buildl test` / `clean` / `gc` | — | run test targets; drop outputs; prune the cas | not yet |
 | `buildl log <target>` | — | show what a target printed when it last ran | not yet |
 | `buildl doctor` | — | print the effective ceiling, grants, workers | not yet |
@@ -152,7 +152,7 @@ Only the first isolation tier is built, and a manifest has to say so:
 strategy = "bare"
 ```
 
-Without that line `build` refuses to run, rather than run actions under a weaker tier than the default asks for; `check`, `graph` and `plan` work either way.
+Without that line `build` refuses to run, rather than run actions under a weaker tier than the default asks for; `check`, `graph`, `query` and `plan` work either way.
 
 ## Repository layout
 
@@ -180,7 +180,7 @@ Workspace policy is inherited verbatim from airsl [1]: `unsafe_code = "forbid"`,
 Dependency-ordered, from [`design.md` §13](./docs/design.md); progress and the development ladder are tracked in [`roadmap.md`](./docs/roadmap.md). buildl is a **build system first** — the defining capability is answering *"does this need to run at all?"*; task-runner use is a degenerate case the model yields for free.
 
 1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `check`/`graph`/`plan`/`build`, local cache and cas
-2. **`query` / `rdeps`** — small work, transforms CI for large repos; with it the `test`, `log`, `clean` and `gc` commands, and demand-driven and parallel loading of build files
+2. **`query` (`deps()`, `rdeps()`)** — small work, transforms CI for large repos; with it the `test`, `log`, `clean` and `gc` commands, and demand-driven and parallel loading of build files
 3. **Local input sandbox (tier 2)** — the correctness discipline everything remote depends on; with it `verify`
 4. **Grant negotiation UX** — wanted set, ceiling intersection, approver, and the `doctor` command; per-target grant narrowing is settled here
 5. **Plugins** — manifest, attribution, `b.use()`; with them discovery targets
