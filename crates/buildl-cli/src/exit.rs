@@ -75,7 +75,9 @@ impl Exit {
     /// An error this binary has no row for is buildl's fault, never the user's.
     pub(crate) const fn of_error(error: &Error) -> Self {
         match error {
-            Error::UnknownOverride { .. } | Error::UnknownTarget { .. } => Self::Usage,
+            Error::UnknownOverride { .. }
+            | Error::UnknownTarget { .. }
+            | Error::InvalidQuery { .. } => Self::Usage,
             Error::MissingTool { .. } => Self::Infrastructure,
             // A manifest that is missing, refused, or asks for what this buildl cannot run is
             // fixed by editing it; every other port failing is the builder's trouble.
@@ -192,6 +194,9 @@ mod tests {
             Error::UnknownTarget {
                 label: label("//:nope"),
                 suggestion: None,
+            },
+            Error::InvalidQuery {
+                expression: "dep(//:app)".to_owned(),
             },
         ]
     }
@@ -438,12 +443,12 @@ mod tests {
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [2, 2, 1, 16, 3, 6]);
+        assert_eq!(counts, [3, 2, 1, 16, 3, 6]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 30, "a variant is listed twice");
+        assert_eq!(variants.len(), 31, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");

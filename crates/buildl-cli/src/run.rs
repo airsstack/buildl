@@ -20,11 +20,13 @@ use std::path::{Path, PathBuf};
 use buildl::Workspace;
 use buildl::buildl_core::json::canonical;
 use buildl::buildl_core::{Error, Scope};
-use buildl::report::{Mode, Paint, TerminalReporter, check_line, error_text, graph_dot, plan_text};
+use buildl::report::{
+    Mode, Paint, TerminalReporter, check_line, error_text, graph_dot, plan_text, query_text,
+};
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 
-use crate::cli::{BuildArgs, Cli, Command, GraphArgs, PlanArgs, overrides};
+use crate::cli::{BuildArgs, Cli, Command, GraphArgs, PlanArgs, QueryArgs, overrides};
 use crate::exit::Exit;
 use crate::terminal::Terminal;
 
@@ -95,6 +97,7 @@ where
     let ended = match cli.command {
         Command::Check => check(&start, stderr),
         Command::Graph(args) => graph(&start, &args, stdout),
+        Command::Query(args) => query(&start, &args, stdout),
         Command::Plan(args) => plan(&start, args, stdout),
         Command::Build(args) => build(&start, args, terminal.mode(), paint, stderr),
     };
@@ -177,6 +180,30 @@ fn graph<O: Write>(start: &Path, args: &GraphArgs, stdout: &mut O) -> Result<Exi
         let mut json = canonical::to_vec(&graph)?;
         json.push(b'\n');
         json
+    };
+    product(stdout, &text)?;
+    Ok(Exit::Success)
+}
+
+/// `query`: writes to `stdout` the targets the expression reaches, one label a line, or as
+/// canonical JSON and a newline. An empty answer is a success. An expression that is neither
+/// `deps(...)` nor `rdeps(...)`, or whose target fails the label grammar, is a mistake of the
+/// command line, not of the workspace.
+fn query<O: Write>(start: &Path, args: &QueryArgs, stdout: &mut O) -> Result<Exit, Stop> {
+    let workspace = Workspace::open(start)?;
+    let asked = workspace.query_of(&args.expression).map_err(|error| {
+        Cli::command().error(
+            ErrorKind::ValueValidation,
+            format!("invalid value '{}' for '<EXPR>': {error}", args.expression),
+        )
+    })?;
+    let answer = workspace.query(&asked)?;
+    let text = if args.json {
+        let mut json = canonical::to_vec(&answer)?;
+        json.push(b'\n');
+        json
+    } else {
+        query_text(&answer).into_bytes()
     };
     product(stdout, &text)?;
     Ok(Exit::Success)
@@ -464,6 +491,71 @@ mod tests {
         assert_eq!(ran.exit, Exit::Success);
         assert_eq!(ran.stdout, "digraph buildl {\n  \"//:copy\";\n}\n");
         assert_eq!(ran.stderr, "");
+    }
+
+    #[test]
+    fn query_writes_the_answer_to_stdout_in_either_form() {
+        let (_dir, root) = copying();
+        // //:copy depends on nothing: an empty answer is a success, and says nothing.
+        let ran_text = ran(&root, &["query", "deps(//:copy)"]);
+        assert_eq!(ran_text.exit, Exit::Success);
+        assert_eq!(ran_text.stdout, "");
+        assert_eq!(ran_text.stderr, "");
+        let ran_json = ran(&root, &["query", "--json", "rdeps(copy)"]);
+        assert_eq!(ran_json.exit, Exit::Success);
+        assert_eq!(ran_json.stdout, "[]\n");
+        assert_eq!(ran_json.stderr, "");
+        assert!(!root.join(".buildl").exists());
+    }
+
+    #[test]
+    fn a_query_in_neither_form_is_a_usage_error() {
+        let (_dir, root) = copying();
+        let ran = ran(&root, &["query", "dep(//:copy)"]);
+        assert_eq!(ran.exit, Exit::Usage);
+        assert_eq!(ran.stdout, "");
+        assert_eq!(
+            ran.stderr,
+            concat!(
+                "error: invalid value 'dep(//:copy)' for '<EXPR>': ",
+                "query `dep(//:copy)` is not deps(<target>) or rdeps(<target>)\n",
+                "\n",
+                "Usage: buildl [OPTIONS] <COMMAND>\n",
+                "\n",
+                "For more information, try '--help'.\n",
+            )
+        );
+    }
+
+    #[test]
+    fn a_query_whose_target_fails_its_grammar_is_a_usage_error() {
+        let (_dir, root) = copying();
+        let ran = ran(&root, &["query", "deps(//:)"]);
+        assert_eq!(ran.exit, Exit::Usage);
+        assert_eq!(ran.stdout, "");
+        assert_eq!(
+            ran.stderr,
+            concat!(
+                "error: invalid value 'deps(//:)' for '<EXPR>': ",
+                "invalid target name: \"\" \u{2014} must not be empty\n",
+                "\n",
+                "Usage: buildl [OPTIONS] <COMMAND>\n",
+                "\n",
+                "For more information, try '--help'.\n",
+            )
+        );
+    }
+
+    #[test]
+    fn a_query_for_an_undeclared_target_is_a_usage_error() {
+        let (_dir, root) = copying();
+        let ran = ran(&root, &["query", "rdeps(//:cpy)"]);
+        assert_eq!(ran.exit, Exit::Usage);
+        assert_eq!(ran.stdout, "");
+        assert_eq!(
+            ran.stderr,
+            "error: target //:cpy was asked for but is not declared (did you mean //:copy?)\n"
+        );
     }
 
     #[test]

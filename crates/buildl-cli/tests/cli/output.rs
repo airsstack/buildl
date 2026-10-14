@@ -130,6 +130,39 @@ fn graph_json_equals_the_graph_file() {
 }
 
 #[test]
+fn query_prints_one_label_a_line_for_deps_and_rdeps() {
+    let shop = Shop::new();
+    for (expression, expected) in [
+        ("deps(//:app)", "//:main.o\n//lib:text\n"),
+        ("deps(default)", "//:main.o\n//lib:text\n"),
+        ("rdeps(//lib:text)", "//:app\n"),
+        ("rdeps(//:docs)", ""),
+    ] {
+        let output = shop.run(&["query", expression]);
+        assert_eq!(code(&output), 0, "{expression}");
+        assert_eq!(stdout(&output), expected, "{expression}");
+        assert_eq!(stderr(&output), "", "{expression}");
+    }
+    assert!(!shop.root.join("out").exists());
+    assert!(!shop.root.join(".buildl").exists());
+}
+
+#[test]
+fn query_json_is_the_canonical_array_and_one_newline() {
+    let shop = Shop::new();
+    for (expression, expected) in [
+        ("deps(//:app)", "[\"//:main.o\",\"//lib:text\"]\n"),
+        ("rdeps(//:main.o)", "[\"//:app\"]\n"),
+        ("deps(//:docs)", "[]\n"),
+    ] {
+        let output = shop.run(&["query", "--json", expression]);
+        assert_eq!(code(&output), 0, "{expression}");
+        assert_eq!(stdout(&output), expected, "{expression}");
+        assert_eq!(stderr(&output), "", "{expression}");
+    }
+}
+
+#[test]
 fn graph_dot_is_stable() {
     let shop = Shop::new();
     let first = shop.run(&["graph", "--dot"]);

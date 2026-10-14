@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-14
 depends-on: [02]
 built-on: 050ed7322c38
@@ -246,3 +246,22 @@ Definition of Done is green, and `cargo deny check` is green. Commit
 - `cargo test -p buildl-cli` green.
 - On a copy of `crates/buildl/tests/fixtures/chain`, `./target/debug/buildl query "deps(//:report)"`
   prints `//:greet`, `//:greeting`, `//lib:words`, one per line, and exits 0.
+
+## Review findings
+
+- unit-test-mandate / reversion guard — no test covered a `query` whose target fails the label grammar (spec §2: exit 2); narrowing the `map_err` in `query` to `InvalidQuery` alone would have sent `InvalidName` to `Internal` (exit 7) with no test failing — `crates/buildl-cli/src/run.rs` — fixed: new test `a_query_whose_target_fails_its_grammar_is_a_usage_error` (`query deps(//:)` → `Exit::Usage`, the clap usage block, `invalid target name: "" — must not be empty`); `cargo test -p buildl-cli --bin buildl run::tests` → `test result: ok. 23 passed; 0 failed`
+- doc-comment-discipline — `query`'s rustdoc named only the malformed-function case as the command line's mistake — `crates/buildl-cli/src/run.rs:190` — fixed: it now also names a target that fails the label grammar; `cargo fmt --all -- --check` clean
+
+## Probe results
+
+No throwaway probe was needed: each behavioural claim sits under a test the plan names, and each red-green run was the probe.
+
+- Pinned help text (Risks) — the task 2 `arguments` tests passed against what clap renders, byte for byte. Holds.
+- The refusal's usage line is the top-level `Usage: buildl [OPTIONS] <COMMAND>` (Risks) — `a_query_in_neither_form_is_a_usage_error` passes. Holds.
+- Proof — on a copy of the `chain` fixture, `buildl query "deps(//:report)"` printed `//:greet`, `//:greeting`, `//lib:words`, one per line, exit 0, and made no `.buildl/` or `out/`. Holds.
+- Full gate after task 5 (reviewer's independent run): `cargo make dod` → exit 0 (fmt, the four guards, clippy, rustdoc, tests, doctests); `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`.
+
+## Deviations
+
+- 2026-10-15 — Review fix: the grammar-failure test uses `deps(//:)`, not a target with a space; `Query::parse` refuses a space in the expression as `InvalidQuery` before the target is read, so `deps(a b)` never reaches the label grammar.
+- 2026-10-15 — Commits: the plan asks for one commit per task. Nothing was committed during execution; committing is left to the author.
