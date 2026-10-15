@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [09]
 built-on: fefed82cb705
@@ -111,3 +111,22 @@ shows the row marked `yes`; `grep -c '```mermaid'` of both architecture document
 
 - `cargo make dod` and `cargo deny check` green after each task.
 - `git diff --stat` touches only the five files above.
+
+## Review findings
+
+- risk — README's status named `query` and `log` from the second roadmap item, not `test` — `README.md` — fixed
+- risk — a building-blocks end-to-end row said the cached test prints `tests: 1 passed (1 cached)`, which no end-to-end test checks — `docs/architecture-building-blocks.md` — fixed: the clause is dropped
+- risk — a building-blocks end-to-end row said `test` with no target runs every test, which only the CLI tests check — `docs/architecture-building-blocks.md` — fixed: the clause is dropped
+- risk — design §8.7 said a skipped test gets a block; `block` writes nothing for a skipped target that printed nothing, so it gets none — `docs/design.md` — fixed, and the same wording in `buildl-cli/src/main.rs`'s command table (plan `09`) with it. Spec §2's "a failing or skipped test's block" is §3.7's rule that such a test is shown as `build` shows it, which for a skipped target is nothing; the behaviour follows §3.7
+- amendment hygiene — edits outside this plan's rows (design `:3`, `:72`, `:360`; architecture `:388`; building-blocks `:601`; README `:7`) — kept, and listed under Deviations
+
+## Probe results
+
+- None: every statement was checked against the code by the review.
+
+## Deviations
+
+- The log slice's documentation landed first on this branch: its `log` rows were left as they read, `test` is ordered before `log`, and CLAUDE.md's Status names `query`, `test` and `log`.
+- Lines outside the plan's rows, each saying something this chain changed: design `:3` (status), `:72` (the lock is taken by `test` too), `:360` (exit 2 for a target that is not a test); architecture `:388` and building-blocks `:601` (the lock is taken by `plan`, `build` or `test`); README `:7` (status).
+- The forgetting of a row is described for any failure under the recorded key (`--rerun`, `always`, a missing output), as `execute/record.rs` does it, not for tests alone.
+- Both tasks are one commit, `docs(repo): the documents describe buildl test`.
