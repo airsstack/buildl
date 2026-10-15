@@ -14,15 +14,19 @@
 //! | `buildl query <EXPR> [--json]` | the targets the expression reaches, one per line, or as canonical JSON | nothing |
 //! | `buildl plan [TARGET]... [--set NAME=VALUE]... [--json]` | what a build would run and why, or the plan as canonical JSON | nothing |
 //! | `buildl build [TARGET]... [--set NAME=VALUE]... [-k \| --keep-going] [--stream]` | nothing | a block for each action that printed or failed, and a summary |
+//! | `buildl test [TARGET]... [--set NAME=VALUE]... [--stop] [--stream] [--rerun] [--verbose]` | nothing | a block for each failing test (and each test that printed, with `--verbose`) and for each other target that printed or failed, and a line counting the tests |
 //! | `buildl log <TARGET> [--stdout \| --stderr]` | the stored stdout, or the one stream asked for | the header, a warning of damaged lines, and the stored stderr when no flag is given |
 //!
 //! A target is written `//dir:name`, or `:name` and `name` for one in the directory the command
-//! was started in; naming none means every target, except for `log`, which takes exactly one. `--set` gives a build setting a value for
+//! was started in; naming none means every target but tests for `plan` and `build`, and every
+//! test for `test`, and `log` takes exactly one. `--set` gives a build setting a value for
 //! one run and may be repeated, once per setting. `--keep-going` builds everything a failure
-//! does not stop, and `--stream` shows one running action's output as it is printed. Every
-//! command takes `--color auto|always|never`: under `auto`, what is printed is coloured only
-//! when standard error is a terminal whose `TERM` is set and not `dumb`, and `NO_COLOR` is
-//! unset or empty.
+//! does not stop, and `--stream` shows one running action's output as it is printed. `--stop`
+//! starts nothing new after the first failure. `--rerun` runs the selected tests even when
+//! nothing they depend on changed. `--verbose` shows what every test printed, not only what a
+//! failing one did. Every command takes `--color auto|always|never`: under `auto`, what is
+//! printed is coloured only when standard error is a terminal whose `TERM` is set and not
+//! `dumb`, and `NO_COLOR` is unset or empty.
 //!
 //! An expression is `deps(TARGET)`, every target TARGET depends on, or `rdeps(TARGET)`, every
 //! target that depends on TARGET. Either reaches any number of steps away, and TARGET itself is
@@ -44,7 +48,8 @@
 //! | 6 | a file in `.buildl/` is not what buildl writes |
 //! | 7 | buildl itself is at fault |
 //!
-//! Under `--keep-going` the most severe status wins: 7, then 3, then 1.
+//! Under `--keep-going`, which `test` has unless `--stop` is given, the most severe status wins:
+//! 7, then 3, then 1.
 //!
 //! # Platforms
 //!

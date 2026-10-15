@@ -78,7 +78,8 @@ impl Exit {
             Error::UnknownOverride { .. }
             | Error::UnknownTarget { .. }
             | Error::InvalidQuery { .. }
-            | Error::NoRun { .. } => Self::Usage,
+            | Error::NoRun { .. }
+            | Error::NotATest { .. } => Self::Usage,
             Error::MissingTool { .. } | Error::MissingOutput { .. } => Self::Infrastructure,
             // A manifest that is missing, refused, or asks for what this buildl cannot run is
             // fixed by editing it; every other port failing is the builder's trouble.
@@ -203,6 +204,11 @@ mod tests {
                 label: label("//:app"),
                 suggestion: None,
                 damaged: Vec::new(),
+            },
+            Error::NotATest {
+                asked: label("//:app"),
+                target: label("//:app"),
+                provenance: Box::new(root_file()),
             },
         ]
     }
@@ -447,6 +453,16 @@ mod tests {
     }
 
     #[test]
+    fn not_a_test_is_a_usage_error() {
+        let error = Error::NotATest {
+            asked: label("//:default"),
+            target: label("//:app"),
+            provenance: Box::new(root_file()),
+        };
+        assert_eq!(Exit::of_error(&error), Exit::Usage);
+    }
+
+    #[test]
     fn missing_output_is_an_infrastructure_failure() {
         let error = Error::MissingOutput {
             label: label("//:app"),
@@ -471,12 +487,12 @@ mod tests {
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [4, 3, 1, 16, 3, 6]);
+        assert_eq!(counts, [5, 3, 1, 16, 3, 6]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 33, "a variant is listed twice");
+        assert_eq!(variants.len(), 34, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");

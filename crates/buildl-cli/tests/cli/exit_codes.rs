@@ -712,3 +712,44 @@ fn log_with_a_broken_build_file_exits_0() {
     write(&root, "build.lua", "this is not lua\n");
     assert_eq!(code(&run(&root, &["log", "copy"], &[])), 0);
 }
+
+/// Two test targets, `//:pass` and `//:fail`, which fails.
+const TESTS: &str = r#"buildl.test("pass", { run = { "sh", "-c", "echo ok" } })
+buildl.test("fail", { run = { "sh", "-c", "echo bad; exit 1" } })
+"#;
+
+#[test]
+fn test_with_a_failing_test_exits_1() {
+    let (_dir, root) = workspace(&[("buildl.toml", &manifest(&["sh"])), ("build.lua", TESTS)]);
+    let output = run(&root, &["test"], &[]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+}
+
+#[test]
+fn test_naming_a_build_target_exits_2() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        ("build.lua", COPY),
+        ("a.txt", "a\n"),
+    ]);
+    assert_eq!(
+        failed(&root, &["test", "copy"]),
+        (
+            2,
+            "error: target //:copy was asked for as a test, but //:copy is declared with b.target in build.lua\n"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn test_with_no_tests_exits_0() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        ("build.lua", COPY),
+        ("a.txt", "a\n"),
+    ]);
+    assert_eq!(failed(&root, &["test"]), (0, "no tests\n".to_owned()));
+    assert!(!root.join("out/copy").exists());
+}

@@ -485,3 +485,80 @@ fn log_header_is_on_stderr() {
     let header = said.lines().next().unwrap();
     assert!(is_header(&format!("{header}\n")), "{said}");
 }
+
+/// Two test targets, `//:pass`, which prints `ok` and passes, and `//:fail`, which prints `bad`
+/// and fails.
+const TESTS: &str = r#"buildl.test("pass", { run = { "sh", "-c", "echo ok" } })
+buildl.test("fail", { run = { "sh", "-c", "echo bad; exit 1" } })
+"#;
+
+/// A workspace of [`TESTS`] under a manifest that allows `sh`.
+fn tests() -> (tempfile::TempDir, PathBuf) {
+    workspace(&[("buildl.toml", &manifest(&["sh"])), ("build.lua", TESTS)])
+}
+
+/// The block `buildl build fail` prints for `//:fail`: what it wrote to standard error without
+/// the summary line that ends it.
+fn failing_block() -> String {
+    let (_dir, root) = tests();
+    let said = stderr(&run(&root, &["build", "fail"], &[]));
+    said.strip_suffix("1 failed\n").unwrap().to_owned()
+}
+
+#[test]
+fn test_prints_only_failing_tests_and_the_test_line() {
+    let (_dir, root) = tests();
+    let output = run(&root, &["test"], &[]);
+    assert_eq!(stdout(&output), "");
+    let said = stderr(&output);
+    assert_eq!(
+        said,
+        [failing_block(), "tests: 1 passed, 1 failed\n".to_owned()].concat()
+    );
+    assert!(!said.contains("ok"), "{said}");
+}
+
+#[test]
+fn test_verbose_prints_every_test() {
+    let (_dir, root) = tests();
+    let output = run(&root, &["test", "--verbose"], &[]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        [
+            failing_block(),
+            "--- //:pass\nok\n".to_owned(),
+            "tests: 1 passed, 1 failed\n".to_owned()
+        ]
+        .concat()
+    );
+}
+
+#[test]
+fn test_stop_starts_nothing_after_the_first_failure() {
+    let (_dir, root) = tests();
+    let output = run(&root, &["test", "--stop"], &[]);
+    assert_eq!(code(&output), 1);
+    let said = stderr(&output);
+    assert!(said.ends_with("tests: 1 failed, 1 skipped\n"), "{said}");
+    assert!(!said.contains("ok"), "{said}");
+}
+
+#[test]
+fn test_stream_shows_a_passing_test_as_it_runs() {
+    let (_dir, root) = tests();
+    let output = run(&root, &["test", "--stream", "pass"], &[]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "--- //:pass\nok\ntests: 1 passed\n");
+}
+
+#[test]
+fn test_rerun_line() {
+    let (_dir, root) = tests();
+    assert_eq!(code(&run(&root, &["test", "pass"], &[])), 0);
+    let output = run(&root, &["test", "--rerun", "pass"], &[]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "tests (rerun): 1 passed\n");
+}

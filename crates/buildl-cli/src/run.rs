@@ -29,7 +29,7 @@ use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 
 use crate::cli::{
-    BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, QueryArgs, Streams, overrides,
+    BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, QueryArgs, Streams, TestArgs, overrides,
 };
 use crate::exit::Exit;
 use crate::terminal::Terminal;
@@ -104,6 +104,7 @@ where
         Command::Query(args) => query(&start, &args, stdout),
         Command::Plan(args) => plan(&start, args, stdout),
         Command::Build(args) => build(&start, args, terminal.mode(), paint, stderr),
+        Command::Test(args) => test(&start, args, terminal.mode(), paint, stderr),
         Command::Log(args) => log(&start, &args, stdout, stderr),
     };
     match ended {
@@ -252,6 +253,33 @@ fn build<E: Write>(
         reporter.close();
     }
     Ok(Exit::of_outcomes(&built?))
+}
+
+/// `test`: builds what the selected tests need and runs them, showing on `stderr` how it goes
+/// and ending with a line that counts the tests, and returns the status of the most severe way a
+/// target ended.
+fn test<E: Write>(
+    start: &Path,
+    args: TestArgs,
+    mode: Mode,
+    paint: Paint,
+    stderr: &mut E,
+) -> Result<Exit, Stop> {
+    let (on_failure, live, rerun) = (args.on_failure(), args.live(), args.rerun());
+    let report = Report::Test {
+        blocks: args.blocks(),
+        rerun,
+    };
+    let settings = overrides(args.selection.overrides)?;
+    let workspace = Workspace::open(start)?;
+    let scope = scope(&workspace, &args.selection.targets)?;
+    let mut reporter = TerminalReporter::new(&mut *stderr, mode, paint, report);
+    let tested = workspace.test(&scope, &settings, on_failure, live, rerun, &mut reporter);
+    if tested.is_err() {
+        // The run ended before its summary: whatever is said next starts on a row of its own.
+        reporter.close();
+    }
+    Ok(Exit::of_outcomes(&tested?))
 }
 
 /// `log`: writes to `stderr` the header of the target's last logged run and a warning of any
@@ -690,6 +718,15 @@ mod tests {
         let ran = ran(&root, &["build"]);
         assert_eq!(ran.exit, Exit::Success);
         assert_eq!(ran.stderr, "nothing to build\n");
+        assert_eq!(ran.stdout, "");
+    }
+
+    #[test]
+    fn a_test_run_of_a_workspace_without_tests_says_so_on_stderr() {
+        let (_dir, root) = copying();
+        let ran = ran(&root, &["test"]);
+        assert_eq!(ran.exit, Exit::Success);
+        assert_eq!(ran.stderr, "no tests\n");
         assert_eq!(ran.stdout, "");
     }
 

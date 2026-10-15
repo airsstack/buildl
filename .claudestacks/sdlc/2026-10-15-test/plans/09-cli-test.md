@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [08]
 built-on: fefed82cb705
@@ -32,13 +32,13 @@ Facts the tasks rest on, each read at commit `1799d47` or left by an earlier pla
 
 | Fact | Where |
 |---|---|
-| `Command { Check, Graph(GraphArgs), Query(QueryArgs), Plan(PlanArgs), Build(BuildArgs) }`, each variant's doc line is its one-line help | `crates/buildl-cli/src/cli.rs:51-63` |
+| `Command { Check, Graph(GraphArgs), Query(QueryArgs), Plan(PlanArgs), Build(BuildArgs), Log(LogArgs) }` (`Log` added by the log slice, which ran first on this branch), each variant's doc line is its one-line help | `crates/buildl-cli/src/cli.rs:51-63` |
 | `Selection { targets: Vec<String>, overrides: Vec<Override> }`, struct doc "What `plan` and `build` share: which targets, under which settings."; `targets`' help "Targets to build, as //dir:name, :name or name; every target when none is given" | `cli.rs:96-105` |
 | `BuildArgs { selection, keep_going (-k, --keep-going), stream }` with `on_failure()` and `live()` | `cli.rs:118-147` |
 | `cli.rs` tests: `each_command_parses` (`:248`), `keep_going_and_stream_are_flags` (`:330`), helpers `build(args)`, `refused(args)` | `cli.rs:199-370` |
 | `run.rs` dispatch `Command::Build(args) => build(&start, args, terminal.mode(), paint, stderr)`; `build` reads overrides, opens the workspace, `scope(&workspace, &targets)`, makes a `TerminalReporter`, calls `workspace.build`, closes the reporter on error, returns `Exit::of_outcomes` | `crates/buildl-cli/src/run.rs:98-103`, `:229-252` |
 | `run.rs` unit test `a_build_of_nothing_says_so_on_stderr` | `run.rs:590` |
-| `Exit::of_error` maps `UnknownOverride`, `UnknownTarget`, `InvalidQuery` to `Usage`; tests list `usage_errors()` and check `every_error_variant_has_its_code` | `crates/buildl-cli/src/exit.rs:76-80`, `:189-204`, `:430` |
+| `Exit::of_error` maps `UnknownOverride`, `UnknownTarget`, `InvalidQuery`, `NoRun` to `Usage`, and `NotATest` falls to the `_ => Internal` arm; tests list `usage_errors()` and check `every_error_variant_has_its_code` | `crates/buildl-cli/src/exit.rs:76-80`, `:189-204`, `:430` |
 | The binary's module doc has a command table and a paragraph saying "naming none means every target" | `crates/buildl-cli/src/main.rs:8-24` |
 | CLI integration tests pin `--help` byte for byte: the command list (`help_names_every_command_and_flag`, `arguments.rs:79`), each command's help (`each_command_has_its_help`, `:104`, with the shared `SELECTION` constant at `:38-43`), and the short help (`no_command_prints_the_short_help_on_stderr`, `:194`) | `crates/buildl-cli/tests/cli/arguments.rs` |
 | CLI test helpers: `workspace(files)`, `manifest(programs)`, `run(start, args, variables)`, `code`, `stdout`, `stderr`; exit tests render an error as `error: <message>\n` on stderr (`an_unknown_target_is_a_usage_error`) | `crates/buildl-cli/tests/cli/common.rs:12-88`; `exit_codes.rs:214-233` |
@@ -65,7 +65,7 @@ crates/buildl-cli/tests/cli/exit_codes.rs — [modify] three tests of test's sta
 `tests/cli/arguments.rs` (all `crates/buildl-cli`).
 
 **Change:**
-- `Command::Test(TestArgs)` after `Build`, doc line `Run test targets and what they need`.
+- `Command::Test(TestArgs)` after `Build` and before `Log`, doc line `Run test targets and what they need`; every list the binary prints keeps that order.
 - `TestArgs { selection: Selection, stop: bool, stream: bool, rerun: bool, verbose: bool }`,
   flags long only, their help lines:
   - `--stop` — `Start nothing new after the first failure`
@@ -85,7 +85,7 @@ crates/buildl-cli/tests/cli/exit_codes.rs — [modify] three tests of test's sta
 - `exit.rs`: `Error::NotATest { .. }` joins the `Usage` arm; `usage_errors()` gains a
   `NotATest` value.
 - `main.rs`: a table row
-  `` | `buildl test [TARGET]... [--set NAME=VALUE]... [--stop] [--stream] [--rerun] [--verbose]` | nothing | a block for each failing test and for each other target that printed or failed, and a line counting the tests | ``;
+  `` | `buildl test [TARGET]... [--set NAME=VALUE]... [--stop] [--stream] [--rerun] [--verbose]` | nothing | a block for each failing test (and each test that printed, with `--verbose`) and for each other target that printed or failed, and a line counting the tests | ``, after `build`'s row and before `log`'s;
   the paragraph's "naming none means every target" becomes "naming none means every target but
   tests for `plan` and `build`, and every test for `test`", and it says `--stop`, `--rerun` and
   `--verbose` in one sentence each.
@@ -102,8 +102,8 @@ crates/buildl-cli/tests/cli/exit_codes.rs — [modify] three tests of test's sta
 - `each_command_parses` gains `test`.
 - `not_a_test_is_a_usage_error` in `exit.rs`'s tests — `Exit::of_error(&NotATest{…})` is
   `Exit::Usage`; `every_error_variant_has_its_code` passes with the new value in
-  `usage_errors()`, its two literals moved from `[3, 2, 1, 16, 3, 6]` and `31` to
-  `[4, 2, 1, 16, 3, 6]` and `32` (`exit.rs:446`, `:451`).
+  `usage_errors()`, its two literals moved from `[4, 3, 1, 16, 3, 6]` and `33` to
+  `[5, 3, 1, 16, 3, 6]` and `34`.
 - `a_test_run_of_a_workspace_without_tests_says_so_on_stderr` in `run.rs`'s tests — `test` on
   the `copying()` workspace exits `Success`, writes `no tests\n` to stderr and nothing to stdout.
 - `help_names_every_command_and_flag`, `each_command_has_its_help` and
@@ -126,7 +126,11 @@ not-a-test cases. `sh -c` is a system tool used in tests only (architecture-buil
   empty; stderr is `//:fail`'s block exactly as `buildl build fail` prints it, then
   `tests: 1 passed, 1 failed\n`; `ok` appears nowhere in it.
 - `test_verbose_prints_every_test` — `buildl test --verbose`: stderr holds `//:pass`'s block
-  with `ok` as well, then the same test line.
+  with `ok` as well, after `//:fail`'s (blocks come in label order), then the same test line.
+- `test_stop_starts_nothing_after_the_first_failure` — `buildl test --stop`: exits 1 and its
+  stderr ends `tests: 1 failed, 1 skipped\n`.
+- `test_stream_shows_a_passing_test_as_it_runs` — `buildl test --stream pass`: stderr is
+  exactly `--- //:pass\nok\ntests: 1 passed\n`.
 - `test_rerun_line` — `buildl test pass`, then `buildl test --rerun pass`: the second exits 0 and its
   stderr is exactly `tests (rerun): 1 passed\n` — `//:pass` ran again and, passing, has no
   block.
@@ -153,3 +157,25 @@ Commit `test(buildl-cli): what the test command prints and how it ends`.
 ## Proof
 
 - `cargo make dod` and `cargo deny check` green after each task.
+
+## Review findings
+
+- risk — `main.rs` said `--stop` starts nothing new after the first failed *test*; it stops on any failure, a dependency's included — `src/main.rs` — fixed: "after the first failure"
+- risk — nothing failed if `test()` stopped passing `--stop` or `--stream` on to the workspace — `tests/cli/output.rs` — fixed: `test_stop_starts_nothing_after_the_first_failure`, `test_stream_shows_a_passing_test_as_it_runs`, added to Task 2's Proof
+- amendment — the plan still read the command list without `log` and the exit literals of a branch without it — this plan — fixed: facts table, Task 1's Change and Proof amended
+- nit — the `test` row left out `--verbose` — `src/main.rs` and Task 1's row — fixed. The finding also asked for skipped tests; the documentation review that followed showed a skipped test gets no block (`block` writes nothing for a skipped target that printed nothing), so the row names failing tests only
+- nit — a paragraph of `main.rs`'s module doc broke short — fixed
+- nit — `test_with_no_tests_exits_0` uses the helper `failed` for a run that succeeds — kept: the file's `success_exits_zero` already uses it so
+
+## Probe results
+
+- None needed beyond the named tests: every claim the plan makes about the binary is pinned by one.
+
+## Deviations
+
+- The log slice ran first on this branch: `Test` sits between `Build` and `Log` in `Command` and in every list the binary prints, and `every_error_variant_has_its_code` reads `[5, 3, 1, 16, 3, 6]` and `34` (amended above).
+- `test_verbose_prints_every_test` pins `//:fail`'s block before `//:pass`'s: blocks come in label order.
+- `TestArgs` carries `#[expect(clippy::struct_excessive_bools, reason = …)]`: clap maps each long flag to a `bool`, and the methods turn them into the library's enums.
+- `each_command_has_its_help`'s `plan`, `build` and `test` cases moved into a helper, `selecting_helps()`, under `too_many_lines`.
+- `main.rs`'s sentence on `--keep-going`'s severity now also says `test` keeps going unless `--stop` is given.
+- Both tasks are one commit, `feat(buildl-cli): the test command`.
