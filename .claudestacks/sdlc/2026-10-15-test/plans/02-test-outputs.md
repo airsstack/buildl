@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [01]
 built-on: fefed82cb705
@@ -98,3 +98,15 @@ The `handed` assertion for `//:app_test` in the two-directory flow expects no ou
 ## Proof
 
 - `cargo make dod` and `cargo deny check` green.
+
+## Review findings
+
+- naming — `outputs_default_to_the_target_name` now covers build targets only, beside `a_test_declares_no_outputs_by_default` — `load/traversal.rs:434` — kept: the task and spec §6 leave it unchanged
+
+## Probe results
+
+- No throwaway probe: the named tests cover the premise. Seen failing first: the default test got `[app_test]`; the new flow ended `OutputMissing { name: "check" }`; the pinned-events flow failed on its `handed` assertion. Goldens: only `//:app_test` changed (graph.json and plan.json outputs `["app_test"]` → `[]`; log.jsonl line 4 key and outputs).
+
+## Deviations
+
+- None.

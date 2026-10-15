@@ -21,7 +21,7 @@ use crate::types::{
     Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
     Directory, EntryName, Evaluated, Label, OutputName, Provenance, Rule, Setting, SourcePath,
     StagedAlias, StagedDeclaration, StagedItem, StagedRule, StagedSetting, StagedSubdir,
-    StagedTarget, Target, TargetName, Written,
+    StagedTarget, Target, TargetName, TargetRole, Written,
 };
 
 /// Evaluates the workspace's build files and returns their declarations, validated and sorted.
@@ -214,10 +214,15 @@ fn convert_target(staged: StagedTarget, site: &Site<'_>) -> Result<Target> {
             }
             outputs
         }
-        None => vec![
-            OutputName::parse(label.name().as_str())
-                .map_err(site.invalid(DeclarationField::Output))?,
-        ],
+        // A build target is its output, so it defaults to one named for itself. A test is a record
+        // of its exit status and what it printed, so it produces no file unless it names one.
+        None => match staged.role {
+            TargetRole::Build => vec![
+                OutputName::parse(label.name().as_str())
+                    .map_err(site.invalid(DeclarationField::Output))?,
+            ],
+            TargetRole::Test => Vec::new(),
+        },
     };
     let mut env = Vec::with_capacity(staged.env.len());
     for name in &staged.env {
@@ -434,6 +439,28 @@ mod tests {
             .map(OutputName::as_str)
             .collect();
         assert_eq!(outputs, ["app"]);
+    }
+
+    #[test]
+    fn a_test_declares_no_outputs_by_default() {
+        let mut staged = staged_target("app_test");
+        staged.role = TargetRole::Test;
+        let declaration = convert_target_in("app", staged).unwrap();
+        assert_eq!(target_of(&declaration).outputs, Vec::<OutputName>::new());
+    }
+
+    #[test]
+    fn a_test_keeps_the_outputs_it_declares() {
+        let mut staged = staged_target("app_test");
+        staged.role = TargetRole::Test;
+        staged.outputs = Some(vec![Written::new("junit.xml")]);
+        let declaration = convert_target_in("app", staged).unwrap();
+        let outputs: Vec<&str> = target_of(&declaration)
+            .outputs
+            .iter()
+            .map(OutputName::as_str)
+            .collect();
+        assert_eq!(outputs, ["junit.xml"]);
     }
 
     #[test]

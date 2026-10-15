@@ -862,6 +862,27 @@ fn a_test_that_runs_what_its_dependency_built_is_built_when_the_workspace_allows
 }
 
 #[test]
+fn a_test_with_no_outputs_that_exits_zero_is_built() {
+    let mut pipeline = root_only(vec![target_with("check", |target| {
+        target.role = TargetRole::Test;
+    })]);
+    script(
+        &mut pipeline,
+        "//:check",
+        leaving(out("//:check", "check"), Content::Missing),
+    );
+
+    let outcomes = build_named(&mut pipeline, &["//:check"], OnFailure::Stop).unwrap();
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[("//:check", OutcomeClass::Built)])
+    );
+    assert_eq!(outcome(&outcomes, "//:check").outputs, []);
+    assert!(pipeline.ports().cache.rows.contains_key(&label("//:check")));
+}
+
+#[test]
 fn a_program_first_named_by_expansion_is_refused_before_anything_runs() {
     let mut pipeline = tested();
 
@@ -1180,7 +1201,7 @@ fn a_two_directory_workspace_hands_each_action_its_expanded_command_and_logs_the
             texts(&["out/app", "--filter=Login"]),
             texts(&[]),
             texts(&["out/app"]),
-            texts(&["out/app_test"]),
+            texts(&[]),
         ]
     );
 
