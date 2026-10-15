@@ -22,8 +22,8 @@ use crate::plan::plan;
 use crate::ports::{DeclarationSource, GraphRecord, PortSet, Ports};
 use crate::resolve::{narrow, reach, resolve};
 use crate::types::{
-    ActionOutcome, Declaration, EntryName, Label, LiveOutput, OnFailure, Plan, Query, Scope,
-    SettingName, SettingValue, TargetGraph,
+    ActionOutcome, Declaration, EntryName, Label, LiveOutput, OnFailure, Plan, Purpose, Query,
+    Scope, SettingName, SettingValue, TargetGraph,
 };
 
 /// The pipeline over one chosen implementation of each port.
@@ -103,9 +103,10 @@ impl<P: Ports> Pipeline<P> {
     /// Loads the workspace once, resolves it, and plans a build of the part of the graph `scope`
     /// asks for.
     ///
-    /// `overrides` gives values to build settings for this run. A target outside `scope` is not
-    /// planned, so nothing it reads has to exist. Takes `&mut self` because a plan records the
-    /// digest of every file it had to hash.
+    /// `overrides` gives values to build settings for this run. A whole workspace means every
+    /// target but tests, and a test is planned when it is named or a planned target depends on it.
+    /// A target outside `scope` is not planned, so nothing it reads has to exist. Takes `&mut self`
+    /// because a plan records the digest of every file it had to hash.
     ///
     /// # Errors
     ///
@@ -121,7 +122,7 @@ impl<P: Ports> Pipeline<P> {
         overrides: &BTreeMap<SettingName, SettingValue>,
     ) -> Result<Plan> {
         let whole = resolve(load(&self.ports.source, entry)?)?;
-        let graph = narrow(&whole, scope)?;
+        let graph = narrow(&whole, scope, Purpose::Build)?;
         plan(&graph, overrides, &mut self.ports)
     }
 
@@ -130,9 +131,10 @@ impl<P: Ports> Pipeline<P> {
     ///
     /// `overrides` gives values to build settings for this run, `on_failure` says what a failed
     /// action does to the rest of the build, and `live` whether one running action at a time is
-    /// shown as it prints. The outcomes are one per target of that part, in id order; a target
-    /// that failed or was skipped is an outcome, not an error. A target outside `scope` is left
-    /// alone: it has no outcome, and its row and outputs stay.
+    /// shown as it prints. A whole workspace means every target but tests, and a test is built
+    /// when it is named or a built target depends on it. The outcomes are one per target of that
+    /// part, in id order; a target that failed or was skipped is an outcome, not an error. A
+    /// target outside `scope` is left alone: it has no outcome, and its row and outputs stay.
     ///
     /// The graph is recorded through the graph-record port before anything is planned, and it is
     /// the whole workspace's whatever `scope` asks for, so the record never depends on which
@@ -156,7 +158,7 @@ impl<P: Ports> Pipeline<P> {
     ) -> Result<Vec<ActionOutcome>> {
         let whole = resolve(load(&self.ports.source, entry)?)?;
         self.ports.graph.record(&whole)?;
-        let graph = narrow(&whole, scope)?;
+        let graph = narrow(&whole, scope, Purpose::Build)?;
         let plan = plan(&graph, overrides, &mut self.ports)?;
         execute(&whole, &graph, &plan, on_failure, live, &mut self.ports)
     }

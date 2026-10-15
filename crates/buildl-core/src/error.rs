@@ -293,6 +293,18 @@ pub enum Error {
         /// The nearest declared target or alias, if one is near enough.
         suggestion: Option<Label>,
     },
+    /// A test run was asked for a target that is not a test.
+    #[error(
+        "target {asked} was asked for as a test, but {target} is declared with b.target in {provenance}"
+    )]
+    NotATest {
+        /// The label that was asked for.
+        asked: Label,
+        /// The target it names: the same label unless an alias was followed.
+        target: Label,
+        /// The build file that declares the target.
+        provenance: Box<Provenance>,
+    },
     /// A query was written in neither of the two forms a query takes.
     #[error("query `{expression}` is not deps(<target>) or rdeps(<target>)")]
     InvalidQuery {
@@ -1187,6 +1199,19 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "target //:nope was asked for but is not declared"
+        );
+    }
+
+    #[test]
+    fn not_a_test_names_the_target_and_its_file() {
+        let err = Error::NotATest {
+            asked: label("//:default"),
+            target: label("//:app"),
+            provenance: Box::new(root_file()),
+        };
+        assert_eq!(
+            err.to_string(),
+            "target //:default was asked for as a test, but //:app is declared with b.target in build.lua"
         );
     }
 

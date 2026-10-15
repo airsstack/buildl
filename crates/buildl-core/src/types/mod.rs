@@ -50,6 +50,7 @@
 //! - [`OnFailure`] — what a build does with the rest of its targets once one has failed.
 //! - [`Scope`] — which targets of a workspace one run works on; [`LiveOutput`] — whether a build
 //!   shows what an action prints while the action is still running.
+//! - [`Purpose`] — what a run is for, which decides the targets a whole workspace means.
 //! - [`Query`] and [`Direction`] — a question about the target graph: what one target needs, or
 //!   what needs it.
 //! - [`ActionOutcome`], [`OutcomeClass`], [`InfraKind`] and [`OutputRefusal`] — how the build of
@@ -101,6 +102,7 @@ pub mod plan;
 pub mod platform;
 pub mod program;
 pub mod provenance;
+pub mod purpose;
 pub mod query;
 pub mod raw_outcome;
 pub mod ready_action;
@@ -161,6 +163,7 @@ pub use plan::{Difference, DirtyReason, Plan, PlannedKey, Unfinished, Verdict};
 pub use platform::Platform;
 pub use program::Program;
 pub use provenance::Provenance;
+pub use purpose::Purpose;
 pub use query::{Direction, Query};
 pub use raw_outcome::{Exit, RawOutcome};
 pub use ready_action::ReadyAction;

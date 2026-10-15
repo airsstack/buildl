@@ -5,7 +5,7 @@
     reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use buildl_core::{
@@ -69,6 +69,21 @@ fn build(pipeline: &mut Pipeline<FakePorts>, on_failure: OnFailure) -> Vec<Actio
             LiveOutput::Off,
         )
         .unwrap()
+}
+
+/// A build of the targets `labels` name, with no setting overridden.
+fn build_named(
+    pipeline: &mut Pipeline<FakePorts>,
+    labels: &[&str],
+    on_failure: OnFailure,
+) -> Result<Vec<ActionOutcome>, Error> {
+    pipeline.build(
+        &entry(),
+        &Scope::Targets(labels.iter().map(|raw| label(raw)).collect()),
+        &Overrides::new(),
+        on_failure,
+        LiveOutput::Off,
+    )
 }
 
 /// The last event logged for the target `raw` names.
@@ -822,7 +837,7 @@ fn a_test_that_runs_what_its_dependency_built_is_built_when_the_workspace_allows
     let ceiling = &mut pipeline.ports_mut().manifest.workspace.ceiling;
     ceiling.run.insert(program("out/app"));
 
-    let outcomes = build(&mut pipeline, OnFailure::Stop);
+    let outcomes = build_named(&mut pipeline, &["//:app_test"], OnFailure::Stop).unwrap();
 
     assert_eq!(
         classes(&outcomes),
@@ -850,7 +865,7 @@ fn a_test_that_runs_what_its_dependency_built_is_built_when_the_workspace_allows
 fn a_program_first_named_by_expansion_is_refused_before_anything_runs() {
     let mut pipeline = tested();
 
-    let error = refused(&mut pipeline);
+    let error = build_named(&mut pipeline, &["//:app_test"], OnFailure::Stop).unwrap_err();
 
     assert_eq!(
         error.to_string(),
@@ -1073,7 +1088,8 @@ fn two_directories(order: Order) -> Pipeline<FakePorts> {
     pipeline
 }
 
-/// A build of [`two_directories`] with `test_filter` set to `Login`.
+/// A build of `//:app_test` of [`two_directories`], whose closure is the whole workspace, with
+/// `test_filter` set to `Login`.
 fn build_filtered(pipeline: &mut Pipeline<FakePorts>) -> Vec<ActionOutcome> {
     let overrides = Overrides::from([(
         SettingName::parse("test_filter").unwrap(),
@@ -1082,7 +1098,7 @@ fn build_filtered(pipeline: &mut Pipeline<FakePorts>) -> Vec<ActionOutcome> {
     pipeline
         .build(
             &entry(),
-            &Scope::Workspace,
+            &Scope::Targets(BTreeSet::from([label("//:app_test")])),
             &overrides,
             OnFailure::Stop,
             LiveOutput::Off,

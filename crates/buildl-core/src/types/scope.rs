@@ -18,7 +18,8 @@ use crate::types::Label;
 /// The part of a workspace's graph one run works on.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum Scope {
-    /// Every target.
+    /// Every target the run's purpose means: every target but tests for a build, every test for a
+    /// test run.
     #[default]
     Workspace,
     /// The targets these labels name, each directly or as an alias, and everything they depend

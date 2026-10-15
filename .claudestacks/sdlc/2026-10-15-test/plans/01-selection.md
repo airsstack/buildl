@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 built-on: fefed82cb705
 ---
@@ -82,7 +82,7 @@ crates/buildl-core/tests/flows/plan.rs         — [modify] the pinned flow name
   choosing the targets, which `narrow` does). Being a plain enum with no logic, `purpose.rs` is
   exempt from the unit-test mandate, and its module doc ends with the line the sibling data
   files use: "This file holds only a type definition, so it carries no logic to unit-test." (`scope.rs:12`).
-- `Error::NotATest { asked: Label, target: Label, provenance: Provenance }`, doc "A test run was
+- `Error::NotATest { asked: Label, target: Label, provenance: Box<Provenance> }`, doc "A test run was
   asked for a target that is not a test.", fields documented as "The label that was asked for",
   "The target it names: the same label unless an alias was followed", "The build file that
   declares the target". Message exactly
@@ -118,7 +118,7 @@ is green. Commit `feat(buildl-core): a purpose for a run, and an error for a tes
   - `Scope::Targets(labels)`, `Purpose::Test`: labels are taken in label order; a label naming
     nothing is `unknown_target` as today; a label resolving (directly or through an alias) to a
     node whose role is not `Test` is `Error::NotATest { asked: label, target: node.label,
-    provenance: node.provenance }`; the first failing label decides the error.
+    provenance: Box::new(node.provenance) }`; the first failing label decides the error.
   - An empty start set gives an empty graph, with every setting kept.
   The rustdoc's first paragraph and `# Errors` section say all of this; `Error::NotATest` is
   linked by its explicit path, as `UnknownTarget` is (`narrow.rs:29`).
@@ -185,3 +185,21 @@ is green. Commit `feat(buildl-core): a purpose for a run, and an error for a tes
 
 - `cargo make dod` and `cargo deny check` green after Task 2.
 - `git diff --exit-code crates/buildl-core/tests/flows/golden` clean after Task 2.
+
+## Review findings
+
+- doc-comment-discipline — `Scope::Workspace` still read "Every target." though a build leaves tests out — `types/scope.rs:21` — fixed; `cargo make dod` → `Build Done in 28.69 seconds.`
+- doc-comment-discipline — one `Pipeline::plan` rustdoc line ran to 127 columns — `pipeline/driver.rs:108` — fixed (rewrapped)
+- correctness hygiene — `named`'s `_ => Ok(id)` also takes a missing node — `resolve/narrow.rs` — fixed: a comment says `id_of` gave the id
+- unit-test-mandate — "the first failing label decides the error" was unpinned — `resolve/narrow.rs` — fixed: `the_first_failing_label_in_label_order_decides_the_error`; `cargo test -p buildl-core --lib resolve::narrow` → `15 passed; 0 failed`
+- redundancy — `a_build_of_the_workspace_keeps_a_test_a_target_depends_on` repeats a check of `a_build_of_the_workspace_leaves_tests_out` — kept: the plan names it
+- amendment hygiene — spec §6 lists `a_plan_of_the_workspace_leaves_tests_out` under `tests/flows/build.rs`; it is in `tests/flows/plan.rs` — not amended: this plan records the move, and editing the approved spec would mark all ten plans stale
+
+## Probe results
+
+- No throwaway probe: every premise of both tasks sits under a test the tasks name. The four flows that reach a test through the whole workspace failed before they were moved to `//:app_test`, as Risks predicted, and pass after.
+
+## Deviations
+
+- 2026-10-15 — `Error::NotATest.provenance` is `Box<Provenance>`, not `Provenance`: three inline fields made the variant 144 bytes and `clippy::result_large_err` (limit 128) failed the gate; every other large variant of `Error` boxes its site. Task 1 and Task 2 text amended.
+- 2026-10-15 — `narrow`'s doc links to `Error::*` are plain intra-doc links (`rustdoc::redundant_explicit_links` once `Error` is imported); its first doc paragraph is one sentence (`clippy::too_long_first_doc_paragraph`).
