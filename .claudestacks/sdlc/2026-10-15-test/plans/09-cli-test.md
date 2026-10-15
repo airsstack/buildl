@@ -102,7 +102,8 @@ crates/buildl-cli/tests/cli/exit_codes.rs — [modify] three tests of test's sta
 - `each_command_parses` gains `test`.
 - `not_a_test_is_a_usage_error` in `exit.rs`'s tests — `Exit::of_error(&NotATest{…})` is
   `Exit::Usage`; `every_error_variant_has_its_code` passes with the new value in
-  `usage_errors()`.
+  `usage_errors()`, its two literals moved from `[3, 2, 1, 16, 3, 6]` and `31` to
+  `[4, 2, 1, 16, 3, 6]` and `32` (`exit.rs:446`, `:451`).
 - `a_test_run_of_a_workspace_without_tests_says_so_on_stderr` in `run.rs`'s tests — `test` on
   the `copying()` workspace exits `Success`, writes `no tests\n` to stderr and nothing to stdout.
 - `help_names_every_command_and_flag`, `each_command_has_its_help` and
