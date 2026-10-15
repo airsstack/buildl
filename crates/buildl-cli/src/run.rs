@@ -5,7 +5,8 @@
 //! two streams are all handed in. A test therefore drives a command without a process.
 //!
 //! Standard output carries what the command was asked for and nothing else; standard error
-//! carries everything about how the command went.
+//! carries everything about how the command went and, for `log`, the stored standard error of
+//! the run it shows.
 //!
 //! Responsibilities: [`run`], and one function per command.
 //!
@@ -21,12 +22,15 @@ use buildl::Workspace;
 use buildl::buildl_core::json::canonical;
 use buildl::buildl_core::{Error, Scope};
 use buildl::report::{
-    Mode, Paint, TerminalReporter, check_line, error_text, graph_dot, plan_text, query_text,
+    Mode, Paint, TerminalReporter, check_line, damage, error_text, graph_dot, header, plan_text,
+    query_text,
 };
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 
-use crate::cli::{BuildArgs, Cli, Command, GraphArgs, PlanArgs, QueryArgs, overrides};
+use crate::cli::{
+    BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, QueryArgs, Streams, overrides,
+};
 use crate::exit::Exit;
 use crate::terminal::Terminal;
 
@@ -100,6 +104,7 @@ where
         Command::Query(args) => query(&start, &args, stdout),
         Command::Plan(args) => plan(&start, args, stdout),
         Command::Build(args) => build(&start, args, terminal.mode(), paint, stderr),
+        Command::Log(args) => log(&start, &args, stdout, stderr),
     };
     match ended {
         Ok(exit) => exit,
@@ -249,6 +254,41 @@ fn build<E: Write>(
     Ok(Exit::of_outcomes(&built?))
 }
 
+/// `log`: writes to `stderr` the header of the target's last logged run and a warning of any
+/// damaged line of the log, then the bytes that run printed as stored: standard output to
+/// `stdout` and standard error to `stderr`, or the one stream asked for to `stdout`. A target
+/// that fails the label grammar is a mistake of the command line.
+fn log<O: Write, E: Write>(
+    start: &Path,
+    args: &LogArgs,
+    stdout: &mut O,
+    stderr: &mut E,
+) -> Result<Exit, Stop> {
+    let workspace = Workspace::open(start)?;
+    let label = workspace.label(&args.target).map_err(|error| {
+        Cli::command().error(
+            ErrorKind::ValueValidation,
+            format!("invalid value '{}' for '<TARGET>': {error}", args.target),
+        )
+    })?;
+    let shown = workspace.log(&label)?;
+    let _ = stderr.write_all(header(&shown.last).as_bytes());
+    if let Some(warning) = damage(&shown.last.damaged) {
+        let _ = stderr.write_all(warning.as_bytes());
+    }
+    match args.streams() {
+        Streams::Both => {
+            // The stored standard error is shown whether or not standard output can be written.
+            let written = product(stdout, &shown.stdout);
+            let _ = stderr.write_all(&shown.stderr);
+            written?;
+        }
+        Streams::Stdout => product(stdout, &shown.stdout)?,
+        Streams::Stderr => product(stdout, &shown.stderr)?,
+    }
+    Ok(Exit::Success)
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -278,6 +318,12 @@ mod tests {
 
     /// One target, `//:copy`, that copies `a.txt`.
     const COPY: &str = "buildl.target(\"copy\", { inputs = { \"a.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\n";
+
+    /// A manifest like [`MANIFEST`] that allows `sh` instead of `cp`.
+    const SH_MANIFEST: &str = "[ceiling]\nproc.run = [\"sh\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nworkers = 1\nstrategy = \"bare\"\n";
+
+    /// One target, `//:both`, that prints a line on each stream.
+    const BOTH: &str = "buildl.target(\"both\", { run = { \"sh\", \"-c\", \"echo out; echo err >&2\" }, outputs = {} })\n";
 
     /// A temporary workspace holding each of `files`, and its canonical root.
     fn workspace(files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
@@ -555,6 +601,58 @@ mod tests {
         assert_eq!(
             ran.stderr,
             "error: target //:cpy was asked for but is not declared (did you mean //:copy?)\n"
+        );
+    }
+
+    #[test]
+    fn log_writes_the_stored_streams_to_their_writers() {
+        let (_dir, root) = copying();
+        assert_eq!(ran(&root, &["build"]).exit, Exit::Success);
+        let ran = ran(&root, &["log", "copy"]);
+        assert_eq!(ran.exit, Exit::Success);
+        assert_eq!(ran.stdout, "");
+        assert!(
+            ran.stderr.starts_with("//:copy: built at "),
+            "{}",
+            ran.stderr
+        );
+        assert!(ran.stderr.ends_with(" UTC\n"), "{}", ran.stderr);
+        assert_eq!(ran.stderr.lines().count(), 1, "{}", ran.stderr);
+    }
+
+    #[test]
+    fn log_writes_stored_stderr_when_stdout_is_closed() {
+        let (_dir, root) = workspace(&[("buildl.toml", SH_MANIFEST), ("build.lua", BOTH)]);
+        assert_eq!(ran(&root, &["build"]).exit, Exit::Success);
+        let mut stderr = Vec::new();
+        let exit = run(
+            ["buildl", "log", "both"],
+            Ok(root),
+            &piped(),
+            &mut Failing(io::ErrorKind::BrokenPipe),
+            &mut stderr,
+        );
+        assert_eq!(exit, Exit::Success);
+        let stderr = String::from_utf8(stderr).unwrap();
+        assert!(stderr.starts_with("//:both: built at "), "{stderr}");
+        assert!(stderr.ends_with(" UTC\nerr\n"), "{stderr}");
+    }
+
+    #[test]
+    fn log_warns_of_damaged_lines() {
+        let (_dir, root) = copying();
+        assert_eq!(ran(&root, &["build"]).exit, Exit::Success);
+        let log = root.join(".buildl/log.jsonl");
+        let before = fs::read_to_string(&log).unwrap();
+        let line = before.lines().count() + 1;
+        fs::write(&log, format!("{before}junk\n")).unwrap();
+        let ran = ran(&root, &["log", "copy"]);
+        assert_eq!(ran.exit, Exit::Success);
+        let (header, warning) = ran.stderr.split_once('\n').unwrap();
+        assert!(header.starts_with("//:copy: built at "), "{}", ran.stderr);
+        assert_eq!(
+            warning,
+            format!("log.jsonl: 1 damaged line skipped (line {line})\n")
         );
     }
 

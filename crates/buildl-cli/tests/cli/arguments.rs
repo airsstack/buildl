@@ -49,6 +49,24 @@ const SET: &str = concat!(
     "\n",
 );
 
+/// The help of the argument of `log`.
+const LOG_TARGET: &str = concat!(
+    "Arguments:\n",
+    "  <TARGET>\n",
+    "          The target, as //dir:name, :name or name\n",
+    "\n",
+);
+
+/// The help of `--stdout` and `--stderr`.
+const STREAMS: &str = concat!(
+    "      --stdout\n",
+    "          Print only what the run wrote to standard output\n",
+    "\n",
+    "      --stderr\n",
+    "          Print only what the run wrote to standard error, on standard output\n",
+    "\n",
+);
+
 /// What the binary writes to standard output for `args`, which it must answer with success and
 /// nothing on standard error.
 fn answered(args: &[&str]) -> String {
@@ -90,6 +108,7 @@ fn help_names_every_command_and_flag() {
             "  query  Ask what a target needs, or what needs it\n",
             "  plan   Say what a build would run, and why\n",
             "  build  Build targets and what they need\n",
+            "  log    Show what a target printed when it last ran\n",
             "  help   Print this message or the help of the given subcommand(s)\n",
             "\n",
             "Options:\n",
@@ -184,10 +203,71 @@ fn each_command_has_its_help() {
             ]
             .concat(),
         ),
+        (
+            "log",
+            [
+                "Show what a target printed when it last ran\n\n",
+                "Usage: buildl log [OPTIONS] <TARGET>\n\n",
+                LOG_TARGET,
+                "Options:\n",
+                COLOR,
+                STREAMS,
+                HELP_AND_VERSION,
+            ]
+            .concat(),
+        ),
     ];
     for (command, expected) in cases {
         assert_eq!(answered(&[command, "--help"]), expected, "{command}");
     }
+}
+
+#[test]
+fn log_rejects_both_stream_flags() {
+    let (_dir, root) = workspace(&[]);
+    let output = run(&root, &["log", "copy", "--stdout", "--stderr"], &[]);
+    assert_eq!(code(&output), 2);
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output)
+            .starts_with("error: the argument '--stdout' cannot be used with '--stderr'\n"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn log_reads_a_relative_target() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        ("build.lua", "buildl.subdir(\"lib\")\n"),
+        (
+            "lib/build.lua",
+            "buildl.target(\"text\", { inputs = { \"text.c\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+        ),
+        ("lib/text.c", "text\n"),
+    ]);
+    assert_eq!(code(&run(&root, &["build"], &[])), 0);
+    let output = run(&root.join("lib"), &["log", "text"], &[]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(
+        stderr(&output).starts_with("//lib:text: built at "),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn log_rejects_a_bad_label_with_exit_2() {
+    let (_dir, root) = workspace(&[("buildl.toml", &manifest(&["sh"])), ("build.lua", "")]);
+    let output = run(&root, &["log", "//lib"], &[]);
+    assert_eq!(code(&output), 2);
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output).starts_with("error: invalid value '//lib' for '<TARGET>'"),
+        "{}",
+        stderr(&output)
+    );
 }
 
 #[test]
@@ -205,6 +285,7 @@ fn no_command_prints_the_short_help_on_stderr() {
             "  query  Ask what a target needs, or what needs it\n",
             "  plan   Say what a build would run, and why\n",
             "  build  Build targets and what they need\n",
+            "  log    Show what a target printed when it last ran\n",
             "  help   Print this message or the help of the given subcommand(s)\n",
             "\n",
             "Options:\n",

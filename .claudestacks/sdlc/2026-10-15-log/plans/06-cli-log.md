@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [04, 05]
 built-on: 280eda6f4573
@@ -101,7 +101,7 @@ crates/buildl-cli/tests/cli/exit_codes.rs — [modify] three tests of log's stat
 - `no_run_is_a_usage_error` and `missing_output_is_an_infrastructure_failure` in `exit.rs`'s
   tests — `Exit::of_error` gives `Usage` and `Infrastructure`; `every_error_variant_has_its_code`
   passes with the new values, its two literals moved from what the test slice leaves (`[4, 2, 1,
-  16, 3, 6]`, `32`) to `[5, 3, 1, 16, 3, 6]` and `33` (`exit.rs:446`, `:451`).
+  16, 3, 6]`, `32`) to `[5, 3, 1, 16, 3, 6]` and `34` (`exit.rs:446`, `:451`).
 - `only_the_manifests_adapter_is_a_definition_error` (`exit.rs:460`) gains `PortName::RunHistory`,
   so a log that cannot be read is shown to exit 3.
 - `log_writes_the_stored_streams_to_their_writers` in `run.rs`'s tests — `copying()` built, then
@@ -156,3 +156,23 @@ Commit `test(buildl-cli): what the log command prints and how it ends`.
 ## Proof
 
 - `cargo make dod` and `cargo deny check` green after each task.
+
+## Review findings
+
+- risk — with no flag, a closed stdout returned before the stored stderr was written, so `buildl log x | head -1` lost the run's stderr — `src/run.rs` — fixed: the stored stderr is written whatever stdout's write returned; `log_writes_stored_stderr_when_stdout_is_closed`, seen failing first
+- risk — nothing guarded the damaged-lines warning — `src/run.rs` — fixed: `log_warns_of_damaged_lines`, seen failing with the warning's write removed
+- nit — `main.rs` said naming no target means every target, and that `log`, like `query`, loads no build file and writes nothing; `run.rs`'s module doc said stderr carries only how the command went — fixed
+- nit — `LogArgs.streams` let the flag `bool`s out of `cli.rs` and shared its name with `streams()` — fixed: a private field `flags`
+- nit — the test helper `copying(built: bool)` — `tests/cli/exit_codes.rs` — fixed: `copying()` and `built_copying()`
+- nit — `log_reads_a_relative_target` and `log_rejects_a_bad_label_with_exit_2` sat in `output.rs`, where Task 2 puts them in `arguments.rs` — fixed: moved
+- nit — the plan's literals did not add up (`5+3+1+16+3+6` is 34, not 33) — fixed: Task 1 reads `34`
+
+## Probe results
+
+- No throwaway probe: every claim is under a named test. The removed warning write served as the reversion probe for the damaged-lines warning.
+
+## Deviations
+
+- The test slice's command-line plan has not run on this branch, so there is no `Command::Test` and `NotATest` still has no code of its own: `Command::Log` follows `Build`, the help lines and the command-table row follow `build`'s, and `every_error_variant_has_its_code` reads `[4, 3, 1, 16, 3, 6]` and `33` (the test slice's plan adds one usage error and one variant).
+- `log_rejects_both_stream_flags` also pins clap's conflict message on stderr.
+- Task 2's tests passed on their first run: they exercise Task 1's code, which existed when they were written. The pinned helps were pinned from the binary rather than seen failing.

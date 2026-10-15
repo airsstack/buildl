@@ -8,8 +8,9 @@
 //!
 //! - [`Cli`] and [`Command`] — the commands and the flags of each.
 //! - [`Color`] — when to colour what is printed, as asked for.
-//! - [`GraphArgs`], [`QueryArgs`], [`PlanArgs`], [`BuildArgs`] and [`Selection`] — the arguments
-//!   of a command.
+//! - [`GraphArgs`], [`QueryArgs`], [`PlanArgs`], [`BuildArgs`], [`LogArgs`] and [`Selection`] —
+//!   the arguments of a command.
+//! - [`Streams`] — which streams of a run `log` prints.
 //! - [`Override`] and [`overrides`] — `--set NAME=VALUE`, and the settings of one run.
 //!
 //! Non-responsibilities: running a command, which the `run` module does; reading a target
@@ -60,6 +61,8 @@ pub(crate) enum Command {
     Plan(PlanArgs),
     /// Build targets and what they need
     Build(BuildArgs),
+    /// Show what a target printed when it last ran
+    Log(LogArgs),
 }
 
 /// The arguments of `graph`.
@@ -127,6 +130,53 @@ pub(crate) struct BuildArgs {
     /// Show one running action's output as it is printed
     #[arg(long)]
     pub stream: bool,
+}
+
+/// The arguments of `log`.
+#[derive(Debug, Args)]
+pub(crate) struct LogArgs {
+    /// The target, as //dir:name, :name or name
+    #[arg(value_name = "TARGET")]
+    pub target: String,
+    /// Which stream to print.
+    #[command(flatten)]
+    flags: StreamFlags,
+}
+
+/// The stream of a run `log` prints: one of the two at most, and both when neither is named.
+#[derive(Debug, Args)]
+#[group(multiple = false)]
+pub(crate) struct StreamFlags {
+    /// Print only what the run wrote to standard output
+    #[arg(long)]
+    pub stdout: bool,
+    /// Print only what the run wrote to standard error, on standard output
+    #[arg(long)]
+    pub stderr: bool,
+}
+
+/// Which of a run's streams `log` prints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Streams {
+    /// Standard output on standard output and standard error on standard error
+    Both,
+    /// Only what the run wrote to standard output
+    Stdout,
+    /// Only what the run wrote to standard error, on standard output
+    Stderr,
+}
+
+impl LogArgs {
+    /// The streams the command line asks for.
+    pub(crate) const fn streams(&self) -> Streams {
+        if self.flags.stdout {
+            Streams::Stdout
+        } else if self.flags.stderr {
+            Streams::Stderr
+        } else {
+            Streams::Both
+        }
+    }
 }
 
 impl BuildArgs {
@@ -209,7 +259,7 @@ mod tests {
     use clap::error::ErrorKind;
     use clap::{CommandFactory, Parser};
 
-    use super::{BuildArgs, Cli, Color, Command, PlanArgs, overrides};
+    use super::{BuildArgs, Cli, Color, Command, LogArgs, PlanArgs, Streams, overrides};
 
     /// The command line `args` after the program's name, parsed.
     fn parsed(args: &[&str]) -> Cli {
@@ -239,6 +289,14 @@ mod tests {
         }
     }
 
+    /// The arguments of the `log` command line `args`.
+    fn log(args: &[&str]) -> LogArgs {
+        match parsed(args).command {
+            Command::Log(log) => log,
+            other => panic!("expected log, got {other:?}"),
+        }
+    }
+
     #[test]
     fn the_definition_is_consistent() {
         Cli::command().debug_assert();
@@ -250,6 +308,24 @@ mod tests {
         assert!(matches!(parsed(&["graph"]).command, Command::Graph(_)));
         assert!(matches!(parsed(&["plan"]).command, Command::Plan(_)));
         assert!(matches!(parsed(&["build"]).command, Command::Build(_)));
+        assert!(matches!(parsed(&["log", "app"]).command, Command::Log(_)));
+    }
+
+    #[test]
+    fn log_streams_map_to_their_values() {
+        assert_eq!(log(&["log", "app"]).streams(), Streams::Both);
+        assert_eq!(log(&["log", "app", "--stdout"]).streams(), Streams::Stdout);
+        assert_eq!(log(&["log", "--stderr", "app"]).streams(), Streams::Stderr);
+        assert_eq!(log(&["log", "//lib:app"]).target, "//lib:app");
+    }
+
+    #[test]
+    fn log_takes_one_stream_flag_and_one_target() {
+        assert_eq!(
+            refused(&["log", "app", "--stdout", "--stderr"]),
+            ErrorKind::ArgumentConflict
+        );
+        assert_eq!(refused(&["log"]), ErrorKind::MissingRequiredArgument);
     }
 
     #[test]

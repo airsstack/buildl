@@ -663,3 +663,52 @@ fn a_state_directory_that_cannot_be_used_is_an_infrastructure_failure() {
         )
     );
 }
+
+/// The workspace of [`COPY`], not built.
+fn copying() -> (tempfile::TempDir, std::path::PathBuf) {
+    workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        ("build.lua", COPY),
+        ("a.txt", "a\n"),
+    ])
+}
+
+/// The workspace of [`COPY`], built once.
+fn built_copying() -> (tempfile::TempDir, std::path::PathBuf) {
+    let (dir, root) = copying();
+    assert_eq!(code(&run(&root, &["build"], &[])), 0);
+    (dir, root)
+}
+
+#[test]
+fn log_of_a_target_that_never_ran_exits_2() {
+    let (_dir, root) = copying();
+    assert_eq!(
+        failed(&root, &["log", "copy"]),
+        (
+            2,
+            "error: target //:copy has no run in the log\n".to_owned()
+        )
+    );
+}
+
+#[test]
+fn log_with_a_blob_removed_exits_3() {
+    let (_dir, root) = built_copying();
+    fs::remove_dir_all(root.join(".buildl/cas")).unwrap();
+    assert_eq!(
+        failed(&root, &["log", "copy"]),
+        (
+            3,
+            "error: target //:copy: the output of its last logged run is no longer in the store\n"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn log_with_a_broken_build_file_exits_0() {
+    let (_dir, root) = built_copying();
+    write(&root, "build.lua", "this is not lua\n");
+    assert_eq!(code(&run(&root, &["log", "copy"], &[])), 0);
+}

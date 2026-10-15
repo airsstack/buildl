@@ -14,9 +14,10 @@
 //! | `buildl query <EXPR> [--json]` | the targets the expression reaches, one per line, or as canonical JSON | nothing |
 //! | `buildl plan [TARGET]... [--set NAME=VALUE]... [--json]` | what a build would run and why, or the plan as canonical JSON | nothing |
 //! | `buildl build [TARGET]... [--set NAME=VALUE]... [-k \| --keep-going] [--stream]` | nothing | a block for each action that printed or failed, and a summary |
+//! | `buildl log <TARGET> [--stdout \| --stderr]` | the stored stdout, or the one stream asked for | the header, a warning of damaged lines, and the stored stderr when no flag is given |
 //!
 //! A target is written `//dir:name`, or `:name` and `name` for one in the directory the command
-//! was started in; naming none means every target. `--set` gives a build setting a value for
+//! was started in; naming none means every target, except for `log`, which takes exactly one. `--set` gives a build setting a value for
 //! one run and may be repeated, once per setting. `--keep-going` builds everything a failure
 //! does not stop, and `--stream` shows one running action's output as it is printed. Every
 //! command takes `--color auto|always|never`: under `auto`, what is printed is coloured only
@@ -26,6 +27,9 @@
 //! An expression is `deps(TARGET)`, every target TARGET depends on, or `rdeps(TARGET)`, every
 //! target that depends on TARGET. Either reaches any number of steps away, and TARGET itself is
 //! not in the answer. `query`, like `check` and `graph`, takes no lock and writes nothing.
+//!
+//! `log` takes no lock and loads no build file, and writes nothing but the store's own removal of
+//! a blob that fails its digest; it does not follow an alias.
 //!
 //! # Exit status
 //!
