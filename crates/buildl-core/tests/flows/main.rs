@@ -10,6 +10,7 @@ mod build;
 mod check;
 mod graph;
 mod load;
+mod log;
 mod plan;
 mod query;
 mod report;

@@ -13,7 +13,7 @@
 use std::collections::BTreeSet;
 
 use crate::error::{Error, Result};
-use crate::resolve::suggest::nearest;
+use crate::suggest::nearest;
 use crate::types::{Direction, Label, NodeId, Query, TargetGraph};
 
 /// The labels of the targets `query` reaches in `graph`: everything its target needs for

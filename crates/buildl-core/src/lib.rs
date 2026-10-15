@@ -29,7 +29,9 @@
 //! | [`resolve`](mod@resolve) | Resolve, the second phase: declarations to the target graph, that graph cut down to the targets one run was asked for, and the targets a query reaches |
 //! | [`plan`](mod@plan) | Plan, the third phase: the target graph to a verdict per target, with what the build wants |
 //! | [`execute`](mod@execute) | Execute and Record, the last phase: a plan to one outcome per target, each result recorded as the last step of its action and reported once it is logged |
-//! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command, and the three commands that reach only build files as functions over a source alone |
+//! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command, and the commands that need only some of the ports as functions over those ports alone: the three that reach only build files, and `log` |
+//! | [`history`] | the read side of the build log: the newest run of a target that left output |
+//! | `suggest` | the nearest declared name to one that names nothing, for any module that refuses a name |
 //!
 //! Each phase has its own module, named for the phase. Five rules keep that arrangement
 //! navigable:
@@ -90,19 +92,23 @@
 //! target, asks which targets that target needs or which need it: [`reach`](fn@reach) answers it
 //! over a [`TargetGraph`], in the [`Direction`] it names. [`pipeline::check`], [`pipeline::graph`]
 //! and [`pipeline::query`] run the three commands that reach only build files for a caller that
-//! holds only a [`DeclarationSource`].
+//! holds only a [`DeclarationSource`]. A [`LoggedRun`] reads back from the build log through
+//! [`RunHistory`], and [`pipeline::log`](fn@pipeline::log) returns a target's last run with what it
+//! printed.
 //!
 //! This file holds only module declarations and re-exports, so it carries no logic to
 //! unit-test.
 
 pub mod error;
 pub mod execute;
+pub mod history;
 pub mod json;
 pub mod load;
 pub mod pipeline;
 pub mod plan;
 pub mod ports;
 pub mod resolve;
+mod suggest;
 pub mod types;
 
 pub use error::{
@@ -110,12 +116,14 @@ pub use error::{
     EvaluationLimit, NameKind, PortName, Result, TreeFault,
 };
 pub use execute::execute;
+pub use history::LastRun;
 pub use load::load;
-pub use pipeline::Pipeline;
+pub use pipeline::{Pipeline, Shown, log};
 pub use plan::plan;
 pub use ports::{
     ActionCache, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
-    ExecStrategy, GraphRecord, Host, Manifest, PortSet, Ports, Reporter, StatCache, ToolResolver,
+    ExecStrategy, GraphRecord, Host, Manifest, PortSet, Ports, Reporter, RunHistory, StatCache,
+    ToolResolver,
 };
 pub use resolve::{narrow, reach, resolve};
 pub use types::{

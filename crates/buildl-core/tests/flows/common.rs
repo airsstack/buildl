@@ -11,10 +11,11 @@ use buildl_core::{
     ActionCache, BuildFile, CacheRow, Ceiling, Clock, ContentStore, DeclarationOrder,
     DeclarationSource, Diagnostic, Digest, Digester, Directory, Dispatcher, EnvName, EnvValue,
     Error, Evaluated, EvaluationFailure, EventLog, ExecStrategy, Exit, FileStat, Freshness, Host,
-    InputKind, InputStat, Label, Manifest, NetworkAccess, OutcomeEvent, OutputPath, Platform,
-    PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, SourcePath, StagedAlias,
-    StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir,
-    StagedTarget, StatCache, StatEntry, TargetRole, Timestamp, ToolResolver, Workspace, Written,
+    InputKind, InputStat, Label, LogLine, Manifest, NetworkAccess, OutcomeEvent, OutputPath,
+    Platform, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory,
+    SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
+    StagedSubdir, StagedTarget, StatCache, StatEntry, TargetRole, Timestamp, ToolResolver,
+    Workspace, Written,
 };
 use buildl_core::{
     Captured, Channel, GraphRecord, LiveSink, OutcomeClass, Reporter, Summary, TargetGraph, Turn,
@@ -449,6 +450,27 @@ impl EventLog for FakeLog {
         }
         self.events.push(event.clone());
         Ok(())
+    }
+}
+
+/// A build log held in memory, as a reader gets it back.
+#[derive(Debug, Default)]
+pub struct FakeHistory {
+    /// The lines of the log, oldest first.
+    pub lines: Vec<LogLine>,
+    /// Whether reading fails.
+    pub broken: bool,
+}
+
+impl RunHistory for FakeHistory {
+    fn lines(&self) -> Result<Vec<LogLine>> {
+        if self.broken {
+            return Err(Error::Adapter {
+                port: PortName::RunHistory,
+                diagnostic: Diagnostic::new("the log cannot be read"),
+            });
+        }
+        Ok(self.lines.clone())
     }
 }
 

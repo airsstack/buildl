@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [01]
 built-on: 280eda6f4573
@@ -235,3 +235,23 @@ with or without digests):
 ## Proof
 
 - `cargo make dod` and `cargo deny check` green after each task.
+
+## Review findings
+
+- reversion guard — nothing caught `&&` → `||` in `has_output`: every fixture set both digests or neither — `history/last_run.rs:80` — fixed: `a_line_with_only_one_stream_is_noted_not_chosen`; with `||` it fails (`10 passed, 1 failed`), with `&&` `cargo test -p buildl-core --lib history::` → `11 passed`
+- reversion guard — `newer` order and an older skipped line left out were untested — `history/last_run.rs:59` — fixed: `newer_lines_are_listed_newest_first_and_older_ones_left_out`
+- unit-test-mandate — test helper `refused` returned `(None, [])` for any other error — `history/last_run.rs:154` — fixed: `unreachable!` on an error that is not `NoRun`
+- doc-comment-discipline — `pipeline::log`'s `# Errors` left out the content store's failure — `pipeline/log.rs:33` — fixed
+- doc-comment-discipline — module doc gave `check` as the reason for its own file, and said `LastRun` chooses the run — `pipeline/log.rs:3`, `:9` — fixed: the real reason; `history`'s `last_run` chooses (plain code text: the function is crate-private)
+- doc style — prose over 100 columns; an awkward list — `lib.rs:96`, `pipeline/mod.rs:6` — fixed; `cargo make dod` → `Build Done in 34.21 seconds.`
+- spec amendment — spec §3.3 says the suggestion comes from every label of the log's events; it comes from labels that have a run — not amended in the spec: Task 3 records the reason (else the asked label suggests itself), and editing the approved spec would mark the chain's plans stale
+- plan addition — `pipeline/log.rs` holds 3 unit tests and a test-only content store the plan does not list — kept: the unit-test mandate asks for them, as `read` branches
+
+## Probe results
+
+- No throwaway probe: the named tests cover each premise; the `||` flip above is the reversion check for the one rule no named test pinned.
+
+## Deviations
+
+- 2026-10-15 — `pipeline/log.rs` carries inline unit tests besides the flows (its `read` helper branches).
+- 2026-10-15 — intra-doc links to the function name it `fn@log`, as `pipeline` holds both a module and a function named `log`.

@@ -16,7 +16,6 @@ mod index;
 pub mod narrow;
 pub mod reach;
 mod references;
-mod suggest;
 
 #[cfg(test)]
 mod fixtures;
