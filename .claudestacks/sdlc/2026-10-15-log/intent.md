@@ -37,8 +37,9 @@ Assumed, and overridable:
   `log`.
 - `buildl-cli` — the `log` subcommand, its flags, its exit codes.
 - `docs/design.md` §3, §7, §8.7; `README.md`'s command table; `docs/architecture.md` and
-  `docs/architecture-building-blocks.md` where they describe the log, its port and the commands;
-  the roadmap's milestone 2 ladder.
+  `docs/architecture-building-blocks.md` where they describe the log, its port and the commands.
+  The milestone 2 ladder is written nowhere outside the chains, and the status board counts
+  progress, so no roadmap file changes.
 
 ## Desired outcome
 

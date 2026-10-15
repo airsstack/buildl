@@ -47,8 +47,9 @@ Assumed, and overridable:
 - `buildl-cli` — the `test` subcommand, its flags, its exit codes; `build`'s selection with no
   targets.
 - `docs/design.md` §5, §7, §8.7, §9.1; `README.md`'s command table; `docs/architecture.md` and
-  `docs/architecture-building-blocks.md` where they describe commands, outcomes and the reporter;
-  the roadmap's milestone 2 ladder.
+  `docs/architecture-building-blocks.md` where they describe commands, outcomes and the reporter.
+  The milestone 2 ladder is written nowhere outside the chains, and the status board counts
+  progress, so no roadmap file changes.
 
 ## Desired outcome
 
