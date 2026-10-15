@@ -208,6 +208,11 @@ mod tests {
             self.0.insert(label, row);
             Ok(())
         }
+
+        fn forget(&mut self, label: &Label) -> Result<()> {
+            self.0.remove(label);
+            Ok(())
+        }
     }
 
     /// Stands in for every port a plan never asks.

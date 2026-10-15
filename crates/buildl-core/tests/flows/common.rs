@@ -273,7 +273,10 @@ pub struct FakeCache {
     pub rows: BTreeMap<Label, CacheRow>,
     /// The targets whose row it fails to record.
     pub failing: BTreeSet<Label>,
+    /// The targets whose row it fails to forget.
+    pub unforgettable: BTreeSet<Label>,
     recorded: Vec<Label>,
+    forgotten: Vec<Label>,
 }
 
 impl FakeCache {
@@ -281,6 +284,12 @@ impl FakeCache {
     #[must_use]
     pub fn recorded(&self) -> Vec<Label> {
         self.recorded.clone()
+    }
+
+    /// Every target whose row was removed, in the order removed.
+    #[must_use]
+    pub fn forgotten(&self) -> Vec<Label> {
+        self.forgotten.clone()
     }
 }
 
@@ -298,6 +307,19 @@ impl ActionCache for FakeCache {
         }
         self.recorded.push(label.clone());
         self.rows.insert(label, row);
+        Ok(())
+    }
+
+    fn forget(&mut self, label: &Label) -> Result<()> {
+        if self.unforgettable.contains(label) {
+            return Err(Error::Adapter {
+                port: PortName::ActionCache,
+                diagnostic: Diagnostic::new(format!("{label} cannot be forgotten")),
+            });
+        }
+        if self.rows.remove(label).is_some() {
+            self.forgotten.push(label.clone());
+        }
         Ok(())
     }
 }

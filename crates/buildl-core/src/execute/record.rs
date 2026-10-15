@@ -6,10 +6,11 @@
 //! place, so that what a class of outcome carries is decided once.
 //!
 //! Responsibilities: [`row`]; the outcomes [`built`], [`cached`], [`failed`], [`unstored`],
-//! [`unplaced`], [`mismatched`] and [`skipped`]; [`event`] with [`Progress`]; and the three
+//! [`unplaced`], [`mismatched`] and [`skipped`]; [`event`] with [`Progress`]; and the four
 //! steps that reach a port, in the order that keeps a crash harmless: [`store`] puts a built
-//! target's outputs in place and only then records its row, [`restore`] puts a cached
-//! target's outputs in place, and [`append`] logs an outcome whatever it is. An output that
+//! target's outputs in place and only then records its row, [`forget_contradicted`] removes
+//! the row a failed action contradicts, [`restore`] puts a cached target's outputs in place,
+//! and [`append`] logs an outcome whatever it is. An output that
 //! cannot be put in place whole is removed from its path again. [`shown`] reads back what an
 //! action printed, for whoever shows its outcome.
 //!
@@ -197,6 +198,41 @@ pub(crate) fn store<A: ActionCache, C: ContentStore>(
     }
 }
 
+/// Takes the `outcome` of a target whose action just ran under `key`, and removes the row the
+/// target's last build recorded when that outcome contradicts it.
+///
+/// A row is the claim that its key passes, and this run of the same key just failed: under
+/// `--rerun`, under `always = true`, or after a row that stood could not be restored. The row
+/// is forgotten when `outcome` is not a success and the row's key has the digest of `key`. A
+/// row under another key is kept, so that reverting an edit is still a hit. A forget the cache
+/// refuses makes the outcome the failure to store, with the refusal as its diagnostic and
+/// everything else kept, unless the outcome already is that failure: its diagnostic names the
+/// cause that came first, and it is returned as it was, like every other outcome.
+pub(crate) fn forget_contradicted<A: ActionCache>(
+    outcome: ActionOutcome,
+    key: &ActionKey,
+    cache: &mut A,
+) -> ActionOutcome {
+    if outcome.class.succeeded() {
+        return outcome;
+    }
+    let contradicted = cache
+        .row(&outcome.label)
+        .is_some_and(|row| row.key().digest() == key.digest());
+    if !contradicted {
+        return outcome;
+    }
+    match cache.forget(&outcome.label) {
+        Ok(()) => outcome,
+        Err(_) if outcome.class == NOT_STORED => outcome,
+        Err(error) => ActionOutcome {
+            class: NOT_STORED,
+            diagnostic: Some(Diagnostic::new(error.to_string())),
+            ..outcome
+        },
+    }
+}
+
 /// Puts the outputs of a target that need not run back in place, and returns its outcome:
 /// `manifests` says what each output `row` recorded is. Nothing is written to the cache. A
 /// store that fails makes the outcome a failure to store, and an output it could not place
@@ -324,22 +360,23 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::{BTreeMap, BTreeSet};
     use std::sync::{Mutex, PoisonError};
 
     use super::{
-        Progress, built, cached, event, failed, mismatched, place, row, shown, skipped, unplaced,
-        unstored,
+        Progress, built, cached, event, failed, forget_contradicted, mismatched, place, row, shown,
+        skipped, unplaced, unstored,
     };
     use crate::error::{Error, PortName, Result};
     use crate::execute::fixtures::{
         command, file, key, label, node, output_path, row as recorded, tree,
     };
     use crate::execute::perform::{Printed, Span};
-    use crate::ports::ContentStore;
+    use crate::ports::{ActionCache, ContentStore};
     use crate::types::{
-        ActionOutcome, Diagnostic, Digest, FileMode, InfraKind, OutcomeClass, OutcomeEvent,
-        OutputManifest, OutputName, OutputPath, StoredFile, TargetRole, Timestamp, Tree, TreeEntry,
-        TreePath,
+        ActionOutcome, CacheRow, Diagnostic, Digest, FileMode, InfraKind, Label, OutcomeClass,
+        OutcomeEvent, OutputManifest, OutputName, OutputPath, StoredFile, TargetRole, Timestamp,
+        Tree, TreeEntry, TreePath,
     };
 
     /// A store that writes down what it is asked to clear and to place, whether or not it
@@ -888,5 +925,139 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// A cache holding the rows it is given, which fails to forget the labels in `unforgettable`.
+    #[derive(Default)]
+    struct Rows {
+        rows: BTreeMap<Label, CacheRow>,
+        unforgettable: BTreeSet<Label>,
+    }
+
+    impl Rows {
+        /// A cache holding `//:app` under the key of `names`.
+        fn holding(names: &[&str]) -> Self {
+            Self {
+                rows: BTreeMap::from([(label("//:app"), recorded(names))]),
+                unforgettable: BTreeSet::new(),
+            }
+        }
+    }
+
+    impl ActionCache for Rows {
+        fn row(&self, label: &Label) -> Option<&CacheRow> {
+            self.rows.get(label)
+        }
+
+        fn record(&mut self, label: Label, row: CacheRow) -> Result<()> {
+            self.rows.insert(label, row);
+            Ok(())
+        }
+
+        fn forget(&mut self, label: &Label) -> Result<()> {
+            if self.unforgettable.contains(label) {
+                return Err(Error::Adapter {
+                    port: PortName::ActionCache,
+                    diagnostic: Diagnostic::new("the row cannot be forgotten"),
+                });
+            }
+            self.rows.remove(label);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_failure_under_the_recorded_key_forgets_the_row() {
+        let mut cache = Rows::holding(&["app"]);
+        let outcome = failed(
+            label("//:app"),
+            TargetRole::Build,
+            OutcomeClass::ActionFailure { status: 2 },
+            None,
+            Some(printed()),
+        );
+
+        let returned = forget_contradicted(outcome.clone(), &key(&["app"]), &mut cache);
+
+        assert_eq!(returned, outcome);
+        assert_eq!(cache.row(&label("//:app")), None);
+    }
+
+    #[test]
+    fn a_failure_under_another_key_keeps_the_row() {
+        let mut cache = Rows::holding(&["app"]);
+        let outcome = bare(OutcomeClass::ActionFailure { status: 2 });
+
+        let returned = forget_contradicted(outcome.clone(), &key(&["lib"]), &mut cache);
+
+        assert_eq!(returned, outcome);
+        assert_eq!(cache.row(&label("//:app")), Some(&recorded(&["app"])));
+    }
+
+    #[test]
+    fn an_output_missing_under_the_recorded_key_forgets_the_row() {
+        let mut cache = Rows::holding(&["app"]);
+        let outcome = bare(OutcomeClass::OutputMissing {
+            name: OutputName::parse("app").unwrap(),
+        });
+
+        let returned = forget_contradicted(outcome.clone(), &key(&["app"]), &mut cache);
+
+        assert_eq!(returned, outcome);
+        assert_eq!(cache.row(&label("//:app")), None);
+    }
+
+    #[test]
+    fn a_forget_that_fails_is_a_store_failure() {
+        let mut cache = Rows::holding(&["app"]);
+        cache.unforgettable.insert(label("//:app"));
+        let outcome = failed(
+            label("//:app"),
+            TargetRole::Build,
+            OutcomeClass::ActionFailure { status: 2 },
+            None,
+            Some(printed()),
+        );
+
+        let returned = forget_contradicted(outcome, &key(&["app"]), &mut cache);
+
+        assert_eq!(
+            returned,
+            ActionOutcome {
+                diagnostic: Some(Diagnostic::new("action cache: the row cannot be forgotten")),
+                stdout: Some(printed().stdout),
+                stderr: Some(printed().stderr),
+                ..bare(STORE)
+            }
+        );
+        assert_eq!(cache.row(&label("//:app")), Some(&recorded(&["app"])));
+    }
+
+    #[test]
+    fn a_failed_forget_keeps_an_earlier_store_failure() {
+        let mut cache = Rows::holding(&["app"]);
+        cache.unforgettable.insert(label("//:app"));
+        let outcome = ActionOutcome {
+            diagnostic: Some(Diagnostic::new("appending to journal: disk full")),
+            stdout: Some(printed().stdout),
+            stderr: Some(printed().stderr),
+            ..bare(STORE)
+        };
+
+        let returned = forget_contradicted(outcome.clone(), &key(&["app"]), &mut cache);
+
+        assert_eq!(returned, outcome);
+        assert_eq!(cache.row(&label("//:app")), Some(&recorded(&["app"])));
+    }
+
+    #[test]
+    fn a_success_forgets_nothing() {
+        let mut cache = Rows::holding(&["app"]);
+        let outcome = built(label("//:app"), TargetRole::Build, &recorded(&["app"]));
+
+        let returned = forget_contradicted(outcome.clone(), &key(&["app"]), &mut cache);
+
+        assert_eq!(returned, outcome);
+        assert_eq!(cache.row(&label("//:app")), Some(&recorded(&["app"])));
     }
 }

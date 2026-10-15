@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [04]
 built-on: fefed82cb705
@@ -109,6 +109,8 @@ crates/buildl-core/tests/flows/build.rs          — [modify] two flows
 - `a_forgotten_row_is_gone_after_reopen_from_the_journal` — record `//:a` and fold; record
   `//:b`, forget `//:a`, do not fold; `LocalCache::open` on the same layout has no row for
   `//:a` and the row of `//:b`.
+- `after_a_failed_append_no_row_is_forgotten` — record `//:a`, make the journal unappendable;
+  `forget(//:a)` is `Err` and `row(//:a)` still returns the row, here and after a reopen.
 - `forgetting_a_label_with_no_row_writes_nothing` — on a fresh cache, `forget(//:a)` is `Ok`,
   no journal file exists afterwards (`entries(layout)` unchanged) and a `fold` leaves no
   `cache.json`.
@@ -127,7 +129,9 @@ Commit `feat(repo): the action cache can forget a row`.
   `cache.row(&outcome.label)` holds a row whose key digest equals `key.digest()`, calls
   `cache.forget(&outcome.label)`. A forget that returns `Err(error)` gives back the outcome with
   class `NOT_STORED` and diagnostic `error`'s text, everything else kept, as `store` does for a
-  failed `record`. Otherwise the outcome is returned unchanged. Its rustdoc says why: a row is
+  failed `record`; an outcome that is already `NOT_STORED` comes back unchanged when its forget
+  fails, so the diagnostic of the first failure is kept. Otherwise the outcome is returned
+  unchanged. Its rustdoc says why: a row is
   the claim that this key passes, and this run of the same key just failed — under `--rerun`,
   `always = true`, or a row that stood and could not be restored.
 - `record.rs`'s module doc names it among the steps that reach a port.
@@ -146,6 +150,9 @@ whose `forget` fails):
   `K` forgets the row.
 - `a_forget_that_fails_is_a_store_failure` — row under `K`, `forget` failing: the outcome comes
   back as `NOT_STORED` with the cache's message as diagnostic and its `stdout`/`stderr` kept.
+- `a_failed_forget_keeps_an_earlier_store_failure` — row under `K`, an outcome already
+  `NOT_STORED` with a diagnostic, `forget` failing: the outcome comes back unchanged, diagnostic
+  included, and the row stays.
 - `a_success_forgets_nothing` — a `built` outcome under `K` keeps the row.
 
 (in `tests/flows/build.rs`):
@@ -155,6 +162,9 @@ whose `forget` fails):
 - `a_failed_always_target_forgets_the_row_it_left` — a target with `freshness = Always` whose
   script exits 0, built once (row recorded); its script then exits 1; built again: it fails,
   `cache.forgotten()` is `[//:a]` and it has no row.
+- `a_forget_that_fails_is_a_store_failure` — the same target, built once passing, then scripted
+  to exit 1 with its label in `FakeCache.unforgettable`; built again: its outcome is the store's
+  infrastructure failure, `cache.forgotten()` is empty and its row stays.
 
 **Done when:** `cargo test -p buildl-core --lib execute::record` and
 `cargo test -p buildl-core --test flows` pass and the Definition of Done is green. Commit
@@ -172,3 +182,21 @@ whose `forget` fails):
 ## Proof
 
 - `cargo make dod` and `cargo deny check` green after each task.
+
+## Review findings
+
+- risk — a forget that failed overwrote the diagnostic of an outcome that was already the store's failure (a forced run whose `cache.record` failed to append), losing the real I/O cause — `execute/record.rs` — fixed: such an outcome comes back unchanged; `a_failed_forget_keeps_an_earlier_store_failure`, seen failing first; Task 2 amended
+- risk — nothing guarded `LocalCache::forget`'s append-before-remove order, or "after `Err`, `row` returns what it returned before" — `cache/local_cache.rs` — fixed: `after_a_failed_append_no_row_is_forgotten`, seen failing with the two steps swapped; Task 1 amended
+- nit — `FakeCache.unforgettable` was used by no flow — `tests/flows/build.rs` — fixed: `a_forget_that_fails_is_a_store_failure`; Task 2 amended
+- nit — stale or over-wide docs: `LocalCache::open`, `fold`, `record`, `Journal`; `record` read as if it might not insert — `cache/local_cache.rs`, `cache/journal.rs` — fixed
+- question — an infrastructure failure (`Prepare`, `Run`, `TimedOut`, `Killed`) also forgets a row it did not contradict — kept: spec §3.5 forgets on any failure class, and the cost is one more run, never a wrong pass
+- nit — `Build::record` clones the whole `ActionKey` to compare a digest — kept: the signature is this plan's, and the clone is one per performed action
+- nit — spec §6 still lists the forget tests under `execute/assembly.rs` — kept: this plan's "Where the decision's tests live" records the move
+
+## Probe results
+
+- No throwaway probe: every claim is under a named test. The swap of append and removal in `LocalCache::forget` served as the reversion probe for the order.
+
+## Deviations
+
+- `an_unplaced_cached_target_forgets_nothing` and `a_forget_that_fails_is_a_store_failure` passed on their first run: each guards behaviour no change of this plan could break before it was written.

@@ -473,6 +473,73 @@ fn a_target_that_always_runs_runs_on_every_build_and_its_dependent_stays_cached(
     );
 }
 
+#[test]
+fn an_unplaced_cached_target_forgets_nothing() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+    build(&mut pipeline, OnFailure::Stop);
+    pipeline.ports().cas.fail_place(out("//:a", "a"));
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[("//:a", infra(InfraKind::Store))])
+    );
+    let cache = &pipeline.ports().cache;
+    assert_eq!(cache.forgotten(), []);
+    assert!(cache.rows.contains_key(&label("//:a")));
+}
+
+#[test]
+fn a_failed_always_target_forgets_the_row_it_left() {
+    let mut pipeline = root_only(vec![target_with("a", |target| {
+        target.freshness = Freshness::Always;
+    })]);
+    let first = build(&mut pipeline, OnFailure::Stop);
+    assert_eq!(classes(&first), expected(&[("//:a", OutcomeClass::Built)]));
+    assert!(pipeline.ports().cache.rows.contains_key(&label("//:a")));
+    script(&mut pipeline, "//:a", ending(Ends::Exits(1)));
+
+    let second = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&second),
+        expected(&[("//:a", OutcomeClass::ActionFailure { status: 1 })])
+    );
+    let cache = &pipeline.ports().cache;
+    assert_eq!(cache.forgotten(), [label("//:a")]);
+    assert!(!cache.rows.contains_key(&label("//:a")));
+}
+
+#[test]
+fn a_forget_that_fails_is_a_store_failure() {
+    let mut pipeline = root_only(vec![target_with("a", |target| {
+        target.freshness = Freshness::Always;
+    })]);
+    let first = build(&mut pipeline, OnFailure::Stop);
+    assert_eq!(classes(&first), expected(&[("//:a", OutcomeClass::Built)]));
+    script(&mut pipeline, "//:a", ending(Ends::Exits(1)));
+    pipeline
+        .ports_mut()
+        .cache
+        .unforgettable
+        .insert(label("//:a"));
+
+    let second = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&second),
+        expected(&[("//:a", infra(InfraKind::Store))])
+    );
+    assert_eq!(
+        diagnostic(outcome(&second, "//:a")).as_deref(),
+        Some("action cache: //:a cannot be forgotten")
+    );
+    let cache = &pipeline.ports().cache;
+    assert_eq!(cache.forgotten(), []);
+    assert!(cache.rows.contains_key(&label("//:a")), "its row stays");
+}
+
 /// The class of a target skipped because the target `raw` names failed.
 fn skipped(raw: &str) -> OutcomeClass {
     OutcomeClass::Skipped {

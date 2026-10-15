@@ -2,7 +2,8 @@
 //!
 //! Its own file because it holds the two ways rows are kept and the rule that joins them:
 //! `cache.json` is the canonical snapshot of every row, the journal holds what was recorded
-//! since the snapshot was written, and a fold writes the snapshot again and removes the journal.
+//! since the snapshot was written (rows recorded, and rows forgotten), and a fold writes the
+//! snapshot again and removes the journal.
 //!
 //! Responsibilities: [`LocalCache`], its [`ActionCache`] implementation, and the fold.
 //!
@@ -20,12 +21,14 @@ use buildl_core::{ActionCache, CacheRow, Diagnostic, Error, Label, PortName, Res
 use crate::cache::journal::{Entry, Journal};
 use crate::state::{Access, StateLayout, write_whole};
 
-/// Holds the row each target's last successful build recorded, across runs.
+/// Holds the row each target's last successful build recorded, across runs, until it is
+/// forgotten.
 ///
 /// The rows are held in memory, read once from the snapshot `cache.json`. A row that is
-/// recorded is appended to the journal before it is held, so it is kept from then on whatever
-/// becomes of the process. [`LocalCache::fold`] writes every row to the snapshot and removes
-/// the journal.
+/// recorded is appended to the journal before it is held, and a row that is forgotten is
+/// appended to the journal as a forgetting before it is dropped, so each is kept from then on
+/// whatever becomes of the process. [`LocalCache::fold`] writes every row to the snapshot and
+/// removes the journal.
 ///
 /// The snapshot is written from a sorted map by the canonical serializer, so the order rows
 /// were recorded in never reaches it: the same rows always give the same bytes.
@@ -51,9 +54,9 @@ impl LocalCache {
     /// neither has no rows.
     ///
     /// A journal is there when the run that wrote it ended before its fold, or its fold failed.
-    /// Each whole line is applied in order, as it was recorded, and the cache is folded at
-    /// once, so the snapshot is whole and the journal gone before anything is planned. A last
-    /// line with no newline is left out.
+    /// Each whole line is applied in order, as it was recorded or forgotten, and the cache is
+    /// folded at once, so the snapshot is whole and the journal gone before anything is planned.
+    /// A last line with no newline is left out.
     ///
     /// # Errors
     ///
@@ -73,7 +76,10 @@ impl LocalCache {
         };
         let journal = layout.journal();
         for entry in Journal::read(&journal)? {
-            rows.insert(entry.label, entry.row);
+            match entry.row {
+                Some(row) => rows.insert(entry.label, row),
+                None => rows.remove(&entry.label),
+            };
         }
         // A journal that holds no whole line is folded too: a cut line left in it would join
         // the next line appended.
@@ -92,8 +98,8 @@ impl LocalCache {
     }
 
     /// Writes every row to `cache.json` and removes the journal. Does nothing when no row was
-    /// recorded since the last fold, so a build that records nothing leaves the snapshot as it
-    /// was, bytes and modification time.
+    /// recorded or forgotten since the last fold, so a build that changes no row leaves the
+    /// snapshot as it was, bytes and modification time.
     ///
     /// The snapshot is written whole before the journal is removed. A run that ends between the
     /// two leaves both, and both hold the same rows.
@@ -101,8 +107,8 @@ impl LocalCache {
     /// # Errors
     ///
     /// Returns [`Error::Adapter`], naming [`PortName::ActionCache`], when the snapshot cannot be
-    /// written or the journal cannot be removed. Every recorded row is then still in the
-    /// journal.
+    /// written or the journal cannot be removed. Every row recorded and every row forgotten
+    /// is then still in the journal.
     pub fn fold(&mut self) -> Result<()> {
         if !self.unfolded {
             return Ok(());
@@ -126,11 +132,32 @@ impl ActionCache for LocalCache {
     /// Appends the row to the journal as one line, then holds it.
     ///
     /// The row is kept once this returns `Ok`: its line has been handed to the system. After an
-    /// append that failed, no later row is taken by this cache.
+    /// append that failed, no later row is taken or forgotten by this cache.
     fn record(&mut self, label: Label, row: CacheRow) -> Result<()> {
-        let entry = Entry { label, row };
+        self.journal.append(&Entry {
+            label: label.clone(),
+            row: Some(row.clone()),
+        })?;
+        self.rows.insert(label, row);
+        self.unfolded = true;
+        Ok(())
+    }
+
+    /// Appends the forgetting of the row to the journal as one line, then drops the row.
+    ///
+    /// The removal is kept once this returns `Ok`: its line has been handed to the system. A
+    /// target with no row appends nothing. After an append that failed, no later entry is taken
+    /// by this cache.
+    fn forget(&mut self, label: &Label) -> Result<()> {
+        if !self.rows.contains_key(label) {
+            return Ok(());
+        }
+        let entry = Entry {
+            label: label.clone(),
+            row: None,
+        };
         self.journal.append(&entry)?;
-        self.rows.insert(entry.label, entry.row);
+        self.rows.remove(label);
         self.unfolded = true;
         Ok(())
     }
@@ -518,6 +545,52 @@ mod tests {
     }
 
     #[test]
+    fn a_forgotten_row_is_gone_after_fold() {
+        let (_dir, layout) = workspace();
+        let mut cache = LocalCache::open(&layout).unwrap();
+        cache.record(label("a"), row("a")).unwrap();
+        cache.record(label("b"), row("b")).unwrap();
+
+        cache.forget(&label("a")).unwrap();
+        assert_eq!(cache.row(&label("a")), None);
+        cache.fold().unwrap();
+
+        assert_eq!(cache.row(&label("a")), None);
+        assert_eq!(
+            fs::read_to_string(layout.cache()).unwrap(),
+            format!(r#"{{"//:b":{}}}"#, written_b())
+        );
+    }
+
+    #[test]
+    fn a_forgotten_row_is_gone_after_reopen_from_the_journal() {
+        let (_dir, layout) = workspace();
+        let mut first = LocalCache::open(&layout).unwrap();
+        first.record(label("a"), row("a")).unwrap();
+        first.fold().unwrap();
+        first.record(label("b"), row("b")).unwrap();
+        first.forget(&label("a")).unwrap();
+        drop(first);
+        assert_eq!(entries(&layout), ["cache.journal", "cache.json"]);
+
+        let cache = LocalCache::open(&layout).unwrap();
+
+        assert_eq!(cache.row(&label("a")), None);
+        assert_eq!(cache.row(&label("b")), Some(&row("b")));
+    }
+
+    #[test]
+    fn forgetting_a_label_with_no_row_writes_nothing() {
+        let (_dir, layout) = workspace();
+        let mut cache = LocalCache::open(&layout).unwrap();
+
+        cache.forget(&label("a")).unwrap();
+        cache.fold().unwrap();
+
+        assert_eq!(entries(&layout), [] as [&str; 0]);
+    }
+
+    #[test]
     fn after_a_failed_append_no_row_is_taken_and_none_is_lost() {
         let (_dir, layout) = workspace();
         let mut cache = LocalCache::open(&layout).unwrap();
@@ -557,5 +630,34 @@ mod tests {
             fs::read_to_string(layout.cache()).unwrap(),
             format!(r#"{{"//:a":{}}}"#, written_a())
         );
+    }
+
+    #[test]
+    fn after_a_failed_append_no_row_is_forgotten() {
+        let (_dir, layout) = workspace();
+        let mut cache = LocalCache::open(&layout).unwrap();
+        cache.record(label("a"), row("a")).unwrap();
+
+        // From here on the journal cannot be appended to: its path holds a directory.
+        let blocked = layout.dir().join("blocked");
+        fs::create_dir(&blocked).unwrap();
+        cache.journal = Journal::new(blocked);
+        let error = cache.forget(&label("a")).unwrap_err();
+        assert!(
+            matches!(
+                error,
+                Error::Adapter {
+                    port: PortName::ActionCache,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        assert_eq!(cache.row(&label("a")), Some(&row("a")));
+        drop(cache);
+
+        // The row recorded before the failure is the one the next run finds.
+        let reopened = LocalCache::open(&layout).unwrap();
+        assert_eq!(reopened.row(&label("a")), Some(&row("a")));
     }
 }

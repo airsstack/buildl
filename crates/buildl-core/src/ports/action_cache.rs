@@ -14,7 +14,8 @@
 use crate::error::Result;
 use crate::types::{CacheRow, Label};
 
-/// Holds the row the last successful build of each target recorded.
+/// Holds the row the last successful build of each target recorded, until a failure under the
+/// same key makes the cache forget it.
 pub trait ActionCache {
     /// The row for the target `label` names, if it has one: the one a previous build left, or
     /// the one [`record`](ActionCache::record) last stored.
@@ -31,4 +32,18 @@ pub trait ActionCache {
     /// Returns [`Error::Adapter`](crate::Error::Adapter), naming
     /// [`PortName::ActionCache`](crate::PortName::ActionCache), when the row cannot be stored.
     fn record(&mut self, label: Label, row: CacheRow) -> Result<()>;
+
+    /// Removes the row of the target `label` names, durably. A target with no row is left as it
+    /// is.
+    ///
+    /// The removal is kept once the call has returned `Ok`: [`row`](ActionCache::row) then
+    /// returns `None`, and a build that dies afterwards does not bring the row back. After
+    /// `Err`, [`row`](ActionCache::row) returns what it returned before the call.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Adapter`](crate::Error::Adapter), naming
+    /// [`PortName::ActionCache`](crate::PortName::ActionCache), when the removal cannot be made
+    /// durable.
+    fn forget(&mut self, label: &Label) -> Result<()>;
 }

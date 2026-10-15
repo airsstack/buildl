@@ -23,7 +23,9 @@ use crate::execute::admission::admit;
 use crate::execute::expand::{Lists, expand, expand_description};
 use crate::execute::layout::Layout;
 use crate::execute::perform::{Ended, Performed, Shared, Task, Told, Worked, perform};
-use crate::execute::record::{Progress, append, failed, restore, shown, skipped, store};
+use crate::execute::record::{
+    Progress, append, failed, forget_contradicted, restore, shown, skipped, store,
+};
 use crate::execute::schedule::{Finish, Schedule};
 use crate::execute::settle::{Settled, settle};
 use crate::ports::{Dispatcher, Manifest, PortSet, Ports, Reporter};
@@ -446,7 +448,8 @@ impl<P: Ports> Build<'_, P> {
         Ok(())
     }
 
-    /// Records what a worker did for one target, and finishes the target.
+    /// Records what a worker did for one target, and finishes the target. A failure under the
+    /// key the target's row was recorded under removes that row first.
     fn record(&mut self, performed: Performed) -> Result<()> {
         let node = performed.node;
         let Some(target) = self.targets.get(node.index()) else {
@@ -458,6 +461,7 @@ impl<P: Ports> Build<'_, P> {
             key: performed.key.digest(),
             span: performed.span,
         };
+        let key = performed.key.clone();
         let outcome = match performed.ended {
             Ended::Produced { outputs, printed } => store(
                 target.node,
@@ -474,6 +478,8 @@ impl<P: Ports> Build<'_, P> {
                 printed,
             } => failed(target.node.label.clone(), role, class, diagnostic, printed),
         };
+        // Before the outcome is finished, so the row is gone before the log line is written.
+        let outcome = forget_contradicted(outcome, &key, self.cache);
         self.finish(node, progress, outcome)?;
         if was_live && let Some(place) = self.shared.live {
             // Given back only now, with the outcome reported: the next action to take the

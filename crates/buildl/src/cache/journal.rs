@@ -1,8 +1,10 @@
-//! The action cache's journal: one line for each row recorded since the snapshot was written.
+//! The action cache's journal: one line for each row recorded, or forgotten, since the snapshot
+//! was written.
 //!
 //! Its own file because a row must be kept from the moment it is recorded, and writing the whole
 //! cache again for each row costs time that grows with the square of the number of rows. One
-//! appended line costs the same however many rows there are.
+//! appended line costs the same however many rows there are. A line holds a row, or a `null`
+//! where the row of its target was forgotten.
 //!
 //! Responsibilities: [`Journal`], and [`Entry`], the line it holds.
 //!
@@ -17,17 +19,17 @@ use buildl_core::json::canonical;
 use buildl_core::{CacheRow, Diagnostic, Error, Label, PortName, Result};
 use serde::{Deserialize, Serialize};
 
-/// One line of the journal: a target, and the row recorded for it.
+/// One line of the journal: a target, and the row recorded for it or the forgetting of its row.
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Entry {
     /// The target.
     pub(crate) label: Label,
-    /// The row recorded for it.
-    pub(crate) row: CacheRow,
+    /// The row recorded for it; `None` when its row was forgotten.
+    pub(crate) row: Option<CacheRow>,
 }
 
-/// The file rows are appended to, one canonical line each.
+/// The file entries are appended to, one canonical line each: a row recorded, or a row forgotten.
 #[derive(Debug)]
 pub(crate) struct Journal {
     path: PathBuf,
@@ -183,7 +185,9 @@ mod tests {
         let nothing = Digest::of(b"");
         Entry {
             label: Label::parse(&format!("//:{name}")).unwrap(),
-            row: CacheRow::new(key, vec![Digest::of(name.as_bytes())], nothing, nothing).unwrap(),
+            row: Some(
+                CacheRow::new(key, vec![Digest::of(name.as_bytes())], nothing, nothing).unwrap(),
+            ),
         }
     }
 
@@ -336,6 +340,49 @@ mod tests {
                 "{source:?}"
             );
             assert_eq!(fs::read_to_string(&path).unwrap(), damaged);
+        }
+    }
+
+    #[test]
+    fn a_forget_line_is_canonical() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.journal");
+        let mut journal = Journal::new(path.clone());
+
+        journal
+            .append(&Entry {
+                label: Label::parse("//:a").unwrap(),
+                row: None,
+            })
+            .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            "{\"label\":\"//:a\",\"row\":null}\n"
+        );
+        let entries = Journal::read(&path).unwrap();
+        assert_eq!(labels(&entries), ["//:a"]);
+        assert_eq!(entries[0].row, None);
+    }
+
+    #[test]
+    fn a_forget_line_out_of_form_is_corrupt() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("cache.journal");
+
+        // A line with no `row` at all, and one whose keys are out of order.
+        for damaged in [
+            "{\"label\":\"//:a\"}\n",
+            "{\"row\":null,\"label\":\"//:a\"}\n",
+        ] {
+            fs::write(&path, damaged).unwrap();
+
+            let error = Journal::read(&path).unwrap_err();
+
+            let Error::CorruptState { file, .. } = error else {
+                unreachable!("a corrupt state error, got {error:?}")
+            };
+            assert_eq!(file, path);
         }
     }
 
