@@ -39,6 +39,7 @@ fn reason_text(reason: &DirtyReason, key: &PlannedKey) -> String {
     match reason {
         DirtyReason::Always => "declared to run on every build".to_owned(),
         DirtyReason::NeverBuilt => "never built".to_owned(),
+        DirtyReason::Rerun => "asked to run again".to_owned(),
         DirtyReason::Changed(differences) => {
             let own = match key {
                 PlannedKey::Finished(key) => &key.components().own,
@@ -117,16 +118,16 @@ mod tests {
     use buildl_core::{
         Action, ActionCache, ActionKey, Argument, BuildFile, CacheRow, Ceiling, Clock, Command,
         ContentStore, Declaration, DeclarationSource, Declared, DepProducts, Diagnostic, Digest,
-        Digester, Directory, Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog,
-        ExecStrategy, Execution, FileMode, FileStat, Found, Freshness, GraphRecord, Host,
+        Digester, Directory, DirtyReason, Dispatcher, EnvName, EnvValue, Error, Evaluated,
+        EventLog, ExecStrategy, Execution, FileMode, FileStat, Found, Freshness, GraphRecord, Host,
         InputDigest, InputStat, KeyComponents, Label, LiveSink, Manifest, NetworkAccess,
         OutcomeEvent, OutputName, OutputPath, OwnComponents, Plan, PlannedKey, Platform, PortName,
-        PortSet, Ports, Program, Provenance, RawOutcome, ReadyAction, Result, Setting, SettingName,
-        SettingValue, SourcePath, StatCache, StatEntry, Target, TargetGraph, TargetRole, Timestamp,
-        ToolIdentity, ToolResolver, Turn, Verdict, Workspace, plan, resolve,
+        PortSet, Ports, Program, Provenance, RawOutcome, ReadyAction, Rerun, Result, Setting,
+        SettingName, SettingValue, SourcePath, StatCache, StatEntry, Target, TargetGraph,
+        TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn, Verdict, Workspace, plan, resolve,
     };
 
-    use super::plan_text;
+    use super::{plan_text, reason_text};
     use crate::report::silent::Silent;
 
     /// The machine a plan asks about: every file exists and holds its own path, every program
@@ -205,6 +206,11 @@ mod tests {
 
         fn record(&mut self, label: Label, row: CacheRow) -> Result<()> {
             self.0.insert(label, row);
+            Ok(())
+        }
+
+        fn forget(&mut self, label: &Label) -> Result<()> {
+            self.0.remove(label);
             Ok(())
         }
     }
@@ -344,7 +350,7 @@ mod tests {
             graph: Unused,
             reporter: Silent,
         };
-        plan(graph, &BTreeMap::new(), &mut ports).unwrap()
+        plan(graph, &BTreeMap::new(), Rerun::Off, &mut ports).unwrap()
     }
 
     fn label(raw: &str) -> Label {
@@ -548,6 +554,17 @@ mod tests {
                 "6 to run, 1 conditional, 2 clean\n",
             )
         );
+    }
+
+    #[test]
+    fn a_rerun_reads_as_asked_to_run_again() {
+        let graph = graph();
+        let first = planned(&graph, Rows::default());
+        let id = graph.id_of(&label("//:new")).unwrap();
+        let Some(Verdict::Dirty { key, .. }) = first.verdict(id) else {
+            unreachable!("with nothing recorded every target is dirty");
+        };
+        assert_eq!(reason_text(&DirtyReason::Rerun, key), "asked to run again");
     }
 
     #[test]

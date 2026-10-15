@@ -170,6 +170,13 @@ impl Wiring {
         })
     }
 
+    /// Where the state directory's files are, read without taking the directory: for a command
+    /// that only reads it.
+    #[must_use]
+    pub fn layout(&self) -> StateLayout {
+        StateLayout::new(self.root.as_path(), &self.workspace.state)
+    }
+
     /// Takes the state directory for this process, after holding it to the ceiling.
     ///
     /// The directory is made when it is missing, but only once the workspace is seen to allow
@@ -192,11 +199,9 @@ impl Wiring {
                 ceiling: Box::new(ceiling.clone()),
             });
         }
-        StateLock::acquire(StateLayout::new(self.root.as_path(), state)).map_err(|error| {
-            Error::Adapter {
-                port: PortName::ActionCache,
-                diagnostic: Diagnostic::new(error.to_string()),
-            }
+        StateLock::acquire(self.layout()).map_err(|error| Error::Adapter {
+            port: PortName::ActionCache,
+            diagnostic: Diagnostic::new(error.to_string()),
         })
     }
 
@@ -451,6 +456,17 @@ mod tests {
             assert_eq!(lock.layout().dir(), root.join(".buildl"), "{manifest:?}");
             assert!(root.join(".buildl/lock").is_file(), "{manifest:?}");
         }
+    }
+
+    #[test]
+    fn the_layout_is_made_without_the_lock() {
+        let (_dir, root) = workspace(BARE);
+        let wiring = Wiring::read(&root).unwrap();
+
+        let layout = wiring.layout();
+
+        assert_eq!(layout.dir(), root.join(".buildl"));
+        assert!(!root.join(".buildl").exists());
     }
 
     #[test]

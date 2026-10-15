@@ -181,6 +181,10 @@ mod tests {
         fn record(&mut self, _label: Label, _row: CacheRow) -> Result<()> {
             Ok(())
         }
+
+        fn forget(&mut self, _label: &Label) -> Result<()> {
+            Ok(())
+        }
     }
 
     impl ContentStore for Stub {

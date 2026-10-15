@@ -59,6 +59,8 @@ pub enum DirtyReason {
     Always,
     /// No previous build recorded a result for it.
     NeverBuilt,
+    /// The run asked for its tests to run again, and this target is one.
+    Rerun,
     /// Its key differs from the recorded one in these ways, in a fixed order.
     Changed(Vec<Difference>),
 }
@@ -460,6 +462,14 @@ mod tests {
         assert_eq!(
             canonical::to_string(&changed).unwrap(),
             r#"{"Changed":["Tool","DepOrder"]}"#
+        );
+    }
+
+    #[test]
+    fn a_rerun_reason_serializes_as_rerun() {
+        assert_eq!(
+            canonical::to_string(&DirtyReason::Rerun).unwrap(),
+            r#""Rerun""#
         );
     }
 

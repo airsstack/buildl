@@ -414,3 +414,151 @@ fn colour_is_written_only_when_asked_for() {
         stderr(&asked)
     );
 }
+
+/// A workspace whose one target, `//:both`, prints a line on each stream, built once.
+fn logged() -> (tempfile::TempDir, PathBuf) {
+    let (dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["sh"])),
+        (
+            "build.lua",
+            "buildl.target(\"both\", { run = { \"sh\", \"-c\", \"echo out; echo err >&2\" }, outputs = {} })\n",
+        ),
+    ]);
+    assert_eq!(code(&run(&root, &["build"], &[])), 0);
+    (dir, root)
+}
+
+/// Whether `line` is `//:both: built at ` and a UTC time to the second, as the header of a
+/// last run is written, with its newline.
+fn is_header(line: &str) -> bool {
+    let Some(time) = line
+        .strip_prefix("//:both: built at ")
+        .and_then(|rest| rest.strip_suffix(" UTC\n"))
+    else {
+        return false;
+    };
+    let shape = "dddd-dd-dd dd:dd:dd";
+    time.len() == shape.len()
+        && time
+            .chars()
+            .zip(shape.chars())
+            .all(|(got, want)| match want {
+                'd' => got.is_ascii_digit(),
+                other => got == other,
+            })
+}
+
+#[test]
+fn log_prints_each_stream_on_its_own_channel() {
+    let (_dir, root) = logged();
+    let output = run(&root, &["log", "both"], &[]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(stdout(&output), "out\n");
+    let said = stderr(&output);
+    let (header, rest) = said.split_once('\n').unwrap();
+    assert!(is_header(&format!("{header}\n")), "{said}");
+    assert_eq!(rest, "err\n");
+}
+
+#[test]
+fn log_stdout_prints_only_stdout() {
+    let (_dir, root) = logged();
+    let output = run(&root, &["log", "both", "--stdout"], &[]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(stdout(&output), "out\n");
+    assert!(is_header(&stderr(&output)), "{}", stderr(&output));
+}
+
+#[test]
+fn log_stderr_prints_stored_stderr_on_stdout() {
+    let (_dir, root) = logged();
+    let output = run(&root, &["log", "both", "--stderr"], &[]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(stdout(&output), "err\n");
+    assert!(is_header(&stderr(&output)), "{}", stderr(&output));
+}
+
+#[test]
+fn log_header_is_on_stderr() {
+    let (_dir, root) = logged();
+    let said = stderr(&run(&root, &["log", "both"], &[]));
+    let header = said.lines().next().unwrap();
+    assert!(is_header(&format!("{header}\n")), "{said}");
+}
+
+/// Two test targets, `//:pass`, which prints `ok` and passes, and `//:fail`, which prints `bad`
+/// and fails.
+const TESTS: &str = r#"buildl.test("pass", { run = { "sh", "-c", "echo ok" } })
+buildl.test("fail", { run = { "sh", "-c", "echo bad; exit 1" } })
+"#;
+
+/// A workspace of [`TESTS`] under a manifest that allows `sh`.
+fn tests() -> (tempfile::TempDir, PathBuf) {
+    workspace(&[("buildl.toml", &manifest(&["sh"])), ("build.lua", TESTS)])
+}
+
+/// The block `buildl build fail` prints for `//:fail`: what it wrote to standard error without
+/// the summary line that ends it.
+fn failing_block() -> String {
+    let (_dir, root) = tests();
+    let said = stderr(&run(&root, &["build", "fail"], &[]));
+    said.strip_suffix("1 failed\n").unwrap().to_owned()
+}
+
+#[test]
+fn test_prints_only_failing_tests_and_the_test_line() {
+    let (_dir, root) = tests();
+    let output = run(&root, &["test"], &[]);
+    assert_eq!(stdout(&output), "");
+    let said = stderr(&output);
+    assert_eq!(
+        said,
+        [failing_block(), "tests: 1 passed, 1 failed\n".to_owned()].concat()
+    );
+    assert!(!said.contains("ok"), "{said}");
+}
+
+#[test]
+fn test_verbose_prints_every_test() {
+    let (_dir, root) = tests();
+    let output = run(&root, &["test", "--verbose"], &[]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(
+        stderr(&output),
+        [
+            failing_block(),
+            "--- //:pass\nok\n".to_owned(),
+            "tests: 1 passed, 1 failed\n".to_owned()
+        ]
+        .concat()
+    );
+}
+
+#[test]
+fn test_stop_starts_nothing_after_the_first_failure() {
+    let (_dir, root) = tests();
+    let output = run(&root, &["test", "--stop"], &[]);
+    assert_eq!(code(&output), 1);
+    let said = stderr(&output);
+    assert!(said.ends_with("tests: 1 failed, 1 skipped\n"), "{said}");
+    assert!(!said.contains("ok"), "{said}");
+}
+
+#[test]
+fn test_stream_shows_a_passing_test_as_it_runs() {
+    let (_dir, root) = tests();
+    let output = run(&root, &["test", "--stream", "pass"], &[]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "--- //:pass\nok\ntests: 1 passed\n");
+}
+
+#[test]
+fn test_rerun_line() {
+    let (_dir, root) = tests();
+    assert_eq!(code(&run(&root, &["test", "pass"], &[])), 0);
+    let output = run(&root, &["test", "--rerun", "pass"], &[]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "tests (rerun): 1 passed\n");
+}

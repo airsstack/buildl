@@ -24,6 +24,7 @@
 //! unless an adapter's own message spans several. An error is returned, and its caller shows it.
 
 use core::fmt;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use crate::types::{
@@ -293,11 +294,44 @@ pub enum Error {
         /// The nearest declared target or alias, if one is near enough.
         suggestion: Option<Label>,
     },
+    /// A test run was asked for a target that is not a test.
+    #[error(
+        "target {asked} was asked for as a test, but {target} is declared with b.target in {provenance}"
+    )]
+    NotATest {
+        /// The label that was asked for.
+        asked: Label,
+        /// The target it names: the same label unless an alias was followed.
+        target: Label,
+        /// The build file that declares the target.
+        provenance: Box<Provenance>,
+    },
     /// A query was written in neither of the two forms a query takes.
     #[error("query `{expression}` is not deps(<target>) or rdeps(<target>)")]
     InvalidQuery {
         /// The query as it was written.
         expression: String,
+    },
+    /// A log was asked for a target with no run in it.
+    #[error(
+        "target {label} has no run in the log{}{}",
+        suggestion_suffix(.suggestion.as_ref()),
+        damaged_suffix(.damaged)
+    )]
+    NoRun {
+        /// The label that was asked for.
+        label: Label,
+        /// The nearest label the log has a run for, if one is near enough.
+        suggestion: Option<Label>,
+        /// Every damaged line of the log, by number, in order: one of them may have been this
+        /// target's run.
+        damaged: Vec<NonZeroUsize>,
+    },
+    /// What a target printed in its last logged run is no longer in the content store.
+    #[error("target {label}: the output of its last logged run is no longer in the store")]
+    MissingOutput {
+        /// The target whose output is gone.
+        label: Label,
     },
     /// A plan was handed over with a graph it was not made from.
     #[error("the plan was not made from this graph")]
@@ -384,6 +418,20 @@ fn sites_list(sites: &[Provenance]) -> String {
 /// The suffix offering the nearest declared name, when there is one.
 fn suggestion_suffix<T: fmt::Display>(suggestion: Option<&T>) -> String {
     suggestion.map_or_else(String::new, |nearest| format!(" (did you mean {nearest}?)"))
+}
+
+/// The suffix counting the damaged lines of a log, when there are any.
+fn damaged_suffix(damaged: &[NonZeroUsize]) -> String {
+    let numbers: Vec<String> = damaged.iter().map(ToString::to_string).collect();
+    match numbers.as_slice() {
+        [] => String::new(),
+        [only] => format!("; 1 damaged line was skipped (line {only})"),
+        many => format!(
+            "; {} damaged lines were skipped (lines {})",
+            many.len(),
+            many.join(", ")
+        ),
+    }
 }
 
 /// A cycle as its labels and build files, closed by repeating the first label.
@@ -524,6 +572,8 @@ pub enum PortName {
     ContentStore,
     /// The build log.
     EventLog,
+    /// The build log, read back.
+    RunHistory,
     /// What runs an action.
     ExecStrategy,
     /// What hands actions to workers.
@@ -543,6 +593,7 @@ impl fmt::Display for PortName {
             Self::ActionCache => "action cache",
             Self::ContentStore => "content store",
             Self::EventLog => "event log",
+            Self::RunHistory => "run history",
             Self::ExecStrategy => "exec strategy",
             Self::Dispatcher => "dispatcher",
             Self::GraphRecord => "graph record",
@@ -799,6 +850,7 @@ mod tests {
     )]
 
     use std::collections::BTreeSet;
+    use std::num::NonZeroUsize;
     use std::path::PathBuf;
 
     use super::{
@@ -1191,6 +1243,19 @@ mod tests {
     }
 
     #[test]
+    fn not_a_test_names_the_target_and_its_file() {
+        let err = Error::NotATest {
+            asked: label("//:default"),
+            target: label("//:app"),
+            provenance: Box::new(root_file()),
+        };
+        assert_eq!(
+            err.to_string(),
+            "target //:default was asked for as a test, but //:app is declared with b.target in build.lua"
+        );
+    }
+
+    #[test]
     fn invalid_query_names_the_query_and_the_two_forms() {
         let err = Error::InvalidQuery {
             expression: "dep(//:a)".to_owned(),
@@ -1198,6 +1263,62 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "query `dep(//:a)` is not deps(<target>) or rdeps(<target>)"
+        );
+    }
+
+    fn line(number: usize) -> NonZeroUsize {
+        NonZeroUsize::new(number).unwrap()
+    }
+
+    #[test]
+    fn no_run_names_the_target_and_a_suggestion() {
+        let err = Error::NoRun {
+            label: label("//:ap"),
+            suggestion: Some(label("//:app")),
+            damaged: Vec::new(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "target //:ap has no run in the log (did you mean //:app?)"
+        );
+        let without = Error::NoRun {
+            label: label("//:ap"),
+            suggestion: None,
+            damaged: Vec::new(),
+        };
+        assert_eq!(without.to_string(), "target //:ap has no run in the log");
+    }
+
+    #[test]
+    fn no_run_names_the_damaged_lines() {
+        let two = Error::NoRun {
+            label: label("//:app"),
+            suggestion: None,
+            damaged: vec![line(14), line(90)],
+        };
+        assert_eq!(
+            two.to_string(),
+            "target //:app has no run in the log; 2 damaged lines were skipped (lines 14, 90)"
+        );
+        let one = Error::NoRun {
+            label: label("//:app"),
+            suggestion: None,
+            damaged: vec![line(14)],
+        };
+        assert_eq!(
+            one.to_string(),
+            "target //:app has no run in the log; 1 damaged line was skipped (line 14)"
+        );
+    }
+
+    #[test]
+    fn missing_output_names_the_target() {
+        let err = Error::MissingOutput {
+            label: label("//:app"),
+        };
+        assert_eq!(
+            err.to_string(),
+            "target //:app: the output of its last logged run is no longer in the store"
         );
     }
 
@@ -1309,6 +1430,7 @@ mod tests {
             (PortName::ActionCache, "action cache"),
             (PortName::ContentStore, "content store"),
             (PortName::EventLog, "event log"),
+            (PortName::RunHistory, "run history"),
             (PortName::ExecStrategy, "exec strategy"),
             (PortName::Dispatcher, "dispatcher"),
             (PortName::GraphRecord, "graph record"),

@@ -15,17 +15,21 @@ use std::path::Path;
 
 use buildl_core::{
     ActionOutcome, Declaration, Directory, Label, LiveOutput, OnFailure, Pipeline, Plan, Query,
-    Reporter, Result, Scope, SettingName, SettingValue, TargetGraph, pipeline,
+    Reporter, Rerun, Result, Scope, SettingName, SettingValue, Shown, TargetGraph, pipeline,
 };
 
+use crate::cas::LocalCas;
 use crate::local_ports::Wiring;
+use crate::log::LocalLog;
 use crate::report::Silent;
 
 /// A workspace wired with the real adapters.
 ///
 /// Opening one reads its manifest and nothing else. The state directory is taken by
-/// [`Workspace::plan`] and [`Workspace::build`] only, and only while one of them runs, so a
-/// workspace kept open holds nothing while it is idle.
+/// [`Workspace::plan`], [`Workspace::build`] and [`Workspace::test`] only, and only while one
+/// of them runs, so a workspace kept open holds nothing while it is idle.
+/// [`Workspace::check`], [`Workspace::graph`], [`Workspace::query`] and [`Workspace::log`]
+/// hold nothing even while they run.
 #[derive(Debug)]
 pub struct Workspace {
     wiring: Wiring,
@@ -115,6 +119,26 @@ impl Workspace {
         pipeline::query(&self.wiring.source(), self.wiring.entry(), query)
     }
 
+    /// The newest logged run of `label` that stored its output, with what it printed read back
+    /// from the store.
+    ///
+    /// Takes no lock and reads no build file, so it runs while a build holds the workspace and
+    /// whatever the build files now say. It writes nothing but the store's own removal of a blob
+    /// whose bytes fail its digest. The target is looked up as the log names it: an alias is not
+    /// followed.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever [`pipeline::log()`] returns.
+    pub fn log(&self, label: &Label) -> Result<Shown> {
+        let layout = self.wiring.layout();
+        pipeline::log(
+            &LocalLog::new(&layout),
+            &LocalCas::new(self.wiring.root().as_path(), &layout),
+            label,
+        )
+    }
+
     /// Plans a build of `scope` with `overrides` given to build settings, and runs nothing.
     ///
     /// Holds the state directory while it runs. It writes the lock file, the stat cache when a
@@ -169,11 +193,51 @@ impl Workspace {
         drop(pipeline);
         concluded(built, folded)
     }
+
+    /// Runs the tests `scope` asks for, every test when it asks for the workspace, telling
+    /// `reporter` how it goes.
+    ///
+    /// Holds the state directory while it runs, and folds the rows of the run into the action
+    /// cache before the directory is let go, as [`Workspace::build`] does. With
+    /// [`Rerun::Tests`] the selected tests run whatever their keys say.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Adapter`](buildl_core::Error::Adapter), naming
+    /// [`PortName::Manifest`](buildl_core::PortName::Manifest), when the workspace asks for a
+    /// strategy other than `bare`: nothing has been made then, and nothing was run. After that,
+    /// as [`Workspace::plan`], then whatever [`Pipeline::test`] returns. A run that succeeded
+    /// and whose rows could not be folded returns the fold's error.
+    pub fn test<R: Reporter>(
+        &self,
+        scope: &Scope,
+        overrides: &BTreeMap<SettingName, SettingValue>,
+        on_failure: OnFailure,
+        live: LiveOutput,
+        rerun: Rerun,
+        reporter: &mut R,
+    ) -> Result<Vec<ActionOutcome>> {
+        self.wiring.runs()?;
+        let lock = self.wiring.lock()?;
+        let mut pipeline = Pipeline::new(self.wiring.ports(&lock, reporter)?);
+        let tested = pipeline.test(
+            self.wiring.entry(),
+            scope,
+            overrides,
+            on_failure,
+            live,
+            rerun,
+        );
+        let folded = pipeline.ports_mut().cache.fold();
+        // The adapters are let go before the lock that kept the directory theirs.
+        drop(pipeline);
+        concluded(tested, folded)
+    }
 }
 
-/// What a build returns once its rows were folded: its own error first, then the fold's.
-fn concluded<T>(built: Result<T>, folded: Result<()>) -> Result<T> {
-    match (built, folded) {
+/// What a run returns once its rows were folded: its own error first, then the fold's.
+fn concluded<T>(ran: Result<T>, folded: Result<()>) -> Result<T> {
+    match (ran, folded) {
         (Err(error), _) | (Ok(_), Err(error)) => Err(error),
         (Ok(value), Ok(())) => Ok(value),
     }
@@ -193,7 +257,8 @@ mod tests {
     use buildl_core::json::canonical;
     use buildl_core::{
         Captured, Channel, Diagnostic, Error, Label, LiveOutput, NameKind, OnFailure, OutcomeClass,
-        OutcomeEvent, PortName, ReadyAction, Reporter, Result, Scope, Summary, Verdict, Want,
+        OutcomeEvent, PortName, ReadyAction, Reporter, Rerun, Result, Scope, Summary, Tally,
+        Verdict, Want,
     };
 
     use crate::report::Silent;
@@ -267,6 +332,15 @@ mod tests {
             .map(|outcome| (outcome.label.to_string(), outcome.class))
             .collect())
     }
+
+    /// [`BARE`], with `cmp` allowed in place of `false`.
+    const COMPARING: &str = "[ceiling]\nproc.run = [\"cp\", \"cmp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nworkers = 1\nstrategy = \"bare\"\n";
+
+    /// [`COPY`], a second copy target no test needs, and `//:check`, a test that writes no file
+    /// and compares the copy with `a.txt`.
+    const CHECKED: &str = "buildl.target(\"copy\", { inputs = { \"a.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\n\
+         buildl.target(\"spare\", { inputs = { \"a.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\n\
+         buildl.test(\"check\", { deps = { \"copy\" }, inputs = { \"a.txt\" }, run = { \"cmp\", \"$deps\", \"$in\" } })\n";
 
     /// Keeps what a build tells its reporter.
     #[derive(Debug, Default)]
@@ -406,6 +480,22 @@ mod tests {
         workspace.graph().unwrap();
         let query = workspace.query_of("deps(//:copy)").unwrap();
         assert_eq!(workspace.query(&query).unwrap(), BTreeSet::new());
+    }
+
+    #[test]
+    fn log_minds_neither_a_held_lock_nor_build_files() {
+        let (_dir, root) = copying();
+        let workspace = Workspace::open(&root).unwrap();
+        build(&workspace).unwrap();
+        let _held = workspace.wiring.lock().unwrap();
+        fs::write(root.join("build.lua"), "this is not Lua").unwrap();
+        assert!(workspace.check().is_err());
+
+        let shown = workspace.log(&label("//:copy")).unwrap();
+
+        assert_eq!(shown.last.run.class, OutcomeClass::Built);
+        assert_eq!(shown.stdout, b"");
+        assert_eq!(shown.stderr, b"");
     }
 
     #[test]
@@ -560,16 +650,22 @@ mod tests {
             told.summaries,
             [
                 Summary {
-                    failed: 0,
-                    skipped: 0,
-                    built: 1,
-                    cached: 0
+                    all: Tally {
+                        failed: 0,
+                        skipped: 0,
+                        built: 1,
+                        cached: 0
+                    },
+                    tests: Tally::default()
                 },
                 Summary {
-                    failed: 0,
-                    skipped: 0,
-                    built: 0,
-                    cached: 1
+                    all: Tally {
+                        failed: 0,
+                        skipped: 0,
+                        built: 0,
+                        cached: 1
+                    },
+                    tests: Tally::default()
                 }
             ]
         );
@@ -632,6 +728,46 @@ mod tests {
                 .unwrap()
                 .starts_with("{\"//:copy\":{")
         );
+    }
+
+    #[test]
+    fn a_test_run_folds_its_rows_and_runs_no_build_target_of_its_own() {
+        let (_dir, root) = workspace(&[
+            ("buildl.toml", COMPARING),
+            ("build.lua", CHECKED),
+            ("a.txt", "a\n"),
+        ]);
+        let workspace = Workspace::open(&root).unwrap();
+
+        let outcomes = workspace
+            .test(
+                &Scope::Workspace,
+                &BTreeMap::new(),
+                OnFailure::Stop,
+                LiveOutput::Off,
+                Rerun::Off,
+                &mut Silent,
+            )
+            .unwrap();
+
+        let ran: Vec<(String, OutcomeClass)> = outcomes
+            .into_iter()
+            .map(|outcome| (outcome.label.to_string(), outcome.class))
+            .collect();
+        assert_eq!(
+            ran,
+            [
+                ("//:check".to_owned(), OutcomeClass::Built),
+                ("//:copy".to_owned(), OutcomeClass::Built),
+            ]
+        );
+        assert_eq!(
+            kept(&root),
+            ["cache.json", "cas", "graph.json", "lock", "log.jsonl"]
+        );
+        let rows = fs::read_to_string(root.join(".buildl/cache.json")).unwrap();
+        assert!(rows.contains("\"//:check\":{") && rows.contains("\"//:copy\":{"));
+        assert!(!rows.contains("//:spare"));
     }
 
     #[test]
@@ -733,6 +869,41 @@ mod tests {
             "manifest: buildl.toml: [execution] strategy is \"sandbox\" (the default when it is \
              not written), and this version of buildl runs \"bare\" only: write strategy = \
              \"bare\" under [execution]"
+        );
+        // Refused before the lock was taken: no state directory, no output.
+        assert_eq!(names(&root), ["a.txt", "build.lua", "buildl.toml"]);
+    }
+
+    #[test]
+    fn a_test_run_refuses_a_strategy_it_cannot_run_before_anything_is_made() {
+        let manifest = COMPARING.replace("strategy = \"bare\"\n", "");
+        let (_dir, root) = workspace(&[
+            ("buildl.toml", &manifest),
+            ("build.lua", CHECKED),
+            ("a.txt", "a\n"),
+        ]);
+        let workspace = Workspace::open(&root).unwrap();
+
+        let error = workspace
+            .test(
+                &Scope::Workspace,
+                &BTreeMap::new(),
+                OnFailure::Stop,
+                LiveOutput::Off,
+                Rerun::Off,
+                &mut Silent,
+            )
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                Error::Adapter {
+                    port: PortName::Manifest,
+                    ..
+                }
+            ),
+            "{error:?}"
         );
         // Refused before the lock was taken: no state directory, no output.
         assert_eq!(names(&root), ["a.txt", "build.lua", "buildl.toml"]);

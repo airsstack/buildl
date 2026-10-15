@@ -8,8 +8,9 @@
 //!
 //! - [`Cli`] and [`Command`] — the commands and the flags of each.
 //! - [`Color`] — when to colour what is printed, as asked for.
-//! - [`GraphArgs`], [`QueryArgs`], [`PlanArgs`], [`BuildArgs`] and [`Selection`] — the arguments
-//!   of a command.
+//! - [`GraphArgs`], [`QueryArgs`], [`PlanArgs`], [`BuildArgs`], [`TestArgs`], [`LogArgs`] and
+//!   [`Selection`] — the arguments of a command.
+//! - [`Streams`] — which streams of a run `log` prints.
 //! - [`Override`] and [`overrides`] — `--set NAME=VALUE`, and the settings of one run.
 //!
 //! Non-responsibilities: running a command, which the `run` module does; reading a target
@@ -19,7 +20,8 @@
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
-use buildl::buildl_core::{LiveOutput, OnFailure, SettingName, SettingValue};
+use buildl::buildl_core::{LiveOutput, OnFailure, Rerun, SettingName, SettingValue};
+use buildl::report::TestBlocks;
 use clap::error::ErrorKind;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 
@@ -60,6 +62,10 @@ pub(crate) enum Command {
     Plan(PlanArgs),
     /// Build targets and what they need
     Build(BuildArgs),
+    /// Run test targets and what they need
+    Test(TestArgs),
+    /// Show what a target printed when it last ran
+    Log(LogArgs),
 }
 
 /// The arguments of `graph`.
@@ -93,10 +99,10 @@ pub(crate) struct QueryArgs {
     pub json: bool,
 }
 
-/// What `plan` and `build` share: which targets, under which settings.
+/// What `plan`, `build` and `test` share: which targets, under which settings.
 #[derive(Debug, Args)]
 pub(crate) struct Selection {
-    /// Targets to build, as //dir:name, :name or name; every target when none is given
+    /// Targets, as //dir:name, :name or name; with none, plan and build take every target but tests, and test every test
     #[arg(value_name = "TARGET")]
     pub targets: Vec<String>,
     /// Give a build setting a value for this run; may be repeated
@@ -129,6 +135,77 @@ pub(crate) struct BuildArgs {
     pub stream: bool,
 }
 
+/// The arguments of `test`.
+#[derive(Debug, Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is one independent flag of the command line, which clap reads as a bool"
+)]
+pub(crate) struct TestArgs {
+    /// Which targets, under which settings.
+    #[command(flatten)]
+    pub selection: Selection,
+    /// Start nothing new after the first failure
+    #[arg(long)]
+    pub stop: bool,
+    /// Show one running action's output as it is printed
+    #[arg(long)]
+    pub stream: bool,
+    /// Run the selected tests even when nothing they depend on changed
+    #[arg(long)]
+    pub rerun: bool,
+    /// Show what every test printed, not only what a failing one did
+    #[arg(long)]
+    pub verbose: bool,
+}
+
+/// The arguments of `log`.
+#[derive(Debug, Args)]
+pub(crate) struct LogArgs {
+    /// The target, as //dir:name, :name or name
+    #[arg(value_name = "TARGET")]
+    pub target: String,
+    /// Which stream to print.
+    #[command(flatten)]
+    flags: StreamFlags,
+}
+
+/// The stream of a run `log` prints: one of the two at most, and both when neither is named.
+#[derive(Debug, Args)]
+#[group(multiple = false)]
+pub(crate) struct StreamFlags {
+    /// Print only what the run wrote to standard output
+    #[arg(long)]
+    pub stdout: bool,
+    /// Print only what the run wrote to standard error, on standard output
+    #[arg(long)]
+    pub stderr: bool,
+}
+
+/// Which of a run's streams `log` prints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Streams {
+    /// Standard output on standard output and standard error on standard error
+    Both,
+    /// Only what the run wrote to standard output
+    Stdout,
+    /// Only what the run wrote to standard error, on standard output
+    Stderr,
+}
+
+impl LogArgs {
+    /// The streams the command line asks for.
+    pub(crate) const fn streams(&self) -> Streams {
+        if self.flags.stdout {
+            Streams::Stdout
+        } else if self.flags.stderr {
+            Streams::Stderr
+        } else {
+            Streams::Both
+        }
+    }
+}
+
 impl BuildArgs {
     /// What the build does once a target has failed.
     pub(crate) const fn on_failure(&self) -> OnFailure {
@@ -145,6 +222,40 @@ impl BuildArgs {
             LiveOutput::OneAction
         } else {
             LiveOutput::Off
+        }
+    }
+}
+
+impl TestArgs {
+    /// What the run does once a test has failed.
+    pub(crate) const fn on_failure(&self) -> OnFailure {
+        if self.stop {
+            OnFailure::Stop
+        } else {
+            OnFailure::KeepGoing
+        }
+    }
+
+    /// Whether one running action's output is shown as it is printed.
+    pub(crate) const fn live(&self) -> LiveOutput {
+        if self.stream {
+            LiveOutput::OneAction
+        } else {
+            LiveOutput::Off
+        }
+    }
+
+    /// Whether the selected tests run again whatever their keys say.
+    pub(crate) const fn rerun(&self) -> Rerun {
+        if self.rerun { Rerun::Tests } else { Rerun::Off }
+    }
+
+    /// Which tests get a block in the report.
+    pub(crate) const fn blocks(&self) -> TestBlocks {
+        if self.verbose {
+            TestBlocks::Every
+        } else {
+            TestBlocks::Failed
         }
     }
 }
@@ -205,11 +316,12 @@ mod tests {
 
     use std::iter;
 
-    use buildl::buildl_core::{LiveOutput, OnFailure};
+    use buildl::buildl_core::{LiveOutput, OnFailure, Rerun};
+    use buildl::report::TestBlocks;
     use clap::error::ErrorKind;
     use clap::{CommandFactory, Parser};
 
-    use super::{BuildArgs, Cli, Color, Command, PlanArgs, overrides};
+    use super::{BuildArgs, Cli, Color, Command, LogArgs, PlanArgs, Streams, TestArgs, overrides};
 
     /// The command line `args` after the program's name, parsed.
     fn parsed(args: &[&str]) -> Cli {
@@ -231,11 +343,27 @@ mod tests {
         }
     }
 
+    /// The arguments of the `test` command line `args`.
+    fn test(args: &[&str]) -> TestArgs {
+        match parsed(args).command {
+            Command::Test(test) => test,
+            other => panic!("expected test, got {other:?}"),
+        }
+    }
+
     /// The arguments of the `plan` command line `args`.
     fn plan(args: &[&str]) -> PlanArgs {
         match parsed(args).command {
             Command::Plan(plan) => plan,
             other => panic!("expected plan, got {other:?}"),
+        }
+    }
+
+    /// The arguments of the `log` command line `args`.
+    fn log(args: &[&str]) -> LogArgs {
+        match parsed(args).command {
+            Command::Log(log) => log,
+            other => panic!("expected log, got {other:?}"),
         }
     }
 
@@ -250,6 +378,25 @@ mod tests {
         assert!(matches!(parsed(&["graph"]).command, Command::Graph(_)));
         assert!(matches!(parsed(&["plan"]).command, Command::Plan(_)));
         assert!(matches!(parsed(&["build"]).command, Command::Build(_)));
+        assert!(matches!(parsed(&["test"]).command, Command::Test(_)));
+        assert!(matches!(parsed(&["log", "app"]).command, Command::Log(_)));
+    }
+
+    #[test]
+    fn log_streams_map_to_their_values() {
+        assert_eq!(log(&["log", "app"]).streams(), Streams::Both);
+        assert_eq!(log(&["log", "app", "--stdout"]).streams(), Streams::Stdout);
+        assert_eq!(log(&["log", "--stderr", "app"]).streams(), Streams::Stderr);
+        assert_eq!(log(&["log", "//lib:app"]).target, "//lib:app");
+    }
+
+    #[test]
+    fn log_takes_one_stream_flag_and_one_target() {
+        assert_eq!(
+            refused(&["log", "app", "--stdout", "--stderr"]),
+            ErrorKind::ArgumentConflict
+        );
+        assert_eq!(refused(&["log"]), ErrorKind::MissingRequiredArgument);
     }
 
     #[test]
@@ -340,6 +487,33 @@ mod tests {
         assert_eq!(build(&["build", "-k", "app"]).selection.targets, ["app"]);
         assert_eq!(
             refused(&["plan", "--keep-going"]),
+            ErrorKind::UnknownArgument
+        );
+    }
+
+    #[test]
+    fn test_flags_map_to_their_values() {
+        let quiet = test(&["test"]);
+        assert_eq!(quiet.on_failure(), OnFailure::KeepGoing);
+        assert_eq!(quiet.live(), LiveOutput::Off);
+        assert_eq!(quiet.rerun(), Rerun::Off);
+        assert_eq!(quiet.blocks(), TestBlocks::Failed);
+
+        let every = test(&["test", "--stop", "--stream", "--rerun", "--verbose"]);
+        assert_eq!(every.on_failure(), OnFailure::Stop);
+        assert_eq!(every.live(), LiveOutput::OneAction);
+        assert_eq!(every.rerun(), Rerun::Tests);
+        assert_eq!(every.blocks(), TestBlocks::Every);
+
+        let named = test(&["test", "//lib:unit", "app", ":docs"]);
+        assert_eq!(named.selection.targets, ["//lib:unit", "app", ":docs"]);
+    }
+
+    #[test]
+    fn test_takes_no_keep_going() {
+        assert_eq!(refused(&["test", "-k"]), ErrorKind::UnknownArgument);
+        assert_eq!(
+            refused(&["test", "--keep-going"]),
             ErrorKind::UnknownArgument
         );
     }

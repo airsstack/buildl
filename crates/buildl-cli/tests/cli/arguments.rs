@@ -11,6 +11,9 @@ use crate::common::{append, code, manifest, path_with, program, run, stderr, std
 const COPY: &str =
     "buildl.target(\"copy\", { inputs = { \"a.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\n";
 
+/// One test target, `//:pass`, that prints a line and passes.
+const PASS: &str = "buildl.test(\"pass\", { run = { \"sh\", \"-c\", \"echo ok\" } })\n";
+
 /// The help of the `--color` option, as every command's help shows it.
 const COLOR: &str = concat!(
     "      --color <WHEN>\n",
@@ -34,11 +37,11 @@ const HELP_AND_VERSION: &str = concat!(
     "          Print version\n",
 );
 
-/// The help of the arguments `plan` and `build` share.
+/// The help of the arguments `plan`, `build` and `test` share.
 const SELECTION: &str = concat!(
     "Arguments:\n",
     "  [TARGET]...\n",
-    "          Targets to build, as //dir:name, :name or name; every target when none is given\n",
+    "          Targets, as //dir:name, :name or name; with none, plan and build take every target but tests, and test every test\n",
     "\n",
 );
 
@@ -46,6 +49,40 @@ const SELECTION: &str = concat!(
 const SET: &str = concat!(
     "      --set <NAME=VALUE>\n",
     "          Give a build setting a value for this run; may be repeated\n",
+    "\n",
+);
+
+/// The help of the argument of `log`.
+const LOG_TARGET: &str = concat!(
+    "Arguments:\n",
+    "  <TARGET>\n",
+    "          The target, as //dir:name, :name or name\n",
+    "\n",
+);
+
+/// The help of `--stdout` and `--stderr`.
+const STREAMS: &str = concat!(
+    "      --stdout\n",
+    "          Print only what the run wrote to standard output\n",
+    "\n",
+    "      --stderr\n",
+    "          Print only what the run wrote to standard error, on standard output\n",
+    "\n",
+);
+
+/// The help of the flags only `test` has.
+const TEST_FLAGS: &str = concat!(
+    "      --stop\n",
+    "          Start nothing new after the first failure\n",
+    "\n",
+    "      --stream\n",
+    "          Show one running action's output as it is printed\n",
+    "\n",
+    "      --rerun\n",
+    "          Run the selected tests even when nothing they depend on changed\n",
+    "\n",
+    "      --verbose\n",
+    "          Show what every test printed, not only what a failing one did\n",
     "\n",
 );
 
@@ -90,6 +127,8 @@ fn help_names_every_command_and_flag() {
             "  query  Ask what a target needs, or what needs it\n",
             "  plan   Say what a build would run, and why\n",
             "  build  Build targets and what they need\n",
+            "  test   Run test targets and what they need\n",
+            "  log    Show what a target printed when it last ran\n",
             "  help   Print this message or the help of the given subcommand(s)\n",
             "\n",
             "Options:\n",
@@ -150,6 +189,28 @@ fn each_command_has_its_help() {
             .concat(),
         ),
         (
+            "log",
+            [
+                "Show what a target printed when it last ran\n\n",
+                "Usage: buildl log [OPTIONS] <TARGET>\n\n",
+                LOG_TARGET,
+                "Options:\n",
+                COLOR,
+                STREAMS,
+                HELP_AND_VERSION,
+            ]
+            .concat(),
+        ),
+    ];
+    for (command, expected) in cases.into_iter().chain(selecting_helps()) {
+        assert_eq!(answered(&[command, "--help"]), expected, "{command}");
+    }
+}
+
+/// The help of each command that takes a selection of targets, by command.
+fn selecting_helps() -> [(&'static str, String); 3] {
+    [
+        (
             "plan",
             [
                 "Say what a build would run, and why\n\n",
@@ -184,10 +245,89 @@ fn each_command_has_its_help() {
             ]
             .concat(),
         ),
-    ];
-    for (command, expected) in cases {
-        assert_eq!(answered(&[command, "--help"]), expected, "{command}");
-    }
+        (
+            "test",
+            [
+                "Run test targets and what they need\n\n",
+                "Usage: buildl test [OPTIONS] [TARGET]...\n\n",
+                SELECTION,
+                "Options:\n",
+                COLOR,
+                SET,
+                TEST_FLAGS,
+                HELP_AND_VERSION,
+            ]
+            .concat(),
+        ),
+    ]
+}
+
+#[test]
+fn test_rejects_keep_going() {
+    let (_dir, root) = workspace(&[]);
+    let output = run(&root, &["test", "-k"], &[]);
+    assert_eq!(code(&output), 2);
+    assert_eq!(stdout(&output), "");
+}
+
+#[test]
+fn test_accepts_stop_stream_rerun_verbose() {
+    let (_dir, root) = workspace(&[("buildl.toml", &manifest(&["sh"])), ("build.lua", PASS)]);
+    let output = run(
+        &root,
+        &["test", "--stop", "--stream", "--rerun", "--verbose"],
+        &[],
+    );
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert_eq!(stdout(&output), "");
+}
+
+#[test]
+fn log_rejects_both_stream_flags() {
+    let (_dir, root) = workspace(&[]);
+    let output = run(&root, &["log", "copy", "--stdout", "--stderr"], &[]);
+    assert_eq!(code(&output), 2);
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output)
+            .starts_with("error: the argument '--stdout' cannot be used with '--stderr'\n"),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn log_reads_a_relative_target() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        ("build.lua", "buildl.subdir(\"lib\")\n"),
+        (
+            "lib/build.lua",
+            "buildl.target(\"text\", { inputs = { \"text.c\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+        ),
+        ("lib/text.c", "text\n"),
+    ]);
+    assert_eq!(code(&run(&root, &["build"], &[])), 0);
+    let output = run(&root.join("lib"), &["log", "text"], &[]);
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(
+        stderr(&output).starts_with("//lib:text: built at "),
+        "{}",
+        stderr(&output)
+    );
+}
+
+#[test]
+fn log_rejects_a_bad_label_with_exit_2() {
+    let (_dir, root) = workspace(&[("buildl.toml", &manifest(&["sh"])), ("build.lua", "")]);
+    let output = run(&root, &["log", "//lib"], &[]);
+    assert_eq!(code(&output), 2);
+    assert_eq!(stdout(&output), "");
+    assert!(
+        stderr(&output).starts_with("error: invalid value '//lib' for '<TARGET>'"),
+        "{}",
+        stderr(&output)
+    );
 }
 
 #[test]
@@ -205,6 +345,8 @@ fn no_command_prints_the_short_help_on_stderr() {
             "  query  Ask what a target needs, or what needs it\n",
             "  plan   Say what a build would run, and why\n",
             "  build  Build targets and what they need\n",
+            "  test   Run test targets and what they need\n",
+            "  log    Show what a target printed when it last ran\n",
             "  help   Print this message or the help of the given subcommand(s)\n",
             "\n",
             "Options:\n",

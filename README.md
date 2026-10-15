@@ -4,7 +4,7 @@
 
 The positioning in one sentence: Lua where Starlark sits in Bazel [5], ninja's execution discipline underneath [4], and airsl's capability model as the trust layer neither of them has.
 
-> **Status: the core pipeline is built.** The `buildl` binary runs `check`, `graph`, `query`, `plan` and `build` on a real workspace: it evaluates build files on airsl, keys every target, runs what is dirty in parallel with its output captured, and keeps results in a local content-addressed store and action cache, so a second build runs nothing and a build repeated in another directory is byte-identical. Actions run at isolation tier 1, a plain process holding only its declared environment. That is the first item of the [roadmap](#roadmap), with `query` from the second; the input sandbox, grant negotiation, plugins, the remote cache and watch mode are designed and not built. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
+> **Status: the core pipeline is built.** The `buildl` binary runs `check`, `graph`, `query`, `plan`, `build`, `test` and `log` on a real workspace: it evaluates build files on airsl, keys every target, runs what is dirty in parallel with its output captured, and keeps results in a local content-addressed store and action cache, so a second build runs nothing and a build repeated in another directory is byte-identical. Actions run at isolation tier 1, a plain process holding only its declared environment. That is the first item of the [roadmap](#roadmap), with `query`, `test` and `log` from the second; the input sandbox, grant negotiation, plugins, the remote cache and watch mode are designed and not built. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
 
 ---
 
@@ -121,11 +121,12 @@ Each CLI command is the Load → Resolve → Plan → Execute → Record pipelin
 | `buildl build [target]...` | Record | the full pipeline | yes |
 | `buildl watch [target]` | loops | persistent process, re-plans on file change | not yet |
 | `buildl query <expr>` | Resolve | graph queries: `deps()`, `rdeps()` | yes |
-| `buildl test` / `clean` / `gc` | — | run test targets; drop outputs; prune the cas | not yet |
-| `buildl log <target>` | — | show what a target printed when it last ran | not yet |
+| `buildl test [target]...` | Record | run test targets and what they need | yes |
+| `buildl clean` / `gc` | — | drop outputs; prune the cas | not yet |
+| `buildl log <target> [--stdout \| --stderr]` | log + cas | show what a target printed when it last ran | yes |
 | `buildl doctor` | — | print the effective ceiling, grants, workers | not yet |
 
-`plan` and `build` take any number of targets and `--set name=value`; `build` adds `--keep-going` and `--stream`. A command finds its workspace at the nearest `buildl.toml` at or above the current directory. The exit code says what kind of end it was, so CI need not read text: `0` done, `1` an action failed, `2` a wrong command line, `3` a sick builder, `4` the build wants more than the ceiling, `5` a mistake in a build file or in `buildl.toml`, `6` a state file that is not what buildl writes, `7` a fault in buildl.
+`plan`, `build` and `test` take any number of targets and `--set name=value`; `build` adds `--keep-going` and `--stream`; with no targets `plan` and `build` take every target but the tests, while `test` takes every test, keeps going after a failure and adds `--stop`, `--stream`, `--rerun` and `--verbose`, and naming a target that is not a test is a usage error; `log` takes one target and at most one of `--stdout` and `--stderr`, and takes no lock, so it answers while a build runs. A command finds its workspace at the nearest `buildl.toml` at or above the current directory. The exit code says what kind of end it was, so CI need not read text: `0` done, `1` an action failed, `2` a wrong command line, `3` a sick builder, `4` the build wants more than the ceiling, `5` a mistake in a build file or in `buildl.toml`, `6` a state file that is not what buildl writes, `7` a fault in buildl.
 
 ## Running it
 
@@ -143,6 +144,7 @@ buildl graph --dot            # the target graph; canonical JSON without the fla
 buildl plan                   # what would run, and why
 buildl build                  # build every target
 buildl build //lib:text -k    # one target and what it needs, carrying on past a failure
+buildl log //lib:text         # what that target printed when it last ran
 ```
 
 Only the first isolation tier is built, and a manifest has to say so:
@@ -152,7 +154,7 @@ Only the first isolation tier is built, and a manifest has to say so:
 strategy = "bare"
 ```
 
-Without that line `build` refuses to run, rather than run actions under a weaker tier than the default asks for; `check`, `graph`, `query` and `plan` work either way.
+Without that line `build` refuses to run, rather than run actions under a weaker tier than the default asks for; `check`, `graph`, `query`, `plan` and `log` work either way.
 
 ## Repository layout
 

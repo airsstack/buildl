@@ -6,7 +6,8 @@
 //! can be captured in memory.
 //!
 //! Responsibilities: [`TerminalReporter`], its [`Reporter`] implementation and
-//! [`TerminalReporter::close`]; and [`Mode`], whether a status line is kept.
+//! [`TerminalReporter::close`]; [`Mode`], whether a status line is kept; and [`Report`] and
+//! [`TestBlocks`], what kind of run is shown and which tests of a test run get a block.
 //!
 //! Non-responsibilities: what a block or the summary holds, which the block renderings decide;
 //! whether to colour and whether the stream is a terminal, which the caller decides; and the
@@ -16,9 +17,12 @@
 
 use std::io::Write;
 
-use buildl_core::{Captured, Channel, Label, OutcomeEvent, ReadyAction, Reporter, Summary};
+use buildl_core::{
+    Captured, Channel, Label, OutcomeClass, OutcomeEvent, ReadyAction, Reporter, Rerun, Summary,
+    TargetRole,
+};
 
-use crate::report::block::{block, header, summary_line, trailer};
+use crate::report::block::{block, header, summary_line, test_line, trailer};
 use crate::report::paint::Paint;
 
 /// Moves to the start of the row and clears it.
@@ -36,6 +40,31 @@ pub enum Mode {
     /// A status line on the last row, erased before anything is printed and drawn again after:
     /// for a terminal.
     Live,
+}
+
+/// What kind of run a reporter shows, which decides what it prints of a passing test and how it
+/// sums up.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Report {
+    /// A build: every target is shown as it is, and the summary counts targets.
+    Build,
+    /// A test run: a dependency is shown as in a build, a test that passed is shown as
+    /// `blocks` says, and the summary counts tests.
+    Test {
+        /// Which tests get a block.
+        blocks: TestBlocks,
+        /// Whether the run forced every test to run again, which its summary says.
+        rerun: Rerun,
+    },
+}
+
+/// Which tests of a test run get a block: those that failed, or every one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestBlocks {
+    /// Only a test that failed. A test that was built or cached shows nothing.
+    Failed,
+    /// Every test, a passing one with what it printed and a cached one marked as such.
+    Every,
 }
 
 /// Writes a build's blocks, status line and summary to `out`.
@@ -58,6 +87,8 @@ pub struct TerminalReporter<W: Write> {
     mode: Mode,
     /// Whether what is written is coloured.
     paint: Paint,
+    /// What kind of run is shown.
+    report: Report,
     /// How many targets the build has.
     total: usize,
     /// How many of them have their outcome.
@@ -75,12 +106,14 @@ pub struct TerminalReporter<W: Write> {
 }
 
 impl<W: Write> TerminalReporter<W> {
-    /// A reporter that writes to `out`, with or without a status line, coloured or not.
-    pub const fn new(out: W, mode: Mode, paint: Paint) -> Self {
+    /// A reporter that writes to `out`, with or without a status line, coloured or not, showing
+    /// the kind of run `report` names.
+    pub const fn new(out: W, mode: Mode, paint: Paint, report: Report) -> Self {
         Self {
             out,
             mode,
             paint,
+            report,
             total: 0,
             done: 0,
             running: Vec::new(),
@@ -104,6 +137,21 @@ impl<W: Write> TerminalReporter<W> {
         self.live = None;
         self.mid_line = false;
         self.emit(&frame);
+    }
+
+    /// Whether `event` is a test that passed in a run that shows only the tests that failed.
+    fn hides(&self, event: &OutcomeEvent) -> bool {
+        matches!(
+            self.report,
+            Report::Test {
+                blocks: TestBlocks::Failed,
+                ..
+            }
+        ) && event.outcome.role == TargetRole::Test
+            && matches!(
+                event.outcome.class,
+                OutcomeClass::Built | OutcomeClass::Cached
+            )
     }
 
     /// Adds to `frame` what erases the status line, when one stands.
@@ -191,7 +239,8 @@ impl<W: Write> Reporter for TerminalReporter<W> {
     }
 
     /// Writes the target's block; or, for the target shown live, ends its last line and writes
-    /// its trailer. The status line is erased before and drawn again after.
+    /// its trailer. The status line is erased before and drawn again after. A test that passed
+    /// in a run that shows only failed tests gets no block, only the status line's redraw.
     fn finished(&mut self, event: &OutcomeEvent, printed: Captured<'_>) {
         let label = &event.outcome.label;
         self.done += 1;
@@ -206,17 +255,24 @@ impl<W: Write> Reporter for TerminalReporter<W> {
             self.mid_line = false;
         } else {
             self.erase(&mut frame);
-            frame.extend_from_slice(&block(event, printed, self.paint));
+            if !self.hides(event) {
+                frame.extend_from_slice(&block(event, printed, self.paint));
+            }
         }
         self.draw(&mut frame);
         self.emit(&frame);
     }
 
-    /// Erases the status line and writes the summary line.
+    /// Erases the status line and writes the summary line: the count of targets for a build, the
+    /// count of tests for a test run.
     fn summary(&mut self, summary: Summary) {
         let mut frame = Vec::new();
         self.erase(&mut frame);
-        frame.extend_from_slice(summary_line(summary).as_bytes());
+        let line = match self.report {
+            Report::Build => summary_line(summary.all),
+            Report::Test { rerun, .. } => test_line(summary.tests, rerun),
+        };
+        frame.extend_from_slice(line.as_bytes());
         self.emit(&frame);
     }
 }
@@ -234,11 +290,11 @@ mod tests {
 
     use buildl_core::{
         ActionOutcome, Argument, Captured, Channel, Command, Diagnostic, ExpandedDescription,
-        InfraKind, Label, NetworkAccess, OutcomeClass, OutcomeEvent, Provenance, ReadyAction,
-        Reporter, Summary, Timestamp,
+        InfraKind, Label, NetworkAccess, OutcomeClass, OutcomeEvent, OutputName, Provenance,
+        ReadyAction, Reporter, Rerun, Summary, Tally, TargetRole, Timestamp,
     };
 
-    use super::{Mode, TerminalReporter};
+    use super::{Mode, Report, TerminalReporter, TestBlocks, block};
     use crate::report::paint::Paint;
 
     fn label(raw: &str) -> Label {
@@ -287,6 +343,7 @@ mod tests {
             finished: None,
             outcome: ActionOutcome {
                 label,
+                role: TargetRole::Build,
                 class,
                 diagnostic: None,
                 outputs: Vec::new(),
@@ -325,15 +382,48 @@ mod tests {
 
     const fn counts(failed: usize, skipped: usize, built: usize, cached: usize) -> Summary {
         Summary {
-            failed,
-            skipped,
-            built,
-            cached,
+            all: Tally {
+                failed,
+                skipped,
+                built,
+                cached,
+            },
+            tests: Tally {
+                failed: 0,
+                skipped: 0,
+                built: 0,
+                cached: 0,
+            },
         }
     }
 
     fn reporter(mode: Mode, paint: Paint) -> TerminalReporter<Vec<u8>> {
-        TerminalReporter::new(Vec::new(), mode, paint)
+        TerminalReporter::new(Vec::new(), mode, paint, Report::Build)
+    }
+
+    /// `event` for a target declared with `b.test`.
+    fn test_event(raw: &str, class: OutcomeClass) -> OutcomeEvent {
+        let mut event = event(raw, class, &["check"]);
+        event.outcome.role = TargetRole::Test;
+        event
+    }
+
+    /// A plain reporter that shows a test run, giving `blocks` their blocks.
+    fn test_reporter(blocks: TestBlocks, rerun: Rerun) -> TerminalReporter<Vec<u8>> {
+        TerminalReporter::new(
+            Vec::new(),
+            Mode::Plain,
+            Paint::Plain,
+            Report::Test { blocks, rerun },
+        )
+    }
+
+    /// What a build-role reporter writes for `event` printing `printed`.
+    fn shown_by_a_build(event: &OutcomeEvent, printed: Captured<'_>) -> Vec<u8> {
+        let mut build = reporter(Mode::Plain, Paint::Plain);
+        build.begun(1);
+        build.finished(event, printed);
+        written(&mut build)
     }
 
     /// What `reporter` wrote since this was last asked.
@@ -402,6 +492,152 @@ mod tests {
             nothing(),
         );
         reporter.summary(counts(2, 1, 0, 1));
+    }
+
+    #[test]
+    fn a_test_run_hides_a_passing_test_that_printed() {
+        let mut reporter = test_reporter(TestBlocks::Failed, Rerun::Off);
+        reporter.begun(1);
+        reporter.finished(
+            &test_event("//:check", OutcomeClass::Built),
+            on_stdout(b"ok\n"),
+        );
+        assert_eq!(written(&mut reporter), b"");
+    }
+
+    #[test]
+    fn a_test_run_hides_the_replay_of_a_cached_pass() {
+        let mut reporter = test_reporter(TestBlocks::Failed, Rerun::Off);
+        reporter.begun(1);
+        reporter.finished(
+            &test_event("//:check", OutcomeClass::Cached),
+            on_stdout(b"ok\n"),
+        );
+        assert_eq!(written(&mut reporter), b"");
+    }
+
+    #[test]
+    fn a_test_run_shows_the_block_of_a_failing_test() {
+        let failing = test_event("//:check", OutcomeClass::ActionFailure { status: 1 });
+        let mut reporter = test_reporter(TestBlocks::Failed, Rerun::Off);
+        reporter.begun(1);
+        reporter.finished(&failing, on_stdout(b"not ok\n"));
+        let wanted = block(&failing, on_stdout(b"not ok\n"), Paint::Plain);
+        assert_ne!(wanted, b"");
+        assert_eq!(written(&mut reporter), wanted);
+    }
+
+    #[test]
+    fn a_test_run_shows_the_block_of_a_test_whose_output_is_missing() {
+        let missing = test_event(
+            "//:check",
+            OutcomeClass::OutputMissing {
+                name: OutputName::parse("report.txt").unwrap(),
+            },
+        );
+        let mut reporter = test_reporter(TestBlocks::Failed, Rerun::Off);
+        reporter.begun(1);
+        reporter.finished(&missing, nothing());
+        let wanted = block(&missing, nothing(), Paint::Plain);
+        assert_ne!(wanted, b"");
+        assert_eq!(written(&mut reporter), wanted);
+    }
+
+    #[test]
+    fn a_test_run_shows_a_dependency_as_a_build_does() {
+        let dependency = event("//:lib", OutcomeClass::Built, &["cc"]);
+        let mut reporter = test_reporter(TestBlocks::Failed, Rerun::Off);
+        reporter.begun(1);
+        reporter.finished(&dependency, on_stdout(b"compiled\n"));
+        let shown = written(&mut reporter);
+        assert_eq!(shown, b"--- //:lib\ncompiled\n");
+        assert_eq!(
+            shown,
+            shown_by_a_build(&dependency, on_stdout(b"compiled\n"))
+        );
+    }
+
+    #[test]
+    fn a_verbose_test_run_shows_every_test() {
+        let mut reporter = test_reporter(TestBlocks::Every, Rerun::Off);
+        reporter.begun(2);
+        reporter.finished(
+            &test_event("//:fresh", OutcomeClass::Built),
+            on_stdout(b"ok\n"),
+        );
+        reporter.finished(
+            &test_event("//:stale", OutcomeClass::Cached),
+            on_stdout(b"ok\n"),
+        );
+        assert_eq!(
+            String::from_utf8(written(&mut reporter)).unwrap(),
+            "--- //:fresh\nok\n--- //:stale (cached)\nok\n"
+        );
+    }
+
+    #[test]
+    fn a_test_run_ends_with_the_test_line() {
+        let mut reporter = test_reporter(TestBlocks::Failed, Rerun::Off);
+        reporter.begun(2);
+        let mut summary = counts(1, 0, 1, 0);
+        summary.tests = Tally {
+            failed: 1,
+            skipped: 0,
+            built: 1,
+            cached: 0,
+        };
+        reporter.summary(summary);
+        assert_eq!(written(&mut reporter), b"tests: 1 passed, 1 failed\n");
+    }
+
+    #[test]
+    fn a_rerun_test_run_ends_with_the_rerun_line() {
+        let mut reporter = test_reporter(TestBlocks::Failed, Rerun::Tests);
+        reporter.begun(1);
+        let mut summary = counts(0, 0, 1, 0);
+        summary.tests = Tally {
+            failed: 0,
+            skipped: 0,
+            built: 1,
+            cached: 0,
+        };
+        reporter.summary(summary);
+        assert_eq!(written(&mut reporter), b"tests (rerun): 1 passed\n");
+    }
+
+    #[test]
+    fn a_live_test_run_still_advances_the_status_line_past_a_hidden_pass() {
+        let mut reporter = TerminalReporter::new(
+            Vec::new(),
+            Mode::Live,
+            Paint::Plain,
+            Report::Test {
+                blocks: TestBlocks::Failed,
+                rerun: Rerun::Off,
+            },
+        );
+        reporter.begun(2);
+        reporter.started(&action("//:check", None));
+        assert_eq!(
+            written(&mut reporter),
+            b"\x1b[?7l[0/2] 1 running: //:check\x1b[?7h"
+        );
+        reporter.finished(
+            &test_event("//:check", OutcomeClass::Built),
+            on_stdout(b"ok\n"),
+        );
+        assert_eq!(written(&mut reporter), b"\r\x1b[2K\x1b[?7l[1/2]\x1b[?7h");
+    }
+
+    #[test]
+    fn a_test_shown_live_ends_as_a_live_action_does_even_when_it_passes() {
+        let mut reporter = test_reporter(TestBlocks::Failed, Rerun::Off);
+        reporter.begun(1);
+        reporter.started(&action("//:check", None));
+        reporter.printed(&label("//:check"), Channel::Stdout, b"ok");
+        assert_eq!(written(&mut reporter), b"--- //:check\nok");
+        reporter.finished(&test_event("//:check", OutcomeClass::Built), nothing());
+        assert_eq!(written(&mut reporter), b"\n");
     }
 
     #[test]
@@ -574,7 +810,8 @@ mod tests {
 
     #[test]
     fn each_call_is_one_write_and_one_flush() {
-        let mut reporter = TerminalReporter::new(Writes::default(), Mode::Live, Paint::Ansi);
+        let mut reporter =
+            TerminalReporter::new(Writes::default(), Mode::Live, Paint::Ansi, Report::Build);
         report_a_build_with_two_failures(&mut reporter);
         // One per call that had something to say: four `finished`, two `started`, the summary.
         // `begun` says nothing.
@@ -597,7 +834,8 @@ mod tests {
 
     #[test]
     fn a_call_with_nothing_to_say_writes_nothing() {
-        let mut reporter = TerminalReporter::new(Writes::default(), Mode::Plain, Paint::Plain);
+        let mut reporter =
+            TerminalReporter::new(Writes::default(), Mode::Plain, Paint::Plain, Report::Build);
         reporter.begun(2);
         reporter.started(&action("//:app", None));
         reporter.finished(&event("//:app", OutcomeClass::Built, &["cc"]), nothing());
@@ -649,7 +887,7 @@ mod tests {
             good: 1,
             ..Failing::default()
         };
-        let mut reporter = TerminalReporter::new(failing, Mode::Live, Paint::Ansi);
+        let mut reporter = TerminalReporter::new(failing, Mode::Live, Paint::Ansi, Report::Build);
         report_a_build_with_two_failures(&mut reporter);
         // The first write is taken, the second is refused, and no third is tried.
         assert_eq!(reporter.out.writes, 2);
@@ -663,7 +901,7 @@ mod tests {
             fail_flush: true,
             ..Failing::default()
         };
-        let mut reporter = TerminalReporter::new(failing, Mode::Plain, Paint::Plain);
+        let mut reporter = TerminalReporter::new(failing, Mode::Plain, Paint::Plain, Report::Build);
         report_a_build_with_two_failures(&mut reporter);
         assert_eq!(reporter.out.writes, 1);
         assert_eq!(reporter.out.flushes, 1);

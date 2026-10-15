@@ -114,6 +114,10 @@ use crate::ports::{
 ///     fn record(&mut self, _label: Label, _row: CacheRow) -> Result<()> {
 ///         Err(nothing(PortName::ActionCache))
 ///     }
+///
+///     fn forget(&mut self, _label: &Label) -> Result<()> {
+///         Ok(())
+///     }
 /// }
 ///
 /// impl ContentStore for Nothing {

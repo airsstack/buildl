@@ -19,5 +19,7 @@ mod facade;
 mod failure;
 mod identical;
 mod incremental;
+mod log;
 mod named;
 mod recovery;
+mod test;

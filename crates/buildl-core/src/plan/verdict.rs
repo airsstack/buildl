@@ -12,8 +12,8 @@
 use crate::error::Result;
 use crate::plan::difference::{Known, between};
 use crate::types::{
-    ActionKey, CacheRow, DepProducts, DirtyReason, Freshness, KeyComponents, Label, NodeId,
-    OwnComponents, PlannedKey, Produced, TargetGraph, Unfinished, Verdict,
+    ActionKey, CacheRow, DepProducts, DirtyReason, Forcing, KeyComponents, Label, NodeId,
+    OwnComponents, PlannedKey, Produced, Rerun, TargetGraph, Unfinished, Verdict,
 };
 
 /// One dependency of the target being decided.
@@ -39,18 +39,22 @@ pub(crate) struct Dependency<'a> {
 /// unfinished, awaiting the dependencies that are not. The rules, tried in order:
 ///
 /// 1. a target declared to always run is dirty;
-/// 2. a target with no row is dirty: it was never built;
-/// 3. with a finished key, it is clean when the key's digest equals the row's, and dirty with
+/// 2. a test the run asked to run again is dirty, with its key finished or not, so it is never
+///    clean and never conditional;
+/// 3. a target with no row is dirty: it was never built;
+/// 4. with a finished key, it is clean when the key's digest equals the row's, and dirty with
 ///    every difference otherwise;
-/// 4. with an unfinished key, it is dirty when something already known differs, and conditional
+/// 5. with an unfinished key, it is dirty when something already known differs, and conditional
 ///    when nothing does.
+///
+/// `forcing` carries the first two rules: what makes the target run whatever its row says.
 ///
 /// # Errors
 ///
 /// Returns [`Error::CanonicalJson`](crate::Error::CanonicalJson) when a finished key cannot be
 /// serialized.
 pub(crate) fn decide(
-    freshness: Freshness,
+    forcing: Forcing,
     own: OwnComponents,
     deps: &[Dependency<'_>],
     row: Option<&CacheRow>,
@@ -82,11 +86,20 @@ pub(crate) fn decide(
         PlannedKey::Unfinished(Unfinished { own, awaiting })
     };
 
-    if freshness == Freshness::Always {
-        return Ok(Verdict::Dirty {
-            reason: DirtyReason::Always,
-            key,
-        });
+    match forcing {
+        Forcing::Always => {
+            return Ok(Verdict::Dirty {
+                reason: DirtyReason::Always,
+                key,
+            });
+        }
+        Forcing::Rerun => {
+            return Ok(Verdict::Dirty {
+                reason: DirtyReason::Rerun,
+                key,
+            });
+        }
+        Forcing::None => {}
     }
     let (Some(row), Some(differences)) = (row, differences) else {
         return Ok(Verdict::Dirty {
@@ -109,7 +122,8 @@ pub(crate) fn decide(
 /// The verdict for every target of `graph`, in id order.
 ///
 /// `own` holds one set of components per node, in id order; `order` is the graph's nodes with
-/// each after all it depends on; `row` answers with what a target's last build recorded.
+/// each after all it depends on; `rerun` says whether the run's tests run again whatever their
+/// rows say; `row` answers with what a target's last build recorded.
 ///
 /// # Errors
 ///
@@ -118,6 +132,7 @@ pub(crate) fn all<'r>(
     graph: &TargetGraph,
     own: Vec<OwnComponents>,
     order: &[NodeId],
+    rerun: Rerun,
     row: impl Fn(&Label) -> Option<&'r CacheRow>,
 ) -> Result<Vec<Verdict>> {
     let mut own: Vec<Option<OwnComponents>> = own.into_iter().map(Some).collect();
@@ -142,7 +157,8 @@ pub(crate) fn all<'r>(
                 })
             })
             .collect();
-        let verdict = decide(node.freshness, components, &deps, row(&node.label))?;
+        let forcing = Forcing::of(node.freshness, node.role, rerun);
+        let verdict = decide(forcing, components, &deps, row(&node.label))?;
         if let Some(slot) = verdicts.get_mut(id.index()) {
             *slot = Some(verdict);
         }
@@ -163,8 +179,9 @@ mod tests {
     use crate::plan::fixtures::{command, components, graph, label, node, produced};
     use crate::plan::order::topological;
     use crate::types::{
-        ActionKey, CacheRow, DepProducts, Difference, Digest, DirtyReason, Freshness,
-        KeyComponents, Label, NodeId, OwnComponents, PlannedKey, Produced, Unfinished, Verdict,
+        ActionKey, CacheRow, DepProducts, Difference, Digest, DirtyReason, Forcing, Freshness,
+        KeyComponents, Label, NodeId, OwnComponents, PlannedKey, Produced, Rerun, TargetRole,
+        Unfinished, Verdict,
     };
 
     /// The key of `own` over `deps`, each a label and what it produced.
@@ -209,7 +226,52 @@ mod tests {
     #[test]
     fn a_target_that_always_runs_is_dirty_whatever_was_recorded() {
         let recorded = row(key(app(), &[]), "app v1");
-        let verdict = decide(Freshness::Always, app(), &[], Some(&recorded)).unwrap();
+        let verdict = decide(Forcing::Always, app(), &[], Some(&recorded)).unwrap();
+        assert_eq!(
+            verdict,
+            Verdict::Dirty {
+                reason: DirtyReason::Always,
+                key: PlannedKey::Finished(key(app(), &[])),
+            }
+        );
+    }
+
+    #[test]
+    fn a_rerun_test_with_an_unchanged_key_is_dirty_for_a_rerun() {
+        let recorded = row(key(app(), &[]), "app v1");
+        let verdict = decide(Forcing::Rerun, app(), &[], Some(&recorded)).unwrap();
+        assert_eq!(
+            verdict,
+            Verdict::Dirty {
+                reason: DirtyReason::Rerun,
+                key: PlannedKey::Finished(key(app(), &[])),
+            }
+        );
+    }
+
+    #[test]
+    fn a_rerun_test_waiting_on_a_dep_is_dirty_not_conditional() {
+        let text = label("//lib:text");
+        let deps = [not_clean(1, &text)];
+        let recorded = key(app(), &[("//lib:text", vec![produced("text", "text v1")])]);
+        let verdict = decide(Forcing::Rerun, app(), &deps, Some(&row(recorded, "app v1"))).unwrap();
+        assert_eq!(
+            verdict,
+            Verdict::Dirty {
+                reason: DirtyReason::Rerun,
+                key: PlannedKey::Unfinished(Unfinished {
+                    own: app(),
+                    awaiting: vec![NodeId::new(1)],
+                }),
+            }
+        );
+    }
+
+    #[test]
+    fn a_test_declared_always_keeps_always_under_a_rerun() {
+        let recorded = row(key(app(), &[]), "app v1");
+        let forcing = Forcing::of(Freshness::Always, TargetRole::Test, Rerun::Tests);
+        let verdict = decide(forcing, app(), &[], Some(&recorded)).unwrap();
         assert_eq!(
             verdict,
             Verdict::Dirty {
@@ -221,7 +283,7 @@ mod tests {
 
     #[test]
     fn a_target_with_no_row_was_never_built() {
-        let verdict = decide(Freshness::Cached, app(), &[], None).unwrap();
+        let verdict = decide(Forcing::None, app(), &[], None).unwrap();
         assert_eq!(
             verdict,
             Verdict::Dirty {
@@ -236,7 +298,7 @@ mod tests {
         let text = label("//lib:text");
         let util = label("//lib:util");
         let deps = [not_clean(4, &text), clean(2, &util, "util", "util v1")];
-        let verdict = decide(Freshness::Cached, app(), &deps, None).unwrap();
+        let verdict = decide(Forcing::None, app(), &deps, None).unwrap();
         assert_eq!(
             verdict,
             Verdict::Dirty {
@@ -255,7 +317,7 @@ mod tests {
         let deps = [clean(1, &text, "text", "text v1")];
         let recorded = key(app(), &[("//lib:text", vec![produced("text", "text v1")])]);
         let verdict = decide(
-            Freshness::Cached,
+            Forcing::None,
             app(),
             &deps,
             Some(&row(recorded.clone(), "app v1")),
@@ -268,7 +330,7 @@ mod tests {
     fn a_settled_target_whose_key_differs_is_dirty_with_every_difference() {
         let recorded = row(key(app(), &[]), "app v1");
         let changed = components("app", |own| own.command = command(&["cc", "-O2"]));
-        let verdict = decide(Freshness::Cached, changed.clone(), &[], Some(&recorded)).unwrap();
+        let verdict = decide(Forcing::None, changed.clone(), &[], Some(&recorded)).unwrap();
         assert_eq!(
             verdict,
             Verdict::Dirty {
@@ -283,13 +345,7 @@ mod tests {
         let text = label("//lib:text");
         let deps = [clean(1, &text, "text", "text v2")];
         let recorded = key(app(), &[("//lib:text", vec![produced("text", "text v1")])]);
-        let verdict = decide(
-            Freshness::Cached,
-            app(),
-            &deps,
-            Some(&row(recorded, "app v1")),
-        )
-        .unwrap();
+        let verdict = decide(Forcing::None, app(), &deps, Some(&row(recorded, "app v1"))).unwrap();
         assert_eq!(
             verdict,
             Verdict::Dirty {
@@ -309,7 +365,7 @@ mod tests {
         let recorded = key(app(), &[("//lib:text", vec![produced("text", "text v1")])]);
         let changed = components("app", |own| own.command = command(&["cc", "-O2"]));
         let verdict = decide(
-            Freshness::Cached,
+            Forcing::None,
             changed.clone(),
             &deps,
             Some(&row(recorded, "app v1")),
@@ -345,13 +401,7 @@ mod tests {
                 ("//lib:other", vec![produced("other", "other v1")]),
             ],
         );
-        let verdict = decide(
-            Freshness::Cached,
-            app(),
-            &deps,
-            Some(&row(recorded, "app v1")),
-        )
-        .unwrap();
+        let verdict = decide(Forcing::None, app(), &deps, Some(&row(recorded, "app v1"))).unwrap();
         assert_eq!(
             verdict,
             Verdict::Conditional(Unfinished {
@@ -366,7 +416,7 @@ mod tests {
     fn an_always_target_with_an_unclean_dependency_keeps_an_unfinished_key() {
         let text = label("//lib:text");
         let deps = [not_clean(1, &text)];
-        let verdict = decide(Freshness::Always, app(), &deps, None).unwrap();
+        let verdict = decide(Forcing::Always, app(), &deps, None).unwrap();
         assert_eq!(
             verdict,
             Verdict::Dirty {
@@ -425,7 +475,7 @@ mod tests {
     ) -> Vec<Verdict> {
         let graph = chain();
         let order = topological(&graph);
-        all(&graph, own, &order, |label| rows.get(label)).unwrap()
+        all(&graph, own, &order, Rerun::Off, |label| rows.get(label)).unwrap()
     }
 
     #[test]
@@ -461,6 +511,58 @@ mod tests {
             let recorded = rows.get(&label(raw)).unwrap().key().clone();
             assert_eq!(verdict, &Verdict::Clean { key: recorded }, "{raw}");
         }
+    }
+
+    #[test]
+    fn a_rerun_leaves_a_clean_build_target_clean() {
+        let rows = rows_of_chain("z v1");
+        let graph = chain();
+        let order = topological(&graph);
+        let verdicts = all(&graph, own_of_chain(), &order, Rerun::Tests, |label| {
+            rows.get(label)
+        })
+        .unwrap();
+        assert!(
+            verdicts
+                .iter()
+                .all(|verdict| matches!(verdict, Verdict::Clean { .. })),
+            "{verdicts:?}"
+        );
+    }
+
+    #[test]
+    fn a_rerun_makes_a_clean_test_dirty_and_leaves_the_rest_clean() {
+        let rows = rows_of_chain("z v1");
+        let graph = graph(
+            vec![
+                node("//:app", |_| {}),
+                node("//:lib", |_| {}),
+                node("//:solo", |node| node.role = TargetRole::Test),
+                node("//:z", |_| {}),
+            ],
+            &[&[1], &[3], &[], &[]],
+        );
+        let order = topological(&graph);
+        let verdicts_under = |rerun| {
+            all(&graph, own_of_chain(), &order, rerun, |label| {
+                rows.get(label)
+            })
+            .unwrap()
+        };
+        let solo = rows.get(&label("//:solo")).unwrap().key().clone();
+
+        let rerun = verdicts_under(Rerun::Tests);
+        assert_eq!(
+            rerun[2],
+            Verdict::Dirty {
+                reason: DirtyReason::Rerun,
+                key: PlannedKey::Finished(solo.clone()),
+            }
+        );
+        for index in [0, 1, 3] {
+            assert!(matches!(rerun[index], Verdict::Clean { .. }), "{rerun:?}");
+        }
+        assert_eq!(verdicts_under(Rerun::Off)[2], Verdict::Clean { key: solo });
     }
 
     #[test]

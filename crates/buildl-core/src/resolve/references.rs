@@ -12,7 +12,7 @@
 
 use crate::error::{DeclarationField, DeclarationSite, DeclaredKind, Error, Result};
 use crate::resolve::index::{Entry, Index, Item};
-use crate::resolve::suggest::nearest;
+use crate::suggest::nearest;
 use crate::types::{Argument, Command, Description, Label, Provenance, Rule, SettingName};
 
 /// The declaration holding a reference: the one an error about that reference names.

@@ -107,7 +107,7 @@ graph TD
     LUA["[Component: crate] buildl-lua<br/>implements DeclarationSource<br/>airsl Engine per build file<br/>buildl HostModule bound as a global"]
     subgraph CORE["[Component: crate] buildl-core — no I/O, no Lua, no threads"]
         DATA["domain data<br/>Label, Digest, NodeId, Provenance<br/>Declaration, TargetGraph, Plan<br/>KeyComponents, ActionKey<br/>ActionOutcome, OutcomeClass"]
-        PORTS["ports — traits<br/>DeclarationSource, Manifest, Host<br/>Digester, StatCache, ToolResolver<br/>ContentStore, ActionCache, EventLog<br/>ExecStrategy, Dispatcher<br/>Clock, GraphRecord, Reporter<br/>later: Approver"]
+        PORTS["ports — traits<br/>DeclarationSource, Manifest, Host<br/>Digester, StatCache, ToolResolver<br/>ContentStore, ActionCache, EventLog<br/>RunHistory, ExecStrategy, Dispatcher<br/>Clock, GraphRecord, Reporter<br/>later: Approver"]
         LOGIC["pure logic<br/>load, resolve, plan, grants<br/>Schedule, record<br/>canonical JSON"]
     end
     AIRSL["[External crate] airsl<br/>Engine, Policy, HostModule"]
@@ -141,7 +141,7 @@ Inside `buildl` there is one module per adapter, two shared modules that impleme
 |`tools`|a program's lookup and its fingerprint|`ToolResolver`|
 |`cas`|`.buildl/cas`, and the files placed under `out/`|`ContentStore`|
 |`cache`|`cache.json` and `cache.journal`|`ActionCache`|
-|`log`|`log.jsonl`|`EventLog`|
+|`log`|`log.jsonl`, appended to and read back|`EventLog` and `RunHistory`|
 |`statcache`|`statcache.json`|`StatCache`|
 |`graph`|`graph.json`|`GraphRecord`|
 |`exec`|tier 1, `bare`|`ExecStrategy`|
@@ -176,8 +176,9 @@ Every value is a validated newtype or a serializable handoff; field-level detail
 |Incrementality|`KeyComponents`, `ActionKey`|
 |Authority|`Ceiling`, `WantedSet`, `Want`, `Workspace`, `Grants`|
 |Execution settings|`Execution` — the manifest's `[execution]` table, held in `Workspace` — with `Workers`, `Timeout` and `Isolation`, each validated at construction; none is a key component (`architecture.md` §6)|
-|A run and what it shows|`Scope` — what a run was asked for: the workspace, or named targets — `LiveOutput` — whether one action is shown as it prints — `Channel`, `LiveSink` and `Captured` — which stream an action wrote to, where its bytes go as they are read, and what it printed — `Turn` — what a dispatcher hands the scheduling thread|
+|A run and what it shows|`Scope` — what a run was asked for: the workspace, or named targets — `Purpose` — whether the run builds or tests — `Rerun` — whether a run runs its tests again whatever their keys say — `LiveOutput` — whether one action is shown as it prints — `Channel`, `LiveSink` and `Captured` — which stream an action wrote to, where its bytes go as they are read, and what it printed — `Turn` — what a dispatcher hands the scheduling thread|
 |Inputs|`InputStat` and `InputKind` — what stands at an input's path: nothing, a regular file, or a link, a directory or a special file; `Hasher` — `Digest::of` for bytes handed over in pieces|
+|Log, read back|`LogLine` — one line of the log, an event or a damaged line by its number — `LoggedRun` — one event as it reads back, the twelve keys `OutcomeEvent` writes|
 |Classification|`OutcomeClass`, `InfraKind` and `OutputRefusal` (`#[non_exhaustive]`, `architecture.md` §4); `TreeFault` — why a list of files is not a tree|
 
 ### 5.2 Ports
@@ -249,6 +250,11 @@ pub trait ActionCache {
 
 pub trait EventLog {
     fn append(&mut self, event: &OutcomeEvent) -> Result<()>;
+}
+
+/// The reading side of the log: its lines, oldest first, each an event or a damaged line.
+pub trait RunHistory {
+    fn lines(&self) -> Result<Vec<LogLine>>;
 }
 
 /// When the command starts, the directory that will contain each declared output
@@ -408,18 +414,19 @@ classDiagram
 |---|---|---|
 |load|workspace root → `Vec<Declaration>` (queue, `subdir`, sorted merge)|`DeclarationSource`|
 |resolve|`Vec<Declaration>` → `TargetGraph` (validations, cycle detection)|—|
-|narrow|`TargetGraph` and a `Scope` → the graph of the targets a run was asked for and everything they depend on, or the whole graph for `Scope::Workspace`; a label nothing declares is `Error::UnknownTarget`|—|
+|narrow|`TargetGraph`, a `Scope` and a `Purpose` → the graph of the targets a run was asked for and everything they depend on; for `Scope::Workspace` that is every target but tests for a build and every test for a test run; a label nothing declares is `Error::UnknownTarget`, and a test run naming a target that is not a test is `Error::NotATest`|—|
 |reach|`TargetGraph` and a `Query` → the targets the query reaches from its target, following dependencies or the reverse edges any number of steps, without that target and without aliases, as a `BTreeSet<Label>`; a label nothing declares is `Error::UnknownTarget`|—|
-|plan|`TargetGraph` and setting overrides → `Plan` (the settings in force, ceiling check, key assembly, a verdict per target; the plan carries the settings it was made with, as `Plan::settings()`)|`Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver`, `ActionCache`|
+|plan|`TargetGraph`, setting overrides and the run's `Rerun` → `Plan` (the settings in force, ceiling check, key assembly, a verdict per target; the plan carries the settings it was made with, as `Plan::settings()`)|`Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver`, `ActionCache`|
 |grants — not built; arrives with design §13 item 4|wanted set ∩ ceiling → grants or refusal. Today the ceiling check is Plan's, and a want outside the ceiling refuses the plan|`Manifest`, and `Approver` once it exists|
-|execute|the whole `TargetGraph`, the narrowed one, its `Plan`, the failure policy and `LiveOutput` → `Vec<ActionOutcome>` (output layout, checked over the whole graph and used for the narrowed one; placeholder expansion of commands and descriptions under the plan's settings, the program check, the `Schedule` state machine, cached or run, what an action left judged into one manifest per output, then cas, row, log, with each step shown through the reporter; an outcome per target of the narrowed graph, or `Error::DispatcherFault`)|`Manifest`, `Dispatcher`, `ExecStrategy`, `ContentStore`, `ActionCache`, `EventLog`, `Clock`, `Reporter`|
+|execute|the whole `TargetGraph`, the narrowed one, its `Plan`, the failure policy, `LiveOutput` and the run's `Rerun` → `Vec<ActionOutcome>` (output layout, checked over the whole graph and used for the narrowed one; placeholder expansion of commands and descriptions under the plan's settings, the program check, the `Schedule` state machine, cached or run, what an action left judged into one manifest per output, then cas, row, log, with each step shown through the reporter; an outcome per target of the narrowed graph, or `Error::DispatcherFault`)|`Manifest`, `Dispatcher`, `ExecStrategy`, `ContentStore`, `ActionCache`, `EventLog`, `Clock`, `Reporter`|
+|last_run|`[LogLine]` and a `Label` → the newest run of the label that stored both its output digests, the class of each newer line that stored none, and the damaged lines; or `Error::NoRun`, suggesting the nearest label that has a run|—|
 |canonical JSON|value → sorted-key bytes; those bytes, and no others, → the value|—|
 
-`Pipeline` strings these together, one method per command. `plan` and `build` take a `Scope` and narrow between Resolve and Plan; `build` also records the whole graph through `GraphRecord` before it narrows. `check`, `graph` and `query` read only the source of build files, so each also exists as a free function, `pipeline::check`, `pipeline::graph` and `pipeline::query`, for a caller that holds a `DeclarationSource` and nothing else: a command that reads only build files then needs no state directory, takes no lock and is not stopped by a state file.
+`Pipeline` strings these together, one method per command. `plan` and `build` take a `Scope` and narrow between Resolve and Plan, with `Purpose::Build`; `test` does the same with `Purpose::Test` and takes a `Rerun` too. `build` and `test` also record the whole graph through `GraphRecord` before they narrow. `check`, `graph` and `query` read only the source of build files, so each also exists as a free function, `pipeline::check`, `pipeline::graph` and `pipeline::query`, for a caller that holds a `DeclarationSource` and nothing else: a command that reads only build files then needs no state directory, takes no lock and is not stopped by a state file. `log` is a free function over its own two ports, `pipeline::log` over `RunHistory` and `ContentStore`: it runs `last_run` over the log's lines, reads the run's two blobs, and takes no lock and no `DeclarationSource`, so it reads no build file.
 
 ## 6. Port catalog
 
-"Since" is the item of design §13 an adapter arrives with; item 1 is built, and a row with a later item describes what is designed.
+"Since" is the item of design §13 an adapter arrives with; item 1 is built, and so is each item-2 row listed here (today `RunHistory`); a row with a later item describes what is designed.
 
 |Port|`buildl-core` uses it for|v1 adapter|Crate|Since|
 |---|---|---|---|---|
@@ -430,8 +437,9 @@ classDiagram
 |`StatCache`|reusing digests on unchanged mtime + size|`.buildl/statcache.json`, keyed by path; keeps an entry only for a file modified more than 2 s before the run began, and discards a file it cannot read back|`buildl`|1|
 |`ToolResolver`|tool fingerprints in the key|`PATH` lookup + content hash|`buildl`|1|
 |`ContentStore`|the cas: storing a blob, asking whether one is held, reading a held one back (an output's manifest), clearing an output's path under `out/` — before the output is placed, and again when it cannot be placed whole — and making a stored blob a file there, runnable or not|`.buildl/cas/ab/…`, temp file then rename, nothing synced; read-only blobs, with an executable twin `….x` beside a blob that was placed executable; hard links into `out/` where a write through a read-only file is refused, copies elsewhere|`buildl`|1|
-|`ActionCache`|cache rows: reading the last build's, and recording one durably for each target that was built|`.buildl/cache.json`, written by the canonical serializer and read back by the canonical reader, with `.buildl/cache.journal`: one appended line per recorded row, folded into the snapshot once per build|`buildl`|1|
+|`ActionCache`|cache rows: reading the last build's, recording one durably for each target that was built, and forgetting one durably when a failure under its key contradicts it|`.buildl/cache.json`, written by the canonical serializer and read back by the canonical reader, with `.buildl/cache.journal`: one appended line per recorded row, or per forgotten one, folded into the snapshot once per build|`buildl`|1|
 |`EventLog`|one event per outcome|`.buildl/log.jsonl`, appended to across builds|`buildl`|1|
+|`RunHistory`|the log's lines, oldest first, each an event or a damaged line|`.buildl/log.jsonl`, read only: never created, cut or written; a last line without a newline is left out|`buildl`|2|
 |`ExecStrategy`|running one action, started with each output's containing directory in place and nothing at the output's own path, handing over what it prints as it prints when asked to, then reporting what the action left at each output path — a file, a directory with everything below it, or neither — and storing every regular file of it|`Bare` (tier 1)|`buildl`|1|
 |`ExecStrategy`|the same, with undeclared inputs absent|`InputSandbox` (tier 2)|`buildl`|3|
 |`Dispatcher`|running ready actions in parallel, and carrying what a running action says to the scheduling thread|std scoped threads + `mpsc`, started as tasks need them|`buildl`|1|
@@ -453,7 +461,7 @@ The `Clock` port is `architecture.md` §5 rule 4's quarantine of the wall clock.
 |---|---|
 |the dependency half of 1, rule 4, and the cross-crate half of 2|`deny.toml`'s `[bans].deny` wrapper lists, which name the only direct parents a crate may have, plus `cargo make guard-crate-edges`, which diffs every member's direct dependencies against `crates/expected-edges.txt`. The compiler covers only imports: it stops a crate using what its `[dependencies]` omits, but not a dependency being added, and not one being removed.|
 |the "no I/O API" half of 1|`crates/buildl-core/clippy.toml`, an enumerated ban on the filesystem, process, thread, network, environment, standard-stream and clock APIs, asserted by `cargo make guard-core-purity`|
-|"no phase module names another" (`architecture.md` §1.1)|`crates/expected-module-edges.txt`, a committed list of `buildl-core`'s module-to-module imports, diffed by `cargo make guard-module-edges`. A grouped `crate::{…}` import, a `super::` that climbs to the crate root and an item named through the crate root's re-export (`crate::<Item>`) are refused outright, because the listing cannot read them|
+|"no phase module names another" (`architecture.md` §1.1)|`crates/expected-module-edges.txt`, a committed list of `buildl-core`'s module-to-module imports, which also holds the edges of `history` and `suggest`, two modules that are not phases, diffed by `cargo make guard-module-edges`. A grouped `crate::{…}` import, a `super::` that climbs to the crate root and an item named through the crate root's re-export (`crate::<Item>`) are refused outright, because the listing cannot read them|
 |adapter isolation inside `buildl`|`cargo make guard-adapter-isolation`, which reads every file under `crates/buildl/src` but `lib.rs`, test code included: an adapter module may name `crate::state` and `crate::search_path` and no other module of the crate, the two shared modules name none, and only `local_ports` and `workspace` name any module they like. A grouped `crate::{…}` import, `super::super`, a `super::` in a `mod.rs` or in a module that is one file, and an item named through the crate root (`crate::<Item>`) are refused outright, because each would hide an edge|
 
 ## 8. Testing layers
@@ -491,8 +499,9 @@ The fakes live in `buildl-core`'s integration tests (`crates/buildl-core/tests/f
 |`StatCache`|in-memory, counting commits|a filesystem|
 |`ToolResolver`|fixed fingerprints, recording every lookup|a `PATH`|
 |`ContentStore`|blobs and placed paths held in memory, each placed path with its mode; digests it can be told to forget, paths and content it can be told to fail on|a filesystem|
-|`ActionCache`|rows held in memory, with labels it can be told to fail on|a filesystem|
+|`ActionCache`|rows held in memory, with labels it can be told to fail on; it also keeps the labels it forgot, and can be told to fail a forget|a filesystem|
 |`EventLog`|the events appended, and whether to fail|a filesystem|
+|`RunHistory`|the lines it was handed, and whether to fail|a filesystem|
 |`ExecStrategy`|scripted per label: how the action exits, what it prints, and what is at each output — a file, one that may be run, a directory of files and of things that are not, a symbolic link, something special, or nothing|process spawning|
 |`Dispatcher`|inline, on the test thread, taking the oldest or the newest waiting task first; tasks it can be told to lose, unrun or run with the result dropped|threads; results are deterministic|
 |`Clock`|a counter, one tick per read|wall-clock time|
@@ -504,6 +513,9 @@ Flows that run entirely in `buildl-core`'s tests:
 |Scenario|Assertion|
 |---|---|
 |`//:a` fails under `--keep-going`|summary `1 failed, 2 skipped, 2 built`|
+|a test run over a workspace of builds and tests|only the tests and what they depend on run; no other target does|
+|a cached test run with `--rerun`|the test runs again and its dependency, whose key is unchanged, does not|
+|a test fails with `--rerun`|its row is forgotten, so the next run runs it again and a failure records no pass|
 |cas write succeeds, cache write fails|no row for the target — the crash-safety invariant (design §8.5)|
 |rebuilt output byte-identical|downstream targets stay `Clean` — early cutoff|
 |an action leaves a directory at an output|stored file by file under one manifest; the next build puts it back whole without running|
@@ -529,6 +541,8 @@ The same promises against the real adapters, through the `Workspace` facade (`cr
 |one input edited|its dependents rebuilt and nothing else|
 |an edit that leaves an output's bytes unchanged|the rebuild stops there — early cutoff|
 |a named target, or an alias|that target and what it needs, nothing else; `graph.json` is still the whole graph|
+|a test that declares no outputs|it passes and is cached; the next `test` serves it from the cache|
+|a build of the whole workspace|no test runs|
 |a failure, without and with `--keep-going`|`1 failed, 4 skipped`, then `1 failed, 2 skipped, 2 built`; no row for the failed target, which runs again next time|
 |the states an interrupted build leaves: blobs with no row, rows in the journal, staging files, a partial output|the next build finishes: it trusts no blob without a row, folds the journal, sweeps the staging and clears the partial output|
 |a corrupt `cache.json`|`Error::CorruptState` naming the file, the file untouched, no action run; `check`, `graph` and `query` still work|
@@ -584,7 +598,7 @@ Once published, the ports are a semver contract:
 |Source globbing|**Host-side in `buildl-lua`**|`b.sources()` walks with `globset` and `walkdir`, so the declaration engine holds no grant and `airsstack.glob.walk` is refused; sorting, symlink policy and the containment check are buildl's, in one place. The directories the walk stays out of are a required argument of `LuaSource::new`, so a source cannot be built without them, and the composition root gives it the manifest's output and state directories: the skip list is the adapter's configuration, not part of the port, so `buildl-lua` reads no manifest.|
 |Diagram notation|**Mermaid `graph` with C4 element labels**|Renders wherever the other documents' Mermaid renders; Mermaid's dedicated C4 syntax is marked experimental.|
 |Re-exporting the core|**`pub use buildl_core;` — the crate under its own name, `buildl::buildl_core`**|`pub use buildl_core as core` is unusable: in a crate root that also names `core::fmt` it is `error[E0432]: unresolved import core::fmt`, and a downstream crate that glob-imports the re-export and names `core::fmt` gets `error[E0659]: core is ambiguous`. A third name would invent vocabulary. The facade `buildl::Workspace` and the manifest value `buildl::buildl_core::Workspace` stay apart.|
-|When ports are wired|**Per `plan` or `build` call; a source of build files alone for `check`, `graph` and `query`**|`Pipeline` needs every port, and a command that reads only build files must not need, lock or be stopped by a state file: a corrupt `cache.json` does not stop `check`. The state lock is held for one call, so an embedder that keeps a `Workspace` open does not hold the directory while idle.|
+|When ports are wired|**Per `plan`, `build` or `test` call; a source of build files alone for `check`, `graph` and `query`**|`Pipeline` needs every port, and a command that reads only build files must not need, lock or be stopped by a state file: a corrupt `cache.json` does not stop `check`. The state lock is held for one call, so an embedder that keeps a `Workspace` open does not hold the directory while idle.|
 |Who owns the reporter|**The caller: `Workspace::build` is lent `&mut R` for one build**|Only `build` reports, and an embedder supplies its own reporter. `LocalPorts<R>` is generic over it, and `&mut R` is a `Reporter` when `R` is, so the bundle needs no bound beyond that.|
 |Tools in tests|**System tools by argv; no compiled helper, no published kit of fakes**|Cargo sets `CARGO_BIN_EXE_<name>` only for integration tests of the package that owns the binary, so a helper would cost the published `buildl` crate a `[[bin]]` or a feature, or the workspace a fifth member (§9).|
 |Adapter isolation|**Checked by `cargo make guard-adapter-isolation`**|Thirteen adapter modules in one crate is where a cross-import slips in. What they share lives in `state` and `search_path`, which implement no port (§7 rule 2).|

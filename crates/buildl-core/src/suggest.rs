@@ -1,7 +1,7 @@
 //! The nearest declared name to one that names nothing.
 //!
-//! Its own file because it is the one part of this phase that knows nothing about build files:
-//! it compares rendered names, and the caller decides which names are candidates.
+//! Its own module because it knows nothing about build files or any phase: it compares rendered
+//! names, and the caller decides which names are candidates.
 //!
 //! Responsibilities: [`nearest`], and the edit distance it ranks by.
 //!

@@ -23,7 +23,7 @@ use crate::plan::settings::effective;
 use crate::plan::tools::fingerprints;
 use crate::plan::verdict;
 use crate::ports::{ActionCache, Host, Manifest, PortSet, Ports};
-use crate::types::{Plan, SettingName, SettingValue, TargetGraph};
+use crate::types::{Plan, Rerun, SettingName, SettingValue, TargetGraph};
 
 /// Plans a build of `graph`: one verdict per target, what the build wants, and the settings in
 /// force.
@@ -34,7 +34,10 @@ use crate::types::{Plan, SettingName, SettingValue, TargetGraph};
 /// environment, the tool it runs, the settings it names, the platform, and what its dependencies
 /// produced; the key is compared with the one the target's last build recorded. A target is
 /// clean when the two are equal, dirty when they differ, and conditional when all that could
-/// still differ is the output of a dependency that is about to run.
+/// still differ is the output of a dependency that is about to run. When `rerun` asks for the
+/// tests to run again, a test not declared to always run is dirty with
+/// [`DirtyReason::Rerun`](crate::DirtyReason::Rerun) whatever its key, and every other target is
+/// judged as before.
 ///
 /// The tool a target runs is the program its command's first argument names once each `$opt:`
 /// reference in it is replaced by the setting's value for this run. So a program named through
@@ -63,6 +66,7 @@ use crate::types::{Plan, SettingName, SettingValue, TargetGraph};
 pub fn plan<P: Ports>(
     graph: &TargetGraph,
     overrides: &BTreeMap<SettingName, SettingValue>,
+    rerun: Rerun,
     ports: &mut PortSet<P>,
 ) -> Result<Plan> {
     let workspace = ports.manifest.workspace()?;
@@ -88,7 +92,9 @@ pub fn plan<P: Ports>(
         .map(|node| own(node, &gathered))
         .collect();
     let order = topological(graph);
-    let verdicts = verdict::all(graph, components, &order, |label| ports.cache.row(label))?;
+    let verdicts = verdict::all(graph, components, &order, rerun, |label| {
+        ports.cache.row(label)
+    })?;
     let labels = graph
         .nodes()
         .iter()

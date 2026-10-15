@@ -58,9 +58,12 @@ fn put(pipeline: &mut Pipeline<FakePorts>, raw: &str, text: &str, modified: u64)
 
 /// A plan of the workspace with no setting overridden.
 fn planned(pipeline: &mut Pipeline<FakePorts>) -> Plan {
-    pipeline
-        .plan(&entry(), &Scope::Workspace, &Overrides::new())
-        .unwrap()
+    planned_in(pipeline, &Scope::Workspace)
+}
+
+/// A plan of what `scope` asks for, with no setting overridden.
+fn planned_in(pipeline: &mut Pipeline<FakePorts>, scope: &Scope) -> Plan {
+    pipeline.plan(&entry(), scope, &Overrides::new()).unwrap()
 }
 
 /// What a verdict says, without its key: the reason, and the labels of the targets awaited.
@@ -150,15 +153,27 @@ fn record(
     pipeline.ports_mut().cache.rows.insert(label, row);
 }
 
-/// Records a build of every target, each after the targets it depends on.
+/// Records a build of every target of the workspace, each after the targets it depends on.
 ///
 /// The helper takes the targets in dependency order rather than planning until all are clean,
 /// so it also works for a workspace holding a target that is never clean.
 fn build(pipeline: &mut Pipeline<FakePorts>, overrides: &Overrides, version: &str) {
+    build_in(pipeline, &Scope::Workspace, overrides, version);
+}
+
+/// Records a build of every target of the workspace, planned for what `scope` asks for, each
+/// after the targets it depends on.
+///
+/// The plan's targets are matched to the whole graph's by number, so `scope` must ask for a part
+/// that is numbered the same as the whole.
+fn build_in(
+    pipeline: &mut Pipeline<FakePorts>,
+    scope: &Scope,
+    overrides: &Overrides,
+    version: &str,
+) {
     let graph = pipeline.graph(&entry()).unwrap();
-    let plan = pipeline
-        .plan(&entry(), &Scope::Workspace, overrides)
-        .unwrap();
+    let plan = pipeline.plan(&entry(), scope, overrides).unwrap();
     let mut built = BTreeSet::new();
     while built.len() < graph.len() {
         let ready: Vec<NodeId> = (0_u32..)
@@ -1065,10 +1080,11 @@ fn a_built_workspace_with_one_edit_plans_to_the_pinned_json() {
     tools
         .fingerprints
         .insert(program("cc"), Digest::of(b"cc 14.2"));
-    build(&mut pipeline, &Overrides::new(), "v1");
+    let app_test = Scope::Targets(BTreeSet::from([label("//:app_test")]));
+    build_in(&mut pipeline, &app_test, &Overrides::new(), "v1");
     put(&mut pipeline, "main.c", "main.c, edited", 200);
 
-    let plan = planned(&mut pipeline);
+    let plan = planned_in(&mut pipeline, &app_test);
 
     assert_eq!(
         said(&plan, "//:main.o"),
@@ -1085,4 +1101,24 @@ fn a_built_workspace_with_one_edit_plans_to_the_pinned_json() {
     assert_eq!(said(&plan, "//lib:text"), Said::Clean);
     let json = json::canonical::to_string(&plan).unwrap();
     assert_eq!(json, GOLDEN.trim_end());
+}
+
+#[test]
+fn a_plan_of_the_workspace_leaves_tests_out() {
+    let mut pipeline = Pipeline::<FakePorts>::new(ports(crate::graph::fixture()));
+    put(&mut pipeline, "main.c", "main.c", 100);
+    put(&mut pipeline, "lib/text.c", "lib/text.c", 100);
+    let tools = &mut pipeline.ports_mut().tools;
+    tools
+        .fingerprints
+        .insert(program("cc"), Digest::of(b"cc 14.2"));
+
+    let plan = planned(&mut pipeline);
+
+    let planned_labels: Vec<String> = (0_u32..)
+        .take(plan.len())
+        .map(NodeId::new)
+        .map(|id| plan.label(id).unwrap().to_string())
+        .collect();
+    assert_eq!(planned_labels, ["//:app", "//:main.o", "//lib:text"]);
 }

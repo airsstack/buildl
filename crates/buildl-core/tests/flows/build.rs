@@ -5,21 +5,22 @@
     reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use buildl_core::{
     ActionOutcome, Digest, EntryName, Error, EvaluationFailure, FileMode, FileStat, Freshness,
-    InfraKind, Label, OnFailure, OutcomeClass, OutcomeEvent, OutputManifest, OutputName,
-    OutputPath, OutputRefusal, Pipeline, PortName, SettingName, SettingValue, SourcePath,
-    StagedItem, StagedSetting, StoredFile, Summary, TargetRole, Timestamp, TreePath, Want, Written,
+    InfraKind, OnFailure, OutcomeClass, OutcomeEvent, OutputManifest, OutputName, OutputPath,
+    OutputRefusal, Pipeline, PortName, SettingName, SettingValue, SourcePath, StagedItem,
+    StagedSetting, StoredFile, Summary, Tally, TargetRole, Timestamp, TreePath, Want, Written,
     json,
 };
 use buildl_core::{LiveOutput, Scope};
 
 use crate::common::{
     Content, Ends, FakeContent, FakeFile, FakePorts, FakeSource, Leaf, Loss, Order, Script, alias,
-    dir, file, ports, program, rule, setting, target, target_with, tree, workspace,
+    classes, dir, ending, expected, file, label, ports, program, root_only, rule, script, setting,
+    skipped, target, target_with, tree, workspace,
 };
 
 /// The events of [`two_directories`] built once, one canonical JSON object per line, pinned.
@@ -30,10 +31,6 @@ type Overrides = BTreeMap<SettingName, SettingValue>;
 
 fn entry() -> EntryName {
     EntryName::parse("build.lua").unwrap()
-}
-
-fn label(raw: &str) -> Label {
-    Label::parse(raw).unwrap()
 }
 
 fn path(raw: &str) -> SourcePath {
@@ -69,6 +66,21 @@ fn build(pipeline: &mut Pipeline<FakePorts>, on_failure: OnFailure) -> Vec<Actio
             LiveOutput::Off,
         )
         .unwrap()
+}
+
+/// A build of the targets `labels` name, with no setting overridden.
+fn build_named(
+    pipeline: &mut Pipeline<FakePorts>,
+    labels: &[&str],
+    on_failure: OnFailure,
+) -> Result<Vec<ActionOutcome>, Error> {
+    pipeline.build(
+        &entry(),
+        &Scope::Targets(labels.iter().map(|raw| label(raw)).collect()),
+        &Overrides::new(),
+        on_failure,
+        LiveOutput::Off,
+    )
 }
 
 /// The last event logged for the target `raw` names.
@@ -161,10 +173,13 @@ fn a_workspace_never_built_builds_every_target_after_what_it_depends_on() {
     assert_eq!(
         Summary::of(&outcomes),
         Summary {
-            failed: 0,
-            skipped: 0,
-            built: 4,
-            cached: 0
+            all: Tally {
+                failed: 0,
+                skipped: 0,
+                built: 4,
+                cached: 0
+            },
+            tests: Tally::default()
         }
     );
 
@@ -220,10 +235,13 @@ fn a_second_build_with_nothing_changed_runs_nothing_and_places_every_output_agai
     assert_eq!(
         Summary::of(&outcomes),
         Summary {
-            failed: 0,
-            skipped: 0,
-            built: 0,
-            cached: 4
+            all: Tally {
+                failed: 0,
+                skipped: 0,
+                built: 0,
+                cached: 4
+            },
+            tests: Tally::default()
         }
     );
     let ports = pipeline.ports();
@@ -265,34 +283,6 @@ fn outcome<'o>(outcomes: &'o [ActionOutcome], raw: &str) -> &'o ActionOutcome {
         .iter()
         .find(|outcome| outcome.label == wanted)
         .unwrap()
-}
-
-/// Every target's class, by label.
-fn classes(outcomes: &[ActionOutcome]) -> BTreeMap<String, OutcomeClass> {
-    outcomes
-        .iter()
-        .map(|outcome| (outcome.label.to_string(), outcome.class.clone()))
-        .collect()
-}
-
-/// The classes a test expects, by label.
-fn expected(pairs: &[(&str, OutcomeClass)]) -> BTreeMap<String, OutcomeClass> {
-    pairs
-        .iter()
-        .map(|(raw, class)| ((*raw).to_owned(), class.clone()))
-        .collect()
-}
-
-/// A pipeline over one root build file making `items`, with `cc` findable.
-fn root_only(items: Vec<StagedItem>) -> Pipeline<FakePorts> {
-    let source = FakeSource::new(workspace(vec![("", file(items, &[]))]));
-    let mut pipeline = Pipeline::new(ports(source));
-    pipeline
-        .ports_mut()
-        .tools
-        .fingerprints
-        .insert(program("cc"), Digest::of(b"cc 14.2"));
-    pipeline
 }
 
 #[test]
@@ -452,33 +442,76 @@ fn a_target_that_always_runs_runs_on_every_build_and_its_dependent_stays_cached(
     );
 }
 
-/// The class of a target skipped because the target `raw` names failed.
-fn skipped(raw: &str) -> OutcomeClass {
-    OutcomeClass::Skipped {
-        because: label(raw),
-    }
+#[test]
+fn an_unplaced_cached_target_forgets_nothing() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+    build(&mut pipeline, OnFailure::Stop);
+    pipeline.ports().cas.fail_place(out("//:a", "a"));
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[("//:a", infra(InfraKind::Store))])
+    );
+    let cache = &pipeline.ports().cache;
+    assert_eq!(cache.forgotten(), []);
+    assert!(cache.rows.contains_key(&label("//:a")));
+}
+
+#[test]
+fn a_failed_always_target_forgets_the_row_it_left() {
+    let mut pipeline = root_only(vec![target_with("a", |target| {
+        target.freshness = Freshness::Always;
+    })]);
+    let first = build(&mut pipeline, OnFailure::Stop);
+    assert_eq!(classes(&first), expected(&[("//:a", OutcomeClass::Built)]));
+    assert!(pipeline.ports().cache.rows.contains_key(&label("//:a")));
+    script(&mut pipeline, "//:a", ending(Ends::Exits(1)));
+
+    let second = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&second),
+        expected(&[("//:a", OutcomeClass::ActionFailure { status: 1 })])
+    );
+    let cache = &pipeline.ports().cache;
+    assert_eq!(cache.forgotten(), [label("//:a")]);
+    assert!(!cache.rows.contains_key(&label("//:a")));
+}
+
+#[test]
+fn a_forget_that_fails_is_a_store_failure() {
+    let mut pipeline = root_only(vec![target_with("a", |target| {
+        target.freshness = Freshness::Always;
+    })]);
+    let first = build(&mut pipeline, OnFailure::Stop);
+    assert_eq!(classes(&first), expected(&[("//:a", OutcomeClass::Built)]));
+    script(&mut pipeline, "//:a", ending(Ends::Exits(1)));
+    pipeline
+        .ports_mut()
+        .cache
+        .unforgettable
+        .insert(label("//:a"));
+
+    let second = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&second),
+        expected(&[("//:a", infra(InfraKind::Store))])
+    );
+    assert_eq!(
+        diagnostic(outcome(&second, "//:a")).as_deref(),
+        Some("action cache: //:a cannot be forgotten")
+    );
+    let cache = &pipeline.ports().cache;
+    assert_eq!(cache.forgotten(), []);
+    assert!(cache.rows.contains_key(&label("//:a")), "its row stays");
 }
 
 /// The class of a target the builder itself failed, at `kind`.
 const fn infra(kind: InfraKind) -> OutcomeClass {
     OutcomeClass::InfraFailure { kind }
-}
-
-/// A script in which the action goes as `ends` says and everything else is unscripted.
-fn ending(ends: Ends) -> Script {
-    Script {
-        ends,
-        ..Script::default()
-    }
-}
-
-/// Scripts the action of the target `raw` names.
-fn script(pipeline: &mut Pipeline<FakePorts>, raw: &str, script: Script) {
-    pipeline
-        .ports_mut()
-        .strategy
-        .scripts
-        .insert(label(raw), script);
 }
 
 /// The message of an outcome, as text.
@@ -519,10 +552,13 @@ fn under_keep_going_a_failure_skips_only_what_depends_on_it() {
     assert_eq!(
         Summary::of(&outcomes),
         Summary {
-            failed: 1,
-            skipped: 2,
-            built: 2,
-            cached: 0
+            all: Tally {
+                failed: 1,
+                skipped: 2,
+                built: 2,
+                cached: 0
+            },
+            tests: Tally::default()
         }
     );
     let ports = pipeline.ports();
@@ -713,10 +749,13 @@ fn every_way_an_action_can_fail_is_a_class_of_its_own_and_none_is_recorded() {
     assert_eq!(
         Summary::of(&outcomes),
         Summary {
-            failed: 8,
-            skipped: 0,
-            built: 0,
-            cached: 0
+            all: Tally {
+                failed: 8,
+                skipped: 0,
+                built: 0,
+                cached: 0
+            },
+            tests: Tally::default()
         }
     );
     let ports = pipeline.ports();
@@ -822,7 +861,7 @@ fn a_test_that_runs_what_its_dependency_built_is_built_when_the_workspace_allows
     let ceiling = &mut pipeline.ports_mut().manifest.workspace.ceiling;
     ceiling.run.insert(program("out/app"));
 
-    let outcomes = build(&mut pipeline, OnFailure::Stop);
+    let outcomes = build_named(&mut pipeline, &["//:app_test"], OnFailure::Stop).unwrap();
 
     assert_eq!(
         classes(&outcomes),
@@ -847,10 +886,108 @@ fn a_test_that_runs_what_its_dependency_built_is_built_when_the_workspace_allows
 }
 
 #[test]
+fn a_test_with_no_outputs_that_exits_zero_is_built() {
+    let mut pipeline = root_only(vec![target_with("check", |target| {
+        target.role = TargetRole::Test;
+    })]);
+    script(
+        &mut pipeline,
+        "//:check",
+        leaving(out("//:check", "check"), Content::Missing),
+    );
+
+    let outcomes = build_named(&mut pipeline, &["//:check"], OnFailure::Stop).unwrap();
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[("//:check", OutcomeClass::Built)])
+    );
+    assert_eq!(outcome(&outcomes, "//:check").outputs, []);
+    assert!(pipeline.ports().cache.rows.contains_key(&label("//:check")));
+}
+
+/// A test target with nothing to run but the default command, which depends on `deps`.
+fn testing(name: &str, deps: &[&str]) -> StagedItem {
+    target_with(name, |target| {
+        target.role = TargetRole::Test;
+        target.deps = deps.iter().map(|dep| Written::new(*dep)).collect();
+    })
+}
+
+#[test]
+fn a_test_targets_outcomes_carry_its_role_whether_built_cached_failed_or_skipped() {
+    let mut pipeline = root_only(vec![
+        target("broken", &[]),
+        testing("t_cached", &[]),
+        testing("t_built", &[]),
+        testing("t_failed", &[]),
+        testing("t_skipped", &["broken"]),
+    ]);
+    script(&mut pipeline, "//:broken", ending(Ends::Exits(1)));
+    script(&mut pipeline, "//:t_failed", ending(Ends::Exits(1)));
+    build_named(&mut pipeline, &["//:t_cached"], OnFailure::KeepGoing).unwrap();
+
+    let outcomes = build_named(
+        &mut pipeline,
+        &[
+            "//:broken",
+            "//:t_cached",
+            "//:t_built",
+            "//:t_failed",
+            "//:t_skipped",
+        ],
+        OnFailure::KeepGoing,
+    )
+    .unwrap();
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[
+            ("//:broken", OutcomeClass::ActionFailure { status: 1 }),
+            ("//:t_cached", OutcomeClass::Cached),
+            ("//:t_built", OutcomeClass::Built),
+            ("//:t_failed", OutcomeClass::ActionFailure { status: 1 }),
+            ("//:t_skipped", skipped("//:broken")),
+        ])
+    );
+    let roles: BTreeMap<String, TargetRole> = outcomes
+        .iter()
+        .map(|outcome| (outcome.label.to_string(), outcome.role))
+        .collect();
+    assert_eq!(
+        roles,
+        BTreeMap::from([
+            ("//:broken".to_owned(), TargetRole::Build),
+            ("//:t_cached".to_owned(), TargetRole::Test),
+            ("//:t_built".to_owned(), TargetRole::Test),
+            ("//:t_failed".to_owned(), TargetRole::Test),
+            ("//:t_skipped".to_owned(), TargetRole::Test),
+        ])
+    );
+    assert_eq!(
+        Summary::of(&outcomes),
+        Summary {
+            all: Tally {
+                failed: 2,
+                skipped: 1,
+                built: 1,
+                cached: 1
+            },
+            tests: Tally {
+                failed: 1,
+                skipped: 1,
+                built: 1,
+                cached: 1
+            }
+        }
+    );
+}
+
+#[test]
 fn a_program_first_named_by_expansion_is_refused_before_anything_runs() {
     let mut pipeline = tested();
 
-    let error = refused(&mut pipeline);
+    let error = build_named(&mut pipeline, &["//:app_test"], OnFailure::Stop).unwrap_err();
 
     assert_eq!(
         error.to_string(),
@@ -1073,7 +1210,8 @@ fn two_directories(order: Order) -> Pipeline<FakePorts> {
     pipeline
 }
 
-/// A build of [`two_directories`] with `test_filter` set to `Login`.
+/// A build of `//:app_test` of [`two_directories`], whose closure is the whole workspace, with
+/// `test_filter` set to `Login`.
 fn build_filtered(pipeline: &mut Pipeline<FakePorts>) -> Vec<ActionOutcome> {
     let overrides = Overrides::from([(
         SettingName::parse("test_filter").unwrap(),
@@ -1082,7 +1220,7 @@ fn build_filtered(pipeline: &mut Pipeline<FakePorts>) -> Vec<ActionOutcome> {
     pipeline
         .build(
             &entry(),
-            &Scope::Workspace,
+            &Scope::Targets(BTreeSet::from([label("//:app_test")])),
             &overrides,
             OnFailure::Stop,
             LiveOutput::Off,
@@ -1125,10 +1263,18 @@ fn a_two_directory_workspace_hands_each_action_its_expanded_command_and_logs_the
     assert_eq!(
         Summary::of(&outcomes),
         Summary {
-            failed: 0,
-            skipped: 0,
-            built: 4,
-            cached: 0
+            all: Tally {
+                failed: 0,
+                skipped: 0,
+                built: 4,
+                cached: 0
+            },
+            tests: Tally {
+                failed: 0,
+                skipped: 0,
+                built: 1,
+                cached: 0
+            }
         }
     );
     assert_eq!(
@@ -1164,7 +1310,7 @@ fn a_two_directory_workspace_hands_each_action_its_expanded_command_and_logs_the
             texts(&["out/app", "--filter=Login"]),
             texts(&[]),
             texts(&["out/app"]),
-            texts(&["out/app_test"]),
+            texts(&[]),
         ]
     );
 
@@ -1498,10 +1644,13 @@ fn editing_only_a_description_leaves_every_target_cached() {
     assert_eq!(
         Summary::of(&outcomes),
         Summary {
-            failed: 0,
-            skipped: 0,
-            built: 0,
-            cached: 3
+            all: Tally {
+                failed: 0,
+                skipped: 0,
+                built: 0,
+                cached: 3
+            },
+            tests: Tally::default()
         }
     );
     let ports = pipeline.ports();
@@ -2050,10 +2199,13 @@ fn an_output_that_cannot_be_put_back_exactly_is_refused_and_never_recorded() {
     assert_eq!(
         Summary::of(&outcomes),
         Summary {
-            failed: 7,
-            skipped: 0,
-            built: 0,
-            cached: 0
+            all: Tally {
+                failed: 7,
+                skipped: 0,
+                built: 0,
+                cached: 0
+            },
+            tests: Tally::default()
         }
     );
     for (raw, class, message) in table {

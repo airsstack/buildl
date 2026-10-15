@@ -23,14 +23,16 @@ use crate::execute::admission::admit;
 use crate::execute::expand::{Lists, expand, expand_description};
 use crate::execute::layout::Layout;
 use crate::execute::perform::{Ended, Performed, Shared, Task, Told, Worked, perform};
-use crate::execute::record::{Progress, append, failed, restore, shown, skipped, store};
+use crate::execute::record::{
+    Progress, append, failed, forget_contradicted, restore, shown, skipped, store,
+};
 use crate::execute::schedule::{Finish, Schedule};
 use crate::execute::settle::{Settled, settle};
 use crate::ports::{Dispatcher, Manifest, PortSet, Ports, Reporter};
 use crate::types::{
-    ActionOutcome, Captured, Ceiling, Command, EnvName, EnvValue, ExpandedDescription, Label,
-    LiveOutput, Node, NodeId, OnFailure, OutcomeEvent, OutputPath, OwnComponents, Plan, PlannedKey,
-    ReadyAction, Summary, TargetGraph, Turn, Verdict,
+    ActionOutcome, Captured, Ceiling, Command, EnvName, EnvValue, ExpandedDescription, Forcing,
+    Label, LiveOutput, Node, NodeId, OnFailure, OutcomeEvent, OutputPath, OwnComponents, Plan,
+    PlannedKey, ReadyAction, Rerun, Summary, TargetGraph, Turn, Verdict,
 };
 
 /// Builds every target of `graph` as `plan` says, and returns one outcome per target, in id
@@ -61,6 +63,9 @@ use crate::types::{
 /// `whole` is the graph of the whole workspace, the one `graph` was narrowed from, or `graph`
 /// itself. A target of `whole` that `graph` leaves out is no part of the build: it has no
 /// outcome, no event and no row, and whatever it left in the workspace stays.
+///
+/// Under [`Rerun::Tests`] a test runs whatever its recorded result says, and its new result is
+/// recorded; any other target settles as before.
 ///
 /// The build is shown through the reporter port, always from the calling thread: that it begins,
 /// once nothing can refuse it any more; each action as a worker begins it; each target's outcome,
@@ -102,6 +107,7 @@ pub fn execute<P: Ports>(
     plan: &Plan,
     on_failure: OnFailure,
     live: LiveOutput,
+    rerun: Rerun,
     ports: &mut PortSet<P>,
 ) -> Result<Vec<ActionOutcome>> {
     if !made_from(plan, graph) {
@@ -137,6 +143,7 @@ pub fn execute<P: Ports>(
         targets,
         layout: &layout,
         schedule: Schedule::new(graph, on_failure),
+        rerun,
         outcomes: vec![None; graph.len()],
         queue: VecDeque::new(),
         fatal: None,
@@ -307,6 +314,8 @@ struct Build<'a, P: Ports> {
     layout: &'a Layout,
     /// Which targets may start, and which never will.
     schedule: Schedule,
+    /// Whether the run's tests run again whatever their rows say.
+    rerun: Rerun,
     /// One slot per target, in id order, filled when the target has its outcome.
     outcomes: Vec<Option<ActionOutcome>>,
     /// The started targets waiting to be settled, oldest first.
@@ -406,7 +415,7 @@ impl<P: Ports> Build<'_, P> {
             };
             let settled = settle(
                 &target.node.label,
-                target.node.freshness,
+                Forcing::of(target.node.freshness, target.node.role, self.rerun),
                 target.own,
                 &target.deps,
                 &*self.cache,
@@ -423,6 +432,7 @@ impl<P: Ports> Build<'_, P> {
                 Settled::Cached { row, manifests } => {
                     let outcome = restore(
                         target.node.label.clone(),
+                        target.node.role,
                         &row,
                         &manifests,
                         self.layout.outputs(node),
@@ -438,21 +448,23 @@ impl<P: Ports> Build<'_, P> {
         Ok(())
     }
 
-    /// Records what a worker did for one target, and finishes the target.
+    /// Records what a worker did for one target, and finishes the target. A failure under the
+    /// key the target's row was recorded under removes that row first.
     fn record(&mut self, performed: Performed) -> Result<()> {
         let node = performed.node;
         let Some(target) = self.targets.get(node.index()) else {
             return Ok(());
         };
-        let label = target.node.label.clone();
+        let role = target.node.role;
         let was_live = performed.live;
         let progress = Progress::Began {
             key: performed.key.digest(),
             span: performed.span,
         };
+        let key = performed.key.clone();
         let outcome = match performed.ended {
             Ended::Produced { outputs, printed } => store(
-                label,
+                target.node,
                 performed.key,
                 outputs,
                 printed,
@@ -464,8 +476,10 @@ impl<P: Ports> Build<'_, P> {
                 class,
                 diagnostic,
                 printed,
-            } => failed(label, class, diagnostic, printed),
+            } => failed(target.node.label.clone(), role, class, diagnostic, printed),
         };
+        // Before the outcome is finished, so the row is gone before the log line is written.
+        let outcome = forget_contradicted(outcome, &key, self.cache);
         self.finish(node, progress, outcome)?;
         if was_live && let Some(place) = self.shared.live {
             // Given back only now, with the outcome reported: the next action to take the
@@ -515,7 +529,11 @@ impl<P: Ports> Build<'_, P> {
         ) else {
             return Ok(());
         };
-        let outcome = skipped(target.node.label.clone(), cause.node.label.clone());
+        let outcome = skipped(
+            target.node.label.clone(),
+            target.node.role,
+            cause.node.label.clone(),
+        );
         self.conclude(node, Progress::Skipped, outcome)
     }
 

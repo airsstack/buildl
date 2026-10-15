@@ -663,3 +663,93 @@ fn a_state_directory_that_cannot_be_used_is_an_infrastructure_failure() {
         )
     );
 }
+
+/// The workspace of [`COPY`], not built.
+fn copying() -> (tempfile::TempDir, std::path::PathBuf) {
+    workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        ("build.lua", COPY),
+        ("a.txt", "a\n"),
+    ])
+}
+
+/// The workspace of [`COPY`], built once.
+fn built_copying() -> (tempfile::TempDir, std::path::PathBuf) {
+    let (dir, root) = copying();
+    assert_eq!(code(&run(&root, &["build"], &[])), 0);
+    (dir, root)
+}
+
+#[test]
+fn log_of_a_target_that_never_ran_exits_2() {
+    let (_dir, root) = copying();
+    assert_eq!(
+        failed(&root, &["log", "copy"]),
+        (
+            2,
+            "error: target //:copy has no run in the log\n".to_owned()
+        )
+    );
+}
+
+#[test]
+fn log_with_a_blob_removed_exits_3() {
+    let (_dir, root) = built_copying();
+    fs::remove_dir_all(root.join(".buildl/cas")).unwrap();
+    assert_eq!(
+        failed(&root, &["log", "copy"]),
+        (
+            3,
+            "error: target //:copy: the output of its last logged run is no longer in the store\n"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn log_with_a_broken_build_file_exits_0() {
+    let (_dir, root) = built_copying();
+    write(&root, "build.lua", "this is not lua\n");
+    assert_eq!(code(&run(&root, &["log", "copy"], &[])), 0);
+}
+
+/// Two test targets, `//:pass` and `//:fail`, which fails.
+const TESTS: &str = r#"buildl.test("pass", { run = { "sh", "-c", "echo ok" } })
+buildl.test("fail", { run = { "sh", "-c", "echo bad; exit 1" } })
+"#;
+
+#[test]
+fn test_with_a_failing_test_exits_1() {
+    let (_dir, root) = workspace(&[("buildl.toml", &manifest(&["sh"])), ("build.lua", TESTS)]);
+    let output = run(&root, &["test"], &[]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+}
+
+#[test]
+fn test_naming_a_build_target_exits_2() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        ("build.lua", COPY),
+        ("a.txt", "a\n"),
+    ]);
+    assert_eq!(
+        failed(&root, &["test", "copy"]),
+        (
+            2,
+            "error: target //:copy was asked for as a test, but //:copy is declared with b.target in build.lua\n"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn test_with_no_tests_exits_0() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        ("build.lua", COPY),
+        ("a.txt", "a\n"),
+    ]);
+    assert_eq!(failed(&root, &["test"]), (0, "no tests\n".to_owned()));
+    assert!(!root.join("out/copy").exists());
+}

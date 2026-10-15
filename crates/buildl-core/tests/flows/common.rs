@@ -11,11 +11,13 @@ use buildl_core::{
     ActionCache, BuildFile, CacheRow, Ceiling, Clock, ContentStore, DeclarationOrder,
     DeclarationSource, Diagnostic, Digest, Digester, Directory, Dispatcher, EnvName, EnvValue,
     Error, Evaluated, EvaluationFailure, EventLog, ExecStrategy, Exit, FileStat, Freshness, Host,
-    InputKind, InputStat, Label, Manifest, NetworkAccess, OutcomeEvent, OutputPath, Platform,
-    PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, SourcePath, StagedAlias,
-    StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir,
-    StagedTarget, StatCache, StatEntry, TargetRole, Timestamp, ToolResolver, Workspace, Written,
+    InputKind, InputStat, Label, LogLine, Manifest, NetworkAccess, OutcomeEvent, OutputPath,
+    Platform, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory,
+    SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
+    StagedSubdir, StagedTarget, StatCache, StatEntry, TargetRole, Timestamp, ToolResolver,
+    Workspace, Written,
 };
+use buildl_core::{ActionOutcome, Pipeline};
 use buildl_core::{
     Captured, Channel, GraphRecord, LiveSink, OutcomeClass, Reporter, Summary, TargetGraph, Turn,
     json,
@@ -272,7 +274,10 @@ pub struct FakeCache {
     pub rows: BTreeMap<Label, CacheRow>,
     /// The targets whose row it fails to record.
     pub failing: BTreeSet<Label>,
+    /// The targets whose row it fails to forget.
+    pub unforgettable: BTreeSet<Label>,
     recorded: Vec<Label>,
+    forgotten: Vec<Label>,
 }
 
 impl FakeCache {
@@ -280,6 +285,12 @@ impl FakeCache {
     #[must_use]
     pub fn recorded(&self) -> Vec<Label> {
         self.recorded.clone()
+    }
+
+    /// Every target whose row was removed, in the order removed.
+    #[must_use]
+    pub fn forgotten(&self) -> Vec<Label> {
+        self.forgotten.clone()
     }
 }
 
@@ -297,6 +308,19 @@ impl ActionCache for FakeCache {
         }
         self.recorded.push(label.clone());
         self.rows.insert(label, row);
+        Ok(())
+    }
+
+    fn forget(&mut self, label: &Label) -> Result<()> {
+        if self.unforgettable.contains(label) {
+            return Err(Error::Adapter {
+                port: PortName::ActionCache,
+                diagnostic: Diagnostic::new(format!("{label} cannot be forgotten")),
+            });
+        }
+        if self.rows.remove(label).is_some() {
+            self.forgotten.push(label.clone());
+        }
         Ok(())
     }
 }
@@ -449,6 +473,27 @@ impl EventLog for FakeLog {
         }
         self.events.push(event.clone());
         Ok(())
+    }
+}
+
+/// A build log held in memory, as a reader gets it back.
+#[derive(Debug, Default)]
+pub struct FakeHistory {
+    /// The lines of the log, oldest first.
+    pub lines: Vec<LogLine>,
+    /// Whether reading fails.
+    pub broken: bool,
+}
+
+impl RunHistory for FakeHistory {
+    fn lines(&self) -> Result<Vec<LogLine>> {
+        if self.broken {
+            return Err(Error::Adapter {
+                port: PortName::RunHistory,
+                diagnostic: Diagnostic::new("the log cannot be read"),
+            });
+        }
+        Ok(self.lines.clone())
     }
 }
 
@@ -1138,6 +1183,73 @@ pub fn tree(files: &[(&str, &str)]) -> Content {
     )
 }
 
+/// A label from known-valid text.
+///
+/// # Panics
+///
+/// Panics when `raw` is not a valid label; a test fixture is wrong then.
+#[must_use]
+pub fn label(raw: &str) -> Label {
+    Label::parse(raw).unwrap_or_else(|error| unreachable!("fixture label: {error}"))
+}
+
+/// Every target's class, by label.
+#[must_use]
+pub fn classes(outcomes: &[ActionOutcome]) -> BTreeMap<String, OutcomeClass> {
+    outcomes
+        .iter()
+        .map(|outcome| (outcome.label.to_string(), outcome.class.clone()))
+        .collect()
+}
+
+/// The classes a test expects, by label.
+#[must_use]
+pub fn expected(pairs: &[(&str, OutcomeClass)]) -> BTreeMap<String, OutcomeClass> {
+    pairs
+        .iter()
+        .map(|(raw, class)| ((*raw).to_owned(), class.clone()))
+        .collect()
+}
+
+/// A pipeline over one root build file making `items`, with `cc` findable.
+#[must_use]
+pub fn root_only(items: Vec<StagedItem>) -> Pipeline<FakePorts> {
+    let source = FakeSource::new(workspace(vec![("", file(items, &[]))]));
+    let mut pipeline = Pipeline::new(ports(source));
+    pipeline
+        .ports_mut()
+        .tools
+        .fingerprints
+        .insert(program("cc"), Digest::of(b"cc 14.2"));
+    pipeline
+}
+
+/// The class of a target skipped because the target `raw` names failed.
+#[must_use]
+pub fn skipped(raw: &str) -> OutcomeClass {
+    OutcomeClass::Skipped {
+        because: label(raw),
+    }
+}
+
+/// A script in which the action goes as `ends` says and everything else is unscripted.
+#[must_use]
+pub fn ending(ends: Ends) -> Script {
+    Script {
+        ends,
+        ..Script::default()
+    }
+}
+
+/// Scripts the action of the target `raw` names.
+pub fn script(pipeline: &mut Pipeline<FakePorts>, raw: &str, script: Script) {
+    pipeline
+        .ports_mut()
+        .strategy
+        .scripts
+        .insert(label(raw), script);
+}
+
 /// The fakes held to the contracts of the ports they stand in for: a flow is only as good as
 /// the fake it runs against.
 #[cfg(test)]
@@ -1157,7 +1269,8 @@ mod tests {
         Command, ContentStore, Digest, Directory, Dispatcher, EntryName, Error, EventLog,
         ExecStrategy, Exit, GraphRecord, KeyComponents, Label, NetworkAccess, OutcomeClass,
         OutcomeEvent, OutputName, OutputPath, OwnComponents, Platform, PortName, Provenance,
-        ReadyAction, Reporter, SourcePath, Summary, TargetGraph, Timestamp, json, load, resolve,
+        ReadyAction, Reporter, SourcePath, Summary, Tally, TargetGraph, TargetRole, Timestamp,
+        json, load, resolve,
     };
 
     use super::{
@@ -1225,6 +1338,7 @@ mod tests {
             finished: None,
             outcome: ActionOutcome {
                 label: label(raw),
+                role: TargetRole::Build,
                 class: OutcomeClass::Cached,
                 diagnostic: None,
                 outputs: Vec::new(),
@@ -1503,10 +1617,13 @@ mod tests {
     #[test]
     fn a_reporter_keeps_every_call_it_receives_in_order() {
         let counts = Summary {
-            failed: 0,
-            skipped: 0,
-            built: 1,
-            cached: 1,
+            all: Tally {
+                failed: 0,
+                skipped: 0,
+                built: 1,
+                cached: 1,
+            },
+            tests: Tally::default(),
         };
         let mut reporter = FakeReporter::default();
 

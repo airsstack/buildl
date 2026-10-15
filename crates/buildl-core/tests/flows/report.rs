@@ -10,8 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
     Channel, Digest, EntryName, Error, FileStat, Label, LiveOutput, OnFailure, OutcomeClass,
-    Pipeline, PortName, Scope, SettingName, SettingValue, SourcePath, Summary, Timestamp, Written,
-    json,
+    Pipeline, PortName, Scope, SettingName, SettingValue, SourcePath, Summary, Tally, Timestamp,
+    Written, json,
 };
 
 use crate::common::{
@@ -104,10 +104,18 @@ fn printed(raw: &str, channel: Channel, bytes: &str) -> Reported {
 }
 
 const ALL_BUILT: Summary = Summary {
-    failed: 0,
-    skipped: 0,
-    built: 4,
-    cached: 0,
+    all: Tally {
+        failed: 0,
+        skipped: 0,
+        built: 4,
+        cached: 0,
+    },
+    tests: Tally {
+        failed: 0,
+        skipped: 0,
+        built: 0,
+        cached: 0,
+    },
 };
 
 #[test]
@@ -162,10 +170,13 @@ fn a_cached_target_never_starts_and_is_reported_with_what_it_printed_when_it_ran
             finished("//:lib", OutcomeClass::Cached, "//:lib\n", ""),
             finished("//:app", OutcomeClass::Cached, "//:app\n", ""),
             Reported::Summary(Summary {
-                failed: 0,
-                skipped: 0,
-                built: 0,
-                cached: 4
+                all: Tally {
+                    failed: 0,
+                    skipped: 0,
+                    built: 0,
+                    cached: 4
+                },
+                tests: Tally::default()
             }),
         ]
     );
@@ -208,14 +219,17 @@ fn a_failure_and_what_it_skips_are_reported_and_a_skipped_target_never_starts() 
             finished("//:app", because(), "", ""),
             finished("//:lib", because(), "", ""),
             Reported::Summary(Summary {
-                failed: 1,
-                skipped: 2,
-                built: 1,
-                cached: 0
+                all: Tally {
+                    failed: 1,
+                    skipped: 2,
+                    built: 1,
+                    cached: 0
+                },
+                tests: Tally::default()
             }),
         ]
     );
-    assert_eq!(Summary::of(&outcomes).failed, 1);
+    assert_eq!(Summary::of(&outcomes).all.failed, 1);
     assert!(
         !pipeline.ports().cache.rows.contains_key(&label("//:gen")),
         "a killed action leaves no row"
@@ -357,10 +371,13 @@ fn a_build_of_one_target_builds_what_it_needs_and_nothing_else() {
     assert_eq!(
         ports.reporter.calls.last(),
         Some(&Reported::Summary(Summary {
-            failed: 0,
-            skipped: 0,
-            built: 2,
-            cached: 0
+            all: Tally {
+                failed: 0,
+                skipped: 0,
+                built: 2,
+                cached: 0
+            },
+            tests: Tally::default()
         }))
     );
     assert_eq!(
@@ -380,10 +397,13 @@ fn a_whole_build_after_a_build_of_one_target_finds_that_part_cached() {
     assert_eq!(
         summary,
         Summary {
-            failed: 0,
-            skipped: 0,
-            built: 2,
-            cached: 2
+            all: Tally {
+                failed: 0,
+                skipped: 0,
+                built: 2,
+                cached: 2
+            },
+            tests: Tally::default()
         }
     );
     assert_eq!(
@@ -541,10 +561,13 @@ fn asking_for_no_target_builds_nothing() {
     assert_eq!(
         summary,
         Summary {
-            failed: 0,
-            skipped: 0,
-            built: 0,
-            cached: 0
+            all: Tally {
+                failed: 0,
+                skipped: 0,
+                built: 0,
+                cached: 0
+            },
+            tests: Tally::default()
         }
     );
 }

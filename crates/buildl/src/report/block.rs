@@ -9,6 +9,7 @@
 //!
 //! - [`command_text`] — a command on one line.
 //! - [`summary_line`] — the line that closes a build.
+//! - [`test_line`] — the line that closes a test run.
 //! - [`trailer`] — what closes the report of a failed target.
 //! - [`block`] — everything shown for one target, and the header it opens with.
 //!
@@ -16,7 +17,7 @@
 //! and the order blocks appear in belong to the reporter.
 
 use buildl_core::{
-    Captured, Command, InfraKind, Label, OutcomeClass, OutcomeEvent, OutputRefusal, Summary,
+    Captured, Command, InfraKind, Label, OutcomeClass, OutcomeEvent, OutputRefusal, Rerun, Tally,
 };
 
 use crate::report::paint::Paint;
@@ -51,16 +52,16 @@ fn reads_as_one_word(text: &str) -> bool {
         })
 }
 
-/// The line that closes a build: each count that is not zero, as `2 failed, 1 skipped, 3 built,
-/// 4 cached`, in that order, and `nothing to build` when every count is zero. Ends with a
-/// newline.
+/// The line that closes a build: each count of `tally` that is not zero, as `2 failed, 1
+/// skipped, 3 built, 4 cached`, in that order, and `nothing to build` when every count is zero.
+/// Ends with a newline.
 #[must_use]
-pub fn summary_line(summary: Summary) -> String {
+pub fn summary_line(tally: Tally) -> String {
     let counts: Vec<String> = [
-        (summary.failed, "failed"),
-        (summary.skipped, "skipped"),
-        (summary.built, "built"),
-        (summary.cached, "cached"),
+        (tally.failed, "failed"),
+        (tally.skipped, "skipped"),
+        (tally.built, "built"),
+        (tally.cached, "cached"),
     ]
     .into_iter()
     .filter(|(count, _)| *count > 0)
@@ -71,6 +72,39 @@ pub fn summary_line(summary: Summary) -> String {
     } else {
         format!("{}\n", counts.join(", "))
     }
+}
+
+/// The line that closes a test run: `tests: 3 passed (2 cached), 1 failed, 1 skipped`.
+///
+/// A test that was built or cached passed; the share of those that were cached follows the
+/// passed count in parentheses. Each count that is zero is left out, and the line is `no tests`
+/// when every count is zero. Under [`Rerun::Tests`] the prefix is `tests (rerun): `. Ends with
+/// a newline.
+#[must_use]
+pub fn test_line(tally: Tally, rerun: Rerun) -> String {
+    let passed = tally.built + tally.cached;
+    let mut parts = Vec::new();
+    if passed > 0 {
+        parts.push(if tally.cached > 0 {
+            format!("{passed} passed ({} cached)", tally.cached)
+        } else {
+            format!("{passed} passed")
+        });
+    }
+    if tally.failed > 0 {
+        parts.push(format!("{} failed", tally.failed));
+    }
+    if tally.skipped > 0 {
+        parts.push(format!("{} skipped", tally.skipped));
+    }
+    if parts.is_empty() {
+        return "no tests\n".to_owned();
+    }
+    let prefix = match rerun {
+        Rerun::Off => "tests: ",
+        Rerun::Tests => "tests (rerun): ",
+    };
+    format!("{prefix}{}\n", parts.join(", "))
 }
 
 /// What the builder could not do, in words.
@@ -96,8 +130,9 @@ const fn refusal_text(refusal: OutputRefusal) -> &'static str {
 }
 
 /// How a failed target ended, in words; `None` for a target that did not fail: one that was
-/// built, cached or skipped.
-fn failure_text(class: &OutcomeClass) -> Option<String> {
+/// built, cached or skipped. The [`trailer`] of a failed target and the header of a last run
+/// word a failure with it alike.
+pub(crate) fn failure_text(class: &OutcomeClass) -> Option<String> {
     match class {
         OutcomeClass::Cached | OutcomeClass::Built | OutcomeClass::Skipped { .. } => None,
         OutcomeClass::ActionFailure { status } => {
@@ -197,10 +232,11 @@ mod tests {
 
     use buildl_core::{
         ActionOutcome, Argument, Captured, Command, Diagnostic, Directory, InfraKind, Label,
-        OutcomeClass, OutcomeEvent, OutputName, OutputRefusal, Provenance, Summary, Timestamp,
+        OutcomeClass, OutcomeEvent, OutputName, OutputRefusal, Provenance, Rerun, Tally,
+        TargetRole, Timestamp,
     };
 
-    use super::{block, command_text, summary_line, trailer};
+    use super::{block, command_text, summary_line, test_line, trailer};
     use crate::report::paint::Paint;
 
     fn command(arguments: &[&str]) -> Command {
@@ -238,8 +274,8 @@ mod tests {
         assert_eq!(command_text(&command(&["true"])), "true");
     }
 
-    const fn counts(failed: usize, skipped: usize, built: usize, cached: usize) -> Summary {
-        Summary {
+    const fn counts(failed: usize, skipped: usize, built: usize, cached: usize) -> Tally {
+        Tally {
             failed,
             skipped,
             built,
@@ -275,6 +311,40 @@ mod tests {
         assert_eq!(summary_line(counts(0, 0, 0, 0)), "nothing to build\n");
     }
 
+    #[test]
+    fn a_test_line_counts_passes_with_their_cached_share() {
+        assert_eq!(
+            test_line(counts(1, 1, 1, 2), Rerun::Off),
+            "tests: 3 passed (2 cached), 1 failed, 1 skipped\n"
+        );
+    }
+
+    #[test]
+    fn a_test_line_leaves_zero_counts_out() {
+        assert_eq!(
+            test_line(counts(0, 0, 2, 0), Rerun::Off),
+            "tests: 2 passed\n"
+        );
+        assert_eq!(
+            test_line(counts(1, 0, 0, 0), Rerun::Off),
+            "tests: 1 failed\n"
+        );
+    }
+
+    #[test]
+    fn a_run_without_tests_says_no_tests() {
+        assert_eq!(test_line(counts(0, 0, 0, 0), Rerun::Off), "no tests\n");
+        assert_eq!(test_line(counts(0, 0, 0, 0), Rerun::Tests), "no tests\n");
+    }
+
+    #[test]
+    fn a_rerun_line_says_rerun() {
+        assert_eq!(
+            test_line(counts(0, 0, 2, 0), Rerun::Tests),
+            "tests (rerun): 2 passed\n"
+        );
+    }
+
     /// The event of `//lib:text`, declared in `lib/build.lua`, ending in `class`.
     fn event(class: OutcomeClass, diagnostic: Option<&str>) -> OutcomeEvent {
         OutcomeEvent {
@@ -289,6 +359,7 @@ mod tests {
             finished: None,
             outcome: ActionOutcome {
                 label: Label::parse("//lib:text").unwrap(),
+                role: TargetRole::Build,
                 class,
                 diagnostic: diagnostic.map(Diagnostic::new),
                 outputs: Vec::new(),

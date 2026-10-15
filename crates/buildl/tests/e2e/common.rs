@@ -10,10 +10,10 @@ use std::path::{Path, PathBuf};
 use buildl::Workspace;
 use buildl::buildl_core::json::canonical;
 use buildl::buildl_core::{
-    ActionOutcome, CacheRow, Directory, Label, LiveOutput, OnFailure, OutcomeClass, Plan, Result,
-    Scope,
+    ActionOutcome, CacheRow, Directory, Label, LiveOutput, OnFailure, OutcomeClass, Plan, Rerun,
+    Result, Scope,
 };
-use buildl::report::{Mode, Paint, Silent, TerminalReporter};
+use buildl::report::{Mode, Paint, Report, Silent, TerminalReporter};
 use buildl::state::StateLayout;
 
 /// The graph of the fixture `chain` as canonical JSON, followed by one newline.
@@ -219,12 +219,39 @@ impl Fixture {
             .unwrap()
     }
 
+    /// Runs the tests `targets` name, or every test when there are none, showing nothing and
+    /// letting the run go on past a failure.
+    pub(crate) fn test(&self, targets: &[&str], rerun: Rerun) -> Vec<ActionOutcome> {
+        let workspace = self.open();
+        let scope = if targets.is_empty() {
+            Scope::Workspace
+        } else {
+            Scope::Targets(
+                targets
+                    .iter()
+                    .map(|target| workspace.label(target).unwrap())
+                    .collect(),
+            )
+        };
+        workspace
+            .test(
+                &scope,
+                &BTreeMap::new(),
+                OnFailure::KeepGoing,
+                LiveOutput::Off,
+                rerun,
+                &mut Silent,
+            )
+            .unwrap()
+    }
+
     /// Builds every target with a reporter that writes plain text, and returns what it wrote
     /// beside the outcomes.
     pub(crate) fn build_shown(&self, on_failure: OnFailure) -> (Vec<ActionOutcome>, String) {
         let mut shown = Vec::new();
         let outcomes = {
-            let mut reporter = TerminalReporter::new(&mut shown, Mode::Plain, Paint::Plain);
+            let mut reporter =
+                TerminalReporter::new(&mut shown, Mode::Plain, Paint::Plain, Report::Build);
             self.open()
                 .build(
                     &Scope::Workspace,
