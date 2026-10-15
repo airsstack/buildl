@@ -13,7 +13,7 @@ use buildl::buildl_core::{
     ActionOutcome, CacheRow, Directory, Label, LiveOutput, OnFailure, OutcomeClass, Plan, Result,
     Scope,
 };
-use buildl::report::{Mode, Paint, Silent, TerminalReporter};
+use buildl::report::{Mode, Paint, Report, Silent, TerminalReporter};
 use buildl::state::StateLayout;
 
 /// The graph of the fixture `chain` as canonical JSON, followed by one newline.
@@ -224,7 +224,8 @@ impl Fixture {
     pub(crate) fn build_shown(&self, on_failure: OnFailure) -> (Vec<ActionOutcome>, String) {
         let mut shown = Vec::new();
         let outcomes = {
-            let mut reporter = TerminalReporter::new(&mut shown, Mode::Plain, Paint::Plain);
+            let mut reporter =
+                TerminalReporter::new(&mut shown, Mode::Plain, Paint::Plain, Report::Build);
             self.open()
                 .build(
                     &Scope::Workspace,

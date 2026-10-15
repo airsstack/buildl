@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [04]
 built-on: fefed82cb705
@@ -135,3 +135,19 @@ Commit `feat(repo): a terminal reporter that shows a test run`.
 ## Proof
 
 - `cargo make dod` and `cargo deny check` green after each task.
+
+## Review findings
+
+- nit — `test_reporter`'s doc named a `report` parameter it does not take — `terminal.rs` — fixed
+- risk — no test showed that a failed test other than an exit status keeps its block under `TestBlocks::Failed` — `terminal.rs` — fixed: `a_test_run_shows_the_block_of_a_test_whose_output_is_missing` (a skipped test was tried first, but `block` writes nothing for a skipped target that printed nothing, so it could not tell hiding from showing)
+- question — the two tasks land as one commit — kept: the branch commits one commit per plan
+
+## Probe results
+
+- None needed: the plan's one risk, a hidden pass leaving the screen out of step, is pinned by `a_live_test_run_still_advances_the_status_line_past_a_hidden_pass`.
+
+## Deviations
+
+- One test beyond the plan: `a_test_shown_live_ends_as_a_live_action_does_even_when_it_passes` pins Task 2's rule that a target shown live ends as today, hidden or not.
+- Clippy's `assert_is_empty` refused `assert!(!bytes.is_empty())`; the tests assert `assert_ne!(bytes, b"")`.
+- Both tasks are one commit, `feat(repo): a terminal reporter that shows a test run`.

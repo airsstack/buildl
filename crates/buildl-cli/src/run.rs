@@ -22,8 +22,8 @@ use buildl::Workspace;
 use buildl::buildl_core::json::canonical;
 use buildl::buildl_core::{Error, Scope};
 use buildl::report::{
-    Mode, Paint, TerminalReporter, check_line, damage, error_text, graph_dot, header, plan_text,
-    query_text,
+    Mode, Paint, Report, TerminalReporter, check_line, damage, error_text, graph_dot, header,
+    plan_text, query_text,
 };
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
@@ -245,7 +245,7 @@ fn build<E: Write>(
     let settings = overrides(args.selection.overrides)?;
     let workspace = Workspace::open(start)?;
     let scope = scope(&workspace, &args.selection.targets)?;
-    let mut reporter = TerminalReporter::new(&mut *stderr, mode, paint);
+    let mut reporter = TerminalReporter::new(&mut *stderr, mode, paint, Report::Build);
     let built = workspace.build(&scope, &settings, on_failure, live, &mut reporter);
     if built.is_err() {
         // The build ended before its summary: whatever is said next starts on a row of its own.

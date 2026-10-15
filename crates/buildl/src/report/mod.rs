@@ -11,10 +11,12 @@
 //! - [`Paint`] — whether what is shown is coloured.
 //! - [`command_text`] — a command on one line.
 //! - [`summary_line`] — the line that closes a build.
+//! - [`test_line`] — the line that closes a test run.
 //! - [`trailer`] — what closes the report of a failed target.
 //! - [`block`] — everything shown for one target once it has its outcome.
 //! - [`TerminalReporter`] — the reporter that writes blocks, a status line and the summary to a
-//!   stream it is given, with [`Mode`] saying whether a status line is kept.
+//!   stream it is given, with [`Mode`] saying whether a status line is kept, [`Report`] what kind
+//!   of run it shows and [`TestBlocks`] which tests of a test run get a block.
 //! - [`Silent`] — the reporter that shows nothing.
 //! - [`plan_text`] — a plan as lines for a person.
 //! - [`query_text`] — the answer to a query as lines for a person.
@@ -41,7 +43,7 @@ mod query_text;
 mod silent;
 mod terminal;
 
-pub use block::{block, command_text, summary_line, trailer};
+pub use block::{block, command_text, summary_line, test_line, trailer};
 pub use dot::graph_dot;
 pub use log_text::{damage, header, utc};
 pub use message::{check_line, error_text};
@@ -49,4 +51,4 @@ pub use paint::Paint;
 pub use plan_text::plan_text;
 pub use query_text::query_text;
 pub use silent::Silent;
-pub use terminal::{Mode, TerminalReporter};
+pub use terminal::{Mode, Report, TerminalReporter, TestBlocks};

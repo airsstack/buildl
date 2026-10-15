@@ -9,6 +9,7 @@
 //!
 //! - [`command_text`] — a command on one line.
 //! - [`summary_line`] — the line that closes a build.
+//! - [`test_line`] — the line that closes a test run.
 //! - [`trailer`] — what closes the report of a failed target.
 //! - [`block`] — everything shown for one target, and the header it opens with.
 //!
@@ -16,7 +17,7 @@
 //! and the order blocks appear in belong to the reporter.
 
 use buildl_core::{
-    Captured, Command, InfraKind, Label, OutcomeClass, OutcomeEvent, OutputRefusal, Tally,
+    Captured, Command, InfraKind, Label, OutcomeClass, OutcomeEvent, OutputRefusal, Rerun, Tally,
 };
 
 use crate::report::paint::Paint;
@@ -71,6 +72,39 @@ pub fn summary_line(tally: Tally) -> String {
     } else {
         format!("{}\n", counts.join(", "))
     }
+}
+
+/// The line that closes a test run: `tests: 3 passed (2 cached), 1 failed, 1 skipped`.
+///
+/// A test that was built or cached passed; the share of those that were cached follows the
+/// passed count in parentheses. Each count that is zero is left out, and the line is `no tests`
+/// when every count is zero. Under [`Rerun::Tests`] the prefix is `tests (rerun): `. Ends with
+/// a newline.
+#[must_use]
+pub fn test_line(tally: Tally, rerun: Rerun) -> String {
+    let passed = tally.built + tally.cached;
+    let mut parts = Vec::new();
+    if passed > 0 {
+        parts.push(if tally.cached > 0 {
+            format!("{passed} passed ({} cached)", tally.cached)
+        } else {
+            format!("{passed} passed")
+        });
+    }
+    if tally.failed > 0 {
+        parts.push(format!("{} failed", tally.failed));
+    }
+    if tally.skipped > 0 {
+        parts.push(format!("{} skipped", tally.skipped));
+    }
+    if parts.is_empty() {
+        return "no tests\n".to_owned();
+    }
+    let prefix = match rerun {
+        Rerun::Off => "tests: ",
+        Rerun::Tests => "tests (rerun): ",
+    };
+    format!("{prefix}{}\n", parts.join(", "))
 }
 
 /// What the builder could not do, in words.
@@ -198,11 +232,11 @@ mod tests {
 
     use buildl_core::{
         ActionOutcome, Argument, Captured, Command, Diagnostic, Directory, InfraKind, Label,
-        OutcomeClass, OutcomeEvent, OutputName, OutputRefusal, Provenance, Tally, TargetRole,
-        Timestamp,
+        OutcomeClass, OutcomeEvent, OutputName, OutputRefusal, Provenance, Rerun, Tally,
+        TargetRole, Timestamp,
     };
 
-    use super::{block, command_text, summary_line, trailer};
+    use super::{block, command_text, summary_line, test_line, trailer};
     use crate::report::paint::Paint;
 
     fn command(arguments: &[&str]) -> Command {
@@ -275,6 +309,40 @@ mod tests {
     #[test]
     fn a_build_of_nothing_says_so() {
         assert_eq!(summary_line(counts(0, 0, 0, 0)), "nothing to build\n");
+    }
+
+    #[test]
+    fn a_test_line_counts_passes_with_their_cached_share() {
+        assert_eq!(
+            test_line(counts(1, 1, 1, 2), Rerun::Off),
+            "tests: 3 passed (2 cached), 1 failed, 1 skipped\n"
+        );
+    }
+
+    #[test]
+    fn a_test_line_leaves_zero_counts_out() {
+        assert_eq!(
+            test_line(counts(0, 0, 2, 0), Rerun::Off),
+            "tests: 2 passed\n"
+        );
+        assert_eq!(
+            test_line(counts(1, 0, 0, 0), Rerun::Off),
+            "tests: 1 failed\n"
+        );
+    }
+
+    #[test]
+    fn a_run_without_tests_says_no_tests() {
+        assert_eq!(test_line(counts(0, 0, 0, 0), Rerun::Off), "no tests\n");
+        assert_eq!(test_line(counts(0, 0, 0, 0), Rerun::Tests), "no tests\n");
+    }
+
+    #[test]
+    fn a_rerun_line_says_rerun() {
+        assert_eq!(
+            test_line(counts(0, 0, 2, 0), Rerun::Tests),
+            "tests (rerun): 2 passed\n"
+        );
     }
 
     /// The event of `//lib:text`, declared in `lib/build.lua`, ending in `class`.
