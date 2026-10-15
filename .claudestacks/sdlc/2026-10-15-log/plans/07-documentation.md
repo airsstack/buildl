@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [06]
 built-on: 280eda6f4573
@@ -77,7 +77,7 @@ docs/design.md` is unchanged.
 | `architecture.md` §3 (`:188-193`, the table of logic, ports and adapters) | one row per phase | a row for reading the log: `history::last_run` and `pipeline::log` in `buildl-core`, ports `RunHistory` and `ContentStore`, adapter crate `buildl`; a sentence that `suggest` is a crate-level module `resolve` and `history` share, and `history` is not a phase |
 | `architecture-building-blocks.md:110` (Mermaid `PORTS` node) | `ContentStore, ActionCache, EventLog` | `RunHistory` beside `EventLog` |
 | `architecture-building-blocks.md:144` | `` |`log`|`log.jsonl`|`EventLog`| `` | serves `EventLog` and `RunHistory` |
-| `architecture-building-blocks.md:434` | the `EventLog` port row | a row after it: `RunHistory` · the log's lines, each an event or a damaged line · `.buildl/log.jsonl`, read only · `buildl` · 1 |
+| `architecture-building-blocks.md:434` | the `EventLog` port row | a row after it: `RunHistory` · the log's lines, each an event or a damaged line · `.buildl/log.jsonl`, read only · `buildl` · 2 (design §13 item 2; the "Since" note at `:423` says an item-2 row is built) |
 | `architecture-building-blocks.md:405-418` (§5.4) | pure logic rows; "`Pipeline` strings these together …" | a `last_run` row (`[LogLine]` and a label → the newest run with output, or `NoRun`; no port); `log`, like `check`, `graph` and `query`, is a function over its own ports, taking no lock |
 | `architecture-building-blocks.md:456` | the module-edge rule's row | the edge list now holds `history` and `suggest` |
 | `architecture-building-blocks.md:495` | the fake `EventLog` | a fake `RunHistory` row: the lines handed over, and whether to fail |
@@ -102,3 +102,22 @@ the edited rows in both; `grep -n 'buildl log' README.md` shows the row marked `
 
 - `cargo make dod` and `cargo deny check` green after each task.
 - `git diff --stat` touches only the five files above.
+
+## Review findings
+
+- risk — README's and design's lists of commands that work under any strategy left out `log`, which never reaches the strategy (`Workspace::log` uses `Wiring::layout` only) — `README.md`, `docs/design.md` — fixed
+- drift — README's roadmap item 2 had dropped `log` from the commands it brings, against design §13 — `README.md` — fixed: reverted
+- risk — `RunHistory`'s port row said Since `1`, where `log` arrives with design §13 item 2 — `docs/architecture-building-blocks.md` — fixed: `2`, and the note defining "Since" says an item-2 row listed there is built; Task 2 amended
+- missing — the §5.2 port listing had no `RunHistory`, and the §5.1 domain table no `LogLine` or `LoggedRun` — `docs/architecture-building-blocks.md` — fixed
+- missing — design §8.7's exit table named neither a target with no run (2) nor an output gone from the store (3) — `docs/design.md` — fixed
+- nit — `suggest` was described too narrowly; §5 rule 2's added sentence broke the wrap; "offers the nearest label" where it can offer one; the header said newer lines are named, where it counts them and names the newest — `docs/architecture.md`, `docs/design.md` — fixed
+- nit — `log + cas` stands in a column headed "Stops after" — kept: the wording Task 1 and Task 2 ask for, naming what the command reads
+- no finding — README's Status paragraph and the usage example now name `log`: consistency edits the README rule requires
+
+## Probe results
+
+- No throwaway probe. Every statement was checked against the code as built; `log` needing no `strategy` line was read from `Workspace::log` and `Wiring::runs`.
+
+## Deviations
+
+- The test slice's documentation plan has not run on this branch. Each row marked "as the test slice leaves it" was applied to the text as it reads now, adding `log` only; `buildl test` is described as built nowhere, and CLAUDE.md's Status names `query` and `log`.
