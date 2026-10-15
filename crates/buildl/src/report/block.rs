@@ -96,8 +96,9 @@ const fn refusal_text(refusal: OutputRefusal) -> &'static str {
 }
 
 /// How a failed target ended, in words; `None` for a target that did not fail: one that was
-/// built, cached or skipped.
-fn failure_text(class: &OutcomeClass) -> Option<String> {
+/// built, cached or skipped. The [`trailer`] of a failed target and the header of a last run
+/// word a failure with it alike.
+pub(crate) fn failure_text(class: &OutcomeClass) -> Option<String> {
     match class {
         OutcomeClass::Cached | OutcomeClass::Built | OutcomeClass::Skipped { .. } => None,
         OutcomeClass::ActionFailure { status } => {

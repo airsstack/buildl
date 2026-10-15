@@ -21,6 +21,9 @@
 //! - [`graph_dot`] — a target graph as Graphviz DOT.
 //! - [`check_line`] — what a check of the build files says when they are sound.
 //! - [`error_text`] — an error as a command shows it.
+//! - [`utc`] — an instant as `YYYY-MM-DD HH:MM:SS UTC`.
+//! - [`header`] — the line that heads a last run.
+//! - [`damage`] — the warning for damaged lines of the build log.
 //!
 //! Non-responsibilities: deciding what is reported and when, which the build does; choosing
 //! the stream, the mode and the colour, which the caller does; and the canonical JSON of a
@@ -30,6 +33,7 @@
 
 mod block;
 mod dot;
+mod log_text;
 mod message;
 mod paint;
 mod plan_text;
@@ -39,6 +43,7 @@ mod terminal;
 
 pub use block::{block, command_text, summary_line, trailer};
 pub use dot::graph_dot;
+pub use log_text::{damage, header, utc};
 pub use message::{check_line, error_text};
 pub use paint::Paint;
 pub use plan_text::plan_text;

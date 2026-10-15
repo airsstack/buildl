@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [02]
 built-on: 280eda6f4573
@@ -96,9 +96,9 @@ green. Commit `feat(buildl): an instant written in UTC`.
 - `a_header_notes_one_newer_line_without_output` — `ActionFailure { 1 }`, newer
   `[Skipped { //lib:text }]` →
   `//:app: action failure (exit status 1) at 2026-10-15 07:03:12 UTC · newer: skipped (//lib:text failed)\n`.
-- `a_header_counts_several_newer_lines` — `Cached`, newer `[Skipped { //lib:text },
-  InfraFailure { Run }, Skipped { //lib:text }]` →
-  `//:app: cached at 2026-10-15 07:03:12 UTC · newer: 3 runs without output, newest skipped (//lib:text failed)\n`.
+- `a_header_counts_several_newer_lines` — `Cached`, newer `[InfraFailure { Run }, Skipped {
+  //lib:text }, Skipped { //lib:text }]` (newest first, so the newest differs from the oldest) →
+  `//:app: cached at 2026-10-15 07:03:12 UTC · newer: 3 runs without output, newest infrastructure failure (the command could not be started)\n`.
 - `the_damage_warning_lists_the_lines` — `[14, 90]` →
   `Some("log.jsonl: 2 damaged lines skipped (lines 14, 90)\n")`; `[14]` →
   `Some("log.jsonl: 1 damaged line skipped (line 14)\n")`.
@@ -117,3 +117,16 @@ green. Commit `feat(buildl): an instant written in UTC`.
 ## Proof
 
 - `cargo make dod` and `cargo deny check` green after each task.
+
+## Review findings
+
+- risk — no fixture told "newest first" from "oldest first": the several-lines test's first and last entries were equal — `report/log_text.rs` — fixed: the newest entry now differs from the others; seen failing with the oldest taken in its place. Task 2's Proof amended
+- nit — `ended`'s doc read as an output order and split its backtick spans — `report/log_text.rs` — fixed
+
+## Probe results
+
+- The date fixtures were checked with `date -u -r` before the tests were written: `1709208000` → `2024-02-29 12:00:00`, `1704067199` → `2023-12-31 23:59:59`, `1792047792` → `2026-10-15 07:03:12`. The tests and the code were written in one pass, so the tests were not seen failing first; the review's reversion check on `header` (above) is the red run.
+
+## Deviations
+
+- `header` and `damage` build their text with one `format!` each: clippy's `format_push_string` refuses `push_str(&format!(…))`. Output unchanged.
