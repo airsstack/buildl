@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [05]
 built-on: fefed82cb705
@@ -110,3 +110,18 @@ green. Commit `feat(buildl-core): a pipeline that runs tests`.
 ## Proof
 
 - `cargo make dod` and `cargo deny check` green.
+
+## Review findings
+
+- nit — the driver's module doc ran past 100 columns — `pipeline/driver.rs` — fixed: rewrapped
+- nit — `test`'s rustdoc said "that part" with no antecedent, and dropped two of `build`'s clauses (a left-alone target keeps its row and outputs; the record never depends on the selection) — `pipeline/driver.rs` — fixed
+- nit — "a rerun is not a key component" compared key digests that would pass if both were `None` — `tests/flows/test.rs` — fixed: `three_runs` asserts the first run's digests are present
+- nit — the helper move changed more than visibility (see Deviations) — kept: recorded here
+
+## Probe results
+
+- No throwaway probe: every claim is under a named flow. Reversion check: `Rerun::Off` passed to `execute` inside `Pipeline::test` turned `a_rerun_runs_a_cached_test_again_and_records_it` and `a_failed_rerun_forgets_the_row_so_the_next_run_runs_it` red; restored. This pins plan `04`'s execute-side wiring.
+
+## Deviations
+
+- The seven helpers moved to `common.rs` with two changes besides visibility, both forced by the lints on non-test code there: `label` reads with `unwrap_or_else(|e| unreachable!(…))` and a `# Panics` doc, as the file's other fixtures do, and the moved functions that return a value carry `#[must_use]`. They sit before `common.rs`'s test module (`items_after_test_module`).

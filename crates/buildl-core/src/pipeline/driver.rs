@@ -5,9 +5,9 @@
 //! Execute.
 //!
 //! Responsibilities: [`Pipeline`], its ports, [`Pipeline::check`], [`Pipeline::graph`],
-//! [`Pipeline::query`], [`Pipeline::plan`] and [`Pipeline::build`]; and [`check`], [`graph`] and
-//! [`query`], the three commands that reach only build files, for a caller that holds only a
-//! source of them.
+//! [`Pipeline::query`], [`Pipeline::plan`], [`Pipeline::build`] and [`Pipeline::test`]; and
+//! [`check`], [`graph`] and [`query`], the three commands that reach only build files, for a
+//! caller that holds only a source of them.
 //!
 //! Non-responsibilities: the phases' own logic, which each phase's module holds.
 
@@ -167,6 +167,56 @@ impl<P: Ports> Pipeline<P> {
             on_failure,
             live,
             Rerun::Off,
+            &mut self.ports,
+        )
+    }
+
+    /// Loads the workspace once, resolves it, records the graph of the whole workspace, plans a
+    /// run of the tests `scope` asks for, and runs them.
+    ///
+    /// `overrides` gives values to build settings for this run, `on_failure` says what a failed
+    /// action does to the rest of the run, and `live` whether one running action at a time is
+    /// shown as it prints. A whole workspace means every test, with what each test needs; a
+    /// target that is not a test and that no selected test needs is left alone: it has no
+    /// outcome, and its row and outputs stay. The outcomes are one per target of the run, in id
+    /// order; a target that failed or was skipped is an outcome, not an error.
+    ///
+    /// With [`Rerun::Tests`] the selected tests run whatever their keys say and their new results
+    /// are recorded; what they depend on does not run again unless its own key says so.
+    ///
+    /// The graph is recorded through the graph-record port before anything is planned, and it is
+    /// the whole workspace's whatever `scope` asks for, so the record never depends on which
+    /// tests one run was asked for.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first of: whatever the load returns; whatever [`resolve`] returns; the
+    /// graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope` that names
+    /// neither a target nor an alias; [`Error::NotATest`] for a label of `scope` that names a
+    /// target that is not a test; whatever [`plan`](fn@plan) returns; and whatever
+    /// [`execute`](fn@execute) returns: two outputs of the workspace that would be written to one
+    /// place, whether or not both targets were asked for, a command that names no program or one
+    /// outside the workspace's ceiling once it is expanded, or a port's own failure.
+    pub fn test(
+        &mut self,
+        entry: &EntryName,
+        scope: &Scope,
+        overrides: &BTreeMap<SettingName, SettingValue>,
+        on_failure: OnFailure,
+        live: LiveOutput,
+        rerun: Rerun,
+    ) -> Result<Vec<ActionOutcome>> {
+        let whole = resolve(load(&self.ports.source, entry)?)?;
+        self.ports.graph.record(&whole)?;
+        let graph = narrow(&whole, scope, Purpose::Test)?;
+        let plan = plan(&graph, overrides, rerun, &mut self.ports)?;
+        execute(
+            &whole,
+            &graph,
+            &plan,
+            on_failure,
+            live,
+            rerun,
             &mut self.ports,
         )
     }

@@ -10,16 +10,17 @@ use std::path::Path;
 
 use buildl_core::{
     ActionOutcome, Digest, EntryName, Error, EvaluationFailure, FileMode, FileStat, Freshness,
-    InfraKind, Label, OnFailure, OutcomeClass, OutcomeEvent, OutputManifest, OutputName,
-    OutputPath, OutputRefusal, Pipeline, PortName, SettingName, SettingValue, SourcePath,
-    StagedItem, StagedSetting, StoredFile, Summary, Tally, TargetRole, Timestamp, TreePath, Want,
-    Written, json,
+    InfraKind, OnFailure, OutcomeClass, OutcomeEvent, OutputManifest, OutputName, OutputPath,
+    OutputRefusal, Pipeline, PortName, SettingName, SettingValue, SourcePath, StagedItem,
+    StagedSetting, StoredFile, Summary, Tally, TargetRole, Timestamp, TreePath, Want, Written,
+    json,
 };
 use buildl_core::{LiveOutput, Scope};
 
 use crate::common::{
     Content, Ends, FakeContent, FakeFile, FakePorts, FakeSource, Leaf, Loss, Order, Script, alias,
-    dir, file, ports, program, rule, setting, target, target_with, tree, workspace,
+    classes, dir, ending, expected, file, label, ports, program, root_only, rule, script, setting,
+    skipped, target, target_with, tree, workspace,
 };
 
 /// The events of [`two_directories`] built once, one canonical JSON object per line, pinned.
@@ -30,10 +31,6 @@ type Overrides = BTreeMap<SettingName, SettingValue>;
 
 fn entry() -> EntryName {
     EntryName::parse("build.lua").unwrap()
-}
-
-fn label(raw: &str) -> Label {
-    Label::parse(raw).unwrap()
 }
 
 fn path(raw: &str) -> SourcePath {
@@ -288,34 +285,6 @@ fn outcome<'o>(outcomes: &'o [ActionOutcome], raw: &str) -> &'o ActionOutcome {
         .unwrap()
 }
 
-/// Every target's class, by label.
-fn classes(outcomes: &[ActionOutcome]) -> BTreeMap<String, OutcomeClass> {
-    outcomes
-        .iter()
-        .map(|outcome| (outcome.label.to_string(), outcome.class.clone()))
-        .collect()
-}
-
-/// The classes a test expects, by label.
-fn expected(pairs: &[(&str, OutcomeClass)]) -> BTreeMap<String, OutcomeClass> {
-    pairs
-        .iter()
-        .map(|(raw, class)| ((*raw).to_owned(), class.clone()))
-        .collect()
-}
-
-/// A pipeline over one root build file making `items`, with `cc` findable.
-fn root_only(items: Vec<StagedItem>) -> Pipeline<FakePorts> {
-    let source = FakeSource::new(workspace(vec![("", file(items, &[]))]));
-    let mut pipeline = Pipeline::new(ports(source));
-    pipeline
-        .ports_mut()
-        .tools
-        .fingerprints
-        .insert(program("cc"), Digest::of(b"cc 14.2"));
-    pipeline
-}
-
 #[test]
 fn an_edited_input_rebuilds_its_target_and_what_depends_on_it_and_nothing_else() {
     let mut pipeline = chain();
@@ -540,33 +509,9 @@ fn a_forget_that_fails_is_a_store_failure() {
     assert!(cache.rows.contains_key(&label("//:a")), "its row stays");
 }
 
-/// The class of a target skipped because the target `raw` names failed.
-fn skipped(raw: &str) -> OutcomeClass {
-    OutcomeClass::Skipped {
-        because: label(raw),
-    }
-}
-
 /// The class of a target the builder itself failed, at `kind`.
 const fn infra(kind: InfraKind) -> OutcomeClass {
     OutcomeClass::InfraFailure { kind }
-}
-
-/// A script in which the action goes as `ends` says and everything else is unscripted.
-fn ending(ends: Ends) -> Script {
-    Script {
-        ends,
-        ..Script::default()
-    }
-}
-
-/// Scripts the action of the target `raw` names.
-fn script(pipeline: &mut Pipeline<FakePorts>, raw: &str, script: Script) {
-    pipeline
-        .ports_mut()
-        .strategy
-        .scripts
-        .insert(label(raw), script);
 }
 
 /// The message of an outcome, as text.

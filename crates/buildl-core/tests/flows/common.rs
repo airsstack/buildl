@@ -17,6 +17,7 @@ use buildl_core::{
     StagedSubdir, StagedTarget, StatCache, StatEntry, TargetRole, Timestamp, ToolResolver,
     Workspace, Written,
 };
+use buildl_core::{ActionOutcome, Pipeline};
 use buildl_core::{
     Captured, Channel, GraphRecord, LiveSink, OutcomeClass, Reporter, Summary, TargetGraph, Turn,
     json,
@@ -1180,6 +1181,73 @@ pub fn tree(files: &[(&str, &str)]) -> Content {
             .map(|(path, text)| ((*path).to_owned(), Leaf::Holds(text.as_bytes().to_vec())))
             .collect(),
     )
+}
+
+/// A label from known-valid text.
+///
+/// # Panics
+///
+/// Panics when `raw` is not a valid label; a test fixture is wrong then.
+#[must_use]
+pub fn label(raw: &str) -> Label {
+    Label::parse(raw).unwrap_or_else(|error| unreachable!("fixture label: {error}"))
+}
+
+/// Every target's class, by label.
+#[must_use]
+pub fn classes(outcomes: &[ActionOutcome]) -> BTreeMap<String, OutcomeClass> {
+    outcomes
+        .iter()
+        .map(|outcome| (outcome.label.to_string(), outcome.class.clone()))
+        .collect()
+}
+
+/// The classes a test expects, by label.
+#[must_use]
+pub fn expected(pairs: &[(&str, OutcomeClass)]) -> BTreeMap<String, OutcomeClass> {
+    pairs
+        .iter()
+        .map(|(raw, class)| ((*raw).to_owned(), class.clone()))
+        .collect()
+}
+
+/// A pipeline over one root build file making `items`, with `cc` findable.
+#[must_use]
+pub fn root_only(items: Vec<StagedItem>) -> Pipeline<FakePorts> {
+    let source = FakeSource::new(workspace(vec![("", file(items, &[]))]));
+    let mut pipeline = Pipeline::new(ports(source));
+    pipeline
+        .ports_mut()
+        .tools
+        .fingerprints
+        .insert(program("cc"), Digest::of(b"cc 14.2"));
+    pipeline
+}
+
+/// The class of a target skipped because the target `raw` names failed.
+#[must_use]
+pub fn skipped(raw: &str) -> OutcomeClass {
+    OutcomeClass::Skipped {
+        because: label(raw),
+    }
+}
+
+/// A script in which the action goes as `ends` says and everything else is unscripted.
+#[must_use]
+pub fn ending(ends: Ends) -> Script {
+    Script {
+        ends,
+        ..Script::default()
+    }
+}
+
+/// Scripts the action of the target `raw` names.
+pub fn script(pipeline: &mut Pipeline<FakePorts>, raw: &str, script: Script) {
+    pipeline
+        .ports_mut()
+        .strategy
+        .scripts
+        .insert(label(raw), script);
 }
 
 /// The fakes held to the contracts of the ports they stand in for: a flow is only as good as

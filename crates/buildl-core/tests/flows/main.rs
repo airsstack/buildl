@@ -14,3 +14,4 @@ mod log;
 mod plan;
 mod query;
 mod report;
+mod test;
