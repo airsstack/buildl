@@ -22,3 +22,4 @@ mod incremental;
 mod log;
 mod named;
 mod recovery;
+mod test;

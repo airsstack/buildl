@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [06, 07]
 built-on: fefed82cb705
@@ -124,3 +124,22 @@ green. Commit `test(buildl): a test run on real commands`.
 ## Proof
 
 - `cargo make dod` and `cargo deny check` green after each task.
+
+## Review findings
+
+- risk — nothing showed `test` refuses a strategy it cannot run before the lock, as `build` is shown to — `workspace.rs` — fixed: `a_test_run_refuses_a_strategy_it_cannot_run_before_anything_is_made`
+- nit — `test` has no test of the lock let go after a failure — kept: `test` takes the lock through the same `Wiring::lock` and drops it the same way as `build`, whose test covers it
+- nit — `concluded`'s doc and parameter spoke of a build only — `workspace.rs` — fixed: "a run", `ran`
+- nit — `COMPARING`'s doc read garbled — `workspace.rs` — fixed
+- nit — the unit test finds the rows by text in `cache.json` — kept: the labels are unique in the file and the journal's absence shows the fold ran
+- nit — `test.rs`'s module doc overstated what the fakes cannot show — `tests/e2e/test.rs` — fixed
+
+## Probe results
+
+- The relative-path risk is settled: `flag.txt` is read from the workspace root under the bare strategy; `a_failed_rerun_runs_again_next_time` passed on its first run (`Built`, `Cached` after the edit, `ActionFailure { status: 1 }` on the rerun with no row left, and again on the next run).
+
+## Deviations
+
+- `tests/e2e/main.rs` already declared `log` (the log slice ran first on this branch); `test` joins the list.
+- The e2e tests read rows through the harness's `recorded()`, which reads `rows()`.
+- Both tasks are one commit, `feat(buildl): a workspace runs its tests`.

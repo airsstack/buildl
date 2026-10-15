@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use buildl::Workspace;
 use buildl::buildl_core::json::canonical;
 use buildl::buildl_core::{
-    ActionOutcome, CacheRow, Directory, Label, LiveOutput, OnFailure, OutcomeClass, Plan, Result,
-    Scope,
+    ActionOutcome, CacheRow, Directory, Label, LiveOutput, OnFailure, OutcomeClass, Plan, Rerun,
+    Result, Scope,
 };
 use buildl::report::{Mode, Paint, Report, Silent, TerminalReporter};
 use buildl::state::StateLayout;
@@ -214,6 +214,32 @@ impl Fixture {
                 &BTreeMap::new(),
                 OnFailure::Stop,
                 LiveOutput::Off,
+                &mut Silent,
+            )
+            .unwrap()
+    }
+
+    /// Runs the tests `targets` name, or every test when there are none, showing nothing and
+    /// letting the run go on past a failure.
+    pub(crate) fn test(&self, targets: &[&str], rerun: Rerun) -> Vec<ActionOutcome> {
+        let workspace = self.open();
+        let scope = if targets.is_empty() {
+            Scope::Workspace
+        } else {
+            Scope::Targets(
+                targets
+                    .iter()
+                    .map(|target| workspace.label(target).unwrap())
+                    .collect(),
+            )
+        };
+        workspace
+            .test(
+                &scope,
+                &BTreeMap::new(),
+                OnFailure::KeepGoing,
+                LiveOutput::Off,
+                rerun,
                 &mut Silent,
             )
             .unwrap()

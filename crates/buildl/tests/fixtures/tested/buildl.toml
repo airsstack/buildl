@@ -1,0 +1,16 @@
+[workspace]
+name   = "tested"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["cp", "cmp"]
+env.read = []
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
+
+[execution]
+workers  = 1
+timeout  = "1m"
+strategy = "bare"
