@@ -423,6 +423,7 @@ impl<P: Ports> Build<'_, P> {
                 Settled::Cached { row, manifests } => {
                     let outcome = restore(
                         target.node.label.clone(),
+                        target.node.role,
                         &row,
                         &manifests,
                         self.layout.outputs(node),
@@ -444,7 +445,7 @@ impl<P: Ports> Build<'_, P> {
         let Some(target) = self.targets.get(node.index()) else {
             return Ok(());
         };
-        let label = target.node.label.clone();
+        let role = target.node.role;
         let was_live = performed.live;
         let progress = Progress::Began {
             key: performed.key.digest(),
@@ -452,7 +453,7 @@ impl<P: Ports> Build<'_, P> {
         };
         let outcome = match performed.ended {
             Ended::Produced { outputs, printed } => store(
-                label,
+                target.node,
                 performed.key,
                 outputs,
                 printed,
@@ -464,7 +465,7 @@ impl<P: Ports> Build<'_, P> {
                 class,
                 diagnostic,
                 printed,
-            } => failed(label, class, diagnostic, printed),
+            } => failed(target.node.label.clone(), role, class, diagnostic, printed),
         };
         self.finish(node, progress, outcome)?;
         if was_live && let Some(place) = self.shared.live {
@@ -515,7 +516,11 @@ impl<P: Ports> Build<'_, P> {
         ) else {
             return Ok(());
         };
-        let outcome = skipped(target.node.label.clone(), cause.node.label.clone());
+        let outcome = skipped(
+            target.node.label.clone(),
+            target.node.role,
+            cause.node.label.clone(),
+        );
         self.conclude(node, Progress::Skipped, outcome)
     }
 

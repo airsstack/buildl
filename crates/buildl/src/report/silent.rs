@@ -39,7 +39,8 @@ mod tests {
 
     use buildl_core::{
         ActionOutcome, Argument, Captured, Channel, Command, Directory, Label, NetworkAccess,
-        OutcomeClass, OutcomeEvent, Provenance, ReadyAction, Reporter, Summary, Timestamp,
+        OutcomeClass, OutcomeEvent, Provenance, ReadyAction, Reporter, Summary, Tally, TargetRole,
+        Timestamp,
     };
 
     use super::Silent;
@@ -71,6 +72,7 @@ mod tests {
                 finished: None,
                 outcome: ActionOutcome {
                     label,
+                    role: TargetRole::Build,
                     class: OutcomeClass::Built,
                     diagnostic: None,
                     outputs: Vec::new(),
@@ -84,10 +86,13 @@ mod tests {
             },
         );
         silent.summary(Summary {
-            failed: 0,
-            skipped: 0,
-            built: 1,
-            cached: 0,
+            all: Tally {
+                failed: 0,
+                skipped: 0,
+                built: 1,
+                cached: 0,
+            },
+            tests: Tally::default(),
         });
         // It has nowhere to keep anything it was told.
         assert_eq!(size_of_val(&silent), 0);

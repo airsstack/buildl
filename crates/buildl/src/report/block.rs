@@ -16,7 +16,7 @@
 //! and the order blocks appear in belong to the reporter.
 
 use buildl_core::{
-    Captured, Command, InfraKind, Label, OutcomeClass, OutcomeEvent, OutputRefusal, Summary,
+    Captured, Command, InfraKind, Label, OutcomeClass, OutcomeEvent, OutputRefusal, Tally,
 };
 
 use crate::report::paint::Paint;
@@ -51,16 +51,16 @@ fn reads_as_one_word(text: &str) -> bool {
         })
 }
 
-/// The line that closes a build: each count that is not zero, as `2 failed, 1 skipped, 3 built,
-/// 4 cached`, in that order, and `nothing to build` when every count is zero. Ends with a
-/// newline.
+/// The line that closes a build: each count of `tally` that is not zero, as `2 failed, 1
+/// skipped, 3 built, 4 cached`, in that order, and `nothing to build` when every count is zero.
+/// Ends with a newline.
 #[must_use]
-pub fn summary_line(summary: Summary) -> String {
+pub fn summary_line(tally: Tally) -> String {
     let counts: Vec<String> = [
-        (summary.failed, "failed"),
-        (summary.skipped, "skipped"),
-        (summary.built, "built"),
-        (summary.cached, "cached"),
+        (tally.failed, "failed"),
+        (tally.skipped, "skipped"),
+        (tally.built, "built"),
+        (tally.cached, "cached"),
     ]
     .into_iter()
     .filter(|(count, _)| *count > 0)
@@ -197,7 +197,8 @@ mod tests {
 
     use buildl_core::{
         ActionOutcome, Argument, Captured, Command, Diagnostic, Directory, InfraKind, Label,
-        OutcomeClass, OutcomeEvent, OutputName, OutputRefusal, Provenance, Summary, Timestamp,
+        OutcomeClass, OutcomeEvent, OutputName, OutputRefusal, Provenance, Tally, TargetRole,
+        Timestamp,
     };
 
     use super::{block, command_text, summary_line, trailer};
@@ -238,8 +239,8 @@ mod tests {
         assert_eq!(command_text(&command(&["true"])), "true");
     }
 
-    const fn counts(failed: usize, skipped: usize, built: usize, cached: usize) -> Summary {
-        Summary {
+    const fn counts(failed: usize, skipped: usize, built: usize, cached: usize) -> Tally {
+        Tally {
             failed,
             skipped,
             built,
@@ -289,6 +290,7 @@ mod tests {
             finished: None,
             outcome: ActionOutcome {
                 label: Label::parse("//lib:text").unwrap(),
+                role: TargetRole::Build,
                 class,
                 diagnostic: diagnostic.map(Diagnostic::new),
                 outputs: Vec::new(),

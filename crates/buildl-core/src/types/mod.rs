@@ -54,7 +54,8 @@
 //! - [`Query`] and [`Direction`] — a question about the target graph: what one target needs, or
 //!   what needs it.
 //! - [`ActionOutcome`], [`OutcomeClass`], [`InfraKind`] and [`OutputRefusal`] — how the build of
-//!   one target ended; [`Summary`] — the count of a build's outcomes.
+//!   one target ended; [`Tally`] — how many targets ended in each way;
+//!   [`Summary`] — a build's tally, and the tally of its tests.
 //! - [`OutcomeEvent`] — one line of the build log: an outcome, with when and under which key.
 //! - [`LoggedRun`] and [`LogLine`] — a line of the build log as it reads back: an event, or a
 //!   damaged line.
@@ -160,7 +161,7 @@ pub use log_line::LogLine;
 pub use logged_run::LoggedRun;
 pub use node_id::NodeId;
 pub use on_failure::OnFailure;
-pub use outcome::{ActionOutcome, InfraKind, OutcomeClass, OutputRefusal, Summary};
+pub use outcome::{ActionOutcome, InfraKind, OutcomeClass, OutputRefusal, Summary, Tally};
 pub use outcome_event::OutcomeEvent;
 pub use output_manifest::OutputManifest;
 pub use output_name::OutputName;

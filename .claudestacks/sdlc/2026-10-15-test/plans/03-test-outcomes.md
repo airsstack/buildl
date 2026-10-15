@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [02]
 built-on: fefed82cb705
@@ -50,12 +50,11 @@ crates/buildl-core/src/types/outcome.rs          — [modify] ActionOutcome.role
 crates/buildl-core/src/types/mod.rs              — [modify] re-export Tally
 crates/buildl-core/src/lib.rs                    — [modify] Tally in the root re-exports
 crates/buildl-core/src/types/outcome_event.rs    — [modify] role in its test literals
+crates/buildl-core/src/types/logged_run.rs       — [modify] role in its test literals
 crates/buildl-core/src/execute/record.rs         — [modify] every helper takes and sets role; tests
 crates/buildl-core/src/execute/assembly.rs       — [modify] pass target.node.role to the helpers
 crates/buildl-core/src/ports/reporter.rs         — [modify] doc example literal; summary's doc
-crates/buildl-core/src/ports/bundle.rs           — [modify] doc example reads the new Summary
-crates/buildl-core/src/ports/port_set.rs         — [modify] its test reporter reads the new Summary
-crates/buildl-core/tests/flows/build.rs          — [modify] literal; summaries read .all
+crates/buildl-core/tests/flows/build.rs          — [modify] literal; summaries read .all; a flow pinning each outcome's role
 crates/buildl-core/tests/flows/common.rs         — [modify] literal; FakeReporter keeps the new Summary
 crates/buildl-core/tests/flows/report.rs         — [modify] summaries read .all
 crates/buildl/src/log/local_log.rs               — [modify] role in its test literal
@@ -71,7 +70,7 @@ crates/buildl-cli/src/exit.rs                    — [modify] role in its test l
 
 ### Task 1 — An outcome carries its target's role
 
-**Files:** `types/outcome.rs`, `types/outcome_event.rs`, `execute/record.rs`,
+**Files:** `types/outcome.rs`, `types/outcome_event.rs`, `types/logged_run.rs`, `execute/record.rs`,
 `execute/assembly.rs`, `ports/reporter.rs`, `tests/flows/build.rs`, `tests/flows/common.rs`
 (all `crates/buildl-core`); `crates/buildl/src/log/local_log.rs`,
 `crates/buildl/src/report/{silent,terminal,block}.rs`; `crates/buildl-cli/src/exit.rs`.
@@ -82,9 +81,12 @@ crates/buildl-cli/src/exit.rs                    — [modify] role in its test l
   one of the twelve keys.
 - Every helper of `record.rs` that makes an outcome takes `role: TargetRole` right after `label`
   and sets it: `built`, `cached`, `failed`, `unstored`, `unplaced`, `mismatched`, `skipped`,
-  `succeeded`, and the two that call them, `store` and `restore`. `skipped`'s role is the
-  skipped target's own, not the cause's.
-- `assembly.rs` passes `target.node.role` at each call (`record`, `drain`, `skip`).
+  `succeeded`, and `restore`, which calls them. `store` takes the target's `&Node` in place of
+  its label and reads both label and role from it: with a separate `role` it would take eight
+  arguments, past clippy's `too_many_arguments` limit of seven. `skipped`'s role is the skipped
+  target's own, not the cause's.
+- `assembly.rs` passes `target.node.role` at each call (`drain`, `skip`), and `target.node` to
+  `store` (`record`).
 - Every other literal adds `role: TargetRole::Build` (or `Test` where a test names a test). The
   compiler lists any literal the grep above missed.
 
@@ -95,7 +97,12 @@ crates/buildl-cli/src/exit.rs                    — [modify] role in its test l
 - `an_event_holds_exactly_the_twelve_keys_of_the_log_format` (`outcome_event.rs:243`) — existing,
   unchanged, passes: the log has no `role`.
 - `a_two_directory_workspace_…_logs_the_pinned_events` (`tests/flows/build.rs:1120`) — existing,
-  passes on the unchanged `golden/log.jsonl`.
+  passes on the unchanged `golden/log.jsonl`, and asserts the whole `Summary`, whose `tests`
+  counts the workspace's one built test.
+- `a_test_targets_outcomes_carry_its_role_whether_built_cached_failed_or_skipped` in
+  `tests/flows/build.rs` — test targets ending built, cached, failed, and skipped because a build
+  target failed, each carry `TargetRole::Test` through `assembly.rs`, and `Summary::of(..).tests`
+  counts them.
 
 **Done when:** `cargo test --workspace --all-targets` passes and the Definition of Done is
 green. Commit `feat(repo): an outcome carries its target's role`.
@@ -103,7 +110,7 @@ green. Commit `feat(repo): an outcome carries its target's role`.
 ### Task 2 — A summary counts the tests apart
 
 **Files:** `types/outcome.rs`, `types/mod.rs`, `lib.rs`, `execute/assembly.rs`,
-`ports/{reporter,bundle,port_set}.rs`, `tests/flows/{build,common,report}.rs` (all
+`ports/reporter.rs`, `tests/flows/{build,common,report}.rs` (all
 `crates/buildl-core`); `crates/buildl/src/report/{block,silent,terminal}.rs`,
 `crates/buildl/src/workspace.rs`, `crates/buildl/tests/e2e/failure.rs`.
 
@@ -144,10 +151,32 @@ green. Commit `feat(repo): a summary counts the tests apart`.
   every summary reader (spec §7). The compiler finds each; the risk is a reader that silently
   starts counting the wrong tally, which is why every existing summary assertion moves to `.all`
   rather than being rewritten.
-- **Most risky step:** Task 1's `skipped` — its role must be the skipped target's, which the
-  named proof covers.
+- **Most risky step:** Task 1's `skipped` — its role must be the skipped target's, not the
+  cause's. `every_outcome_carries_the_role_it_was_given` hands the role in, so it cannot see what
+  `assembly.rs` passes; the flow test
+  `a_test_targets_outcomes_carry_its_role_whether_built_cached_failed_or_skipped` does.
 
 ## Proof
 
 - `cargo make dod` and `cargo deny check` green after each task.
 - `git diff --exit-code crates/buildl-core/tests/flows/golden` clean after each task.
+
+## Review findings
+
+- risk — nothing caught a reverted role pass-through in `assembly.rs` (`drain`, `record`, `skip`) — `execute/assembly.rs` — fixed: flow `a_test_targets_outcomes_carry_its_role_whether_built_cached_failed_or_skipped`, seen failing on each of five swaps (cached, built, failed, skipped → `Build`; skipped → the cause's role)
+- risk — the pinned-events flow was narrowed to `.all` — `tests/flows/build.rs` — fixed: asserts the whole `Summary` again
+- amendment — `store`'s signature and the file list differed from the plan — this file — fixed: Task 1 Change, Files that change
+- claim false — the Risks line said the named proof covered `skipped`'s role — this file — fixed: Risks names the flow that does
+- nit — the label was cloned before the match in `record` — `execute/assembly.rs` — fixed: cloned in the `Failed` arm only
+- nit — a zero `Tally` spelled out by hand in `report.rs` and `terminal.rs`, since `Default` is not const — kept: a `Tally::NONE` constant is API no reader needs
+
+## Probe results
+
+- No throwaway probe: the compiler lists every literal and reader. The new flow test is the reversion probe for the role pass-through (above).
+
+## Deviations
+
+- `store` takes `&Node` in place of `label, role`: eight arguments trips clippy `too_many_arguments` (limit seven). Plan amended.
+- `types/logged_run.rs`'s test literals gained `role`: the file came after the plan's facts table. Plan amended.
+- `ports/bundle.rs` and `ports/port_set.rs` were not changed: they name `Summary` only as a type. Plan amended.
+- `an_event_holds_exactly_the_twelve_keys_of_the_log_format` builds its outcome with `TargetRole::Test`, so it shows the log ignores `role`.

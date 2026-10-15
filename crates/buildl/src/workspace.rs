@@ -193,7 +193,8 @@ mod tests {
     use buildl_core::json::canonical;
     use buildl_core::{
         Captured, Channel, Diagnostic, Error, Label, LiveOutput, NameKind, OnFailure, OutcomeClass,
-        OutcomeEvent, PortName, ReadyAction, Reporter, Result, Scope, Summary, Verdict, Want,
+        OutcomeEvent, PortName, ReadyAction, Reporter, Result, Scope, Summary, Tally, Verdict,
+        Want,
     };
 
     use crate::report::Silent;
@@ -560,16 +561,22 @@ mod tests {
             told.summaries,
             [
                 Summary {
-                    failed: 0,
-                    skipped: 0,
-                    built: 1,
-                    cached: 0
+                    all: Tally {
+                        failed: 0,
+                        skipped: 0,
+                        built: 1,
+                        cached: 0
+                    },
+                    tests: Tally::default()
                 },
                 Summary {
-                    failed: 0,
-                    skipped: 0,
-                    built: 0,
-                    cached: 1
+                    all: Tally {
+                        failed: 0,
+                        skipped: 0,
+                        built: 0,
+                        cached: 1
+                    },
+                    tests: Tally::default()
                 }
             ]
         );

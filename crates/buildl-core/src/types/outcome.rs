@@ -5,14 +5,15 @@
 //! outcome and not an error, so one failure does not hide what the rest of the build did.
 //!
 //! Responsibilities: [`ActionOutcome`], [`OutcomeClass`] with [`OutcomeClass::succeeded`],
-//! [`InfraKind`], [`OutputRefusal`], and [`Summary`] with [`Summary::of`].
+//! [`InfraKind`], [`OutputRefusal`], [`Tally`] with [`Tally::of`], and [`Summary`] with
+//! [`Summary::of`].
 //!
 //! Non-responsibilities: deciding which class a target's build ends in, which the phase that
 //! executes does; and rendering an outcome for a person, which belongs to whoever shows it.
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Diagnostic, Digest, Label, OutputName, Produced};
+use crate::types::{Diagnostic, Digest, Label, OutputName, Produced, TargetRole};
 
 /// Which part of building one target the builder itself could not do.
 ///
@@ -114,6 +115,8 @@ impl OutcomeClass {
 pub struct ActionOutcome {
     /// The target.
     pub label: Label,
+    /// Whether the target was declared with `b.target` or `b.test`.
+    pub role: TargetRole,
     /// How its build ended.
     pub class: OutcomeClass,
     /// A message for display: set for an [`OutcomeClass::InfraFailure`] other than a timeout,
@@ -128,9 +131,9 @@ pub struct ActionOutcome {
     pub stderr: Option<Digest>,
 }
 
-/// How many targets of one build ended in each way.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Summary {
+/// How many targets ended in each way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Tally {
     /// Targets whose action failed or was ended by a signal, whose output was missing or
     /// refused, or that the builder could not build.
     pub failed: usize,
@@ -142,29 +145,48 @@ pub struct Summary {
     pub cached: usize,
 }
 
-impl Summary {
+impl Tally {
     /// Counts `outcomes` by how each ended.
     #[must_use]
-    pub fn of(outcomes: &[ActionOutcome]) -> Self {
-        let mut summary = Self {
-            failed: 0,
-            skipped: 0,
-            built: 0,
-            cached: 0,
-        };
+    pub fn of<'a>(outcomes: impl IntoIterator<Item = &'a ActionOutcome>) -> Self {
+        let mut tally = Self::default();
         for outcome in outcomes {
             match outcome.class {
-                OutcomeClass::Cached => summary.cached += 1,
-                OutcomeClass::Built => summary.built += 1,
+                OutcomeClass::Cached => tally.cached += 1,
+                OutcomeClass::Built => tally.built += 1,
                 OutcomeClass::ActionFailure { .. }
                 | OutcomeClass::Killed { .. }
                 | OutcomeClass::OutputMissing { .. }
                 | OutcomeClass::OutputRefused { .. }
-                | OutcomeClass::InfraFailure { .. } => summary.failed += 1,
-                OutcomeClass::Skipped { .. } => summary.skipped += 1,
+                | OutcomeClass::InfraFailure { .. } => tally.failed += 1,
+                OutcomeClass::Skipped { .. } => tally.skipped += 1,
             }
         }
-        summary
+        tally
+    }
+}
+
+/// How the targets of one build ended: all of them, and the tests among them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Summary {
+    /// Every target of the build.
+    pub all: Tally,
+    /// The targets declared with `b.test`; they are counted in `all` too.
+    pub tests: Tally,
+}
+
+impl Summary {
+    /// Counts `outcomes` by how each ended, and again those of a test target.
+    #[must_use]
+    pub fn of(outcomes: &[ActionOutcome]) -> Self {
+        Self {
+            all: Tally::of(outcomes),
+            tests: Tally::of(
+                outcomes
+                    .iter()
+                    .filter(|outcome| outcome.role == TargetRole::Test),
+            ),
+        }
     }
 }
 
@@ -175,9 +197,9 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use super::{ActionOutcome, InfraKind, OutcomeClass, OutputRefusal, Summary};
+    use super::{ActionOutcome, InfraKind, OutcomeClass, OutputRefusal, Summary, Tally};
     use crate::json::canonical;
-    use crate::types::{Label, OutputName};
+    use crate::types::{Label, OutputName, TargetRole};
 
     /// One class of every kind, in the order the enum declares them.
     fn every_class() -> [OutcomeClass; 8] {
@@ -204,8 +226,14 @@ mod tests {
 
     /// An outcome of `class` for `//:app`, holding nothing else.
     fn outcome(class: OutcomeClass) -> ActionOutcome {
+        outcome_of(TargetRole::Build, class)
+    }
+
+    /// An outcome of `class` for the `role` target `//:app`, holding nothing else.
+    fn outcome_of(role: TargetRole, class: OutcomeClass) -> ActionOutcome {
         ActionOutcome {
             label: Label::parse("//:app").unwrap(),
+            role,
             class,
             diagnostic: None,
             outputs: Vec::new(),
@@ -241,10 +269,13 @@ mod tests {
         assert_eq!(
             Summary::of(&outcomes),
             Summary {
-                failed: 5,
-                skipped: 1,
-                built: 1,
-                cached: 1,
+                all: Tally {
+                    failed: 5,
+                    skipped: 1,
+                    built: 1,
+                    cached: 1,
+                },
+                tests: Tally::default(),
             }
         );
     }
@@ -254,10 +285,8 @@ mod tests {
         assert_eq!(
             Summary::of(&[]),
             Summary {
-                failed: 0,
-                skipped: 0,
-                built: 0,
-                cached: 0,
+                all: Tally::default(),
+                tests: Tally::default(),
             }
         );
     }
@@ -274,10 +303,46 @@ mod tests {
         assert_eq!(
             Summary::of(&outcomes),
             Summary {
-                failed: 1,
-                skipped: 0,
-                built: 3,
-                cached: 1,
+                all: Tally {
+                    failed: 1,
+                    skipped: 0,
+                    built: 3,
+                    cached: 1,
+                },
+                tests: Tally::default(),
+            }
+        );
+    }
+
+    #[test]
+    fn a_summary_tallies_tests_apart_from_every_target() {
+        let outcomes = [
+            outcome_of(TargetRole::Build, OutcomeClass::Built),
+            outcome_of(TargetRole::Test, OutcomeClass::Cached),
+            outcome_of(TargetRole::Test, OutcomeClass::ActionFailure { status: 1 }),
+            outcome_of(
+                TargetRole::Test,
+                OutcomeClass::Skipped {
+                    because: Label::parse("//lib:text").unwrap(),
+                },
+            ),
+            outcome_of(TargetRole::Build, OutcomeClass::Cached),
+        ];
+        assert_eq!(
+            Summary::of(&outcomes),
+            Summary {
+                all: Tally {
+                    failed: 1,
+                    skipped: 1,
+                    built: 1,
+                    cached: 2,
+                },
+                tests: Tally {
+                    failed: 1,
+                    skipped: 1,
+                    built: 0,
+                    cached: 1,
+                },
             }
         );
     }

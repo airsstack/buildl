@@ -96,7 +96,7 @@ mod tests {
     use crate::json::canonical;
     use crate::types::{
         ActionOutcome, Argument, Command, Diagnostic, Digest, Directory, InfraKind, Label,
-        OutcomeClass, OutputName, Produced, Provenance, Timestamp,
+        OutcomeClass, OutputName, Produced, Provenance, TargetRole, Timestamp,
     };
 
     fn command(arguments: &[&str]) -> Command {
@@ -139,6 +139,7 @@ mod tests {
             finished: Some(instant(20)),
             outcome: ActionOutcome {
                 label: Label::parse("//lib:text").unwrap(),
+                role: TargetRole::Build,
                 class: OutcomeClass::Built,
                 diagnostic: None,
                 outputs: vec![Produced {
@@ -182,6 +183,7 @@ mod tests {
             finished: Some(instant(20)),
             outcome: ActionOutcome {
                 label: Label::parse("//:app").unwrap(),
+                role: TargetRole::Build,
                 class: OutcomeClass::InfraFailure {
                     kind: InfraKind::Store,
                 },
@@ -219,6 +221,7 @@ mod tests {
             finished: None,
             outcome: ActionOutcome {
                 label: Label::parse("//:app").unwrap(),
+                role: TargetRole::Build,
                 class: OutcomeClass::Skipped {
                     because: Label::parse("//lib:text").unwrap(),
                 },
@@ -250,6 +253,7 @@ mod tests {
             finished: None,
             outcome: ActionOutcome {
                 label: Label::parse("//:app").unwrap(),
+                role: TargetRole::Test,
                 class: OutcomeClass::Cached,
                 diagnostic: None,
                 outputs: Vec::new(),

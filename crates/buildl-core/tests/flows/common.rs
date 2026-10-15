@@ -1179,7 +1179,8 @@ mod tests {
         Command, ContentStore, Digest, Directory, Dispatcher, EntryName, Error, EventLog,
         ExecStrategy, Exit, GraphRecord, KeyComponents, Label, NetworkAccess, OutcomeClass,
         OutcomeEvent, OutputName, OutputPath, OwnComponents, Platform, PortName, Provenance,
-        ReadyAction, Reporter, SourcePath, Summary, TargetGraph, Timestamp, json, load, resolve,
+        ReadyAction, Reporter, SourcePath, Summary, Tally, TargetGraph, TargetRole, Timestamp,
+        json, load, resolve,
     };
 
     use super::{
@@ -1247,6 +1248,7 @@ mod tests {
             finished: None,
             outcome: ActionOutcome {
                 label: label(raw),
+                role: TargetRole::Build,
                 class: OutcomeClass::Cached,
                 diagnostic: None,
                 outputs: Vec::new(),
@@ -1525,10 +1527,13 @@ mod tests {
     #[test]
     fn a_reporter_keeps_every_call_it_receives_in_order() {
         let counts = Summary {
-            failed: 0,
-            skipped: 0,
-            built: 1,
-            cached: 1,
+            all: Tally {
+                failed: 0,
+                skipped: 0,
+                built: 1,
+                cached: 1,
+            },
+            tests: Tally::default(),
         };
         let mut reporter = FakeReporter::default();
 

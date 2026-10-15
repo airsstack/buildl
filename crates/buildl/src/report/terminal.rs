@@ -216,7 +216,7 @@ impl<W: Write> Reporter for TerminalReporter<W> {
     fn summary(&mut self, summary: Summary) {
         let mut frame = Vec::new();
         self.erase(&mut frame);
-        frame.extend_from_slice(summary_line(summary).as_bytes());
+        frame.extend_from_slice(summary_line(summary.all).as_bytes());
         self.emit(&frame);
     }
 }
@@ -235,7 +235,7 @@ mod tests {
     use buildl_core::{
         ActionOutcome, Argument, Captured, Channel, Command, Diagnostic, ExpandedDescription,
         InfraKind, Label, NetworkAccess, OutcomeClass, OutcomeEvent, Provenance, ReadyAction,
-        Reporter, Summary, Timestamp,
+        Reporter, Summary, Tally, TargetRole, Timestamp,
     };
 
     use super::{Mode, TerminalReporter};
@@ -287,6 +287,7 @@ mod tests {
             finished: None,
             outcome: ActionOutcome {
                 label,
+                role: TargetRole::Build,
                 class,
                 diagnostic: None,
                 outputs: Vec::new(),
@@ -325,10 +326,18 @@ mod tests {
 
     const fn counts(failed: usize, skipped: usize, built: usize, cached: usize) -> Summary {
         Summary {
-            failed,
-            skipped,
-            built,
-            cached,
+            all: Tally {
+                failed,
+                skipped,
+                built,
+                cached,
+            },
+            tests: Tally {
+                failed: 0,
+                skipped: 0,
+                built: 0,
+                cached: 0,
+            },
         }
     }
 

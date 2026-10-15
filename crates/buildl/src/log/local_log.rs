@@ -119,7 +119,7 @@ mod tests {
 
     use buildl_core::{
         ActionOutcome, Argument, Command, Digest, Directory, Error, EventLog, Label, OutcomeClass,
-        OutcomeEvent, PortName, Provenance, Timestamp,
+        OutcomeEvent, PortName, Provenance, TargetRole, Timestamp,
     };
 
     use super::LocalLog;
@@ -168,6 +168,7 @@ mod tests {
             finished: Some(Timestamp::from_unix_nanos(20)),
             outcome: ActionOutcome {
                 label: Label::parse(&format!("//:{name}")).unwrap(),
+                role: TargetRole::Build,
                 class,
                 diagnostic: None,
                 outputs: Vec::new(),

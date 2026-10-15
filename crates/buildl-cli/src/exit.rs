@@ -145,7 +145,7 @@ mod tests {
         ActionFound, ActionOutcome, Ceiling, DeclarationField, DeclarationOrder, DeclarationSite,
         DeclaredKind, Diagnostic, Directory, Error, EvaluationFailure, InfraKind, InputKind, Label,
         OutcomeClass, OutputName, OutputPath, OutputRefusal, PortName, Program, Provenance,
-        SettingName, SourcePath, TreeFault, Want,
+        SettingName, SourcePath, TargetRole, TreeFault, Want,
     };
 
     use super::Exit;
@@ -363,6 +363,7 @@ mod tests {
     fn ended(class: OutcomeClass) -> ActionOutcome {
         ActionOutcome {
             label: label("//:app"),
+            role: TargetRole::Build,
             class,
             diagnostic: None,
             outputs: Vec::new(),

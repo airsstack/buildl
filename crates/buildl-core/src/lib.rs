@@ -137,7 +137,7 @@ pub use types::{
     OutputRefusal, OwnComponents, Plan, PlannedKey, Platform, Produced, Program, Provenance,
     Purpose, Query, RawOutcome, ReadyAction, Rule, Scope, Setting, SettingName, SettingValue,
     SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
-    StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, Target, TargetGraph, TargetName,
-    TargetRole, Timeout, Timestamp, ToolIdentity, Tree, TreeEntry, TreePath, Turn, Unfinished,
-    Verdict, Want, WantedSet, Workers, Workspace, Written,
+    StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, Tally, Target, TargetGraph,
+    TargetName, TargetRole, Timeout, Timestamp, ToolIdentity, Tree, TreeEntry, TreePath, Turn,
+    Unfinished, Verdict, Want, WantedSet, Workers, Workspace, Written,
 };

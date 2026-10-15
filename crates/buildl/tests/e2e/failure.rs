@@ -4,7 +4,7 @@
 //! first in label order among the targets that can start. So a build that stops at the first
 //! failure has begun nothing else when it stops.
 
-use buildl::buildl_core::{Label, OnFailure, OutcomeClass, Summary};
+use buildl::buildl_core::{Label, OnFailure, OutcomeClass, Summary, Tally};
 
 use crate::common::{Fixture, ended};
 
@@ -29,10 +29,13 @@ fn a_failure_stops_the_build_by_default() {
     assert_eq!(
         Summary::of(&outcomes),
         Summary {
-            failed: 1,
-            skipped: 4,
-            built: 0,
-            cached: 0,
+            all: Tally {
+                failed: 1,
+                skipped: 4,
+                built: 0,
+                cached: 0
+            },
+            tests: Tally::default()
         }
     );
     assert_eq!(
@@ -57,10 +60,13 @@ fn keep_going_builds_what_does_not_depend_on_the_failure() {
     assert_eq!(
         Summary::of(&outcomes),
         Summary {
-            failed: 1,
-            skipped: 2,
-            built: 2,
-            cached: 0,
+            all: Tally {
+                failed: 1,
+                skipped: 2,
+                built: 2,
+                cached: 0
+            },
+            tests: Tally::default()
         }
     );
     assert_eq!(

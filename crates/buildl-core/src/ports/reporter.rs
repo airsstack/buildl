@@ -97,7 +97,7 @@ mod tests {
     use super::Reporter;
     use crate::types::{
         ActionOutcome, Argument, Captured, Channel, Command, Directory, Label, NetworkAccess,
-        OutcomeClass, OutcomeEvent, Provenance, ReadyAction, Summary, Timestamp,
+        OutcomeClass, OutcomeEvent, Provenance, ReadyAction, Summary, Tally, TargetRole, Timestamp,
     };
 
     /// Keeps the name of each call it receives, in order.
@@ -152,6 +152,7 @@ mod tests {
                 finished: None,
                 outcome: ActionOutcome {
                     label,
+                    role: TargetRole::Build,
                     class: OutcomeClass::Built,
                     diagnostic: None,
                     outputs: Vec::new(),
@@ -162,10 +163,13 @@ mod tests {
             Captured::default(),
         );
         reporter.summary(Summary {
-            failed: 0,
-            skipped: 0,
-            built: 1,
-            cached: 0,
+            all: Tally {
+                failed: 0,
+                skipped: 0,
+                built: 1,
+                cached: 0,
+            },
+            tests: Tally::default(),
         });
     }
 
