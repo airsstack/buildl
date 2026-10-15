@@ -36,7 +36,7 @@ Assumed, and overridable:
 - `buildl` — reading `log.jsonl` and the cas blobs it names; the `Workspace` facade entry for
   `log`.
 - `buildl-cli` — the `log` subcommand, its flags, its exit codes.
-- `docs/design.md` §3, §7, §8.7; `README.md`'s command table; `docs/architecture.md` and
+- `docs/design.md` §3, §7, §8.7; `README.md`'s command table; `CLAUDE.md`'s Status; `docs/architecture.md` and
   `docs/architecture-building-blocks.md` where they describe the log, its port and the commands.
   The milestone 2 ladder is written nowhere outside the chains, and the status board counts
   progress, so no roadmap file changes.
@@ -58,7 +58,9 @@ Assumed, and overridable:
 
 ## Constraints
 
-- `log` reads state and writes none: no lock, no `.buildl/` created, no clock read.
+- `log` reads state and writes none: no lock, no `.buildl/` created, no clock read. The one
+  exception is the store's own rule: a blob whose bytes fail its digest is removed by the read
+  that finds it, as in every build, and the run reads as missing output.
 - The log format does not change: the twelve keys of an event are read as written.
 - The determinism rules of `architecture.md` §5 hold, and JSON is read and written only through
   the one canonical serializer.
