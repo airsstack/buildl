@@ -23,7 +23,7 @@ use crate::ports::{DeclarationSource, GraphRecord, PortSet, Ports};
 use crate::resolve::{narrow, reach, resolve};
 use crate::types::{
     ActionOutcome, Declaration, EntryName, Label, LiveOutput, OnFailure, Plan, Purpose, Query,
-    Scope, SettingName, SettingValue, TargetGraph,
+    Rerun, Scope, SettingName, SettingValue, TargetGraph,
 };
 
 /// The pipeline over one chosen implementation of each port.
@@ -123,7 +123,7 @@ impl<P: Ports> Pipeline<P> {
     ) -> Result<Plan> {
         let whole = resolve(load(&self.ports.source, entry)?)?;
         let graph = narrow(&whole, scope, Purpose::Build)?;
-        plan(&graph, overrides, &mut self.ports)
+        plan(&graph, overrides, Rerun::Off, &mut self.ports)
     }
 
     /// Loads the workspace once, resolves it, records the graph of the whole workspace, plans a
@@ -159,8 +159,16 @@ impl<P: Ports> Pipeline<P> {
         let whole = resolve(load(&self.ports.source, entry)?)?;
         self.ports.graph.record(&whole)?;
         let graph = narrow(&whole, scope, Purpose::Build)?;
-        let plan = plan(&graph, overrides, &mut self.ports)?;
-        execute(&whole, &graph, &plan, on_failure, live, &mut self.ports)
+        let plan = plan(&graph, overrides, Rerun::Off, &mut self.ports)?;
+        execute(
+            &whole,
+            &graph,
+            &plan,
+            on_failure,
+            live,
+            Rerun::Off,
+            &mut self.ports,
+        )
     }
 }
 

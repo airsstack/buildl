@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [03]
 built-on: fefed82cb705
@@ -175,3 +175,18 @@ pass and the Definition of Done is green, `guard-module-edges` included. Commit
 ## Proof
 
 - `cargo make dod` and `cargo deny check` green after each task.
+
+## Review findings
+
+- risk — no test ran `all` over a test target under `Rerun::Tests`, so dropping `rerun` there passed every test — `plan/verdict.rs` — fixed: `a_rerun_makes_a_clean_test_dirty_and_leaves_the_rest_clean`, seen failing with `Rerun::Off` passed in its place. The same wiring in `execute/assembly.rs` (`self.rerun` into `Forcing::of`) is pinned end to end by plan `06`'s flow `a_rerun_runs_a_cached_test_again_and_records_it`, the first caller to pass `Rerun::Tests`, as this plan's Risks name
+- nit — `plan`'s doc said a rerun test is dirty "whatever its key", where a test declared to always run stays `Always` — `plan/assembly.rs` — fixed
+- nit — `rerun.rs`'s module doc ran past 100 columns and dropped its `Scope` link — `types/rerun.rs` — fixed: rewrapped, links `crate::types::Scope`
+- process — both tasks sit in one working tree — kept: committed as the user asks
+
+## Probe results
+
+- No throwaway probe: the named verdict and settle tests cover the forcing table. The added verdict test is the reversion probe for `all`'s wiring (above).
+
+## Deviations
+
+- `plan_text.rs`'s test helper calls `plan(…)`, so it passes `Rerun::Off` after Task 2's signature change.

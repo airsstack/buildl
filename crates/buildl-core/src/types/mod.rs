@@ -51,6 +51,8 @@
 //! - [`Scope`] — which targets of a workspace one run works on; [`LiveOutput`] — whether a build
 //!   shows what an action prints while the action is still running.
 //! - [`Purpose`] — what a run is for, which decides the targets a whole workspace means.
+//! - `Forcing` — what makes one target run whatever its row says.
+//! - [`Rerun`] — whether a run runs its tests again whatever their keys.
 //! - [`Query`] and [`Direction`] — a question about the target graph: what one target needs, or
 //!   what needs it.
 //! - [`ActionOutcome`], [`OutcomeClass`], [`InfraKind`] and [`OutputRefusal`] — how the build of
@@ -88,6 +90,7 @@ pub mod env_name;
 pub mod env_value;
 pub mod field_name;
 pub mod file_stat;
+pub(crate) mod forcing;
 pub mod found;
 pub mod input_stat;
 pub mod isolation;
@@ -111,6 +114,7 @@ pub mod purpose;
 pub mod query;
 pub mod raw_outcome;
 pub mod ready_action;
+pub mod rerun;
 pub mod scope;
 pub mod setting;
 pub mod source_path;
@@ -151,6 +155,7 @@ pub use env_name::EnvName;
 pub use env_value::EnvValue;
 pub use field_name::FieldName;
 pub use file_stat::{FileStat, StatEntry};
+pub(crate) use forcing::Forcing;
 pub use found::{Found, FoundEntry, FoundKind};
 pub use input_stat::{InputKind, InputStat};
 pub use isolation::Isolation;
@@ -174,6 +179,7 @@ pub use purpose::Purpose;
 pub use query::{Direction, Query};
 pub use raw_outcome::{Exit, RawOutcome};
 pub use ready_action::ReadyAction;
+pub use rerun::Rerun;
 pub use scope::Scope;
 pub use setting::{SettingName, SettingValue};
 pub use source_path::SourcePath;

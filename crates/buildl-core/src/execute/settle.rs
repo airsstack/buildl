@@ -14,7 +14,7 @@
 use crate::error::{Error, PortName, Result};
 use crate::ports::{ActionCache, ContentStore};
 use crate::types::{
-    ActionKey, CacheRow, DepProducts, Diagnostic, Digest, Freshness, KeyComponents, Label,
+    ActionKey, CacheRow, DepProducts, Diagnostic, Digest, Forcing, KeyComponents, Label,
     OutputManifest, OwnComponents,
 };
 
@@ -52,10 +52,11 @@ pub(crate) fn finished_key(
     })
 }
 
-/// Whether `row` still stands for a target whose key is now `key`: the target is not declared
-/// to run on every build, and `key` has the digest of the row's key.
-pub(crate) fn stands(freshness: Freshness, key: &ActionKey, row: &CacheRow) -> bool {
-    freshness != Freshness::Always && row.key().digest() == key.digest()
+/// Whether `row` still stands for a target whose key is now `key`: nothing forces the target to
+/// run, neither a declaration to run on every build nor a rerun of its tests, and `key` has the
+/// digest of the row's key.
+pub(crate) fn stands(forcing: Forcing, key: &ActionKey, row: &CacheRow) -> bool {
+    forcing == Forcing::None && row.key().digest() == key.digest()
 }
 
 /// What each output of `row` is, in declared order, when everything needed to put the outputs
@@ -124,7 +125,7 @@ pub(crate) enum Settled {
 /// an output cannot be read.
 pub(crate) fn settle<A: ActionCache, C: ContentStore>(
     label: &Label,
-    freshness: Freshness,
+    forcing: Forcing,
     own: &OwnComponents,
     deps: &[&Label],
     cache: &A,
@@ -133,7 +134,7 @@ pub(crate) fn settle<A: ActionCache, C: ContentStore>(
     let rows: Vec<(&Label, Option<&CacheRow>)> =
         deps.iter().map(|dep| (*dep, cache.row(dep))).collect();
     let key = finished_key(own, &rows)?;
-    let Some(row) = cache.row(label).filter(|row| stands(freshness, &key, row)) else {
+    let Some(row) = cache.row(label).filter(|row| stands(forcing, &key, row)) else {
         return Ok(Settled::Runs(key));
     };
     let manifests = restorable(row, |digest| cas.contains(digest), |digest| cas.get(digest))?;
@@ -159,8 +160,8 @@ mod tests {
     use crate::error::{Error, PortName, Result};
     use crate::execute::fixtures::{command, digest_of, file, key, label, own, row, tree};
     use crate::types::{
-        ActionKey, CacheRow, DepProducts, Diagnostic, Digest, Freshness, KeyComponents,
-        OutputManifest,
+        ActionKey, CacheRow, DepProducts, Diagnostic, Digest, Forcing, Freshness, KeyComponents,
+        OutputManifest, Rerun, TargetRole,
     };
 
     #[test]
@@ -232,13 +233,26 @@ mod tests {
     #[test]
     fn a_row_stands_when_it_was_recorded_under_the_targets_key() {
         let row = row(&["app", "app.map"]);
-        assert!(stands(Freshness::Cached, &key(&["app", "app.map"]), &row));
+        assert!(stands(Forcing::None, &key(&["app", "app.map"]), &row));
     }
 
     #[test]
     fn no_row_stands_for_a_target_declared_to_always_run() {
         let row = row(&["app"]);
-        assert!(!stands(Freshness::Always, &key(&["app"]), &row));
+        assert!(!stands(Forcing::Always, &key(&["app"]), &row));
+    }
+
+    #[test]
+    fn a_rerun_test_row_does_not_stand() {
+        let row = row(&["app"]);
+        assert!(!stands(Forcing::Rerun, &key(&["app"]), &row));
+    }
+
+    #[test]
+    fn a_rerun_build_target_row_stands() {
+        let row = row(&["app"]);
+        let forcing = Forcing::of(Freshness::Cached, TargetRole::Build, Rerun::Tests);
+        assert!(stands(forcing, &key(&["app"]), &row));
     }
 
     #[test]
@@ -251,7 +265,7 @@ mod tests {
             deps: Vec::new(),
         })
         .unwrap();
-        assert!(!stands(Freshness::Cached, &now, &row));
+        assert!(!stands(Forcing::None, &now, &row));
     }
 
     /// A store holding the bytes given, and the manifest of each output given.
