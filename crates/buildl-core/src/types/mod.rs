@@ -56,6 +56,8 @@
 //! - [`ActionOutcome`], [`OutcomeClass`], [`InfraKind`] and [`OutputRefusal`] — how the build of
 //!   one target ended; [`Summary`] — the count of a build's outcomes.
 //! - [`OutcomeEvent`] — one line of the build log: an outcome, with when and under which key.
+//! - [`LoggedRun`] and [`LogLine`] — a line of the build log as it reads back: an event, or a
+//!   damaged line.
 //! - [`Turn`] — what a dispatcher hands the thread that schedules a build, each time it hands
 //!   it something.
 //!
@@ -91,6 +93,8 @@ pub mod isolation;
 pub mod label;
 pub mod live_output;
 pub mod live_sink;
+pub mod log_line;
+pub mod logged_run;
 pub mod node_id;
 pub mod on_failure;
 pub mod outcome;
@@ -152,6 +156,8 @@ pub use isolation::Isolation;
 pub use label::Label;
 pub use live_output::LiveOutput;
 pub use live_sink::LiveSink;
+pub use log_line::LogLine;
+pub use logged_run::LoggedRun;
 pub use node_id::NodeId;
 pub use on_failure::OnFailure;
 pub use outcome::{ActionOutcome, InfraKind, OutcomeClass, OutputRefusal, Summary};

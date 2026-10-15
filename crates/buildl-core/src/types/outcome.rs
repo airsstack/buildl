@@ -16,8 +16,9 @@ use crate::types::{Diagnostic, Digest, Label, OutputName, Produced};
 
 /// Which part of building one target the builder itself could not do.
 ///
-/// Non-exhaustive: a builder that can fail another way gains a variant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// Serializes as its name and reads back as written. Non-exhaustive: a builder that can fail
+/// another way gains a variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum InfraKind {
     /// The directory to run the action in could not be made.
@@ -54,8 +55,9 @@ pub enum OutputRefusal {
 /// How the build of one target ended.
 ///
 /// Serializes as its name when it has no field, and otherwise as an object of one key, the
-/// name, holding the fields. Non-exhaustive: a build that can end another way gains a variant.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// name, holding the fields, and reads back as written. Non-exhaustive: a build that can end
+/// another way gains a variant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum OutcomeClass {
     /// It did not run: what its last build recorded still stands.
@@ -327,6 +329,26 @@ mod tests {
             rendered,
             [r#""Prepare""#, r#""Run""#, r#""TimedOut""#, r#""Store""#]
         );
+    }
+
+    #[test]
+    fn every_class_reads_back_as_written() {
+        for class in every_class() {
+            let written = canonical::to_vec(&class).unwrap();
+            assert_eq!(
+                canonical::from_slice::<OutcomeClass>(&written).unwrap(),
+                class
+            );
+        }
+        for kind in [
+            InfraKind::Prepare,
+            InfraKind::Run,
+            InfraKind::TimedOut,
+            InfraKind::Store,
+        ] {
+            let written = canonical::to_vec(&kind).unwrap();
+            assert_eq!(canonical::from_slice::<InfraKind>(&written).unwrap(), kind);
+        }
     }
 
     #[test]

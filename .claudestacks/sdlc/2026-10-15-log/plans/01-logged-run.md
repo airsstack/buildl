@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 built-on: 280eda6f4573
 ---
@@ -129,3 +129,20 @@ green. Commit `feat(buildl-core): a log line read back as a run`.
 ## Proof
 
 - `cargo make dod` and `cargo deny check` green after each task.
+
+## Review findings
+
+- reversion guard — the missing-key test asserted only `is_err` — `types/logged_run.rs` — fixed: asserts `NonCanonicalJson`
+- reversion guard — nothing guarded `deny_unknown_fields` (the canonical check refuses the line anyway) — `types/logged_run.rs` — fixed: the unknown-key test asserts `UnreadableJson`; `cargo test -p buildl-core --lib types::logged_run` → `4 passed; 0 failed`
+- consistency — `crate::error::Error` written inline in a test — `types/logged_run.rs` — fixed: a `use` line as siblings have
+- doc-comment-discipline — `outcome_event.rs`'s module doc said `LoggedRun` reads a log back; reading is a port's — `types/outcome_event.rs:11` — fixed; `cargo make dod` → `Build Done in 27.88 seconds.`
+- unit-test-mandate — the `InfraKind` list in `every_class_reads_back_as_written` is written by hand — `types/outcome.rs:344` — kept: it mirrors the existing `every_kind_of_infrastructure_failure_serializes_as_its_name` list beside it
+
+## Probe results
+
+- No throwaway probe: the named tests cover each premise. Seen: a line without `"finished"` is refused by the canonical re-serialization (serde fills an absent `Option` with `None`), not by serde.
+
+## Deviations
+
+- 2026-10-15 — `LogLine` carries `#[expect(clippy::large_enum_variant, reason = …)]`: `Event` is 336 bytes, `Damaged` 8. Kept to hold the spec's shape `Event(LoggedRun)` (spec §3.2, `spec.md:74`), which plans 02 and 03 match on; boxing would change the approved spec.
+- 2026-10-15 — tests name `crate::error::Error`, as `guard-module-edges` refuses `crate::Error`.
