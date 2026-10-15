@@ -15,17 +15,21 @@ use std::path::Path;
 
 use buildl_core::{
     ActionOutcome, Declaration, Directory, Label, LiveOutput, OnFailure, Pipeline, Plan, Query,
-    Reporter, Result, Scope, SettingName, SettingValue, TargetGraph, pipeline,
+    Reporter, Result, Scope, SettingName, SettingValue, Shown, TargetGraph, pipeline,
 };
 
+use crate::cas::LocalCas;
 use crate::local_ports::Wiring;
+use crate::log::LocalLog;
 use crate::report::Silent;
 
 /// A workspace wired with the real adapters.
 ///
 /// Opening one reads its manifest and nothing else. The state directory is taken by
 /// [`Workspace::plan`] and [`Workspace::build`] only, and only while one of them runs, so a
-/// workspace kept open holds nothing while it is idle.
+/// workspace kept open holds nothing while it is idle. [`Workspace::check`],
+/// [`Workspace::graph`], [`Workspace::query`] and [`Workspace::log`] hold nothing even while
+/// they run.
 #[derive(Debug)]
 pub struct Workspace {
     wiring: Wiring,
@@ -113,6 +117,26 @@ impl Workspace {
     /// Returns whatever [`pipeline::query`] returns.
     pub fn query(&self, query: &Query) -> Result<BTreeSet<Label>> {
         pipeline::query(&self.wiring.source(), self.wiring.entry(), query)
+    }
+
+    /// The newest logged run of `label` that stored its output, with what it printed read back
+    /// from the store.
+    ///
+    /// Takes no lock and reads no build file, so it runs while a build holds the workspace and
+    /// whatever the build files now say. It writes nothing but the store's own removal of a blob
+    /// whose bytes fail its digest. The target is looked up as the log names it: an alias is not
+    /// followed.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever [`pipeline::log()`] returns.
+    pub fn log(&self, label: &Label) -> Result<Shown> {
+        let layout = self.wiring.layout();
+        pipeline::log(
+            &LocalLog::new(&layout),
+            &LocalCas::new(self.wiring.root().as_path(), &layout),
+            label,
+        )
     }
 
     /// Plans a build of `scope` with `overrides` given to build settings, and runs nothing.
@@ -407,6 +431,22 @@ mod tests {
         workspace.graph().unwrap();
         let query = workspace.query_of("deps(//:copy)").unwrap();
         assert_eq!(workspace.query(&query).unwrap(), BTreeSet::new());
+    }
+
+    #[test]
+    fn log_minds_neither_a_held_lock_nor_build_files() {
+        let (_dir, root) = copying();
+        let workspace = Workspace::open(&root).unwrap();
+        build(&workspace).unwrap();
+        let _held = workspace.wiring.lock().unwrap();
+        fs::write(root.join("build.lua"), "this is not Lua").unwrap();
+        assert!(workspace.check().is_err());
+
+        let shown = workspace.log(&label("//:copy")).unwrap();
+
+        assert_eq!(shown.last.run.class, OutcomeClass::Built);
+        assert_eq!(shown.stdout, b"");
+        assert_eq!(shown.stderr, b"");
     }
 
     #[test]

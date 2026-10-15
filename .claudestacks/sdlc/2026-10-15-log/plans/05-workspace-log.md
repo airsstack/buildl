@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [03]
 built-on: 280eda6f4573
@@ -75,9 +75,10 @@ crates/buildl/tests/e2e/main.rs                  — [modify] declare mod log
 - `pub fn log(&self, label: &Label) -> Result<Shown>` on `Workspace`, beside `query`: with
   `let layout = self.wiring.layout();`, `pipeline::log(&LocalLog::new(&layout),
   &LocalCas::new(self.wiring.root().as_path(), &layout), label)`. Rustdoc: the newest logged run
-  of the target with stored output, what it printed read back from the store; "Takes no lock,
-  reads no build file and writes nothing, so it runs while a build holds the workspace and
-  whatever the build files now say"; an alias is not followed; `# Errors` as `pipeline::log`'s.
+  of the target with stored output, what it printed read back from the store; "Takes no lock
+  and reads no build file, so it runs while a build holds the workspace and whatever the build
+  files now say", and it writes nothing but the store's own removal of a blob whose bytes fail
+  its digest (spec §2, Reads); an alias is not followed; `# Errors` as `pipeline::log`'s.
   The struct doc names `log` beside `check`, `graph` and `query` as holding nothing.
 
 **Proof:**
@@ -138,3 +139,20 @@ green. Commit `test(buildl): reading the log of a real workspace`.
 ## Proof
 
 - `cargo make dod` and `cargo deny check` green after each task.
+
+## Review findings
+
+- risk — `Workspace::log`'s rustdoc said it "writes nothing", where the store removes a blob whose bytes fail its digest (spec §2, Reads; P9) — `workspace.rs` — fixed, and Task 1's wording amended to match
+- nit — the two tests that overwrite or break the build file never showed the file fails to load — `workspace.rs`, `tests/e2e/log.rs` — fixed: each asserts `check()` is an error before reading the log
+- nit — spec §6's e2e row still names the `chain` and `failing` fixtures — kept: this plan's "Fixture" note records why `logged` replaces them
+- nit — an untracked `.DS_Store` at the worktree root — kept out of every commit
+
+## Probe results
+
+- The `$in` risk is settled on the first run: `say.sh`'s first argument is `hello.txt`, stdout `said hello.txt\n`, stderr `warned\n`, as the plan predicted.
+
+## Deviations
+
+- `tests/e2e/main.rs` declares `log` only: the test slice's e2e plan, which adds `test`, has not run on this branch yet.
+- Task 2's tests were never red on behaviour: they exercise Task 1's code, which existed when they were written; their red run was `log::` matching no test before `mod log` was declared.
+- The rustdoc link reads `` [`pipeline::log()`] ``, since `pipeline::log` names both a module and a function.
