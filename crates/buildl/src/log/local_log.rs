@@ -3,20 +3,24 @@
 //! Its own file because the log is the one state file that is only ever added to: one line for
 //! each target of each build, kept across builds, so the newest line for a target says how its
 //! latest build ended. A line cut short by a run that died is removed before the next is added,
-//! which keeps every line of the file one whole event.
+//! which keeps every line of the file one whole event. The same file is read back as lines, each
+//! an event or a damaged line, without creating, cutting or writing it.
 //!
-//! Responsibilities: [`LocalLog`] and its [`EventLog`] implementation.
+//! Responsibilities: [`LocalLog`] and its [`EventLog`] and [`RunHistory`] implementations.
 //!
-//! Non-responsibilities: building the events, which the build does; and reading the log back
-//! or bounding its size, which nothing here does.
+//! Non-responsibilities: building the events, which the build does; choosing which line to
+//! show, which the core's `history` does; and bounding the log's size.
 
-use std::fs::{File, OpenOptions};
-use std::io::{self, Write};
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, ErrorKind, Write};
+use std::num::NonZeroUsize;
 use std::os::unix::fs::{FileExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 
 use buildl_core::json::canonical;
-use buildl_core::{Diagnostic, Error, EventLog, OutcomeEvent, PortName, Result};
+use buildl_core::{
+    Diagnostic, Error, EventLog, LogLine, LoggedRun, OutcomeEvent, PortName, Result, RunHistory,
+};
 
 use crate::state::StateLayout;
 
@@ -33,10 +37,10 @@ pub struct LocalLog {
     file: Option<File>,
 }
 
-/// The log's failure doing `what` to `path`.
-fn failed(what: &str, path: &Path, error: &io::Error) -> Error {
+/// The log's failure doing `what` to `path`, as the `port` that was asked.
+fn failed(port: PortName, what: &str, path: &Path, error: &io::Error) -> Error {
     Error::Adapter {
-        port: PortName::EventLog,
+        port,
         diagnostic: Diagnostic::new(format!("{what} {}: {error}", path.display())),
     }
 }
@@ -103,7 +107,38 @@ impl EventLog for LocalLog {
         line.push(b'\n');
         self.opened()
             .and_then(|file| file.write_all(&line))
-            .map_err(|error| failed("appending to", &self.path, &error))
+            .map_err(|error| failed(PortName::EventLog, "appending to", &self.path, &error))
+    }
+}
+
+impl RunHistory for LocalLog {
+    /// Every whole line of the file, oldest first; a file that is not there holds none.
+    ///
+    /// The file is only read: it is not made, not cut, and `self` is not touched, so this can run
+    /// while a build appends and sees every whole line written so far. A last line with no
+    /// newline is left out and left in place: the append writing it has not finished, or a run
+    /// that died left it.
+    fn lines(&self) -> Result<Vec<LogLine>> {
+        let bytes = match fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => {
+                return Err(failed(PortName::RunHistory, "reading", &self.path, &error));
+            }
+        };
+        let mut number = NonZeroUsize::MIN;
+        let mut lines = Vec::new();
+        for line in bytes
+            .split_inclusive(|byte| *byte == b'\n')
+            .filter_map(|line| line.strip_suffix(b"\n"))
+        {
+            lines.push(
+                canonical::from_slice::<LoggedRun>(line)
+                    .map_or(LogLine::Damaged { line: number }, LogLine::Event),
+            );
+            number = number.saturating_add(1);
+        }
+        Ok(lines)
     }
 }
 
@@ -115,11 +150,13 @@ mod tests {
     )]
 
     use std::fs;
+    use std::num::NonZeroUsize;
     use std::path::PathBuf;
 
+    use buildl_core::json::canonical;
     use buildl_core::{
-        ActionOutcome, Argument, Command, Digest, Directory, Error, EventLog, Label, OutcomeClass,
-        OutcomeEvent, PortName, Provenance, TargetRole, Timestamp,
+        ActionOutcome, Argument, Command, Digest, Directory, Error, EventLog, Label, LogLine,
+        OutcomeClass, OutcomeEvent, PortName, Provenance, RunHistory, TargetRole, Timestamp,
     };
 
     use super::LocalLog;
@@ -270,6 +307,106 @@ mod tests {
             diagnostic
                 .as_str()
                 .starts_with(&format!("appending to {}: ", layout.log().display())),
+            "{diagnostic}"
+        );
+    }
+
+    /// The `n`th line of a file, counting from 1.
+    fn number(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).unwrap()
+    }
+
+    #[test]
+    fn a_log_written_by_append_reads_back_line_for_line() {
+        let (_dir, layout) = workspace();
+        let mut log = LocalLog::new(&layout);
+        log.append(&built_a()).unwrap();
+        log.append(&killed_b()).unwrap();
+
+        let lines = log.lines().unwrap();
+
+        let [LogLine::Event(first), LogLine::Event(second)] = lines.as_slice() else {
+            unreachable!("two events, got {lines:?}")
+        };
+        assert_eq!(
+            canonical::to_vec(first).unwrap(),
+            canonical::to_vec(&built_a()).unwrap()
+        );
+        assert_eq!(
+            canonical::to_vec(second).unwrap(),
+            canonical::to_vec(&killed_b()).unwrap()
+        );
+    }
+
+    #[test]
+    fn a_missing_log_has_no_lines_and_is_not_created() {
+        let (_dir, layout) = workspace();
+        let log = LocalLog::new(&layout);
+
+        assert_eq!(log.lines().unwrap(), Vec::new());
+
+        assert!(!layout.log().exists());
+    }
+
+    #[test]
+    fn a_last_line_without_a_newline_is_ignored_and_kept() {
+        let (_dir, layout) = workspace();
+        let content = format!("{BUILT_A}{{\"at\":");
+        fs::write(layout.log(), &content).unwrap();
+        let log = LocalLog::new(&layout);
+
+        let lines = log.lines().unwrap();
+
+        assert!(matches!(lines.as_slice(), [LogLine::Event(_)]), "{lines:?}");
+        assert_eq!(fs::read_to_string(layout.log()).unwrap(), content);
+    }
+
+    #[test]
+    fn a_hand_edited_line_is_damaged_with_its_number() {
+        let (_dir, layout) = workspace();
+        let respelt = BUILT_A.replace("\"Built\"", "\"built\"");
+        fs::write(layout.log(), format!("{BUILT_A}not json\n{respelt}")).unwrap();
+        let log = LocalLog::new(&layout);
+
+        let lines = log.lines().unwrap();
+
+        let [LogLine::Event(_), second, third] = lines.as_slice() else {
+            unreachable!("three lines, got {lines:?}")
+        };
+        assert_eq!(*second, LogLine::Damaged { line: number(2) });
+        assert_eq!(*third, LogLine::Damaged { line: number(3) });
+    }
+
+    #[test]
+    fn reading_writes_nothing() {
+        let (_dir, layout) = workspace();
+        let mut log = LocalLog::new(&layout);
+        log.append(&built_a()).unwrap();
+        let before = fs::metadata(layout.log()).unwrap();
+
+        log.lines().unwrap();
+
+        let after = fs::metadata(layout.log()).unwrap();
+        assert_eq!(after.len(), before.len());
+        assert_eq!(after.modified().unwrap(), before.modified().unwrap());
+    }
+
+    #[test]
+    fn a_log_that_cannot_be_read_is_a_run_history_error() {
+        let (_dir, layout) = workspace();
+        fs::create_dir(layout.log()).unwrap();
+        let log = LocalLog::new(&layout);
+
+        let error = log.lines().unwrap_err();
+
+        let Error::Adapter { port, diagnostic } = error else {
+            unreachable!("an adapter error, got {error:?}")
+        };
+        assert_eq!(port, PortName::RunHistory);
+        assert!(
+            diagnostic
+                .as_str()
+                .starts_with(&format!("reading {}: ", layout.log().display())),
             "{diagnostic}"
         );
     }

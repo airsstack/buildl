@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 depends-on: [02]
 built-on: 280eda6f4573
@@ -97,3 +97,15 @@ crates/buildl/src/log/local_log.rs   — [modify] RunHistory for LocalLog; faile
 ## Proof
 
 - `cargo make dod` and `cargo deny check` green.
+
+## Review findings
+
+- nit — `lines`' doc gave one reason a last line has no newline, where the module doc gives two — `log/local_log.rs` — fixed: names an unfinished append and a run that died
+
+## Probe results
+
+- No throwaway probe: the named tests cover the read rules. Seen failing first (`lines` not found), then passing.
+
+## Deviations
+
+- None. Line numbers count from `NonZeroUsize::MIN` with `saturating_add`, so no `unwrap` outside tests.
