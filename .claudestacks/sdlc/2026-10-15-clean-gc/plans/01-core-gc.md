@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-19
 built-on: 137a1ada1042
 ---
@@ -109,8 +109,8 @@ breaks every impl, so all six change in this one commit to keep the workspace co
 **Files:**
 - Create `crates/buildl-core/src/history/logged_outputs.rs` —
   `pub(crate) fn logged_outputs(lines: &[LogLine]) -> BTreeSet<Digest>`
-- Modify `crates/buildl-core/src/history/last_run.rs` — `has_output` (`:80`) becomes `pub(super)`,
-  so both files apply the one rule
+- Modify `crates/buildl-core/src/history/last_run.rs` — `has_output` (`:80`) and `events` (`:73`)
+  become `pub(super)`, so both files apply the one rule
 - Modify `crates/buildl-core/src/history/mod.rs` — `mod logged_outputs;`,
   `pub(crate) use logged_outputs::logged_outputs;`, the Responsibilities line names it
 
@@ -217,3 +217,23 @@ Commit `test(buildl-core): prove gc over a built workspace`.
 - `cargo make guard-adapter-isolation` green (Task 2 touches `buildl` adapters).
 - `grep -rn "impl ActionCache for" crates | wc -l` equals `grep -rn "fn labels(&self)" crates | wc -l`
   minus the one declaration in `ports/action_cache.rs`.
+
+## Review findings
+
+- test-coverage — no test caught a swallowed `history.lines()` or `cache.forget` error in `gc` — `pipeline/gc.rs` — fixed: `a_history_error_removes_nothing`, `a_forget_error_removes_nothing`; `cargo test -p buildl-core --lib pipeline::gc` → `test result: ok. 10 passed; 0 failed`
+- doc — `gc`'s `# Errors` omitted a `sweep.held()` failure — `pipeline/gc.rs:51` — fixed (doc clause); `cargo make dod` → `Build Done in 13.26 seconds`
+- test-coverage — the removed-target flow did not check the kept target's file blobs — `tests/flows/gc.rs:142` — fixed: `removed.is_disjoint(&lib_files)`; `cargo test -p buildl-core --test flows gc` → `test result: ok. 3 passed; 0 failed`
+- plan hygiene — `events` also became `pub(super)` — Task 3 — plan text amended
+- plan hygiene — `Sweep` methods carry `# Errors` sections beyond spec §3.1's doc text — Task 1 — recorded under Deviations
+
+## Probe results
+
+- Six `ActionCache` impls: `grep -rn "impl ActionCache for" crates` → common.rs:297, record.rs:947, bundle.rs:109, port_set.rs:176, local_cache.rs:127, plan_text.rs:202 (6) — as the plan said.
+- `has_output` at `last_run.rs:80` as `const fn has_output(run: &LoggedRun) -> bool` — as the plan said.
+- No separate probes: every other premise is exercised by the tests each task names.
+
+## Deviations
+
+- 2026-10-20 — Task 3: `events` in `last_run.rs` also became `pub(super)`, so `logged_outputs` picks runs by the same code `last_run` uses. Plan text amended.
+- 2026-10-20 — Task 1: the two `Sweep` methods carry `# Errors` doc sections, which pedantic clippy (`missing_errors_doc`) requires; spec §3.1 shows the doc text without them.
+- 2026-10-20 — Review ran once over the whole plan (not per batch); its fix round is its own commit.

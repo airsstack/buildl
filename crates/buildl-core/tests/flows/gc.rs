@@ -9,8 +9,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
-    Argument, Collected, Command, Digest, EntryName, LiveOutput, LogLine, LoggedRun, OnFailure,
-    OutcomeClass, Pipeline, Scope, StagedItem, Timestamp, pipeline,
+    Argument, Collected, Command, ContentStore, Digest, EntryName, LiveOutput, LogLine, LoggedRun,
+    OnFailure, OutcomeClass, OutputManifest, Pipeline, Scope, StagedItem, Timestamp, pipeline,
 };
 
 use crate::common::{
@@ -73,6 +73,23 @@ fn gc(pipeline: &mut Pipeline<FakePorts>, source: &FakeSource, history: &FakeHis
     .unwrap()
 }
 
+/// The digests of the files the stored `manifests` name.
+fn named_files(cas: &impl ContentStore, manifests: &[Digest]) -> BTreeSet<Digest> {
+    let mut files = BTreeSet::new();
+    for at in manifests {
+        let bytes = cas.get(at).unwrap().unwrap();
+        match OutputManifest::from_bytes(&bytes).unwrap() {
+            OutputManifest::File(file) => {
+                files.insert(file.digest);
+            }
+            OutputManifest::Tree(tree) => {
+                files.extend(tree.entries().iter().map(|entry| entry.digest));
+            }
+        }
+    }
+    files
+}
+
 /// A run of `//:app` that printed `stdout` and `stderr`.
 fn logged(stdout: Digest, stderr: Digest) -> LogLine {
     LogLine::Event(LoggedRun {
@@ -122,6 +139,8 @@ fn gc_after_a_target_is_removed_drops_its_row_and_only_its_blobs() {
     let app_row = pipeline.ports().cache.rows[&app].clone();
     let lib_row = pipeline.ports().cache.rows[&lib].clone();
     let before = pipeline.ports().cas.digests();
+    let lib_files = named_files(&pipeline.ports().cas, lib_row.outputs());
+    assert!(!lib_files.is_empty());
     let history = FakeHistory {
         lines: vec![logged(app_row.stdout(), app_row.stderr())],
         broken: false,
@@ -149,6 +168,10 @@ fn gc_after_a_target_is_removed_drops_its_row_and_only_its_blobs() {
     );
     assert!(left.contains(&lib_row.stdout()) && left.contains(&lib_row.stderr()));
     assert!(lib_row.outputs().iter().all(|digest| left.contains(digest)));
+    assert!(
+        removed.is_disjoint(&lib_files),
+        "the files the kept target's manifests name stay"
+    );
     assert_eq!(collected.rows_dropped, 1);
     assert_eq!(collected.blobs_removed, removed.len());
     assert!(collected.bytes_removed > 0);

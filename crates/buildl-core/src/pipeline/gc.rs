@@ -51,8 +51,8 @@ pub struct Collected {
 /// # Errors
 ///
 /// Returns whatever the load returns, then whatever [`resolve`](fn@crate::resolve) returns, then
-/// the first port failure of steps 2 and 3, all before any blob is removed. A failure while
-/// removing returns at once; what was already removed stays removed.
+/// the first port failure of steps 2 and 3, then a failure of `sweep.held()` in step 4, all
+/// before any blob is removed. A failure while removing returns at once; what was already removed stays removed.
 pub fn gc<S, A, C, W, H>(
     source: &S,
     entry: &EntryName,
@@ -191,10 +191,12 @@ mod tests {
         }
     }
 
+    /// A cache of rows by label; `forget` fails when `broken`.
     struct Cache {
         rows: BTreeMap<Label, CacheRow>,
         forgotten: Vec<Label>,
         journal: Journal,
+        broken: bool,
     }
 
     impl ActionCache for Cache {
@@ -212,6 +214,9 @@ mod tests {
         }
 
         fn forget(&mut self, label: &Label) -> Result<()> {
+            if self.broken {
+                return Err(adapter(PortName::ActionCache));
+            }
             self.journal.borrow_mut().push("forget");
             self.rows.remove(label);
             self.forgotten.push(label.clone());
@@ -269,11 +274,18 @@ mod tests {
         }
     }
 
-    struct History(Vec<LogLine>);
+    /// A build log of lines; `lines` fails when `broken`.
+    struct History {
+        lines: Vec<LogLine>,
+        broken: bool,
+    }
 
     impl RunHistory for History {
         fn lines(&self) -> Result<Vec<LogLine>> {
-            Ok(self.0.clone())
+            if self.broken {
+                return Err(adapter(PortName::EventLog));
+            }
+            Ok(self.lines.clone())
         }
     }
 
@@ -359,6 +371,7 @@ mod tests {
                         .collect(),
                     forgotten: Vec::new(),
                     journal: Rc::clone(&journal),
+                    broken: false,
                 },
                 store: Store {
                     blobs: blobs.into_iter().collect(),
@@ -369,7 +382,10 @@ mod tests {
                     removed: RefCell::new(Vec::new()),
                     journal: Rc::clone(&journal),
                 },
-                history: History(Vec::new()),
+                history: History {
+                    lines: Vec::new(),
+                    broken: false,
+                },
                 journal,
             }
         }
@@ -475,7 +491,10 @@ mod tests {
                 (digest("unlogged"), 1),
             ],
         );
-        rig.history = History(vec![line]);
+        rig.history = History {
+            lines: vec![line],
+            broken: false,
+        };
         rig.run().unwrap();
         assert_eq!(rig.removed(), BTreeSet::from([digest("unlogged")]));
     }
@@ -537,6 +556,46 @@ mod tests {
             err,
             Error::Adapter {
                 port: PortName::ContentStore,
+                ..
+            }
+        ));
+        assert!(!rig.journal.borrow().contains(&"remove"));
+    }
+
+    #[test]
+    fn a_history_error_removes_nothing() {
+        let mut rig = Rig::new(
+            &["a"],
+            vec![("//:a", file_row("a"))],
+            vec![],
+            vec![(digest("x"), 1)],
+        );
+        rig.history.broken = true;
+        let err = rig.run().unwrap_err();
+        assert!(matches!(
+            err,
+            Error::Adapter {
+                port: PortName::EventLog,
+                ..
+            }
+        ));
+        assert!(!rig.journal.borrow().contains(&"remove"));
+    }
+
+    #[test]
+    fn a_forget_error_removes_nothing() {
+        let mut rig = Rig::new(
+            &["a"],
+            vec![("//:gone", file_row("gone"))],
+            vec![],
+            vec![(digest("x"), 1)],
+        );
+        rig.cache.broken = true;
+        let err = rig.run().unwrap_err();
+        assert!(matches!(
+            err,
+            Error::Adapter {
+                port: PortName::ActionCache,
                 ..
             }
         ));
