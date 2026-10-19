@@ -10,6 +10,7 @@
 //! - [`StateLock`] and [`LockError`] — one process using a state directory at a time.
 //! - [`write_whole`] and [`Access`] — a file written so that a reader finds it whole.
 //! - `clear_path` — removing whatever stands at a path.
+//! - [`Cleaned`] and `clear_out` — emptying the output directory.
 //!
 //! Non-responsibilities: what any of those files holds. Each file's format belongs to the module
 //! that keeps it.
@@ -18,11 +19,14 @@
 //! unit-test.
 
 mod clear;
+mod clear_out;
 mod layout;
 mod lock;
 mod write;
 
 pub(crate) use clear::clear_path;
+pub use clear_out::Cleaned;
+pub(crate) use clear_out::clear_out;
 pub use layout::StateLayout;
 pub use lock::{LockError, StateLock};
 pub use write::{Access, write_whole};

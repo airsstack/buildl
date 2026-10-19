@@ -7,6 +7,7 @@
 //! Responsibilities:
 //!
 //! - [`check_line`] — that the build files are sound.
+//! - [`clean_line`] — that the output directory was cleaned.
 //! - [`error_text`] — why the command failed.
 //!
 //! Non-responsibilities: writing the text anywhere; the words of an error, which are the
@@ -17,9 +18,10 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use buildl_core::json::canonical;
-use buildl_core::{Declaration, Error};
+use buildl_core::{Declaration, Directory, Error};
 
 use crate::report::paint::Paint;
+use crate::state::Cleaned;
 
 /// `count` of a thing, named by `one` for exactly one and by `many` otherwise.
 fn counted(count: usize, one: &str, many: &str) -> String {
@@ -47,6 +49,16 @@ pub fn check_line(declarations: &[Declaration]) -> String {
         counted(declarations.len(), "declaration", "declarations"),
         counted(files.len(), "build file", "build files")
     )
+}
+
+/// What `clean` says: that the output directory `out` was removed, or that it held nothing, as
+/// `clean: removed out`. Ends with a newline.
+#[must_use]
+pub fn clean_line(cleaned: &Cleaned, out: &Directory) -> String {
+    match cleaned {
+        Cleaned::Removed => format!("clean: removed {out}\n"),
+        Cleaned::Absent => format!("clean: {out} holds nothing\n"),
+    }
 }
 
 /// One evaluation's declaration on one line, or `nothing` when that evaluation had none there.
@@ -110,8 +122,26 @@ mod tests {
         NetworkAccess, Provenance, Setting, SettingName, SettingValue, Target, TargetRole,
     };
 
-    use super::{check_line, error_text};
+    use super::{check_line, clean_line, error_text};
     use crate::report::paint::Paint;
+    use crate::state::Cleaned;
+
+    #[test]
+    fn clean_line_names_the_removed_directory() {
+        let out = Directory::parse("out").unwrap();
+
+        assert_eq!(clean_line(&Cleaned::Removed, &out), "clean: removed out\n");
+    }
+
+    #[test]
+    fn clean_line_says_when_nothing_was_there() {
+        let out = Directory::parse("out").unwrap();
+
+        assert_eq!(
+            clean_line(&Cleaned::Absent, &out),
+            "clean: out holds nothing\n"
+        );
+    }
 
     /// The build file of `directory`.
     fn build_file(directory: &str) -> Provenance {

@@ -14,6 +14,7 @@
     reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
 )]
 
+mod clean_gc;
 mod common;
 mod facade;
 mod failure;

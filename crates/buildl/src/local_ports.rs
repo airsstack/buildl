@@ -15,8 +15,8 @@ use core::marker::PhantomData;
 use std::path::Path;
 
 use buildl_core::{
-    Diagnostic, EntryName, Error, Isolation, Manifest, Pipeline, PortName, PortSet, Ports,
-    Reporter, Result, Want,
+    Diagnostic, Directory, EntryName, Error, Isolation, Manifest, Pipeline, PortName, PortSet,
+    Ports, Reporter, Result, Want,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -175,6 +175,31 @@ impl Wiring {
     #[must_use]
     pub fn layout(&self) -> StateLayout {
         StateLayout::new(self.root.as_path(), &self.workspace.state)
+    }
+
+    /// The directory every output is placed under, as the manifest names it.
+    #[must_use]
+    pub const fn out(&self) -> &Directory {
+        &self.workspace.out
+    }
+
+    /// The output directory, after holding it to the ceiling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Refused`] when the output directory lies in no directory the workspace
+    /// allows a build to write into.
+    pub fn writable_out(&self) -> Result<&Directory> {
+        let out = &self.workspace.out;
+        let ceiling = &self.workspace.ceiling;
+        if !ceiling.write.iter().any(|allowed| allowed.contains(out)) {
+            return Err(Error::Refused {
+                want: Want::Write(out.clone()),
+                site: None,
+                ceiling: Box::new(ceiling.clone()),
+            });
+        }
+        Ok(out)
     }
 
     /// Takes the state directory for this process, after holding it to the ceiling.
@@ -440,6 +465,44 @@ mod tests {
         );
         // Refused before anything was made.
         assert_eq!(names(&root), ["buildl.toml"]);
+    }
+
+    #[test]
+    fn writable_out_is_refused_when_the_ceiling_does_not_allow_writing_it() {
+        let (_dir, root) = workspace("[ceiling]\nfs.write = [\".buildl\"]\n");
+        let wiring = Wiring::read(&root).unwrap();
+
+        let error = wiring.writable_out().unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                Error::Refused { want: Want::Write(directory), site: None, ceiling }
+                    if directory.as_str() == "out" && **ceiling == wiring.workspace.ceiling
+            ),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "directory out is outside the ceiling (fs.write allows: .buildl)"
+        );
+        assert_eq!(names(&root), ["buildl.toml"]);
+    }
+
+    #[test]
+    fn writable_out_is_the_output_directory_when_the_ceiling_allows_it() {
+        for manifest in [
+            "[ceiling]\nfs.write = [\"out\"]\n",
+            "[ceiling]\nfs.write = [\".\"]\n",
+        ] {
+            let (_dir, root) = workspace(manifest);
+            let wiring = Wiring::read(&root).unwrap();
+
+            let out = wiring.writable_out().unwrap();
+
+            assert_eq!(out.as_str(), "out", "{manifest:?}");
+            assert_eq!(wiring.out(), out, "{manifest:?}");
+        }
     }
 
     #[test]
