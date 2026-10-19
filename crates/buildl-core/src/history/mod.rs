@@ -18,5 +18,4 @@ mod logged_outputs;
 
 pub use last_run::LastRun;
 pub(crate) use last_run::last_run;
-#[expect(unused_imports, reason = "no caller yet")]
 pub(crate) use logged_outputs::logged_outputs;

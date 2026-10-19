@@ -17,10 +17,6 @@ use crate::types::{Digest, LogLine};
 ///
 /// That is the run [`last_run`](fn@super::last_run) would show for the label. Damaged lines, and runs
 /// missing either digest, add nothing.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "no caller outside the tests yet")
-)]
 pub(crate) fn logged_outputs(lines: &[LogLine]) -> BTreeSet<Digest> {
     let mut seen = BTreeSet::new();
     let mut digests = BTreeSet::new();
