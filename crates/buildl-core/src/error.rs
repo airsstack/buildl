@@ -580,6 +580,8 @@ pub enum PortName {
     Dispatcher,
     /// The record of the graph a build resolved.
     GraphRecord,
+    /// What lists and removes what the content store holds.
+    Sweep,
 }
 
 impl fmt::Display for PortName {
@@ -597,6 +599,7 @@ impl fmt::Display for PortName {
             Self::ExecStrategy => "exec strategy",
             Self::Dispatcher => "dispatcher",
             Self::GraphRecord => "graph record",
+            Self::Sweep => "sweep",
         })
     }
 }
@@ -1434,6 +1437,7 @@ mod tests {
             (PortName::ExecStrategy, "exec strategy"),
             (PortName::Dispatcher, "dispatcher"),
             (PortName::GraphRecord, "graph record"),
+            (PortName::Sweep, "sweep"),
         ];
         for (port, rendered) in cases {
             assert_eq!(port.to_string(), rendered);

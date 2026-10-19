@@ -123,7 +123,7 @@ pub use plan::plan;
 pub use ports::{
     ActionCache, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
     ExecStrategy, GraphRecord, Host, Manifest, PortSet, Ports, Reporter, RunHistory, StatCache,
-    ToolResolver,
+    Sweep, ToolResolver,
 };
 pub use resolve::{narrow, reach, resolve};
 pub use types::{

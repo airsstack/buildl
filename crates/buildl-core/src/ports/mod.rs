@@ -18,6 +18,7 @@
 //! - [`ContentStore`] — what actions produce, held by content and placed in the workspace.
 //! - [`EventLog`] — the record of how each target of a build ended.
 //! - [`RunHistory`] — the lines of the build log, read back.
+//! - [`Sweep`] — what the content store holds, listed and removed.
 //! - [`ExecStrategy`] — running one action in a directory of its own.
 //! - [`Dispatcher`] — having several tasks worked on at once.
 //! - [`GraphRecord`] — the graph a build resolved, kept where a later reader finds it.
@@ -48,6 +49,7 @@ pub mod port_set;
 pub mod reporter;
 pub mod run_history;
 pub mod stat_cache;
+pub mod sweep;
 pub mod tool_resolver;
 
 pub use action_cache::ActionCache;
@@ -66,4 +68,5 @@ pub use port_set::PortSet;
 pub use reporter::Reporter;
 pub use run_history::RunHistory;
 pub use stat_cache::StatCache;
+pub use sweep::Sweep;
 pub use tool_resolver::ToolResolver;
