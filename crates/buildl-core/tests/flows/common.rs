@@ -14,7 +14,7 @@ use buildl_core::{
     InputKind, InputStat, Label, LogLine, Manifest, NetworkAccess, OutcomeEvent, OutputPath,
     Platform, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory,
     SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
-    StagedSubdir, StagedTarget, StatCache, StatEntry, TargetRole, Timestamp, ToolResolver,
+    StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver,
     Workspace, Written,
 };
 use buildl_core::{ActionOutcome, Pipeline};
@@ -455,6 +455,17 @@ impl ContentStore for FakeCas {
         state.modes.insert(at.clone(), mode);
         drop(state);
         Ok(())
+    }
+}
+
+impl Sweep for FakeCas {
+    fn held(&self) -> Result<BTreeSet<Digest>> {
+        Ok(self.digests())
+    }
+
+    fn remove(&self, digest: &Digest) -> Result<u64> {
+        let removed = self.state().blobs.remove(digest);
+        Ok(removed.map_or(0, |bytes| u64::try_from(bytes.len()).unwrap_or(u64::MAX)))
     }
 }
 
