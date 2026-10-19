@@ -204,6 +204,10 @@ mod tests {
             self.0.get(label)
         }
 
+        fn labels(&self) -> Vec<Label> {
+            self.0.keys().cloned().collect()
+        }
+
         fn record(&mut self, label: Label, row: CacheRow) -> Result<()> {
             self.0.insert(label, row);
             Ok(())

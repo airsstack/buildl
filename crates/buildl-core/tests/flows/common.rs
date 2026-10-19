@@ -299,6 +299,10 @@ impl ActionCache for FakeCache {
         self.rows.get(label)
     }
 
+    fn labels(&self) -> Vec<Label> {
+        self.rows.keys().cloned().collect()
+    }
+
     fn record(&mut self, label: Label, row: CacheRow) -> Result<()> {
         if self.failing.contains(&label) {
             return Err(Error::Adapter {

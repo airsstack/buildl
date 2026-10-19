@@ -129,6 +129,10 @@ impl ActionCache for LocalCache {
         self.rows.get(label)
     }
 
+    fn labels(&self) -> Vec<Label> {
+        self.rows.keys().cloned().collect()
+    }
+
     /// Appends the row to the journal as one line, then holds it.
     ///
     /// The row is kept once this returns `Ok`: its line has been handed to the system. After an
@@ -285,6 +289,26 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn labels_lists_rows_after_open_record_and_forget() {
+        let (_dir, layout) = workspace();
+        let b = Label::parse("//b:x").unwrap();
+        let a = Label::parse("//a:y").unwrap();
+        let mut cache = LocalCache::open(&layout).unwrap();
+        assert_eq!(cache.labels(), Vec::<Label>::new());
+
+        cache.record(b.clone(), row("x")).unwrap();
+        cache.record(a.clone(), row("y")).unwrap();
+        assert_eq!(cache.labels(), [a.clone(), b.clone()]);
+
+        cache.forget(&a).unwrap();
+        assert_eq!(cache.labels(), std::slice::from_ref(&b));
+
+        drop(cache);
+        let reopened = LocalCache::open(&layout).unwrap();
+        assert_eq!(reopened.labels(), [b]);
     }
 
     #[test]
