@@ -4,7 +4,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use buildl_core::{
@@ -44,8 +44,8 @@ pub enum FakeFile {
 pub struct FakeSource {
     first: BTreeMap<Directory, FakeFile>,
     second: Option<BTreeMap<Directory, FakeFile>>,
-    root_evaluations: Cell<u32>,
-    evaluated: RefCell<Vec<Directory>>,
+    root_evaluations: AtomicU32,
+    evaluated: Mutex<Vec<Directory>>,
 }
 
 impl FakeSource {
@@ -55,8 +55,8 @@ impl FakeSource {
         Self {
             first: files,
             second: None,
-            root_evaluations: Cell::new(0),
-            evaluated: RefCell::new(Vec::new()),
+            root_evaluations: AtomicU32::new(0),
+            evaluated: Mutex::new(Vec::new()),
         }
     }
 
@@ -70,15 +70,18 @@ impl FakeSource {
         Self {
             first,
             second: Some(second),
-            root_evaluations: Cell::new(0),
-            evaluated: RefCell::new(Vec::new()),
+            root_evaluations: AtomicU32::new(0),
+            evaluated: Mutex::new(Vec::new()),
         }
     }
 
     /// Every directory evaluated so far, in evaluation order.
     #[must_use]
     pub fn evaluated(&self) -> Vec<Directory> {
-        self.evaluated.borrow().clone()
+        self.evaluated
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -86,11 +89,14 @@ impl DeclarationSource for FakeSource {
     fn evaluate(&self, file: &BuildFile) -> Result<Evaluated> {
         let directory = file.directory();
         if directory.is_root() {
-            self.root_evaluations.set(self.root_evaluations.get() + 1);
+            self.root_evaluations.fetch_add(1, Ordering::SeqCst);
         }
-        self.evaluated.borrow_mut().push(directory.clone());
+        self.evaluated
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(directory.clone());
         let files = match &self.second {
-            Some(second) if self.root_evaluations.get() > 1 => second,
+            Some(second) if self.root_evaluations.load(Ordering::SeqCst) > 1 => second,
             _ => &self.first,
         };
         match files.get(directory) {
