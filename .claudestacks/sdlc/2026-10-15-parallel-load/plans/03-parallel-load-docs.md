@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-19
 depends-on: [02]
 built-on: 62323287dd81
@@ -98,3 +98,28 @@ CLAUDE.md                              — [modify] Status
 
 - `cargo make dod` and `cargo deny check` green.
 - `git diff --stat` touches only the five files above.
+
+## Review findings
+
+One reviewer pass over `4e524f0`: Proof greps hold, every § cited resolves, each changed sentence
+checked against the code, DoD and `cargo deny check` green. No blocking finding.
+
+| # | Tier | Finding | Disposition |
+|---|---|---|---|
+| 1 | 🔵 | architecture §3.1: `LostBuildFiles` condition broader than the code (replay error and dispatcher `Err` come first) | fixed: "returns success, the replay met no error" |
+| 2 | 🔵 | architecture §4 row: "in order" unnamed | fixed: "in directory order" |
+| 3 | 🔵 | design.md:57 "execution the parallel back phase" reads as serial Load | fixed: both phases run on the worker pool |
+| 4 | 🔵 | design §8.1 "same workers as actions" — same count, not same threads | fixed: "through the same dispatcher … up to `[execution] workers` at once" |
+| 5 | 🔵 | README status omits parallel loading from roadmap item 2 | fixed |
+| 6 | 🔵 | `thread_pool.rs` module doc: the only place a thread "that runs an action" starts | fixed: "that runs a task" |
+| 7 | 🔵 | spec §5 names design §4's `workers` row; the plan changed the lead sentence (no meaning column) | declined — recorded in this plan's Task 1 when written; the spec's intent (design §4 says workers serve Load) holds |
+
+## Probe results
+
+- The anchors' line numbers had moved after the clean-gc chain's documents task; each was
+  re-grepped. The `pipeline::gc` sentence already named its `Dispatcher`.
+
+## Deviations
+
+- The fix round touched `crates/buildl/src/dispatch/thread_pool.rs` (module doc only), outside
+  this plan's five files; it describes this chain's own code.

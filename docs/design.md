@@ -54,7 +54,7 @@ The line between the two subgraphs is airsl's boundary. Everything the declarati
 Consequences of the split:
 
 - **Declaration is safe on untrusted input.** The declaration engine holds no grant at all. Its one filesystem read, source globbing, is done host-side by `b.sources()` (§5) and confined to the declaring directory.
-- **Parallelism lives where it works.** One Lua state cannot execute in parallel; a Rust worker pool can. Evaluation is the cheap front phase, execution the parallel back phase.
+- **Parallelism lives where it works.** One Lua state cannot execute in parallel; a Rust worker pool can. Evaluation is the cheap front phase and execution the expensive back phase; each runs on the worker pool, one Lua state per build file.
 - **Resource ceilings become a feature.** A build file that loops forever is stopped by airsl's instruction ceiling in the declaration phase, before it can waste anyone's time.
 
 ## 3. Workspace layout and artifacts
@@ -237,7 +237,7 @@ flowchart TD
     CALLS -. "subdir(dir) enqueues a directory" .-> Q
 ```
 
-Every staged declaration carries provenance (the file that made it), which later phases use for attributable errors. Load evaluates build files on the same workers as actions, each file with its own engine — `Engine` is `Send + Sync`.
+Every staged declaration carries provenance (the file that made it), which later phases use for attributable errors. Load evaluates build files through the same dispatcher as actions, up to `[execution] workers` at once, each file with its own engine — `Engine` is `Send + Sync`.
 
 ### 8.2 Resolve
 
