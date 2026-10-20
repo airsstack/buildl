@@ -209,7 +209,7 @@ flowchart TD
 |`buildl build [target]...`|Record|the full pipeline|
 |`buildl watch [target]`|loops|persistent process, re-plans on file change|
 |`buildl test [target]...`|Record|run test targets and what they need|
-|`buildl clean` / `gc`|—|drop outputs; prune the cas|
+|`buildl clean` / `gc`|—|`clean` removes `out/`, and the next build puts the outputs back from the cas; `gc` drops the cache rows of undeclared targets and removes the blobs no kept row and no newest logged run names|
 |`buildl log <target> [--stdout \| --stderr]`|log + cas|show what a target printed when it last ran (§8.7)|
 |`buildl query <expr>`|Resolve|graph queries: `deps()`, `rdeps()` (§10.2, §10.3, §11.1)|
 |`buildl doctor`|—|print the effective ceiling, grants, workers|
@@ -300,7 +300,7 @@ stateDiagram-v2
     Rec --> [*]
 ```
 
-The ordering is the consistency story: **a cache row is written only after its outputs exist in the cas.** An interrupted build means some finished work is remembered and unfinished work is not; the next run re-plans and continues. For a build that is interrupted — stopped, killed, or ended with its terminal — no "corrupt cache, run clean" state is representable: every state file and every blob is renamed into place whole, and a row follows its content. The same holds for removing a row: a failure under the key a row was recorded under forgets that row, and the forgetting is durable before the target's log line, as a recorded row is. Nothing is synced to disk, so that does not cover the machine itself dying mid-build; the remedy then is to remove `.buildl/` and `out/` and build again. The hash-into-cas step also yields early cutoff: a byte-identical rebuilt output leaves downstream action keys unchanged, so dependents stay clean.
+The ordering is the consistency story: **a cache row is written only after its outputs exist in the cas.** An interrupted build means some finished work is remembered and unfinished work is not; the next run re-plans and continues. For a build that is interrupted — stopped, killed, or ended with its terminal — no "corrupt cache, run clean" state is representable: every state file and every blob is renamed into place whole, and a row follows its content. The same holds for removing a row: a failure under the key a row was recorded under forgets that row, and the forgetting is durable before the target's log line, as a recorded row is. Nothing is synced to disk, so that does not cover the machine itself dying mid-build; the remedy then is to remove `.buildl/` and `out/` and build again. `gc` keeps the same order: it forgets rows before it removes any blob, so a `gc` that is interrupted leaves extra blobs, never a row naming a missing one. The hash-into-cas step also yields early cutoff: a byte-identical rebuilt output leaves downstream action keys unchanged, so dependents stay clean.
 
 Where an action writes depends on the tier. At tier 1 it runs in the workspace root and writes its outputs in place under `out/`; what it left there is then hashed into the cas and placed again from the cas, so a finished output is always a link into the store or a copy of it. An action that fails or is interrupted can leave a partial output at its path: no cache row names it, nothing reads it as a result, and the next build clears the path before it runs the action again (§12.2). From tier 2 an action writes in a directory of its own, and nothing partial reaches `out/`.
 

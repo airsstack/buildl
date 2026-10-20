@@ -107,7 +107,7 @@ graph TD
     LUA["[Component: crate] buildl-lua<br/>implements DeclarationSource<br/>airsl Engine per build file<br/>buildl HostModule bound as a global"]
     subgraph CORE["[Component: crate] buildl-core — no I/O, no Lua, no threads"]
         DATA["domain data<br/>Label, Digest, NodeId, Provenance<br/>Declaration, TargetGraph, Plan<br/>KeyComponents, ActionKey<br/>ActionOutcome, OutcomeClass"]
-        PORTS["ports — traits<br/>DeclarationSource, Manifest, Host<br/>Digester, StatCache, ToolResolver<br/>ContentStore, ActionCache, EventLog<br/>RunHistory, ExecStrategy, Dispatcher<br/>Clock, GraphRecord, Reporter<br/>later: Approver"]
+        PORTS["ports — traits<br/>DeclarationSource, Manifest, Host<br/>Digester, StatCache, ToolResolver<br/>ContentStore, ActionCache, EventLog<br/>RunHistory, Sweep, ExecStrategy, Dispatcher<br/>Clock, GraphRecord, Reporter<br/>later: Approver"]
         LOGIC["pure logic<br/>load, resolve, plan, grants<br/>Schedule, record<br/>canonical JSON"]
     end
     AIRSL["[External crate] airsl<br/>Engine, Policy, HostModule"]
@@ -139,7 +139,7 @@ Inside `buildl` there is one module per adapter, two shared modules that impleme
 |`host`|the OS, the architecture, environment values|`Host`|
 |`digest`|what stands at an input's path, and file hashing on rayon|`Digester`|
 |`tools`|a program's lookup and its fingerprint|`ToolResolver`|
-|`cas`|`.buildl/cas`, and the files placed under `out/`|`ContentStore`|
+|`cas`|`.buildl/cas`, and the files placed under `out/`; listed and pruned through `Sweep`|`ContentStore` and `Sweep`|
 |`cache`|`cache.json` and `cache.journal`|`ActionCache`|
 |`log`|`log.jsonl`, appended to and read back|`EventLog` and `RunHistory`|
 |`statcache`|`statcache.json`|`StatCache`|
@@ -245,7 +245,9 @@ pub trait ContentStore: Send + Sync {
 /// `Ok`; after `Err` the cache holds what it held before the call.
 pub trait ActionCache {
     fn row(&self, label: &Label) -> Option<&CacheRow>;
+    fn labels(&self) -> Vec<Label>;
     fn record(&mut self, label: Label, row: CacheRow) -> Result<()>;
+    fn forget(&mut self, label: &Label) -> Result<()>;
 }
 
 pub trait EventLog {
@@ -255,6 +257,13 @@ pub trait EventLog {
 /// The reading side of the log: its lines, oldest first, each an event or a damaged line.
 pub trait RunHistory {
     fn lines(&self) -> Result<Vec<LogLine>>;
+}
+
+/// Listing and removing what the cas holds, apart from `ContentStore` so a build cannot
+/// remove what it stored; `Ports` does not carry it.
+pub trait Sweep {
+    fn held(&self) -> Result<BTreeSet<Digest>>;
+    fn remove(&self, digest: &Digest) -> Result<u64>;
 }
 
 /// When the command starts, the directory that will contain each declared output
@@ -422,11 +431,11 @@ classDiagram
 |last_run|`[LogLine]` and a `Label` → the newest run of the label that stored both its output digests, the class of each newer line that stored none, and the damaged lines; or `Error::NoRun`, suggesting the nearest label that has a run|—|
 |canonical JSON|value → sorted-key bytes; those bytes, and no others, → the value|—|
 
-`Pipeline` strings these together, one method per command. `plan` and `build` take a `Scope` and narrow between Resolve and Plan, with `Purpose::Build`; `test` does the same with `Purpose::Test` and takes a `Rerun` too. `build` and `test` also record the whole graph through `GraphRecord` before they narrow. `check`, `graph` and `query` read only the source of build files, so each also exists as a free function, `pipeline::check`, `pipeline::graph` and `pipeline::query`, for a caller that holds a `DeclarationSource` and nothing else: a command that reads only build files then needs no state directory, takes no lock and is not stopped by a state file. `log` is a free function over its own two ports, `pipeline::log` over `RunHistory` and `ContentStore`: it runs `last_run` over the log's lines, reads the run's two blobs, and takes no lock and no `DeclarationSource`, so it reads no build file.
+`Pipeline` strings these together, one method per command. `plan` and `build` take a `Scope` and narrow between Resolve and Plan, with `Purpose::Build`; `test` does the same with `Purpose::Test` and takes a `Rerun` too. `build` and `test` also record the whole graph through `GraphRecord` before they narrow. `check`, `graph` and `query` read only the source of build files, so each also exists as a free function, `pipeline::check`, `pipeline::graph` and `pipeline::query`, for a caller that holds a `DeclarationSource` and nothing else: a command that reads only build files then needs no state directory, takes no lock and is not stopped by a state file. `gc` is a free function too, `pipeline::gc`, over a `DeclarationSource`, a `Dispatcher`, an `ActionCache`, a `ContentStore`, a `Sweep` and a `RunHistory`; it loads the build files once, as `build` does, and builds nothing. `log` is a free function over its own two ports, `pipeline::log` over `RunHistory` and `ContentStore`: it runs `last_run` over the log's lines, reads the run's two blobs, and takes no lock and no `DeclarationSource`, so it reads no build file.
 
 ## 6. Port catalog
 
-"Since" is the item of design §13 an adapter arrives with; item 1 is built, and so is each item-2 row listed here (today `RunHistory`); a row with a later item describes what is designed.
+"Since" is the item of design §13 an adapter arrives with; item 1 is built, and so is each item-2 row listed here (today `RunHistory` and `Sweep`); a row with a later item describes what is designed.
 
 |Port|`buildl-core` uses it for|v1 adapter|Crate|Since|
 |---|---|---|---|---|
@@ -437,9 +446,10 @@ classDiagram
 |`StatCache`|reusing digests on unchanged mtime + size|`.buildl/statcache.json`, keyed by path; keeps an entry only for a file modified more than 2 s before the run began, and discards a file it cannot read back|`buildl`|1|
 |`ToolResolver`|tool fingerprints in the key|`PATH` lookup + content hash|`buildl`|1|
 |`ContentStore`|the cas: storing a blob, asking whether one is held, reading a held one back (an output's manifest), clearing an output's path under `out/` — before the output is placed, and again when it cannot be placed whole — and making a stored blob a file there, runnable or not|`.buildl/cas/ab/…`, temp file then rename, nothing synced; read-only blobs, with an executable twin `….x` beside a blob that was placed executable; hard links into `out/` where a write through a read-only file is refused, copies elsewhere|`buildl`|1|
-|`ActionCache`|cache rows: reading the last build's, recording one durably for each target that was built, and forgetting one durably when a failure under its key contradicts it|`.buildl/cache.json`, written by the canonical serializer and read back by the canonical reader, with `.buildl/cache.journal`: one appended line per recorded row, or per forgotten one, folded into the snapshot once per build|`buildl`|1|
+|`ActionCache`|cache rows: reading the last build's, listing the labels that have one, recording one durably for each target that was built, and forgetting one durably when a failure under its key contradicts it|`.buildl/cache.json`, written by the canonical serializer and read back by the canonical reader, with `.buildl/cache.journal`: one appended line per recorded row, or per forgotten one, folded into the snapshot once per build|`buildl`|1|
 |`EventLog`|one event per outcome|`.buildl/log.jsonl`, appended to across builds|`buildl`|1|
 |`RunHistory`|the log's lines, oldest first, each an event or a damaged line|`.buildl/log.jsonl`, read only: never created, cut or written; a last line without a newline is left out|`buildl`|2|
+|`Sweep`|the cas, listed and pruned: every digest it holds a blob or a twin for, and removing the blob and twin of one digest, answering the bytes they took. Kept apart from `ContentStore` and out of `Ports`, so a build cannot remove what it stored|the same `.buildl/cas` that `LocalCas` stores into: `held` lists the digests of its blobs and twins, `remove` unlinks both|`buildl`|2|
 |`ExecStrategy`|running one action, started with each output's containing directory in place and nothing at the output's own path, handing over what it prints as it prints when asked to, then reporting what the action left at each output path — a file, a directory with everything below it, or neither — and storing every regular file of it|`Bare` (tier 1)|`buildl`|1|
 |`ExecStrategy`|the same, with undeclared inputs absent|`InputSandbox` (tier 2)|`buildl`|3|
 |`Dispatcher`|running ready actions in parallel, and carrying what a running action says to the scheduling thread|std scoped threads + `mpsc`, started as tasks need them|`buildl`|1|
@@ -502,6 +512,7 @@ The fakes live in `buildl-core`'s integration tests (`crates/buildl-core/tests/f
 |`ActionCache`|rows held in memory, with labels it can be told to fail on; it also keeps the labels it forgot, and can be told to fail a forget|a filesystem|
 |`EventLog`|the events appended, and whether to fail|a filesystem|
 |`RunHistory`|the lines it was handed, and whether to fail|a filesystem|
+|`Sweep`|digests it holds, each with a size, recording what it removes; it can be told to fail|a filesystem|
 |`ExecStrategy`|scripted per label: how the action exits, what it prints, and what is at each output — a file, one that may be run, a directory of files and of things that are not, a symbolic link, something special, or nothing|process spawning|
 |`Dispatcher`|inline, on the test thread, taking the oldest or the newest waiting task first; tasks it can be told to lose, unrun or run with the result dropped|threads; results are deterministic|
 |`Clock`|a counter, one tick per read|wall-clock time|
@@ -598,7 +609,7 @@ Once published, the ports are a semver contract:
 |Source globbing|**Host-side in `buildl-lua`**|`b.sources()` walks with `globset` and `walkdir`, so the declaration engine holds no grant and `airsstack.glob.walk` is refused; sorting, symlink policy and the containment check are buildl's, in one place. The directories the walk stays out of are a required argument of `LuaSource::new`, so a source cannot be built without them, and the composition root gives it the manifest's output and state directories: the skip list is the adapter's configuration, not part of the port, so `buildl-lua` reads no manifest.|
 |Diagram notation|**Mermaid `graph` with C4 element labels**|Renders wherever the other documents' Mermaid renders; Mermaid's dedicated C4 syntax is marked experimental.|
 |Re-exporting the core|**`pub use buildl_core;` — the crate under its own name, `buildl::buildl_core`**|`pub use buildl_core as core` is unusable: in a crate root that also names `core::fmt` it is `error[E0432]: unresolved import core::fmt`, and a downstream crate that glob-imports the re-export and names `core::fmt` gets `error[E0659]: core is ambiguous`. A third name would invent vocabulary. The facade `buildl::Workspace` and the manifest value `buildl::buildl_core::Workspace` stay apart.|
-|When ports are wired|**Per `plan`, `build` or `test` call; a source of build files alone for `check`, `graph` and `query`**|`Pipeline` needs every port, and a command that reads only build files must not need, lock or be stopped by a state file: a corrupt `cache.json` does not stop `check`. The state lock is held for one call, so an embedder that keeps a `Workspace` open does not hold the directory while idle.|
+|When ports are wired|**Per `plan`, `build`, `test` or `gc` call; a source of build files alone for `check`, `graph` and `query`; none for `clean`**|`Pipeline` needs every port, and a command that reads only build files must not need, lock or be stopped by a state file: a corrupt `cache.json` does not stop `check`. The state lock is held for one call, so an embedder that keeps a `Workspace` open does not hold the directory while idle.|
 |Who owns the reporter|**The caller: `Workspace::build` is lent `&mut R` for one build**|Only `build` reports, and an embedder supplies its own reporter. `LocalPorts<R>` is generic over it, and `&mut R` is a `Reporter` when `R` is, so the bundle needs no bound beyond that.|
 |Tools in tests|**System tools by argv; no compiled helper, no published kit of fakes**|Cargo sets `CARGO_BIN_EXE_<name>` only for integration tests of the package that owns the binary, so a helper would cost the published `buildl` crate a `[[bin]]` or a feature, or the workspace a fifth member (§9).|
 |Adapter isolation|**Checked by `cargo make guard-adapter-isolation`**|Thirteen adapter modules in one crate is where a cross-import slips in. What they share lives in `state` and `search_path`, which implement no port (§7 rule 2).|
