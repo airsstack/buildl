@@ -8,6 +8,7 @@ pub mod common;
 
 mod build;
 mod check;
+mod gc;
 mod graph;
 mod load;
 mod log;

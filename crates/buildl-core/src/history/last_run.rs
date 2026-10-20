@@ -70,14 +70,14 @@ pub(crate) fn last_run(lines: &[LogLine], label: &Label) -> Result<LastRun> {
     })
 }
 
-fn events(lines: &[LogLine]) -> impl DoubleEndedIterator<Item = &LoggedRun> {
+pub(super) fn events(lines: &[LogLine]) -> impl DoubleEndedIterator<Item = &LoggedRun> {
     lines.iter().filter_map(|line| match line {
         LogLine::Event(run) => Some(run),
         LogLine::Damaged { .. } => None,
     })
 }
 
-const fn has_output(run: &LoggedRun) -> bool {
+pub(super) const fn has_output(run: &LoggedRun) -> bool {
     run.stdout.is_some() && run.stderr.is_some()
 }
 

@@ -22,6 +22,8 @@
 //! - [`query_text`] — the answer to a query as lines for a person.
 //! - [`graph_dot`] — a target graph as Graphviz DOT.
 //! - [`check_line`] — what a check of the build files says when they are sound.
+//! - [`clean_line`] — what cleaning the output directory says.
+//! - [`gc_line`] — what collecting the store says.
 //! - [`error_text`] — an error as a command shows it.
 //! - [`utc`] — an instant as `YYYY-MM-DD HH:MM:SS UTC`.
 //! - [`header`] — the line that heads a last run.
@@ -46,7 +48,7 @@ mod terminal;
 pub use block::{block, command_text, summary_line, test_line, trailer};
 pub use dot::graph_dot;
 pub use log_text::{damage, header, utc};
-pub use message::{check_line, error_text};
+pub use message::{check_line, clean_line, error_text, gc_line};
 pub use paint::Paint;
 pub use plan_text::plan_text;
 pub use query_text::query_text;

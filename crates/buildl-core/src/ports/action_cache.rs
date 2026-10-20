@@ -21,6 +21,9 @@ pub trait ActionCache {
     /// the one [`record`](ActionCache::record) last stored.
     fn row(&self, label: &Label) -> Option<&CacheRow>;
 
+    /// Every label with a row, in label order.
+    fn labels(&self) -> Vec<Label>;
+
     /// Stores `row` durably as the row of the target `label` names.
     ///
     /// One call writes one row, and the row is kept once the call has returned `Ok`: a build

@@ -111,6 +111,10 @@ use crate::ports::{
 ///         None
 ///     }
 ///
+///     fn labels(&self) -> Vec<Label> {
+///         Vec::new()
+///     }
+///
 ///     fn record(&mut self, _label: Label, _row: CacheRow) -> Result<()> {
 ///         Err(nothing(PortName::ActionCache))
 ///     }

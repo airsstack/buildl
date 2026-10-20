@@ -4,7 +4,7 @@
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use buildl_core::{
@@ -14,7 +14,7 @@ use buildl_core::{
     InputKind, InputStat, Label, LogLine, Manifest, NetworkAccess, OutcomeEvent, OutputPath,
     Platform, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory,
     SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
-    StagedSubdir, StagedTarget, StatCache, StatEntry, TargetRole, Timestamp, ToolResolver,
+    StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver,
     Workspace, Written,
 };
 use buildl_core::{ActionOutcome, Pipeline};
@@ -44,8 +44,8 @@ pub enum FakeFile {
 pub struct FakeSource {
     first: BTreeMap<Directory, FakeFile>,
     second: Option<BTreeMap<Directory, FakeFile>>,
-    root_evaluations: Cell<u32>,
-    evaluated: RefCell<Vec<Directory>>,
+    root_evaluations: AtomicU32,
+    evaluated: Mutex<Vec<Directory>>,
 }
 
 impl FakeSource {
@@ -55,8 +55,8 @@ impl FakeSource {
         Self {
             first: files,
             second: None,
-            root_evaluations: Cell::new(0),
-            evaluated: RefCell::new(Vec::new()),
+            root_evaluations: AtomicU32::new(0),
+            evaluated: Mutex::new(Vec::new()),
         }
     }
 
@@ -70,15 +70,18 @@ impl FakeSource {
         Self {
             first,
             second: Some(second),
-            root_evaluations: Cell::new(0),
-            evaluated: RefCell::new(Vec::new()),
+            root_evaluations: AtomicU32::new(0),
+            evaluated: Mutex::new(Vec::new()),
         }
     }
 
     /// Every directory evaluated so far, in evaluation order.
     #[must_use]
     pub fn evaluated(&self) -> Vec<Directory> {
-        self.evaluated.borrow().clone()
+        self.evaluated
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 }
 
@@ -86,11 +89,14 @@ impl DeclarationSource for FakeSource {
     fn evaluate(&self, file: &BuildFile) -> Result<Evaluated> {
         let directory = file.directory();
         if directory.is_root() {
-            self.root_evaluations.set(self.root_evaluations.get() + 1);
+            self.root_evaluations.fetch_add(1, Ordering::SeqCst);
         }
-        self.evaluated.borrow_mut().push(directory.clone());
+        self.evaluated
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(directory.clone());
         let files = match &self.second {
-            Some(second) if self.root_evaluations.get() > 1 => second,
+            Some(second) if self.root_evaluations.load(Ordering::SeqCst) > 1 => second,
             _ => &self.first,
         };
         match files.get(directory) {
@@ -299,6 +305,10 @@ impl ActionCache for FakeCache {
         self.rows.get(label)
     }
 
+    fn labels(&self) -> Vec<Label> {
+        self.rows.keys().cloned().collect()
+    }
+
     fn record(&mut self, label: Label, row: CacheRow) -> Result<()> {
         if self.failing.contains(&label) {
             return Err(Error::Adapter {
@@ -451,6 +461,17 @@ impl ContentStore for FakeCas {
         state.modes.insert(at.clone(), mode);
         drop(state);
         Ok(())
+    }
+}
+
+impl Sweep for FakeCas {
+    fn held(&self) -> Result<BTreeSet<Digest>> {
+        Ok(self.digests())
+    }
+
+    fn remove(&self, digest: &Digest) -> Result<u64> {
+        let removed = self.state().blobs.remove(digest);
+        Ok(removed.map_or(0, |bytes| u64::try_from(bytes.len()).unwrap_or(u64::MAX)))
     }
 }
 
@@ -1408,7 +1429,7 @@ mod tests {
         let targets = names.iter().map(|name| target(name, &[])).collect();
         let source = FakeSource::new(workspace(vec![("", file(targets, &[]))]));
         let entry = EntryName::parse("build.lua").unwrap();
-        resolve(load(&source, &entry).unwrap()).unwrap()
+        resolve(load(&source, &mut FakeDispatcher::default(), &entry).unwrap()).unwrap()
     }
 
     #[test]

@@ -118,12 +118,12 @@ pub use error::{
 pub use execute::execute;
 pub use history::LastRun;
 pub use load::load;
-pub use pipeline::{Pipeline, Shown, log};
+pub use pipeline::{Collected, Pipeline, Shown, gc, log};
 pub use plan::plan;
 pub use ports::{
     ActionCache, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
     ExecStrategy, GraphRecord, Host, Manifest, PortSet, Ports, Reporter, RunHistory, StatCache,
-    ToolResolver,
+    Sweep, ToolResolver,
 };
 pub use resolve::{narrow, reach, resolve};
 pub use types::{

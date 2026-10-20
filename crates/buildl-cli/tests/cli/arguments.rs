@@ -129,6 +129,8 @@ fn help_names_every_command_and_flag() {
             "  build  Build targets and what they need\n",
             "  test   Run test targets and what they need\n",
             "  log    Show what a target printed when it last ran\n",
+            "  clean  Remove the output directory\n",
+            "  gc     Drop rows of targets no longer declared and remove what nothing needs\n",
             "  help   Print this message or the help of the given subcommand(s)\n",
             "\n",
             "Options:\n",
@@ -347,6 +349,8 @@ fn no_command_prints_the_short_help_on_stderr() {
             "  build  Build targets and what they need\n",
             "  test   Run test targets and what they need\n",
             "  log    Show what a target printed when it last ran\n",
+            "  clean  Remove the output directory\n",
+            "  gc     Drop rows of targets no longer declared and remove what nothing needs\n",
             "  help   Print this message or the help of the given subcommand(s)\n",
             "\n",
             "Options:\n",
@@ -595,6 +599,17 @@ fn the_workspace_is_found_from_a_subdirectory() {
         stderr(&bare),
         "error: target //:words was asked for but is not declared\n"
     );
+}
+
+#[test]
+fn clean_and_gc_take_no_arguments() {
+    for command in ["clean", "gc"] {
+        let said = refused(&[command, "x"]);
+        assert!(
+            said.starts_with("error: unexpected argument 'x' found\n"),
+            "{command}: {said}"
+        );
+    }
 }
 
 #[test]

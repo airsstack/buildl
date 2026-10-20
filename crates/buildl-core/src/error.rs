@@ -374,6 +374,15 @@ pub enum Error {
         /// The targets without an outcome. Never empty; in label order.
         targets: Vec<Label>,
     },
+    /// The dispatcher returned success and left build files unevaluated: it lost a task, or the
+    /// result of one.
+    ///
+    /// The load's counterpart of [`Error::DispatcherFault`], naming directories, not targets.
+    #[error("{}", lost_build_files(.directories))]
+    LostBuildFiles {
+        /// The directories whose build file was not evaluated. Never empty; in directory order.
+        directories: Vec<Directory>,
+    },
     /// An adapter could not do what a port asked of it.
     #[error("{port}: {diagnostic}")]
     Adapter {
@@ -388,6 +397,17 @@ pub enum Error {
         /// What is wrong with the list.
         fault: TreeFault,
     },
+}
+
+/// A lost load as one sentence naming the port at fault and the directories whose build file it
+/// left unevaluated, the workspace root shown as `//`.
+fn lost_build_files(directories: &[Directory]) -> String {
+    let shown: Vec<String> = directories.iter().map(|d| format!("//{d}")).collect();
+    format!(
+        "{}: returned without evaluating the build files of {}",
+        PortName::Dispatcher,
+        shown.join(", ")
+    )
 }
 
 /// A dispatcher fault as one sentence naming the port at fault and the targets it left without
@@ -580,6 +600,8 @@ pub enum PortName {
     Dispatcher,
     /// The record of the graph a build resolved.
     GraphRecord,
+    /// What lists and removes what the content store holds.
+    Sweep,
 }
 
 impl fmt::Display for PortName {
@@ -597,6 +619,7 @@ impl fmt::Display for PortName {
             Self::ExecStrategy => "exec strategy",
             Self::Dispatcher => "dispatcher",
             Self::GraphRecord => "graph record",
+            Self::Sweep => "sweep",
         })
     }
 }
@@ -1420,6 +1443,17 @@ mod tests {
     }
 
     #[test]
+    fn lost_build_files_names_each_directory() {
+        let lost = Error::LostBuildFiles {
+            directories: vec![Directory::root(), Directory::parse("lib").unwrap()],
+        };
+        assert_eq!(
+            lost.to_string(),
+            "dispatcher: returned without evaluating the build files of //, //lib"
+        );
+    }
+
+    #[test]
     fn every_port_name_renders_a_human_phrase() {
         let cases = [
             (PortName::Manifest, "manifest"),
@@ -1434,6 +1468,7 @@ mod tests {
             (PortName::ExecStrategy, "exec strategy"),
             (PortName::Dispatcher, "dispatcher"),
             (PortName::GraphRecord, "graph record"),
+            (PortName::Sweep, "sweep"),
         ];
         for (port, rendered) in cases {
             assert_eq!(port.to_string(), rendered);

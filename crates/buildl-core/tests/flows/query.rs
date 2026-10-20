@@ -11,7 +11,9 @@ use buildl_core::{
     Direction, EntryName, Error, Label, Pipeline, Query, StagedItem, Written, pipeline,
 };
 
-use crate::common::{FakePorts, FakeSource, alias, file, ports, target_with, workspace};
+use crate::common::{
+    FakeDispatcher, FakePorts, FakeSource, alias, file, ports, target_with, workspace,
+};
 
 fn entry() -> EntryName {
     EntryName::parse("build.lua").unwrap()
@@ -61,7 +63,13 @@ fn deps_answer_what_a_target_needs_across_build_files() {
     let source = fixture();
     let expected = labels(&["//:main.o", "//lib:text"]);
     for start in ["//:app", "//:default"] {
-        let answer = pipeline::query(&source, &entry(), &asked(Direction::Deps, start)).unwrap();
+        let answer = pipeline::query(
+            &source,
+            &mut FakeDispatcher::default(),
+            &entry(),
+            &asked(Direction::Deps, start),
+        )
+        .unwrap();
         assert_eq!(answer, expected, "deps({start})");
     }
 }
@@ -69,18 +77,35 @@ fn deps_answer_what_a_target_needs_across_build_files() {
 #[test]
 fn rdeps_answer_what_needs_a_target_across_build_files() {
     let source = fixture();
-    let answer =
-        pipeline::query(&source, &entry(), &asked(Direction::Rdeps, "//lib:text")).unwrap();
+    let answer = pipeline::query(
+        &source,
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &asked(Direction::Rdeps, "//lib:text"),
+    )
+    .unwrap();
     assert_eq!(answer, labels(&["//:app"]));
 
-    let answer = pipeline::query(&source, &entry(), &asked(Direction::Rdeps, "//:app")).unwrap();
+    let answer = pipeline::query(
+        &source,
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &asked(Direction::Rdeps, "//:app"),
+    )
+    .unwrap();
     assert_eq!(answer, labels(&[]));
 }
 
 #[test]
 fn a_pipeline_answers_what_the_free_function_answers() {
     let question = asked(Direction::Rdeps, "//:main.o");
-    let free = pipeline::query(&fixture(), &entry(), &question).unwrap();
+    let free = pipeline::query(
+        &fixture(),
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &question,
+    )
+    .unwrap();
     let method = Pipeline::<FakePorts>::new(ports(fixture()))
         .query(&entry(), &question)
         .unwrap();
@@ -90,8 +115,13 @@ fn a_pipeline_answers_what_the_free_function_answers() {
 
 #[test]
 fn a_target_naming_nothing_is_refused_with_the_nearest_one() {
-    let error =
-        pipeline::query(&fixture(), &entry(), &asked(Direction::Deps, "//lib:txt")).unwrap_err();
+    let error = pipeline::query(
+        &fixture(),
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &asked(Direction::Deps, "//lib:txt"),
+    )
+    .unwrap_err();
     match error {
         Error::UnknownTarget { label, suggestion } => {
             assert_eq!(label.to_string(), "//lib:txt");
@@ -104,7 +134,13 @@ fn a_target_naming_nothing_is_refused_with_the_nearest_one() {
 #[test]
 fn a_missing_build_file_stops_the_query_before_it_is_answered() {
     let source = FakeSource::new(workspace(vec![("", file(root_items(), &["lib"]))]));
-    let error = pipeline::query(&source, &entry(), &asked(Direction::Deps, "//:app")).unwrap_err();
+    let error = pipeline::query(
+        &source,
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &asked(Direction::Deps, "//:app"),
+    )
+    .unwrap_err();
     assert!(
         matches!(error, Error::MissingBuildFile { .. }),
         "expected MissingBuildFile, got {error:?}"

@@ -18,6 +18,8 @@ use crate::types::{BuildFile, Evaluated};
 /// An implementation reports a missing file as [`Evaluated::Absent`] rather than as an error:
 /// what a missing file means depends on who asked for it, which only the caller knows.
 ///
+/// `Sync` because several build files are evaluated at once, each on the thread that took it.
+///
 /// # Examples
 ///
 /// An implementation needs nothing but this crate's public API:
@@ -55,7 +57,7 @@ use crate::types::{BuildFile, Evaluated};
 /// assert_eq!(RootOnly.evaluate(&lib)?, Evaluated::Absent);
 /// # Ok::<(), buildl_core::Error>(())
 /// ```
-pub trait DeclarationSource {
+pub trait DeclarationSource: Sync {
     /// Evaluates `file`.
     ///
     /// # Errors

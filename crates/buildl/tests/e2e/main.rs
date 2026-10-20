@@ -14,6 +14,7 @@
     reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
 )]
 
+mod clean_gc;
 mod common;
 mod facade;
 mod failure;
@@ -21,5 +22,6 @@ mod identical;
 mod incremental;
 mod log;
 mod named;
+mod parallel_load;
 mod recovery;
 mod test;

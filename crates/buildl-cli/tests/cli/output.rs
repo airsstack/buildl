@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
-use crate::common::{append, code, manifest, program, run, stderr, stdout, workspace};
+use crate::common::{append, code, manifest, program, run, stderr, stdout, workspace, write};
 
 /// The root build file of the workspace.
 const BUILD: &str = r#"local b = buildl
@@ -561,4 +561,74 @@ fn test_rerun_line() {
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "");
     assert_eq!(stderr(&output), "tests (rerun): 1 passed\n");
+}
+
+/// A workspace of two targets, `//:hello` and `//:quiet` that needs it, not built.
+fn pair() -> (tempfile::TempDir, PathBuf) {
+    workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        (
+            "build.lua",
+            "buildl.target(\"hello\", { inputs = { \"hello.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\nbuildl.target(\"quiet\", { deps = { \"hello\" }, run = { \"cp\", \"$deps\", \"$out\" } })\n",
+        ),
+        ("hello.txt", "hello\n"),
+    ])
+}
+
+/// Whether `line` is what `gc` says after dropping one row: a count of blobs and a count of
+/// bytes it removed, each in the plural or the singular, and a newline.
+fn is_gc_line(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix("gc: dropped 1 row, removed ") else {
+        return false;
+    };
+    let Some(rest) = rest
+        .strip_suffix(" bytes)\n")
+        .or_else(|| rest.strip_suffix(" byte)\n"))
+    else {
+        return false;
+    };
+    let Some((blobs, bytes)) = rest.split_once(" (") else {
+        return false;
+    };
+    let digits = |text: &str| !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit());
+    blobs
+        .strip_suffix(" blobs")
+        .or_else(|| blobs.strip_suffix(" blob"))
+        .is_some_and(digits)
+        && digits(bytes)
+}
+
+#[test]
+fn clean_says_it_removed_out_and_prints_nothing_on_stdout() {
+    let (_dir, root) = pair();
+    assert_eq!(code(&run(&root, &["build"], &[])), 0);
+    let output = run(&root, &["clean"], &[]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "clean: removed out\n");
+    assert!(!root.join("out").exists());
+}
+
+#[test]
+fn clean_without_out_says_it_holds_nothing() {
+    let (_dir, root) = pair();
+    let output = run(&root, &["clean"], &[]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(stderr(&output), "clean: out holds nothing\n");
+}
+
+#[test]
+fn gc_reports_rows_blobs_and_bytes() {
+    let (_dir, root) = pair();
+    assert_eq!(code(&run(&root, &["build"], &[])), 0);
+    write(
+        &root,
+        "build.lua",
+        "buildl.target(\"hello\", { inputs = { \"hello.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+    );
+    let output = run(&root, &["gc"], &[]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(stdout(&output), "");
+    assert!(is_gc_line(&stderr(&output)), "{}", stderr(&output));
 }

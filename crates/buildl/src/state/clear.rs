@@ -4,7 +4,7 @@
 //! found there: `remove_file` fails on a directory and `remove_dir_all` fails on a file, each
 //! with a different error on each system. One function looks first, so no caller guesses.
 //!
-//! Responsibilities: [`clear_path`].
+//! Responsibilities: [`clear_path`] and `clear_found`.
 //!
 //! Non-responsibilities: deciding what may be removed. A caller hands over a path it owns.
 
@@ -23,19 +23,31 @@ use std::path::Path;
 ///
 /// Returns the I/O error of looking at `path` or of removing what is there.
 pub(crate) fn clear_path(path: &Path) -> io::Result<()> {
+    clear_found(path).map(drop)
+}
+
+/// As [`clear_path`], and says whether anything stood at `path`: `true` when something was
+/// removed, `false` when nothing was there. The answer comes from the one look that decides what
+/// to remove.
+///
+/// # Errors
+///
+/// Returns the I/O error of looking at `path` or of removing what is there.
+pub(crate) fn clear_found(path: &Path) -> io::Result<bool> {
     let found = match fs::symlink_metadata(path) {
         Ok(found) => found,
         // A parent that is a file holds nothing either.
         Err(error) if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
-            return Ok(());
+            return Ok(false);
         }
         Err(error) => return Err(error),
     };
     if found.is_dir() {
-        fs::remove_dir_all(path)
+        fs::remove_dir_all(path)?;
     } else {
-        fs::remove_file(path)
+        fs::remove_file(path)?;
     }
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -49,7 +61,7 @@ mod tests {
     use std::os::unix::fs::{MetadataExt, PermissionsExt, symlink};
     use std::path::Path;
 
-    use super::clear_path;
+    use super::{clear_found, clear_path};
 
     /// A file at `path` holding `bytes`, which nobody may write to.
     fn read_only(path: &Path, bytes: &[u8]) {
@@ -111,5 +123,17 @@ mod tests {
         let left = fs::metadata(&blob).unwrap();
         assert_eq!(left.nlink(), 1);
         assert_eq!(left.permissions().mode() & 0o777, 0o444);
+    }
+
+    #[test]
+    fn clear_found_says_whether_anything_stood_there() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        fs::write(root.join("file"), b"bytes").unwrap();
+
+        assert!(clear_found(&root.join("file")).unwrap());
+        assert!(!root.join("file").exists());
+        assert!(!clear_found(&root.join("file")).unwrap());
+        assert!(!clear_found(&root.join("absent").join("below")).unwrap());
     }
 }

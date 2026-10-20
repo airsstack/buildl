@@ -4,18 +4,20 @@
 //! the bytes in hand, nothing a build does removes a held file that is sound, and a file of the
 //! workspace never lets a write reach the store.
 //!
-//! Responsibilities: [`LocalCas`] and its [`ContentStore`] implementation.
+//! Responsibilities: [`LocalCas`] and its [`ContentStore`] and [`Sweep`] implementations.
 //!
-//! Non-responsibilities: where a digest's files are, which `BlobPath` decides; and deciding
-//! what is stored, cleared or placed, which the build does.
+//! Non-responsibilities: where a digest's files are, which `BlobPath` decides; deciding what is
+//! stored, cleared or placed, which the build does; and deciding what is still wanted, which
+//! the caller of [`Sweep`] does.
 
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use buildl_core::{
-    ContentStore, Diagnostic, Digest, Error, FileMode, OutputPath, PortName, Result,
+    ContentStore, Diagnostic, Digest, Error, FileMode, OutputPath, PortName, Result, Sweep,
 };
 
 use crate::cas::blob::BlobPath;
@@ -64,6 +66,37 @@ fn twin_differs(twin: &Path, bytes: &[u8]) -> bool {
     match fs::read(twin) {
         Ok(held) => held != bytes,
         Err(error) => error.kind() != ErrorKind::NotFound,
+    }
+}
+
+/// The sweep's failure doing `what` to `path`.
+fn swept(what: &str, path: &Path, error: &io::Error) -> Error {
+    Error::Adapter {
+        port: PortName::Sweep,
+        diagnostic: Diagnostic::new(format!("{what} {}: {error}", path.display())),
+    }
+}
+
+/// The directory entries of `path`, or none where it is missing.
+fn entries_of(path: &Path) -> Result<Vec<fs::DirEntry>> {
+    let listing = match fs::read_dir(path) {
+        Ok(listing) => listing,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(swept("listing", path, &error)),
+    };
+    listing
+        .map(|entry| entry.map_err(|error| swept("listing", path, &error)))
+        .collect()
+}
+
+/// The bytes of the file at `path`; none held is 0.
+fn size_of(path: &Path) -> Result<u64> {
+    match fs::symlink_metadata(path) {
+        Ok(found) => Ok(found.len()),
+        Err(error) if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
+            Ok(0)
+        }
+        Err(error) => Err(swept("examining", path, &error)),
     }
 }
 
@@ -273,6 +306,55 @@ impl ContentStore for LocalCas {
     }
 }
 
+impl Sweep for LocalCas {
+    /// Every digest named by a file below a two-character directory of the store.
+    ///
+    /// A shard directory and a file name together spell a digest, the name with or without the
+    /// `.x` of a twin. The staging directory, and any name that does not spell one, is not the
+    /// store's content and is left out.
+    fn held(&self) -> Result<BTreeSet<Digest>> {
+        let mut held = BTreeSet::new();
+        for shard in entries_of(&self.blobs)? {
+            let shard_name = shard.file_name();
+            let Some(prefix) = shard_name.to_str().filter(|name| name.len() == 2) else {
+                continue;
+            };
+            let is_directory = shard
+                .file_type()
+                .map_err(|error| swept("examining", &shard.path(), &error))?
+                .is_dir();
+            if !is_directory {
+                continue;
+            }
+            for entry in entries_of(&shard.path())? {
+                let file_name = entry.file_name();
+                let Some(name) = file_name.to_str() else {
+                    continue;
+                };
+                let rest = name.strip_suffix(".x").unwrap_or(name);
+                if let Ok(digest) = Digest::from_hex(&format!("{prefix}{rest}")) {
+                    held.insert(digest);
+                }
+            }
+        }
+        Ok(held)
+    }
+
+    /// Removes the blob and the twin of `digest`, leaving their shard directory.
+    fn remove(&self, digest: &Digest) -> Result<u64> {
+        let paths = BlobPath::of(&self.blobs, digest);
+        let mut freed = 0_u64;
+        for path in [
+            paths.for_mode(FileMode::Plain),
+            paths.for_mode(FileMode::Executable),
+        ] {
+            freed = freed.saturating_add(size_of(path)?);
+            clear_path(path).map_err(|error| swept("removing", path, &error))?;
+        }
+        Ok(freed)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -289,6 +371,7 @@ mod tests {
 
     use buildl_core::{
         ContentStore, Digest, Directory, Error, FileMode, Label, OutputName, OutputPath, PortName,
+        Sweep,
     };
 
     use super::LocalCas;
@@ -381,6 +464,94 @@ mod tests {
     /// How many entries the store's staging directory holds.
     fn staged(root: &Path) -> usize {
         fs::read_dir(root.join(".buildl/cas/tmp")).unwrap().count()
+    }
+
+    /// The blob and the twin of `digest`, below the workspace root.
+    fn files_of(root: &Path, digest: &Digest) -> (PathBuf, PathBuf) {
+        let paths = BlobPath::of(&root.join(".buildl/cas"), digest);
+        (
+            paths.for_mode(FileMode::Plain).to_path_buf(),
+            paths.for_mode(FileMode::Executable).to_path_buf(),
+        )
+    }
+
+    #[test]
+    fn held_lists_blob_only_twin_only_and_both() {
+        let (_dir, root, cas) = store();
+        let blob_only = cas.put(b"blob only").unwrap();
+        let twin_only = cas.put(b"twin only").unwrap();
+        let both = cas.put(b"both").unwrap();
+        cas.place(&twin_only, FileMode::Executable, &at("a"))
+            .unwrap();
+        cas.place(&both, FileMode::Executable, &at("b")).unwrap();
+        fs::remove_file(files_of(&root, &twin_only).0).unwrap();
+
+        let mut expected = vec![blob_only, twin_only, both];
+        expected.sort();
+
+        assert_eq!(
+            Sweep::held(&cas).unwrap().into_iter().collect::<Vec<_>>(),
+            expected
+        );
+    }
+
+    #[test]
+    fn held_ignores_tmp_and_foreign_names() {
+        let (_dir, root, cas) = store();
+        let cas_dir = root.join(".buildl/cas");
+        fs::create_dir_all(cas_dir.join("tmp")).unwrap();
+        fs::create_dir_all(cas_dir.join("zz")).unwrap();
+        fs::create_dir_all(cas_dir.join("ab")).unwrap();
+        let strays = [
+            cas_dir.join("tmp/2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"),
+            cas_dir.join("zz/notes"),
+            cas_dir.join("ab/short"),
+        ];
+        for stray in &strays {
+            fs::write(stray, b"stray").unwrap();
+        }
+
+        assert!(Sweep::held(&cas).unwrap().is_empty());
+
+        for stray in &strays {
+            assert!(stray.is_file(), "{}", stray.display());
+        }
+    }
+
+    #[test]
+    fn held_is_empty_without_a_cas_directory() {
+        let (_dir, root, cas) = store();
+
+        assert!(Sweep::held(&cas).unwrap().is_empty());
+
+        assert!(!root.join(".buildl").exists());
+    }
+
+    #[test]
+    fn remove_deletes_both_names_and_returns_their_bytes() {
+        let (_dir, root, cas) = store();
+        let digest = cas.put(b"hello").unwrap();
+        cas.place(&digest, FileMode::Executable, &at("tool"))
+            .unwrap();
+        let (blob, twin) = files_of(&root, &digest);
+
+        assert_eq!(Sweep::remove(&cas, &digest).unwrap(), 10);
+
+        assert!(!blob.exists());
+        assert!(!twin.exists());
+        assert!(blob.parent().unwrap().is_dir());
+        assert!(Sweep::held(&cas).unwrap().is_empty());
+    }
+
+    #[test]
+    fn remove_of_an_absent_digest_returns_zero() {
+        let (_dir, _root, cas) = store();
+        assert_eq!(Sweep::remove(&cas, &Digest::of(b"hello")).unwrap(), 0);
+
+        // The same once the store's directories exist.
+        cas.put(b"other").unwrap();
+        assert_eq!(Sweep::remove(&cas, &Digest::of(b"hello")).unwrap(), 0);
+        assert!(cas.contains(&Digest::of(b"other")));
     }
 
     #[test]

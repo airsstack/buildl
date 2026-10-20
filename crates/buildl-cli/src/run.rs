@@ -22,8 +22,8 @@ use buildl::Workspace;
 use buildl::buildl_core::json::canonical;
 use buildl::buildl_core::{Error, Scope};
 use buildl::report::{
-    Mode, Paint, Report, TerminalReporter, check_line, damage, error_text, graph_dot, header,
-    plan_text, query_text,
+    Mode, Paint, Report, TerminalReporter, check_line, clean_line, damage, error_text, gc_line,
+    graph_dot, header, plan_text, query_text,
 };
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
@@ -106,6 +106,8 @@ where
         Command::Build(args) => build(&start, args, terminal.mode(), paint, stderr),
         Command::Test(args) => test(&start, args, terminal.mode(), paint, stderr),
         Command::Log(args) => log(&start, &args, stdout, stderr),
+        Command::Clean => clean(&start, stderr),
+        Command::Gc => gc(&start, stderr),
     };
     match ended {
         Ok(exit) => exit,
@@ -174,6 +176,23 @@ fn scope(workspace: &Workspace, targets: &[String]) -> Result<Scope, clap::Error
 fn check<E: Write>(start: &Path, stderr: &mut E) -> Result<Exit, Stop> {
     let declarations = Workspace::open(start)?.check()?;
     let _ = stderr.write_all(check_line(&declarations).as_bytes());
+    Ok(Exit::Success)
+}
+
+/// `clean`: removes the output directory, and says on `stderr` that it did or that it held
+/// nothing.
+fn clean<E: Write>(start: &Path, stderr: &mut E) -> Result<Exit, Stop> {
+    let workspace = Workspace::open(start)?;
+    let cleaned = workspace.clean()?;
+    let _ = stderr.write_all(clean_line(&cleaned, workspace.out()).as_bytes());
+    Ok(Exit::Success)
+}
+
+/// `gc`: drops the cache rows of targets no longer declared and removes what nothing needs, and
+/// says on `stderr` how many rows, blobs and bytes that was.
+fn gc<E: Write>(start: &Path, stderr: &mut E) -> Result<Exit, Stop> {
+    let collected = Workspace::open(start)?.gc()?;
+    let _ = stderr.write_all(gc_line(&collected).as_bytes());
     Ok(Exit::Success)
 }
 

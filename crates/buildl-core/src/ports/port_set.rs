@@ -178,6 +178,10 @@ mod tests {
             None
         }
 
+        fn labels(&self) -> Vec<Label> {
+            Vec::new()
+        }
+
         fn record(&mut self, _label: Label, _row: CacheRow) -> Result<()> {
             Ok(())
         }

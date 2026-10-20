@@ -14,20 +14,24 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 use buildl_core::{
-    ActionOutcome, Declaration, Directory, Label, LiveOutput, OnFailure, Pipeline, Plan, Query,
-    Reporter, Rerun, Result, Scope, SettingName, SettingValue, Shown, TargetGraph, pipeline,
+    ActionOutcome, Collected, Declaration, Diagnostic, Directory, Error, Label, LiveOutput,
+    OnFailure, Pipeline, Plan, PortName, Query, Reporter, Rerun, Result, Scope, SettingName,
+    SettingValue, Shown, TargetGraph, pipeline,
 };
 
+use crate::cache::LocalCache;
 use crate::cas::LocalCas;
 use crate::local_ports::Wiring;
 use crate::log::LocalLog;
 use crate::report::Silent;
+use crate::state::{Cleaned, clear_out};
 
 /// A workspace wired with the real adapters.
 ///
 /// Opening one reads its manifest and nothing else. The state directory is taken by
-/// [`Workspace::plan`], [`Workspace::build`] and [`Workspace::test`] only, and only while one
-/// of them runs, so a workspace kept open holds nothing while it is idle.
+/// [`Workspace::plan`], [`Workspace::build`], [`Workspace::test`], [`Workspace::gc`] and
+/// [`Workspace::clean`] only, and only while one of them runs, so a workspace kept open holds
+/// nothing while it is idle.
 /// [`Workspace::check`], [`Workspace::graph`], [`Workspace::query`] and [`Workspace::log`]
 /// hold nothing even while they run.
 #[derive(Debug)]
@@ -53,6 +57,12 @@ impl Workspace {
     #[must_use]
     pub fn root(&self) -> &Path {
         self.wiring.root().as_path()
+    }
+
+    /// The directory every output is placed under, relative to the root.
+    #[must_use]
+    pub const fn out(&self) -> &Directory {
+        self.wiring.out()
     }
 
     /// A target as a person names it: `//dir:name`, or `:name` / `name` in the directory the
@@ -93,7 +103,11 @@ impl Workspace {
     ///
     /// Returns whatever [`pipeline::check`] returns.
     pub fn check(&self) -> Result<Vec<Declaration>> {
-        pipeline::check(&self.wiring.source(), self.wiring.entry())
+        pipeline::check(
+            &self.wiring.source(),
+            &mut self.wiring.dispatcher(),
+            self.wiring.entry(),
+        )
     }
 
     /// Evaluates every build file once and resolves the declarations into the target graph.
@@ -104,7 +118,11 @@ impl Workspace {
     ///
     /// Returns whatever [`pipeline::graph`] returns.
     pub fn graph(&self) -> Result<TargetGraph> {
-        pipeline::graph(&self.wiring.source(), self.wiring.entry())
+        pipeline::graph(
+            &self.wiring.source(),
+            &mut self.wiring.dispatcher(),
+            self.wiring.entry(),
+        )
     }
 
     /// Evaluates every build file once and answers `query`: the targets it reaches, in label
@@ -116,7 +134,12 @@ impl Workspace {
     ///
     /// Returns whatever [`pipeline::query`] returns.
     pub fn query(&self, query: &Query) -> Result<BTreeSet<Label>> {
-        pipeline::query(&self.wiring.source(), self.wiring.entry(), query)
+        pipeline::query(
+            &self.wiring.source(),
+            &mut self.wiring.dispatcher(),
+            self.wiring.entry(),
+            query,
+        )
     }
 
     /// The newest logged run of `label` that stored its output, with what it printed read back
@@ -192,6 +215,75 @@ impl Workspace {
         // The adapters are let go before the lock that kept the directory theirs.
         drop(pipeline);
         concluded(built, folded)
+    }
+
+    /// Removes the output directory and everything below it.
+    ///
+    /// Holds the state directory while it runs, and sweeps the staging leftovers of an
+    /// interrupted run as taking it does. The action cache, the content store and the log are
+    /// left whole, so a build after it places every output from the store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Refused`](buildl_core::Error::Refused) when the output directory or the
+    /// state directory is outside what the workspace allows a build to write into; nothing has
+    /// been made or removed then. Returns [`Error::Adapter`](buildl_core::Error::Adapter),
+    /// naming [`PortName::ActionCache`](buildl_core::PortName::ActionCache), when another
+    /// process holds the workspace, and naming
+    /// [`PortName::ContentStore`](buildl_core::PortName::ContentStore) when the output
+    /// directory cannot be removed.
+    pub fn clean(&self) -> Result<Cleaned> {
+        let out = self.wiring.writable_out()?;
+        let _lock = self.wiring.lock()?;
+        clear_out(self.wiring.root().as_path(), out).map_err(|error| Error::Adapter {
+            port: PortName::ContentStore,
+            diagnostic: Diagnostic::new(format!(
+                "{}: {error}",
+                self.wiring.root().as_path().join(out.as_str()).display()
+            )),
+        })
+    }
+
+    /// Drops the cache rows of targets the build files no longer declare, then removes every
+    /// blob in the content store that no remaining row and no logged run still reads, and the
+    /// staging leftovers of an interrupted run.
+    ///
+    /// Holds the state directory while it runs, and folds the rows it forgot into the action
+    /// cache before the directory is let go, as [`Workspace::build`] does. Nothing is built,
+    /// and the output directory and the log are left whole.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Adapter`](buildl_core::Error::Adapter), naming
+    /// [`PortName::ActionCache`](buildl_core::PortName::ActionCache), when another process
+    /// holds the workspace; [`Error::Refused`](buildl_core::Error::Refused) when the state
+    /// directory is outside what the workspace allows a build to write into. Otherwise returns
+    /// whatever making the adapters returns, then whatever
+    /// [`pipeline::gc`](fn@pipeline::gc) returns: the store is left whole when the build files
+    /// fail to load. A `gc` that succeeded and whose rows could not be folded returns the
+    /// fold's error.
+    pub fn gc(&self) -> Result<Collected> {
+        let lock = self.wiring.lock()?;
+        let layout = lock.layout();
+        let mut cache = LocalCache::open(layout)?;
+        let cas = LocalCas::new(self.wiring.root().as_path(), layout);
+        let log = LocalLog::new(layout);
+        let collected = pipeline::gc(
+            &self.wiring.source(),
+            &mut self.wiring.dispatcher(),
+            self.wiring.entry(),
+            &mut cache,
+            &cas,
+            &cas,
+            &log,
+        );
+        let folded = cache.fold();
+        // The adapters are let go before the lock that kept the directory theirs.
+        drop(cache);
+        drop(cas);
+        drop(log);
+        drop(lock);
+        concluded(collected, folded)
     }
 
     /// Runs the tests `scope` asks for, every test when it asks for the workspace, telling
@@ -693,6 +785,49 @@ mod tests {
     }
 
     #[test]
+    fn clean_is_refused_before_the_lock_when_the_ceiling_leaves_out_the_output_directory() {
+        let manifest = BARE.replace("\"out\", \".buildl\"", "\".buildl\"");
+        let (_dir, root) = workspace(&[
+            ("buildl.toml", &manifest),
+            ("build.lua", COPY),
+            ("a.txt", "a\n"),
+        ]);
+        fs::create_dir(root.join("out")).unwrap();
+        let workspace = Workspace::open(&root).unwrap();
+
+        let error = workspace.clean().unwrap_err();
+
+        assert!(
+            matches!(&error, Error::Refused { want: Want::Write(directory), site: None, .. } if directory.as_str() == "out"),
+            "{error:?}"
+        );
+        assert!(!root.join(".buildl").exists());
+        assert!(root.join("out").is_dir());
+    }
+
+    #[test]
+    fn clean_is_refused_while_another_buildl_holds_the_workspace() {
+        let (_dir, root) = copying();
+        fs::create_dir(root.join("out")).unwrap();
+        let workspace = Workspace::open(&root).unwrap();
+        let _held = workspace.wiring.lock().unwrap();
+
+        let error = workspace.clean().unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                Error::Adapter {
+                    port: PortName::ActionCache,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        assert!(root.join("out").is_dir());
+    }
+
+    #[test]
     fn concluded_returns_the_builds_error_before_the_folds() {
         let both: Result<()> = concluded(Err(failure("the build")), Err(failure("the fold")));
         assert_eq!(both.unwrap_err().to_string(), "action cache: the build");
@@ -727,6 +862,45 @@ mod tests {
             fs::read_to_string(root.join(".buildl/cache.json"))
                 .unwrap()
                 .starts_with("{\"//:copy\":{")
+        );
+    }
+
+    #[test]
+    fn gc_folds_the_rows_it_forgot_and_removes_the_journal() {
+        let (_dir, root) = copying();
+        let workspace = Workspace::open(&root).unwrap();
+        build(&workspace).unwrap();
+        fs::write(root.join("build.lua"), "").unwrap();
+
+        let collected = workspace.gc().unwrap();
+
+        assert_eq!(collected.rows_dropped, 1);
+        assert!(collected.blobs_removed > 0);
+        assert!(
+            !fs::read_to_string(root.join(".buildl/cache.json"))
+                .unwrap()
+                .contains("//:copy")
+        );
+        assert!(!root.join(".buildl/cache.journal").exists());
+    }
+
+    #[test]
+    fn gc_is_refused_while_another_buildl_holds_the_workspace() {
+        let (_dir, root) = copying();
+        let workspace = Workspace::open(&root).unwrap();
+        let _held = workspace.wiring.lock().unwrap();
+
+        let error = workspace.gc().unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                Error::Adapter {
+                    port: PortName::ActionCache,
+                    ..
+                }
+            ),
+            "{error:?}"
         );
     }
 

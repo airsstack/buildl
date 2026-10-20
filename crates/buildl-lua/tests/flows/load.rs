@@ -8,7 +8,7 @@ use buildl_core::{
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
-use crate::common::fixture;
+use crate::common::{InlineDispatcher, fixture};
 
 fn command(arguments: &[&str]) -> Command {
     Command::new(
@@ -56,7 +56,12 @@ fn target(
 #[test]
 fn load_turns_a_real_workspace_into_declarations() {
     let source = LuaSource::new(fixture("workspace"), DeclarationLimits::default(), []);
-    let declarations = load(&source, &EntryName::parse("build.lua").unwrap()).unwrap();
+    let declarations = load(
+        &source,
+        &mut InlineDispatcher,
+        &EntryName::parse("build.lua").unwrap(),
+    )
+    .unwrap();
     let expected = vec![
         target(
             "build.lua",

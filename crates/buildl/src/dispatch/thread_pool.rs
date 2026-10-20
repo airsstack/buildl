@@ -1,6 +1,6 @@
 //! A pool of worker threads that lives for one dispatch.
 //!
-//! Its own file because it is the only place in the crate where a thread that runs an action is
+//! Its own file because it is the only place in the crate where a thread that runs a task is
 //! started. The threads are scoped: what a task borrows — the strategy, the store, the clock —
 //! only has to live as long as the dispatch, and every worker has ended when the dispatch
 //! returns.

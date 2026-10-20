@@ -5,20 +5,26 @@
     reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
 )]
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use buildl_core::{
-    DeclarationField, Declared, EntryName, Error, EvaluationFailure, EvaluationLimit, json, load,
+    Declaration, DeclarationField, Declared, Diagnostic, Direction, Directory, Dispatcher,
+    EntryName, Error, EvaluationFailure, EvaluationLimit, Label, LiveOutput, OnFailure, Pipeline,
+    PortName, Query, Scope, Turn, json, load, pipeline,
 };
 
-use crate::common::{FakeFile, FakeSource, dir, file, setting, target, workspace};
+use crate::common::{
+    FakeDispatcher, FakeFile, FakeHistory, FakePorts, FakeSource, Loss, Order, Pace, dir, file,
+    root_only, setting, target, workspace,
+};
 
 fn entry() -> EntryName {
     EntryName::parse("build.lua").unwrap()
 }
 
 fn names(source: &FakeSource) -> Vec<String> {
-    load(source, &entry())
+    load(source, &mut FakeDispatcher::default(), &entry())
         .unwrap()
         .iter()
         .map(|declaration| match declaration.item() {
@@ -81,8 +87,13 @@ fn a_shuffled_file_loads_to_byte_identical_canonical_json() {
         ("x", file(vec![], &[])),
         ("y", file(vec![], &[])),
     ]));
-    let a = json::canonical::to_vec(&load(&ordered, &entry()).unwrap()).unwrap();
-    let b = json::canonical::to_vec(&load(&shuffled, &entry()).unwrap()).unwrap();
+    let a =
+        json::canonical::to_vec(&load(&ordered, &mut FakeDispatcher::default(), &entry()).unwrap())
+            .unwrap();
+    let b = json::canonical::to_vec(
+        &load(&shuffled, &mut FakeDispatcher::default(), &entry()).unwrap(),
+    )
+    .unwrap();
     assert_eq!(a, b);
 }
 
@@ -95,7 +106,7 @@ fn a_directory_requested_twice_is_evaluated_once() {
         ("a", file(vec![], &["x"])),
         ("a/x", file(vec![], &[])),
     ]));
-    load(&source, &entry()).unwrap();
+    load(&source, &mut FakeDispatcher::default(), &entry()).unwrap();
     assert_eq!(source.evaluated(), [dir(""), dir("a"), dir("a/x")]);
 }
 
@@ -106,7 +117,7 @@ fn a_subdir_cannot_leave_the_workspace() {
             ("", file(vec![], &["lib"])),
             ("lib", file(vec![], &[escape])),
         ]));
-        match load(&source, &entry()).unwrap_err() {
+        match load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err() {
             Error::InvalidDeclaration {
                 provenance, field, ..
             } => {
@@ -121,7 +132,7 @@ fn a_subdir_cannot_leave_the_workspace() {
 #[test]
 fn a_missing_root_names_no_requester() {
     let source = FakeSource::new(workspace(vec![]));
-    match load(&source, &entry()).unwrap_err() {
+    match load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err() {
         Error::MissingBuildFile {
             directory,
             requested_by,
@@ -136,7 +147,7 @@ fn a_missing_root_names_no_requester() {
 #[test]
 fn a_missing_subdir_names_the_file_that_requested_it() {
     let source = FakeSource::new(workspace(vec![("", file(vec![], &["lib"]))]));
-    let error = load(&source, &entry()).unwrap_err();
+    let error = load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err();
     assert_eq!(
         error.to_string(),
         "no build file in //lib (requested by build.lua)"
@@ -153,7 +164,7 @@ fn the_requester_of_a_shared_missing_directory_does_not_depend_on_call_order() {
             ("a", file(vec![], &["b/c"])),
             ("a/b", file(vec![], &["c"])),
         ]));
-        let error = load(&source, &entry()).unwrap_err();
+        let error = load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err();
         assert_eq!(
             error.to_string(),
             "no build file in //a/b/c (requested by a/build.lua)"
@@ -170,7 +181,7 @@ fn an_evaluation_failure_passes_through_unchanged() {
         ("", file(vec![], &["lib"])),
         ("lib", FakeFile::Fails(failure.clone())),
     ]));
-    match load(&source, &entry()).unwrap_err() {
+    match load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err() {
         Error::Evaluation {
             provenance,
             failure: found,
@@ -181,4 +192,230 @@ fn an_evaluation_failure_passes_through_unchanged() {
         }
         other => unreachable!("expected Evaluation, got {other:?}"),
     }
+}
+
+/// Every way the fake dispatcher can order and pace the tasks it is handed.
+fn dispatchers() -> Vec<FakeDispatcher> {
+    let mut all = Vec::new();
+    for order in [Order::OldestFirst, Order::NewestFirst] {
+        for pace in [Pace::OneAtATime, Pace::Together] {
+            all.push(FakeDispatcher {
+                order,
+                pace,
+                ..FakeDispatcher::default()
+            });
+        }
+    }
+    all
+}
+
+const fn failing(limit: EvaluationLimit) -> FakeFile {
+    FakeFile::Fails(EvaluationFailure::LimitReached { limit })
+}
+
+/// Seven directories at two depths.
+fn wide() -> BTreeMap<Directory, FakeFile> {
+    workspace(vec![
+        (
+            "",
+            file(
+                vec![target("app", &["//lib/core:base"])],
+                &["tools", "lib", "app"],
+            ),
+        ),
+        ("lib", file(vec![target("lib", &[])], &["util", "core"])),
+        ("lib/core", file(vec![target("base", &[])], &[])),
+        ("lib/util", file(vec![setting("mode")], &[])),
+        ("app", file(vec![target("ui", &[])], &["view"])),
+        ("app/view", file(vec![target("page", &["//app:ui"])], &[])),
+        ("tools", file(vec![target("gen", &[])], &[])),
+    ])
+}
+
+#[test]
+fn every_order_and_pace_loads_the_same_declarations() {
+    let expected: Vec<Declaration> = load(
+        &FakeSource::new(wide()),
+        &mut FakeDispatcher::default(),
+        &entry(),
+    )
+    .unwrap();
+    assert_eq!(expected.len(), 7);
+    for mut dispatcher in dispatchers() {
+        let how = format!("{:?} {:?}", dispatcher.order, dispatcher.pace);
+        let source = FakeSource::new(wide());
+        let found = load(&source, &mut dispatcher, &entry()).unwrap();
+        assert_eq!(found, expected, "{how}");
+        assert_eq!(source.evaluated().len(), 7, "{how}: every file, once");
+    }
+}
+
+#[test]
+fn every_order_and_pace_reports_the_same_error() {
+    // `lib/core` and `app/view` fail, and `tools/gen` is missing; each is reached through a
+    // parent that loads, so the error reported is the dispatcher's to choose unless results are
+    // taken in serial order.
+    let files = || {
+        workspace(vec![
+            ("", file(vec![target("app", &[])], &["tools", "lib", "app"])),
+            ("lib", file(vec![], &["core", "util"])),
+            ("lib/core", failing(EvaluationLimit::Staging)),
+            ("lib/util", file(vec![], &[])),
+            ("app", file(vec![], &["view"])),
+            ("app/view", failing(EvaluationLimit::Memory)),
+            ("tools", file(vec![], &["gen"])),
+        ])
+    };
+    let failure = |dispatcher: &mut FakeDispatcher| {
+        let error = load(&FakeSource::new(files()), dispatcher, &entry()).unwrap_err();
+        (error.to_string(), format!("{error:?}"))
+    };
+    let expected = failure(&mut FakeDispatcher::default());
+    for mut dispatcher in dispatchers() {
+        let how = format!("{:?} {:?}", dispatcher.order, dispatcher.pace);
+        assert_eq!(failure(&mut dispatcher), expected, "{how}");
+    }
+}
+
+#[test]
+fn a_task_taken_after_the_error_evaluates_nothing() {
+    let source = FakeSource::new(workspace(vec![
+        ("", file(vec![], &["a", "b", "c"])),
+        ("a", failing(EvaluationLimit::Staging)),
+        ("b", file(vec![], &[])),
+        ("c", file(vec![], &[])),
+    ]));
+    match load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err() {
+        Error::Evaluation { provenance, .. } => {
+            assert_eq!(provenance.file(), Path::new("a/build.lua"));
+        }
+        other => unreachable!("expected Evaluation, got {other:?}"),
+    }
+    assert_eq!(source.evaluated(), [dir(""), dir("a")]);
+}
+
+#[test]
+fn a_lost_load_task_is_lost_build_files() {
+    for loss in [Loss::Unreported, Loss::Unrun] {
+        let source = FakeSource::new(workspace(vec![
+            ("", file(vec![], &["a", "b"])),
+            ("a", file(vec![], &[])),
+            ("b", file(vec![], &[])),
+        ]));
+        let mut dispatcher = FakeDispatcher {
+            lose: BTreeMap::from([(1, loss)]),
+            ..FakeDispatcher::default()
+        };
+        match load(&source, &mut dispatcher, &entry()).unwrap_err() {
+            Error::LostBuildFiles { directories } => {
+                assert_eq!(directories, [dir("a")], "{loss:?}");
+            }
+            other => unreachable!("{loss:?}: expected LostBuildFiles, got {other:?}"),
+        }
+    }
+}
+
+/// A dispatcher that takes the first task and then fails, as an adapter whose workers cannot start.
+struct FailingDispatcher;
+
+impl Dispatcher for FailingDispatcher {
+    fn dispatch<T, M, R, W, S>(&mut self, _work: W, mut step: S) -> buildl_core::Result<()>
+    where
+        T: Send,
+        M: Send,
+        R: Send,
+        W: Fn(T, &(dyn Fn(M) + Sync)) -> R + Sync,
+        S: FnMut(Turn<M, R>) -> Vec<T>,
+    {
+        step(Turn::Begin);
+        Err(Error::Adapter {
+            port: PortName::Dispatcher,
+            diagnostic: Diagnostic::new("workers did not start"),
+        })
+    }
+}
+
+#[test]
+fn a_dispatcher_that_fails_fails_the_load_with_its_error() {
+    let source = FakeSource::new(workspace(vec![
+        ("", file(vec![], &["a"])),
+        ("a", file(vec![], &[])),
+    ]));
+    match load(&source, &mut FailingDispatcher, &entry()).unwrap_err() {
+        Error::Adapter { port, diagnostic } => {
+            assert_eq!(port, PortName::Dispatcher);
+            assert_eq!(diagnostic.to_string(), "workers did not start");
+        }
+        other => unreachable!("expected Adapter, got {other:?}"),
+    }
+}
+
+/// A pipeline that has built `//:old`, a target [`wide`] does not declare.
+fn built() -> Pipeline<FakePorts> {
+    let mut pipeline = root_only(vec![target("old", &[])]);
+    pipeline
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &BTreeMap::new(),
+            OnFailure::Stop,
+            LiveOutput::Off,
+        )
+        .unwrap();
+    pipeline
+}
+
+#[test]
+fn check_graph_query_and_gc_load_in_any_order() {
+    let mut jumbled = FakeDispatcher {
+        order: Order::NewestFirst,
+        pace: Pace::Together,
+        ..FakeDispatcher::default()
+    };
+    let source = || FakeSource::new(wide());
+
+    let checked = pipeline::check(&source(), &mut FakeDispatcher::default(), &entry()).unwrap();
+    assert_eq!(
+        checked,
+        pipeline::check(&source(), &mut jumbled, &entry()).unwrap()
+    );
+
+    let canonical = |graph| json::canonical::to_vec(&graph).unwrap();
+    let graphed = pipeline::graph(&source(), &mut FakeDispatcher::default(), &entry()).unwrap();
+    assert_eq!(
+        canonical(graphed),
+        canonical(pipeline::graph(&source(), &mut jumbled, &entry()).unwrap())
+    );
+
+    let question = Query::new(Direction::Rdeps, Label::parse("//lib/core:base").unwrap());
+    let queried = pipeline::query(
+        &source(),
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &question,
+    )
+    .unwrap();
+    assert!(!queried.is_empty());
+    assert_eq!(
+        queried,
+        pipeline::query(&source(), &mut jumbled, &entry(), &question).unwrap()
+    );
+
+    let collected = |dispatcher: &mut FakeDispatcher| {
+        let mut pipeline = built();
+        let ports = pipeline.ports_mut();
+        pipeline::gc(
+            &source(),
+            dispatcher,
+            &entry(),
+            &mut ports.cache,
+            &ports.cas,
+            &ports.cas,
+            &FakeHistory::default(),
+        )
+        .unwrap()
+    };
+    let swept = collected(&mut FakeDispatcher::default());
+    assert!(swept.rows_dropped > 0, "the sweep has something to drop");
+    assert_eq!(swept, collected(&mut jumbled));
 }

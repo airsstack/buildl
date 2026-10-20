@@ -66,6 +66,10 @@ pub(crate) enum Command {
     Test(TestArgs),
     /// Show what a target printed when it last ran
     Log(LogArgs),
+    /// Remove the output directory
+    Clean,
+    /// Drop rows of targets no longer declared and remove what nothing needs
+    Gc,
 }
 
 /// The arguments of `graph`.

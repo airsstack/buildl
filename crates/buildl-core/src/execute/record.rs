@@ -949,6 +949,10 @@ mod tests {
             self.rows.get(label)
         }
 
+        fn labels(&self) -> Vec<Label> {
+            self.rows.keys().cloned().collect()
+        }
+
         fn record(&mut self, label: Label, row: CacheRow) -> Result<()> {
             self.rows.insert(label, row);
             Ok(())
@@ -964,6 +968,15 @@ mod tests {
             self.rows.remove(label);
             Ok(())
         }
+    }
+
+    #[test]
+    fn rows_lists_its_labels_in_order() {
+        let mut cache = Rows::default();
+        cache.record(label("//b:x"), recorded(&["x"])).unwrap();
+        cache.record(label("//a:y"), recorded(&["y"])).unwrap();
+
+        assert_eq!(cache.labels(), [label("//a:y"), label("//b:x")]);
     }
 
     #[test]

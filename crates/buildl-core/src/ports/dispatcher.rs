@@ -36,8 +36,9 @@ pub trait Dispatcher {
     /// reaches `step`. None can happen twice, and none can be made up: a task, a message and a
     /// result are each handed over by value, and the port asks for no way to copy or to build
     /// one. A dispatcher that loses a task or its result breaks the contract: a build over it
-    /// fails with [`Error::DispatcherFault`](crate::Error::DispatcherFault) instead of reporting
-    /// success.
+    /// fails with [`Error::DispatcherFault`](crate::Error::DispatcherFault), and a load of build
+    /// files over it with [`Error::LostBuildFiles`](crate::Error::LostBuildFiles), instead of
+    /// reporting success.
     ///
     /// # Errors
     ///
