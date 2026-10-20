@@ -61,6 +61,14 @@ impl EnvName {
         }
     }
 
+    /// Wraps a literal without checking it.
+    ///
+    /// For literals a test proves valid; anything read at run time goes through
+    /// [`EnvName::parse`].
+    pub(crate) fn from_literal(raw: &'static str) -> Self {
+        Self(raw.to_owned())
+    }
+
     /// The value as a string slice.
     #[must_use]
     pub fn as_str(&self) -> &str {

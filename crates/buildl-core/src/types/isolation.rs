@@ -3,7 +3,8 @@
 //! Its own file because the choice is a closed set with an order: each strategy isolates an
 //! action at least as much as the one before it, and a manifest names one of them by a word.
 //!
-//! Responsibilities: [`Isolation`], its [`Isolation::parse`] constructor, and its rendering.
+//! Responsibilities: [`Isolation`], its [`Isolation::parse`] constructor, its rendering, and the
+//! variables each strategy pins ([`Isolation::pinned`]).
 //!
 //! Non-responsibilities: isolating anything. An execution strategy is an adapter; this is only
 //! the name the manifest picks one by.
@@ -12,6 +13,7 @@ use core::fmt;
 use core::str::FromStr;
 
 use crate::error::{Error, NameKind, Result};
+use crate::types::{EnvName, EnvValue};
 
 /// The execution strategy a workspace runs its actions under.
 ///
@@ -66,6 +68,27 @@ impl Isolation {
             })
     }
 
+    /// The environment variables this strategy sets itself, in name order.
+    ///
+    /// `bare` sets none. Every other strategy fixes the locale, the time zone and the build
+    /// timestamp, so a tool's output does not vary with the machine it ran on. The timestamp is
+    /// 1980-01-01T00:00:00Z, the earliest time a ZIP archive can record. This is the one place the
+    /// names and values are written.
+    #[must_use]
+    pub fn pinned(self) -> Vec<(EnvName, EnvValue)> {
+        match self {
+            Self::Bare => Vec::new(),
+            Self::Sandbox | Self::OsSandbox | Self::Container => vec![
+                (EnvName::from_literal("LC_ALL"), EnvValue::from_literal("C")),
+                (
+                    EnvName::from_literal("SOURCE_DATE_EPOCH"),
+                    EnvValue::from_literal("315532800"),
+                ),
+                (EnvName::from_literal("TZ"), EnvValue::from_literal("UTC")),
+            ],
+        }
+    }
+
     /// The word a manifest names this strategy by.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -99,6 +122,7 @@ mod tests {
     )]
 
     use super::Isolation;
+    use crate::types::{EnvName, EnvValue};
 
     #[test]
     fn each_word_names_its_strategy_and_renders_back() {
@@ -149,5 +173,41 @@ mod tests {
             Isolation::Container
         );
         assert!("vm".parse::<Isolation>().is_err());
+    }
+
+    #[test]
+    fn bare_pins_nothing() {
+        assert_eq!(Isolation::Bare.pinned(), Vec::new());
+    }
+
+    #[test]
+    fn every_other_strategy_pins_the_three_in_name_order() {
+        for isolation in [
+            Isolation::Sandbox,
+            Isolation::OsSandbox,
+            Isolation::Container,
+        ] {
+            let pinned = isolation.pinned();
+            let names: Vec<&str> = pinned.iter().map(|(name, _)| name.as_str()).collect();
+            let values: Vec<&str> = pinned.iter().map(|(_, value)| value.as_str()).collect();
+            assert_eq!(names, ["LC_ALL", "SOURCE_DATE_EPOCH", "TZ"], "{isolation}");
+            assert_eq!(values, ["C", "315532800", "UTC"], "{isolation}");
+        }
+    }
+
+    #[test]
+    fn the_pinned_literals_parse() {
+        for isolation in Isolation::ALL {
+            for (name, value) in isolation.pinned() {
+                assert!(
+                    EnvName::parse(name.as_str()).is_ok(),
+                    "{isolation}: {name:?}"
+                );
+                assert!(
+                    EnvValue::parse(value.as_str()).is_ok(),
+                    "{isolation}: {value:?}"
+                );
+            }
+        }
     }
 }
