@@ -8,24 +8,26 @@
 //!
 //! - [`check_line`] — that the build files are sound.
 //! - [`clean_line`] — that the output directory was cleaned.
+//! - [`gc_line`] — what a collection of the store dropped and removed.
 //! - [`error_text`] — why the command failed.
 //!
 //! Non-responsibilities: writing the text anywhere; the words of an error, which are the
 //! error's own `Display`; and choosing an exit status, which reads the error's variant, never
 //! this text.
 
+use core::fmt::Display;
 use std::collections::BTreeSet;
 use std::path::Path;
 
 use buildl_core::json::canonical;
-use buildl_core::{Declaration, Directory, Error};
+use buildl_core::{Collected, Declaration, Directory, Error};
 
 use crate::report::paint::Paint;
 use crate::state::Cleaned;
 
 /// `count` of a thing, named by `one` for exactly one and by `many` otherwise.
-fn counted(count: usize, one: &str, many: &str) -> String {
-    if count == 1 {
+fn counted<N: Copy + Display + PartialEq + From<u8>>(count: N, one: &str, many: &str) -> String {
+    if count == N::from(1) {
         format!("{count} {one}")
     } else {
         format!("{count} {many}")
@@ -59,6 +61,18 @@ pub fn clean_line(cleaned: &Cleaned, out: &Directory) -> String {
         Cleaned::Removed => format!("clean: removed {out}\n"),
         Cleaned::Absent => format!("clean: {out} holds nothing\n"),
     }
+}
+
+/// What `gc` says: how many cache rows it dropped and how many blobs, and how many bytes, it
+/// removed, as `gc: dropped 1 row, removed 5 blobs (2048 bytes)`. Ends with a newline.
+#[must_use]
+pub fn gc_line(collected: &Collected) -> String {
+    format!(
+        "gc: dropped {}, removed {} ({})\n",
+        counted(collected.rows_dropped, "row", "rows"),
+        counted(collected.blobs_removed, "blob", "blobs"),
+        counted(collected.bytes_removed, "byte", "bytes")
+    )
 }
 
 /// One evaluation's declaration on one line, or `nothing` when that evaluation had none there.
@@ -122,7 +136,9 @@ mod tests {
         NetworkAccess, Provenance, Setting, SettingName, SettingValue, Target, TargetRole,
     };
 
-    use super::{check_line, clean_line, error_text};
+    use buildl_core::Collected;
+
+    use super::{check_line, clean_line, counted, error_text, gc_line};
     use crate::report::paint::Paint;
     use crate::state::Cleaned;
 
@@ -140,6 +156,52 @@ mod tests {
         assert_eq!(
             clean_line(&Cleaned::Absent, &out),
             "clean: out holds nothing\n"
+        );
+    }
+
+    #[test]
+    fn gc_line_counts_singular_and_plural() {
+        let one = Collected {
+            rows_dropped: 1,
+            blobs_removed: 1,
+            bytes_removed: 1,
+        };
+        let two = Collected {
+            rows_dropped: 2,
+            blobs_removed: 2,
+            bytes_removed: 2,
+        };
+
+        assert_eq!(
+            gc_line(&one),
+            "gc: dropped 1 row, removed 1 blob (1 byte)\n"
+        );
+        assert_eq!(
+            gc_line(&two),
+            "gc: dropped 2 rows, removed 2 blobs (2 bytes)\n"
+        );
+    }
+
+    #[test]
+    fn gc_line_of_nothing_removed() {
+        let nothing = Collected {
+            rows_dropped: 0,
+            blobs_removed: 0,
+            bytes_removed: 0,
+        };
+
+        assert_eq!(
+            gc_line(&nothing),
+            "gc: dropped 0 rows, removed 0 blobs (0 bytes)\n"
+        );
+    }
+
+    #[test]
+    fn counted_counts_a_u64() {
+        assert_eq!(counted(1_u64, "byte", "bytes"), "1 byte");
+        assert_eq!(
+            counted(u64::MAX, "byte", "bytes"),
+            format!("{} bytes", u64::MAX)
         );
     }
 

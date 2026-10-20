@@ -134,7 +134,7 @@ as `Workspace::build` does (`workspace.rs:179-195`, its `concluded` helper decid
 wins). `gc_line` uses `counted` (`message.rs:25`) for all three counts:
 `gc: dropped 1 row, removed 5 blobs (2048 bytes)\n`. `counted` takes `usize` today and
 `bytes_removed` is `u64`; a cast trips pedantic clippy, so `counted` becomes generic over the count,
-`N: Display + PartialEq + From<u8>` (singular when `count == N::from(1)`), which both `usize` and
+`N: Copy + Display + PartialEq + From<u8>` (singular when `count == N::from(1)`), which both `usize` and
 `u64` satisfy, and its existing callers and tests stay unchanged.
 
 **Proof:**
@@ -147,7 +147,8 @@ wins). `gc_line` uses `counted` (`message.rs:25`) for all three counts:
   and `gc_is_refused_while_another_buildl_holds_the_workspace`.
 - e2e `clean_gc.rs`:
   - `gc_drops_an_undeclared_targets_row_and_its_only_blobs` — fixture `logged` (`hello`, and
-    `quiet` depending on it; both succeed): build, remove `quiet` from `build.lua`, `gc`:
+    `quiet` depending on it; both succeed), in a copy where `quiet` copies its own `quiet.txt`
+    so it stores bytes no kept row shares: build, remove `quiet` from `build.lua`, `gc`:
     `rows_dropped == 1`, `blobs_removed > 0`; `cache.json` has no row for `quiet`; a `build` after
     `gc` reports `hello` cached, so nothing a kept row needs was removed.
   - `log_of_a_dropped_target_still_reads_after_gc` — `Workspace::log` of that target returns the
