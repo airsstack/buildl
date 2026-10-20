@@ -2,16 +2,20 @@
 //!
 //! The source here makes two sibling build files wait for each other, so a load can only
 //! succeed when both are under way together; a pool of one worker is the control that shows the
-//! wait can fail.
+//! wait can fail. The workspace fixture `fanned` then shows that the worker count changes how
+//! long a load takes and nothing it returns.
 
 use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
+use buildl::Wiring;
 use buildl::buildl_core::{
     BuildFile, DeclarationOrder, DeclarationSource, Diagnostic, Directory, EntryName, Error,
     Evaluated, EvaluationFailure, Result, StagedFile, StagedSubdir, Workers, Written, load,
 };
 use buildl::dispatch::ThreadPool;
+
+use crate::common::Fixture;
 
 /// How long the overlap test lets one evaluation wait for the other before giving up.
 const PATIENT: Duration = Duration::from_secs(10);
@@ -110,4 +114,59 @@ fn one_worker_never_overlaps() {
     assert_eq!(provenance.directory(), &Directory::parse("a").unwrap());
     assert_eq!(failure, EvaluationFailure::Runtime);
     assert_eq!(diagnostic.to_string(), NO_PARTNER);
+}
+
+/// Every build file of `fanned`, loaded by a pool of `workers`.
+fn loaded_by(fixture: &Fixture, workers: usize) -> Result<Vec<buildl::buildl_core::Declaration>> {
+    let wiring = Wiring::read(fixture.root())?;
+    load(
+        &wiring.source(),
+        &mut ThreadPool::new(Workers::of(workers)),
+        wiring.entry(),
+    )
+}
+
+#[test]
+fn real_build_files_load_the_same_at_1_2_and_8_workers() {
+    let fixture = Fixture::copy_of("fanned", &[]);
+    let one = loaded_by(&fixture, 1).unwrap();
+    assert_eq!(one.len(), 6);
+    assert_eq!(loaded_by(&fixture, 2).unwrap(), one);
+    assert_eq!(loaded_by(&fixture, 8).unwrap(), one);
+}
+
+/// Two copies of `fanned`: the first as the fixture says, with eight workers, the second with one.
+fn eight_and_one() -> (Fixture, Fixture) {
+    let eight = Fixture::copy_of("fanned", &[]);
+    let one = Fixture::copy_of("fanned", &[]);
+    one.replace_line("buildl.toml", "workers  = 8", "workers  = 1");
+    (eight, one)
+}
+
+#[test]
+fn graph_json_is_byte_identical_at_1_and_8_workers() {
+    let (eight, one) = eight_and_one();
+    for copy in [&eight, &one] {
+        copy.build();
+    }
+    let graph = |copy: &Fixture| std::fs::read(copy.state().graph()).unwrap();
+    assert_eq!(graph(&eight), graph(&one));
+}
+
+#[test]
+fn two_broken_build_files_report_the_same_error_at_1_and_8_workers() {
+    let (eight, one) = eight_and_one();
+    let mut reported = Vec::new();
+    for copy in [&eight, &one] {
+        copy.append("a/x/build.lua", b"\n+++ not lua\n");
+        copy.append("c/build.lua", b"\n+++ not lua\n");
+        reported.push(copy.open().check().unwrap_err().to_string());
+    }
+    assert_eq!(reported[0], reported[1]);
+    assert!(
+        reported[0].contains("c/build.lua"),
+        "the first broken file in queue order is named: {}",
+        reported[0]
+    );
+    assert!(!reported[0].contains("a/x"), "{}", reported[0]);
 }

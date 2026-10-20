@@ -1,0 +1,16 @@
+[workspace]
+name   = "fanned"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["cp", "sh"]
+env.read = []
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
+
+[execution]
+workers  = 8
+timeout  = "1m"
+strategy = "bare"
