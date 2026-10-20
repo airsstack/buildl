@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-19
 depends-on: [01]
 built-on: 62323287dd81
@@ -10,7 +10,8 @@ built-on: 62323287dd81
 **Goal:** Tests prove the real `ThreadPool` overlaps build-file evaluations while results stay identical across worker counts.
 
 **Architecture:** Tests only, in `buildl`'s e2e test binary, which can reach `ThreadPool`
-(`buildl::dispatch::ThreadPool`, `dispatch/mod.rs:17`), `Wiring` (`buildl/src/lib.rs:167`) and
+(`buildl::dispatch::ThreadPool`, re-exported in `dispatch/mod.rs`), `Wiring` (re-exported from
+`buildl/src/lib.rs`, defined in `local_ports.rs`) and
 `buildl_core::load`. A new fixture `fanned` gives a workspace of several directories. `buildl-core`
 starts no thread, so overlap can only be shown here (spec §4).
 
@@ -84,7 +85,7 @@ green. Commit `test(buildl): prove parallel load matches serial on a real worksp
 ## Risks
 
 - **Serial queue order** decides which broken file is reported: root → a, b, c → a/x, b/y
-  (breadth-first, `traversal.rs:44-73`). If execute finds the order differs, the expected name in
+  (breadth-first, `load` in `traversal.rs` and its `Loading` replay). If execute finds the order differs, the expected name in
   the third test follows the code, and the plan's Deviations say so.
 - **Timing-based tests:** the overlap test fails only on a real failure to overlap (10 s); the
   control uses a short timeout and cannot pass by luck under one worker.
@@ -94,3 +95,27 @@ green. Commit `test(buildl): prove parallel load matches serial on a real worksp
 
 - `cargo make dod` and `cargo deny check` green after each task.
 - `cargo test -p buildl --test e2e parallel_load` run three times passes each time.
+
+## Review findings
+
+One reviewer pass over `855ef5b..fa65497`: spec compliant, DoD green, `parallel_load` ×3 green;
+no blocking finding. Each test shown to prove its claim (one worker cannot overlap: `serve` hands
+work only to a free worker; `Workers::of(2)` is not capped to the core count).
+
+| # | Tier | Finding | Disposition |
+|---|---|---|---|
+| 1 | 🔵 | module doc claimed worker count "changes how long a load takes" — nothing measures time | fixed: "changes nothing a load returns" |
+| 2 | 🔵 | `loaded_by` doc named `fanned`; `Declaration` spelled by full path | fixed |
+| 3 | 🔵 | 1/2/8-worker equality on six small files rarely sees out-of-order arrival | declined — what spec §4 asks; the core order×pace matrix is the guard |
+| 4–6 | 🔵 | plan citations `dispatch/mod.rs:17`, `lib.rs:167`, `traversal.rs:44-73` off by a line or imprecise | fixed in this plan: cite by symbol |
+
+## Probe results
+
+- Serial queue order (Risks): with `a/x/build.lua` and `c/build.lua` broken, 1 and 8 workers both
+  report `c/build.lua` — order root, a, b, c, a/x, b/y holds. The test is the probe.
+- The 1-worker control fails with the timeout's evaluation error on directory `a`, as planned.
+
+## Deviations
+
+- Briefs pointed each coder at its task's text in this plan rather than through a task-briefer
+  ledger; tasks ran beside the clean-gc chain's plan 03 (disjoint files).

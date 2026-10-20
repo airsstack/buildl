@@ -2,16 +2,16 @@
 //!
 //! The source here makes two sibling build files wait for each other, so a load can only
 //! succeed when both are under way together; a pool of one worker is the control that shows the
-//! wait can fail. The workspace fixture `fanned` then shows that the worker count changes how
-//! long a load takes and nothing it returns.
+//! wait can fail. The workspace fixture `fanned` then shows that the worker count changes nothing a
+//! load returns.
 
 use std::sync::{Condvar, Mutex, PoisonError};
 use std::time::Duration;
 
 use buildl::Wiring;
 use buildl::buildl_core::{
-    BuildFile, DeclarationOrder, DeclarationSource, Diagnostic, Directory, EntryName, Error,
-    Evaluated, EvaluationFailure, Result, StagedFile, StagedSubdir, Workers, Written, load,
+    BuildFile, Declaration, DeclarationOrder, DeclarationSource, Diagnostic, Directory, EntryName,
+    Error, Evaluated, EvaluationFailure, Result, StagedFile, StagedSubdir, Workers, Written, load,
 };
 use buildl::dispatch::ThreadPool;
 
@@ -116,8 +116,8 @@ fn one_worker_never_overlaps() {
     assert_eq!(diagnostic.to_string(), NO_PARTNER);
 }
 
-/// Every build file of `fanned`, loaded by a pool of `workers`.
-fn loaded_by(fixture: &Fixture, workers: usize) -> Result<Vec<buildl::buildl_core::Declaration>> {
+/// Every build file of `fixture`, loaded by a pool of `workers`.
+fn loaded_by(fixture: &Fixture, workers: usize) -> Result<Vec<Declaration>> {
     let wiring = Wiring::read(fixture.root())?;
     load(
         &wiring.source(),
