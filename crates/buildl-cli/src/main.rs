@@ -16,7 +16,7 @@
 //! | `buildl build [TARGET]... [--set NAME=VALUE]... [-k \| --keep-going] [--stream]` | nothing | a block for each action that printed or failed, and a summary |
 //! | `buildl test [TARGET]... [--set NAME=VALUE]... [--stop] [--stream] [--rerun] [--verbose]` | nothing | a block for each failing test (and each test that printed, with `--verbose`) and for each other target that printed or failed, and a line counting the tests |
 //! | `buildl log <TARGET> [--stdout \| --stderr]` | the stored stdout, or the one stream asked for | the header, a warning of damaged lines, and the stored stderr when no flag is given |
-//! | `buildl clean` | nothing | `clean: removed out`, or `clean: out holds nothing` |
+//! | `buildl clean` | nothing | `clean: removed out` (naming the manifest's `out` directory), or `clean: out holds nothing` |
 //! | `buildl gc` | nothing | `gc: dropped 1 row, removed 5 blobs (2048 bytes)` |
 //!
 //! A target is written `//dir:name`, or `:name` and `name` for one in the directory the command

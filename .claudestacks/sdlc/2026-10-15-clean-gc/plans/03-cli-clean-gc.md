@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-19
 depends-on: [02]
 built-on: 137a1ada1042
@@ -25,6 +25,7 @@ existing `Exit::of_error` (`exit.rs:76-90`), which already maps `Refused` → 4 
 ```
 crates/buildl-cli/src/cli.rs                 — [modify] `Command::Clean`, `Command::Gc`
 crates/buildl-cli/src/run.rs                 — [modify] dispatch both; `clean` and `gc` fns
+crates/buildl-cli/src/main.rs                — [modify] module-doc command table gains `clean`, `gc`
 crates/buildl-cli/tests/cli/output.rs        — [modify] stderr lines, empty stdout
 crates/buildl-cli/tests/cli/exit_codes.rs    — [modify] exit 0, 3 under a held lock, 4 for a refused out
 crates/buildl-cli/tests/cli/arguments.rs     — [modify] extra arguments refused
@@ -58,8 +59,10 @@ one summary line on stderr, exit 0.
   - `clean_says_it_removed_out_and_prints_nothing_on_stdout` — after a `build`: stderr is
     `clean: removed out\n`, stdout empty.
   - `clean_without_out_says_it_holds_nothing` — fresh fixture: stderr `clean: out holds nothing\n`.
-  - `gc_reports_rows_blobs_and_bytes` — fixture `logged`: after a `build`, remove `quiet` from
-    `build.lua`,
+  - `gc_reports_rows_blobs_and_bytes` — an inline two-target workspace shaped as `logged`
+    (`hello` copies `hello.txt`, `quiet` copies hello's output; `logged` lives under
+    `crates/buildl/tests/fixtures` and is out of reach of `buildl-cli`'s tests): after a `build`,
+    remove `quiet` from `build.lua`,
     `gc`: stderr matches `^gc: dropped 1 row, removed \d+ blobs? \(\d+ bytes?\)\n$`, stdout empty.
 - `exit_codes.rs`:
   - `clean_and_gc_exit_0`.
@@ -91,7 +94,8 @@ and `gc`, and `cargo make dod` is green. Commit `feat(buildl-cli): add clean and
   area) notes `cas` is listed and pruned through `Sweep`; the port table (`:442` area) gains a
   `Sweep` row (what it gives, adapter `LocalCas` over `.buildl/cas`, crate `buildl`, since 2) and
   the `ActionCache` row names `labels`; the fakes table (`:504` area) gains `Sweep`; the "When ports are wired"
-  row (`:601`) adds that `gc` wires its own five ports under the lock and `clean` none (spec §5's
+  row (`:601`) adds that `gc` wires its own six ports under the lock — the five of spec §3 plus the
+`Dispatcher` that load now takes — and `clean` none (spec §5's
   "command list": the document has no list of commands, `grep -n "clean"
   docs/architecture-building-blocks.md` finds nothing, so this row and `:425` carry it); `:425` gains
   "`gc` is a free function too, `pipeline::gc`, over a `DeclarationSource`, `ActionCache`,
@@ -122,7 +126,7 @@ is green. Commit `docs(repo): describe clean and gc as built`.
 
 ## Risks
 
-- The `gc` CLI test edits `logged`'s `build.lua`; `quiet` is a leaf, so `hello` still resolves.
+- The `gc` CLI test edits its workspace's `build.lua`; `quiet` is a leaf, so `hello` still resolves.
 - Docs line numbers are from commit `bc6bea6`; plans 01–02 do not touch docs, so they hold, but
   `execute` re-greps before editing.
 
@@ -131,3 +135,34 @@ is green. Commit `docs(repo): describe clean and gc as built`.
 - `cargo make dod` and `cargo deny check` green after each task.
 - End-to-end by hand on a copy of fixture `logged`: `buildl build; buildl clean; buildl build` →
   the second build's summary counts 2 cached and nothing built; `buildl gc` twice → second line `gc: dropped 0 rows, removed 0 blobs (0 bytes)`.
+
+## Review findings
+
+One reviewer pass over `07974cb` and `3b5c844`: DoD and `cargo deny check` green; the plan's
+end-to-end Proof run by hand on a copy of `logged` passed (second build `2 cached`, nothing built;
+second `gc` → `gc: dropped 0 rows, removed 0 blobs (0 bytes)`). No blocking finding.
+
+| # | Tier | Finding | Disposition |
+|---|---|---|---|
+| 1 | 🟡 | building-blocks fakes row: `Sweep` fake "records what it removes; can be told to fail" — false | fixed: describes `FakeCas` as it is |
+| 2 | 🟡 | README: `clean`/`gc` work without the strategy line — untested | fixed: `clean_and_gc_exit_0_without_a_strategy_line`; fails (exit 5) with a `runs()?` added to `Workspace::clean` |
+| 3 | 🟡 | the inline gc workspace and the six ports were not written into this plan | fixed: Task 1 Proof and Task 2 amended |
+| 4 | 🔵 | `main.rs` doc table showed literal `clean: removed out` | fixed: names the manifest's `out` directory |
+| 5 | 🔵 | architecture §3 `gc` row listed 4 ports, §3.5 lists 6 | fixed: six |
+| 6 | 🔵 | design §7 `gc` "Stops after" was "—" | fixed: Resolve for `gc` |
+| 7 | 🔵 | `main.rs` not in Files | fixed: added to Files |
+
+## Probe results
+
+- The `gc` test's premise that it can use fixture `logged` failed: `logged` lives under
+  `crates/buildl/tests/fixtures`, out of reach of `buildl-cli`'s tests. The test builds an inline
+  workspace shaped the same way; plan text amended.
+- `gc` wires six ports, not five: the parallel-load chain's plan 01 gave load a `Dispatcher`.
+  Plan text amended. Neither is a claim of the spec, so no `disproves` marker.
+
+## Deviations
+
+- Briefs pointed each coder at its task's text in this plan rather than through a task-briefer
+  ledger; tasks ran beside the parallel-load chain's plan 02 (disjoint files).
+- `crates/buildl-cli/src/main.rs` module-doc table gained `clean` and `gc` (not in the plan's file
+  list; added so the table is not stale).

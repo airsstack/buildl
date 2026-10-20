@@ -661,6 +661,22 @@ fn clean_and_gc_exit_0() {
 }
 
 #[test]
+fn clean_and_gc_exit_0_without_a_strategy_line() {
+    let (_dir, root) = workspace(&[
+        (
+            "buildl.toml",
+            "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n",
+        ),
+        ("build.lua", COPY),
+        ("a.txt", "a\n"),
+    ]);
+    for command in ["clean", "gc"] {
+        let output = run(&root, &[command], &[]);
+        assert_eq!(code(&output), 0, "{command}");
+    }
+}
+
+#[test]
 fn clean_and_gc_exit_3_while_the_lock_is_held() {
     let (_dir, root) = workspace(&[
         ("buildl.toml", &manifest(&["cp"])),

@@ -209,7 +209,7 @@ flowchart TD
 |`buildl build [target]...`|Record|the full pipeline|
 |`buildl watch [target]`|loops|persistent process, re-plans on file change|
 |`buildl test [target]...`|Record|run test targets and what they need|
-|`buildl clean` / `gc`|—|`clean` removes `out/`, and the next build puts the outputs back from the cas; `gc` drops the cache rows of undeclared targets and removes the blobs no kept row and no newest logged run names|
+|`buildl clean` / `gc`|— for `clean`, Resolve for `gc`|`clean` removes `out/`, and the next build puts the outputs back from the cas; `gc` drops the cache rows of undeclared targets and removes the blobs no kept row and no newest logged run names|
 |`buildl log <target> [--stdout \| --stderr]`|log + cas|show what a target printed when it last ran (§8.7)|
 |`buildl query <expr>`|Resolve|graph queries: `deps()`, `rdeps()` (§10.2, §10.3, §11.1)|
 |`buildl doctor`|—|print the effective ceiling, grants, workers|

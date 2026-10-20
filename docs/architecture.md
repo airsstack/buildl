@@ -192,7 +192,7 @@ Each phase's logic lives in `buildl-core` and reaches I/O only through ports; th
 |§3.3 `plan`|the settings in force, ceiling check, key assembly, a verdict per target|`Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver`, `ActionCache`|`buildl`|
 |§3.4 `exec` and §3.5 `store` — one phase module, `execute`|output layout, placeholder expansion of commands and descriptions, the program check, the `Schedule` state machine, cached or run, record ordering: cas, row, log, the dispatcher held to its contract|`Manifest`, `Dispatcher`, `ExecStrategy`, `ContentStore`, `ActionCache`, `EventLog`, `Clock`|`buildl`|
 |`log`, reading the log back (§3.5)|`history::last_run` chooses the newest run of a target that stored output; `pipeline::log` reads its two blobs|`RunHistory`, `ContentStore`|`buildl`|
-|`gc`, pruning the store (§3.5)|`pipeline::gc` marks from the kept cache rows and `history::logged_outputs`, then sweeps|`ActionCache`, `ContentStore`, `Sweep`, `RunHistory`|`buildl`|
+|`gc`, pruning the store (§3.5)|`pipeline::gc` marks from the kept cache rows and `history::logged_outputs`, then sweeps|`DeclarationSource`, `Dispatcher`, `ActionCache`, `ContentStore`, `Sweep`, `RunHistory`|`buildl`|
 
 `history` is not a phase: it decides between lines of a log already read, so it sits beside the phase modules, and the `log` command runs it without a `DeclarationSource`. `suggest`, which names the nearest of a set of names to one that names nothing, is a crate-level module: `resolve` uses it for labels and settings, `history` for labels with a logged run.
 

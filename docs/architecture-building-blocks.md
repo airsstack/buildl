@@ -512,7 +512,7 @@ The fakes live in `buildl-core`'s integration tests (`crates/buildl-core/tests/f
 |`ActionCache`|rows held in memory, with labels it can be told to fail on; it also keeps the labels it forgot, and can be told to fail a forget|a filesystem|
 |`EventLog`|the events appended, and whether to fail|a filesystem|
 |`RunHistory`|the lines it was handed, and whether to fail|a filesystem|
-|`Sweep`|digests it holds, each with a size, recording what it removes; it can be told to fail|a filesystem|
+|`Sweep`|the digests of the blobs an in-memory store holds (`FakeCas`, the same store that fakes `ContentStore`); `remove` drops one blob and answers its size, or 0 for a digest it does not hold. It records nothing and never fails|a filesystem|
 |`ExecStrategy`|scripted per label: how the action exits, what it prints, and what is at each output — a file, one that may be run, a directory of files and of things that are not, a symbolic link, something special, or nothing|process spawning|
 |`Dispatcher`|inline, on the test thread, taking the oldest or the newest waiting task first; tasks it can be told to lose, unrun or run with the result dropped|threads; results are deterministic|
 |`Clock`|a counter, one tick per read|wall-clock time|
