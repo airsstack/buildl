@@ -119,7 +119,7 @@ Two rules carried over from airsl's extension design deliberately: variables and
 
 The manifest is read strictly. A key this version of buildl does not read is an error that names the key with its line and column, so a misspelt `fs.wirte` cannot silently drop a grant. An `[approver]` table is such a key until grant negotiation ships (§13 item 4), which is why the example has none. Every table and every key is optional, and an empty file is a valid manifest: every default, and an empty ceiling, under which `check`, `graph` and `query` work and `plan` and `build` are refused, since an empty ceiling allows nothing. A directory with no `buildl.toml` in it or above it is not a workspace: that is an error, never a default ceiling (§7). `config` must be `1`. `out` may not be the workspace root, and may not be `.buildl`, contain it or lie inside it. The state directory is always `.buildl`; no key names it. A directory entry of the ceiling is workspace-relative, and `"."` is the workspace root. `memory` is a whole number directly followed by one unit — `B`, `KB`, `MB` or `GB`, each 1024 times the one before — and never zero.
 
-`[execution]` says how the workspace wants its actions run. Each key has one grammar and one meaning when it is left out, and a value outside its grammar makes the manifest invalid:
+`[execution]` says how the workspace wants its build files evaluated and its actions run. Each key has one grammar and one meaning when it is left out, and a value outside its grammar makes the manifest invalid:
 
 |Key|Written as|When absent|
 |---|---|---|
@@ -237,7 +237,7 @@ flowchart TD
     CALLS -. "subdir(dir) enqueues a directory" .-> Q
 ```
 
-Every staged declaration carries provenance (the file that made it), which later phases use for attributable errors. Load parallelises across engines if needed — `Engine` is `Send + Sync` and each file has its own.
+Every staged declaration carries provenance (the file that made it), which later phases use for attributable errors. Load evaluates build files on the same workers as actions, each file with its own engine — `Engine` is `Send + Sync`.
 
 ### 8.2 Resolve
 
@@ -604,7 +604,7 @@ A new stack plugin is mostly a matter of instantiating these five idioms for one
 
 ### 11.1 Big monorepos
 
-- **Loading:** 10,000 build files × ~136 µs ≈ 1.4 s single-threaded, and Load parallelises across engines. Not the bottleneck.
+- **Loading:** 10,000 build files × ~136 µs ≈ 1.4 s single-threaded, and Load parallelises across engines on `[execution] workers` threads. Not the bottleneck.
 - **Lazy loading falls out of labels:** `//services/api:server` encodes its own directory, so demand-driven loading (load only directories reachable from the requested targets, as Bazel does) is a traversal change, not a redesign. Start eager; flip when a repo makes it matter.
 - **Reverse queries are the killer feature:** `buildl query "rdeps(//proto:go)"` maps a diff to the targets that must rebuild and the tests that must run. The reverse edges already exist for the executor; this is a CLI command over an existing structure, and it is worth more than remote execution to most teams.
 - **No-op speed past ~100k files:** a filesystem watcher keeping the stat cache warm between runs — a merge of watch mode and the stat cache, both already designed.

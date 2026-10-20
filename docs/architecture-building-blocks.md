@@ -145,7 +145,7 @@ Inside `buildl` there is one module per adapter, two shared modules that impleme
 |`statcache`|`statcache.json`|`StatCache`|
 |`graph`|`graph.json`|`GraphRecord`|
 |`exec`|tier 1, `bare`|`ExecStrategy`|
-|`dispatch`|worker threads|`Dispatcher`|
+|`dispatch`|worker threads for Load and Execute|`Dispatcher`|
 |`clock`|the system clock|`Clock`|
 |`report`|terminal output, and every rendering of a value into text|`Reporter`|
 |`state`|shared: where each state file is, the state lock, writing a file whole, clearing a path|—|
@@ -188,7 +188,7 @@ Every value is a validated newtype or a serializable handoff; field-level detail
 /// sorted merge across files are Load logic in `buildl-core`, not the adapter's.
 /// A directory with no build file is `Evaluated::Absent`; whether that is an
 /// error is Load's decision.
-pub trait DeclarationSource {
+pub trait DeclarationSource: Sync {
     fn evaluate(&self, file: &BuildFile) -> Result<Evaluated>;
 }
 
@@ -421,7 +421,7 @@ classDiagram
 
 |Logic|Input → output|Ports used|
 |---|---|---|
-|load|workspace root → `Vec<Declaration>` (queue, `subdir`, sorted merge)|`DeclarationSource`|
+|load|workspace root → `Vec<Declaration>` (queue, `subdir`, serial replay, sorted merge)|`DeclarationSource`, `Dispatcher`|
 |resolve|`Vec<Declaration>` → `TargetGraph` (validations, cycle detection)|—|
 |narrow|`TargetGraph`, a `Scope` and a `Purpose` → the graph of the targets a run was asked for and everything they depend on; for `Scope::Workspace` that is every target but tests for a build and every test for a test run; a label nothing declares is `Error::UnknownTarget`, and a test run naming a target that is not a test is `Error::NotATest`|—|
 |reach|`TargetGraph` and a `Query` → the targets the query reaches from its target, following dependencies or the reverse edges any number of steps, without that target and without aliases, as a `BTreeSet<Label>`; a label nothing declares is `Error::UnknownTarget`|—|
@@ -431,7 +431,7 @@ classDiagram
 |last_run|`[LogLine]` and a `Label` → the newest run of the label that stored both its output digests, the class of each newer line that stored none, and the damaged lines; or `Error::NoRun`, suggesting the nearest label that has a run|—|
 |canonical JSON|value → sorted-key bytes; those bytes, and no others, → the value|—|
 
-`Pipeline` strings these together, one method per command. `plan` and `build` take a `Scope` and narrow between Resolve and Plan, with `Purpose::Build`; `test` does the same with `Purpose::Test` and takes a `Rerun` too. `build` and `test` also record the whole graph through `GraphRecord` before they narrow. `check`, `graph` and `query` read only the source of build files, so each also exists as a free function, `pipeline::check`, `pipeline::graph` and `pipeline::query`, for a caller that holds a `DeclarationSource` and nothing else: a command that reads only build files then needs no state directory, takes no lock and is not stopped by a state file. `gc` is a free function too, `pipeline::gc`, over a `DeclarationSource`, a `Dispatcher`, an `ActionCache`, a `ContentStore`, a `Sweep` and a `RunHistory`; it loads the build files once, as `build` does, and builds nothing. `log` is a free function over its own two ports, `pipeline::log` over `RunHistory` and `ContentStore`: it runs `last_run` over the log's lines, reads the run's two blobs, and takes no lock and no `DeclarationSource`, so it reads no build file.
+`Pipeline` strings these together, one method per command. `plan` and `build` take a `Scope` and narrow between Resolve and Plan, with `Purpose::Build`; `test` does the same with `Purpose::Test` and takes a `Rerun` too. `build` and `test` also record the whole graph through `GraphRecord` before they narrow. `check`, `graph` and `query` read only the source of build files, so each also exists as a free function, `pipeline::check`, `pipeline::graph` and `pipeline::query`, for a caller that holds a `DeclarationSource` and a `Dispatcher` and nothing else: a command that reads only build files then needs no state directory, takes no lock and is not stopped by a state file. `gc` is a free function too, `pipeline::gc`, over a `DeclarationSource`, a `Dispatcher`, an `ActionCache`, a `ContentStore`, a `Sweep` and a `RunHistory`; it loads the build files once, as `build` does, and builds nothing. `log` is a free function over its own two ports, `pipeline::log` over `RunHistory` and `ContentStore`: it runs `last_run` over the log's lines, reads the run's two blobs, and takes no lock and no `DeclarationSource`, so it reads no build file.
 
 ## 6. Port catalog
 
@@ -439,7 +439,7 @@ classDiagram
 
 |Port|`buildl-core` uses it for|v1 adapter|Crate|Since|
 |---|---|---|---|---|
-|`DeclarationSource`|Load — one build file at a time|airsl engine per file, `buildl` module table|`buildl-lua`|1|
+|`DeclarationSource`|Load — one build file per call, several calls at once|airsl engine per file, `buildl` module table|`buildl-lua`|1|
 |`Manifest`|the ceiling and the workspace's output and state directories; the `[execution]` settings, which no phase reads and the composition root hands to the dispatcher and the strategy|`buildl.toml` reader. The entry file's name and the declaration limits do not go through the port: the adapter hands them to the composition root, which makes the declaration source from them|`buildl`|1|
 |`Host`|the platform in every key, and the values of the env names targets read|the running machine's OS, architecture and environment|`buildl`|1|
 |`Digester`|what stands at each input's path, and input content hashes|filesystem + rayon, each file streamed in pieces|`buildl`|1|
@@ -452,7 +452,7 @@ classDiagram
 |`Sweep`|the cas, listed and pruned: every digest it holds a blob or a twin for, and removing the blob and twin of one digest, answering the bytes they took. Kept apart from `ContentStore` and out of `Ports`, so a build cannot remove what it stored|the same `.buildl/cas` that `LocalCas` stores into: `held` lists the digests of its blobs and twins, `remove` unlinks both|`buildl`|2|
 |`ExecStrategy`|running one action, started with each output's containing directory in place and nothing at the output's own path, handing over what it prints as it prints when asked to, then reporting what the action left at each output path — a file, a directory with everything below it, or neither — and storing every regular file of it|`Bare` (tier 1)|`buildl`|1|
 |`ExecStrategy`|the same, with undeclared inputs absent|`InputSandbox` (tier 2)|`buildl`|3|
-|`Dispatcher`|running ready actions in parallel, and carrying what a running action says to the scheduling thread|std scoped threads + `mpsc`, started as tasks need them|`buildl`|1|
+|`Dispatcher`|evaluating build files and running ready actions in parallel, and carrying what a running action says to the scheduling thread|std scoped threads + `mpsc`, started as tasks need them|`buildl`|1|
 |`Approver`|turning the wanted set into grants|interactive, manifest|`buildl`|4|
 |`Clock`|log timestamps and durations|system clock|`buildl`|1|
 |`GraphRecord`|keeping the graph a build resolved|`.buildl/graph.json`: the canonical bytes, written whole by every build|`buildl`|1|
@@ -539,6 +539,7 @@ Flows that run entirely in `buildl-core`'s tests:
 |the `[execution]` settings all change after a build|every target stays `Clean`: none of them is in a key|
 |only a rule's `desc` is edited|every target is cached, and no action runs|
 |the dispatcher loses a task|`Error::DispatcherFault` naming every target left without an outcome; what ended before keeps its content, row and event|
+|the dispatcher loses a build file|`Error::LostBuildFiles` naming every directory without a result; nothing is declared|
 |a build file enqueues subdirectories out of order|merged declarations sorted by directory, then declared name|
 
 The same promises against the real adapters, through the `Workspace` facade (`crates/buildl/tests/e2e`):
