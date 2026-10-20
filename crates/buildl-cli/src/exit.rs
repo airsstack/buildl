@@ -102,6 +102,7 @@ impl Exit {
             | Error::TooManyTargets { .. }
             | Error::MissingInput { .. }
             | Error::InputNotAFile { .. }
+            | Error::PinnedEnv { .. }
             | Error::OutputConflict { .. }
             | Error::NoProgram { .. } => Self::Definition,
             Error::CorruptState { .. }

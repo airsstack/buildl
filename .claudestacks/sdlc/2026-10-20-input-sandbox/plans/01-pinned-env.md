@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-20
 built-on: 5fb250597c90
 ---
@@ -30,6 +30,7 @@ crates/buildl-core/src/error.rs               — [modify] `Error::PinnedEnv`, i
 crates/buildl-core/src/plan/pinned.rs         — [create] the pinned-name check and its unit tests
 crates/buildl-core/src/plan/mod.rs            — [modify] declare `pinned` (`mod` line only: `plan/mod.rs:5` lists only the public `plan`)
 crates/buildl-core/src/plan/assembly.rs       — [modify] call the check after `check`; error order gains step 4
+crates/buildl-core/src/types/workspace.rs     — [modify] `Execution` doc: Plan now reads `strategy`
 crates/buildl-core/tests/flows/plan.rs        — [modify] the flow test of the order
 crates/buildl-cli/src/exit.rs                 — [modify] `PinnedEnv` → `Definition`
 crates/buildl-cli/tests/cli/exit_codes.rs     — [modify] `plan` exits 5 for a pinned name
@@ -145,3 +146,23 @@ and `cargo make dod` is green. Commit `feat(buildl-core): refuse a target that d
 
 - `cargo make dod` and `cargo deny check` green after each task.
 - `cargo make guard-module-edges` green (run by `dod`'s clippy step).
+
+## Review findings
+
+- unit-test-mandate — `the_pinned_literals_parse` checked its own copy of the literals, not what `pinned()` returns — `types/isolation.rs:199`; fixed: the test now loops `Isolation::ALL` and re-parses each `pinned()` name and value; `cargo test -p buildl-core` → 658 unit tests passed.
+- doc-comment-discipline — the module-doc link to `Isolation::pinned` did not resolve — `plan/pinned.rs:9`; fixed: link definition moved into the `//!` block.
+- style — test helper spelled `BTreeSet` and `Result` in full — `plan/pinned.rs:58`; fixed: imported.
+- style — one module-doc line at 141 columns — `plan/assembly.rs:5`; fixed: re-flowed to 100.
+- comment-matches-code — `Execution` doc kept "No phase of the pipeline reads them" beside a sentence contradicting it — `types/workspace.rs:34`; fixed: the false sentence rewritten.
+- plan amendment — `types/workspace.rs` changed but was not in the file list; fixed: added.
+- Verified after the fix round, on the combined tree with plan 02: `cargo make dod` → exit 0, 1501 tests passed, 0 failed, 0 warnings; `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`.
+
+## Probe results
+
+- No fixture declares a pinned name (Risks) — `grep -rnE '"(TZ|LC_ALL|SOURCE_DATE_EPOCH)"' crates` → no match, exit 1; control `grep -rnE '"HOME"' crates` → `crates/buildl-core/src/error.rs:1142`, `crates/buildl-core/src/types/cache_row.rs:274`. Holds.
+- 315532800 is 1980-01-01T00:00:00Z — reviewer: 3652 days × 86400. Holds.
+
+## Deviations
+
+- 2026-10-21 — one coder ran all three tasks in sequence (each builds on the one before) instead of one coder per task; the per-task brief extraction was skipped because the plan text was already in the orchestrator's context.
+- 2026-10-21 — `crates/buildl-core/src/types/workspace.rs` changed off the file list: the `Execution` doc said no phase reads `strategy`, which Task 2 makes false. Belongs to Task 2's commit; file list amended.

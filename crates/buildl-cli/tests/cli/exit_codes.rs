@@ -595,6 +595,38 @@ fn a_program_that_is_not_found_is_an_infrastructure_failure() {
 }
 
 #[test]
+fn a_pinned_variable_exits_5() {
+    let manifest = |execution: &str| {
+        format!(
+            "[ceiling]\nproc.run = [\"cp\"]\nenv.read = [\"TZ\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n{execution}"
+        )
+    };
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest("")),
+        (
+            "build.lua",
+            "buildl.target(\"app\", { inputs = { \"a.txt\" }, env = { \"TZ\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+        ),
+        ("a.txt", "a\n"),
+    ]);
+    assert_eq!(
+        failed(&root, &["plan"]),
+        (
+            5,
+            "error: build.lua: //:app: env TZ is set to UTC by the sandbox and cannot be declared\n"
+                .to_owned()
+        )
+    );
+
+    write(
+        &root,
+        "buildl.toml",
+        &manifest("\n[execution]\nstrategy = \"bare\"\n"),
+    );
+    assert_eq!(code(&run(&root, &["plan"], &[])), 0);
+}
+
+#[test]
 fn a_value_that_is_not_unicode_fails_the_plan() {
     let (_dir, root) = workspace(&[
         (
