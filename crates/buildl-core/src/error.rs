@@ -28,8 +28,9 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use crate::types::{
-    Ceiling, Declaration, DeclarationOrder, Diagnostic, Directory, FieldName, InputKind, Label,
-    Node, OutputPath, Program, Provenance, SettingName, SourcePath, TreePath, Want, Written,
+    Ceiling, Declaration, DeclarationOrder, Diagnostic, Directory, EnvName, EnvValue, FieldName,
+    InputKind, Label, Node, OutputPath, Program, Provenance, SettingName, SourcePath, TreePath,
+    Want, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -250,6 +251,20 @@ pub enum Error {
         site: Box<DeclarationSite>,
         /// The program.
         program: Program,
+    },
+    /// A target declares an environment variable the workspace's execution strategy sets itself.
+    #[error(
+        "{}: {}: env {name} is set to {value} by the sandbox and cannot be declared",
+        .site.provenance,
+        .site.label
+    )]
+    PinnedEnv {
+        /// The variable.
+        name: EnvName,
+        /// The value the strategy gives it.
+        value: EnvValue,
+        /// The lowest-labelled target declaring the variable, and its build file.
+        site: Box<DeclarationSite>,
     },
     /// A target reads a workspace file that does not exist.
     #[error(
@@ -881,9 +896,10 @@ mod tests {
         EvaluationLimit, NameKind, PortName, TreeFault,
     };
     use crate::types::{
-        Argument, Ceiling, Command, DeclarationOrder, Diagnostic, Directory, EnvName, FieldName,
-        Freshness, InputKind, Label, NetworkAccess, Node, OutputName, OutputPath, Program,
-        Provenance, SettingName, SourcePath, TargetName, TargetRole, TreePath, Want, Written,
+        Argument, Ceiling, Command, DeclarationOrder, Diagnostic, Directory, EnvName, EnvValue,
+        FieldName, Freshness, InputKind, Label, NetworkAccess, Node, OutputName, OutputPath,
+        Program, Provenance, SettingName, SourcePath, TargetName, TargetRole, TreePath, Want,
+        Written,
     };
 
     fn lib_file() -> Provenance {
@@ -1092,6 +1108,19 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "build.lua: //:app: program cc was not found"
+        );
+    }
+
+    #[test]
+    fn pinned_env_renders_its_site_name_and_value() {
+        let err = Error::PinnedEnv {
+            name: EnvName::parse("TZ").unwrap(),
+            value: EnvValue::parse("UTC").unwrap(),
+            site: Box::new(root_site("//a:y")),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //a:y: env TZ is set to UTC by the sandbox and cannot be declared"
         );
     }
 

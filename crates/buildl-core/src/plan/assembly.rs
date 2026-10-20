@@ -1,9 +1,10 @@
 //! The assembly: from a target graph, and what the ports report, to one plan.
 //!
 //! Its own file because it is where this phase's steps meet and where their order is fixed:
-//! read the manifest, check the overrides, check every want against the ceiling, and only then
-//! ask the machine anything — find the tools, digest the inputs, read the environment — before
-//! keying every target and comparing each key with the one its last build recorded.
+//! read the manifest, check the overrides, check every want against the ceiling, refuse a
+//! variable the strategy pins, and only then ask the machine anything — find the tools, digest
+//! the inputs, read the environment — before keying every target and comparing each key with the
+//! one its last build recorded.
 //!
 //! Responsibilities: [`plan`].
 //!
@@ -19,6 +20,7 @@ use crate::plan::authority::{check, sites};
 use crate::plan::components::{Gathered, environment, own};
 use crate::plan::inputs::digests;
 use crate::plan::order::topological;
+use crate::plan::pinned::pinned;
 use crate::plan::settings::effective;
 use crate::plan::tools::fingerprints;
 use crate::plan::verdict;
@@ -57,10 +59,12 @@ use crate::types::{Plan, Rerun, SettingName, SettingValue, TargetGraph};
 ///    declared setting;
 /// 3. [`Error::Refused`](crate::Error::Refused) for a want outside the workspace's ceiling;
 ///    nothing is asked of any other port before this check has passed;
-/// 4. [`Error::MissingTool`](crate::Error::MissingTool) for a program that cannot be found;
-/// 5. [`Error::MissingInput`](crate::Error::MissingInput) for an input that does not exist, and
+/// 4. [`Error::PinnedEnv`](crate::Error::PinnedEnv) for a target that declares a variable the
+///    workspace's strategy pins;
+/// 5. [`Error::MissingTool`](crate::Error::MissingTool) for a program that cannot be found;
+/// 6. [`Error::MissingInput`](crate::Error::MissingInput) for an input that does not exist, and
 ///    [`Error::InputNotAFile`](crate::Error::InputNotAFile) for one that is not a regular file;
-/// 6. whatever the host port returns for an environment variable.
+/// 7. whatever the host port returns for an environment variable.
 ///
 /// A port's own failure is returned from the step that met it.
 pub fn plan<P: Ports>(
@@ -73,6 +77,7 @@ pub fn plan<P: Ports>(
     let settings = effective(graph.settings(), overrides)?;
     let sites = sites(graph, &settings);
     let wanted = check(graph, &sites, &workspace)?;
+    pinned(&sites, &workspace)?;
 
     let fingerprints = fingerprints(&sites.programs, &ports.tools)?;
     let digests = digests(&sites.inputs, &ports.digester, &mut ports.stat_cache)?;
