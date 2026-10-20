@@ -5,7 +5,7 @@
 //! and one sort that makes the result independent of the order anything was evaluated or declared
 //! in.
 //!
-//! Responsibilities: [`load`], and the private steps it is made of.
+//! Responsibilities: [`load`], and the per-file steps it is made of, which `evaluation` calls.
 //!
 //! Non-responsibilities: evaluating a build file, which the
 //! [`DeclarationSource`] port does; and checking one declaration
@@ -14,14 +14,16 @@
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
 
+use super::evaluation::{FileResult, evaluate_file};
 use crate::error::{ActionFound, DeclarationField, Error, Result};
 use crate::ports::DeclarationSource;
 use crate::types::{
     Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
-    Directory, EntryName, Evaluated, Label, OutputName, Provenance, Rule, Setting, SourcePath,
-    StagedAlias, StagedDeclaration, StagedItem, StagedRule, StagedSetting, StagedSubdir,
-    StagedTarget, Target, TargetName, TargetRole, Written,
+    Directory, EntryName, Label, OutputName, Provenance, Rule, Setting, SourcePath, StagedAlias,
+    StagedDeclaration, StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target,
+    TargetName, TargetRole, Written,
 };
 
 /// Evaluates the workspace's build files and returns their declarations, validated and sorted.
@@ -45,26 +47,31 @@ pub fn load<S: DeclarationSource>(source: &S, entry: &EntryName) -> Result<Vec<D
     let mut queue = VecDeque::from([(Directory::root(), None)]);
     let mut seen = BTreeSet::from([Directory::root()]);
     let mut declarations = Vec::new();
+    let stop = AtomicBool::new(false);
 
     while let Some((directory, requested_by)) = queue.pop_front() {
-        let file = build_file(&directory, entry);
-        let staged = match source.evaluate(&file)? {
-            Evaluated::Staged(staged) => staged,
-            Evaluated::Absent => {
+        match evaluate_file(source, entry, &directory, &stop) {
+            FileResult::Loaded {
+                subdirs,
+                declarations: found,
+            } => {
+                let requester = build_file(&directory, entry).provenance().clone();
+                for next in subdirs {
+                    if seen.insert(next.clone()) {
+                        queue.push_back((next, Some(requester.clone())));
+                    }
+                }
+                declarations.extend(found);
+            }
+            FileResult::Absent => {
                 return Err(Error::MissingBuildFile {
                     directory,
                     requested_by,
                 });
             }
-        };
-        let provenance = file.provenance();
-        for next in resolve_subdirs(&staged.subdirs, provenance)? {
-            if seen.insert(next.clone()) {
-                queue.push_back((next, Some(provenance.clone())));
-            }
-        }
-        for declaration in staged.declarations {
-            declarations.push(convert(declaration, provenance)?);
+            FileResult::Failed(error) => return Err(error),
+            // Nothing in this loop sets the flag.
+            FileResult::Stopped => break,
         }
     }
 
@@ -73,7 +80,7 @@ pub fn load<S: DeclarationSource>(source: &S, entry: &EntryName) -> Result<Vec<D
 }
 
 /// The build file of `directory`: the entry name, joined under the directory.
-fn build_file(directory: &Directory, entry: &EntryName) -> BuildFile {
+pub(super) fn build_file(directory: &Directory, entry: &EntryName) -> BuildFile {
     let path = if directory.is_root() {
         PathBuf::from(entry.as_str())
     } else {
@@ -117,7 +124,10 @@ impl Site<'_> {
 /// Resolves a file's `subdir` requests under its directory, sorted and without repeats.
 ///
 /// Sorting here makes the breadth-first order independent of the order the requests were made in.
-fn resolve_subdirs(subdirs: &[StagedSubdir], provenance: &Provenance) -> Result<Vec<Directory>> {
+pub(super) fn resolve_subdirs(
+    subdirs: &[StagedSubdir],
+    provenance: &Provenance,
+) -> Result<Vec<Directory>> {
     let mut resolved = Vec::with_capacity(subdirs.len());
     for subdir in subdirs {
         let site = Site {
@@ -136,7 +146,7 @@ fn resolve_subdirs(subdirs: &[StagedSubdir], provenance: &Provenance) -> Result<
 }
 
 /// Converts one staged declaration into a validated one.
-fn convert(staged: StagedDeclaration, provenance: &Provenance) -> Result<Declaration> {
+pub(super) fn convert(staged: StagedDeclaration, provenance: &Provenance) -> Result<Declaration> {
     let site = Site {
         provenance,
         order: staged.order,
