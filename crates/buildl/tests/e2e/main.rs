@@ -22,5 +22,6 @@ mod identical;
 mod incremental;
 mod log;
 mod named;
+mod parallel_load;
 mod recovery;
 mod test;
