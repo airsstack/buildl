@@ -646,6 +646,64 @@ fn a_workspace_another_buildl_holds_is_refused() {
 }
 
 #[test]
+fn clean_and_gc_exit_0() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        ("build.lua", COPY),
+        ("a.txt", "a\n"),
+    ]);
+    assert_eq!(code(&run(&root, &["build"], &[])), 0);
+    for command in ["clean", "gc"] {
+        let output = run(&root, &[command], &[]);
+        assert_eq!(code(&output), 0, "{command}");
+        assert_eq!(stdout(&output), "", "{command}");
+    }
+}
+
+#[test]
+fn clean_and_gc_exit_3_while_the_lock_is_held() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        ("build.lua", COPY),
+        ("a.txt", "a\n"),
+    ]);
+    fs::create_dir(root.join(".buildl")).unwrap();
+    let lock = File::create(root.join(".buildl/lock")).unwrap();
+    lock.try_lock().unwrap();
+    let expected = format!(
+        "error: action cache: {} is in use by another buildl\n",
+        root.join(".buildl/lock").display()
+    );
+    for command in ["clean", "gc"] {
+        assert_eq!(
+            failed(&root, &[command]),
+            (3, expected.clone()),
+            "{command}"
+        );
+    }
+    drop(lock);
+    assert_eq!(code(&run(&root, &["clean"], &[])), 0);
+}
+
+#[test]
+fn clean_exits_4_when_the_ceiling_leaves_out_the_output_directory() {
+    let (_dir, root) = workspace(&[
+        (
+            "buildl.toml",
+            "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\".buildl\"]\n\n[execution]\nstrategy = \"bare\"\n",
+        ),
+        ("build.lua", COPY),
+        ("a.txt", "a\n"),
+    ]);
+    let (status, said) = failed(&root, &["clean"]);
+    assert_eq!(status, 4);
+    assert!(
+        said.starts_with("error: directory out is outside the ceiling"),
+        "{said}"
+    );
+}
+
+#[test]
 fn a_state_directory_that_cannot_be_used_is_an_infrastructure_failure() {
     let (_dir, root) = workspace(&[
         ("buildl.toml", &manifest(&["cp"])),
