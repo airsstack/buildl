@@ -11,14 +11,14 @@ use buildl_core::{
     DeclarationField, Declared, EntryName, Error, EvaluationFailure, EvaluationLimit, json, load,
 };
 
-use crate::common::{FakeFile, FakeSource, dir, file, setting, target, workspace};
+use crate::common::{FakeDispatcher, FakeFile, FakeSource, dir, file, setting, target, workspace};
 
 fn entry() -> EntryName {
     EntryName::parse("build.lua").unwrap()
 }
 
 fn names(source: &FakeSource) -> Vec<String> {
-    load(source, &entry())
+    load(source, &mut FakeDispatcher::default(), &entry())
         .unwrap()
         .iter()
         .map(|declaration| match declaration.item() {
@@ -81,8 +81,13 @@ fn a_shuffled_file_loads_to_byte_identical_canonical_json() {
         ("x", file(vec![], &[])),
         ("y", file(vec![], &[])),
     ]));
-    let a = json::canonical::to_vec(&load(&ordered, &entry()).unwrap()).unwrap();
-    let b = json::canonical::to_vec(&load(&shuffled, &entry()).unwrap()).unwrap();
+    let a =
+        json::canonical::to_vec(&load(&ordered, &mut FakeDispatcher::default(), &entry()).unwrap())
+            .unwrap();
+    let b = json::canonical::to_vec(
+        &load(&shuffled, &mut FakeDispatcher::default(), &entry()).unwrap(),
+    )
+    .unwrap();
     assert_eq!(a, b);
 }
 
@@ -95,7 +100,7 @@ fn a_directory_requested_twice_is_evaluated_once() {
         ("a", file(vec![], &["x"])),
         ("a/x", file(vec![], &[])),
     ]));
-    load(&source, &entry()).unwrap();
+    load(&source, &mut FakeDispatcher::default(), &entry()).unwrap();
     assert_eq!(source.evaluated(), [dir(""), dir("a"), dir("a/x")]);
 }
 
@@ -106,7 +111,7 @@ fn a_subdir_cannot_leave_the_workspace() {
             ("", file(vec![], &["lib"])),
             ("lib", file(vec![], &[escape])),
         ]));
-        match load(&source, &entry()).unwrap_err() {
+        match load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err() {
             Error::InvalidDeclaration {
                 provenance, field, ..
             } => {
@@ -121,7 +126,7 @@ fn a_subdir_cannot_leave_the_workspace() {
 #[test]
 fn a_missing_root_names_no_requester() {
     let source = FakeSource::new(workspace(vec![]));
-    match load(&source, &entry()).unwrap_err() {
+    match load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err() {
         Error::MissingBuildFile {
             directory,
             requested_by,
@@ -136,7 +141,7 @@ fn a_missing_root_names_no_requester() {
 #[test]
 fn a_missing_subdir_names_the_file_that_requested_it() {
     let source = FakeSource::new(workspace(vec![("", file(vec![], &["lib"]))]));
-    let error = load(&source, &entry()).unwrap_err();
+    let error = load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err();
     assert_eq!(
         error.to_string(),
         "no build file in //lib (requested by build.lua)"
@@ -153,7 +158,7 @@ fn the_requester_of_a_shared_missing_directory_does_not_depend_on_call_order() {
             ("a", file(vec![], &["b/c"])),
             ("a/b", file(vec![], &["c"])),
         ]));
-        let error = load(&source, &entry()).unwrap_err();
+        let error = load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err();
         assert_eq!(
             error.to_string(),
             "no build file in //a/b/c (requested by a/build.lua)"
@@ -170,7 +175,7 @@ fn an_evaluation_failure_passes_through_unchanged() {
         ("", file(vec![], &["lib"])),
         ("lib", FakeFile::Fails(failure.clone())),
     ]));
-    match load(&source, &entry()).unwrap_err() {
+    match load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err() {
         Error::Evaluation {
             provenance,
             failure: found,

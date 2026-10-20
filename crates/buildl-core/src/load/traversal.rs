@@ -1,82 +1,74 @@
 //! The traversal: which build files are evaluated, and what their staged values become.
 //!
-//! Its own file because it is the whole of Load's logic: a breadth-first walk from the workspace
-//! root along `subdir` requests, a conversion of every staged declaration into a validated one,
-//! and one sort that makes the result independent of the order anything was evaluated or declared
-//! in.
+//! Its own file because it is the whole of Load's logic: a walk from the workspace root along
+//! `subdir` requests, a conversion of every staged declaration into a validated one, and one sort
+//! that makes the result independent of the order anything was evaluated or declared in.
 //!
-//! Responsibilities: [`load`], and the per-file steps it is made of, which `evaluation` calls.
+//! Responsibilities: [`load`], which hands each build file to a
+//! [`Dispatcher`] and returns what `loading` makes of the results; and the per-file steps
+//! `evaluation` calls.
 //!
 //! Non-responsibilities: evaluating a build file, which the
-//! [`DeclarationSource`] port does; and checking one declaration
-//! against another, which the phase that builds the graph does.
+//! [`DeclarationSource`] port does; deciding how many files are evaluated at a time, which the
+//! dispatcher does; and checking one declaration against another, which the phase that builds the
+//! graph does.
 
 use std::cmp::Ordering;
-use std::collections::{BTreeSet, VecDeque};
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
 use super::evaluation::{FileResult, evaluate_file};
+use super::loading::Loading;
 use crate::error::{ActionFound, DeclarationField, Error, Result};
-use crate::ports::DeclarationSource;
+use crate::ports::{DeclarationSource, Dispatcher};
 use crate::types::{
     Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
     Directory, EntryName, Label, OutputName, Provenance, Rule, Setting, SourcePath, StagedAlias,
     StagedDeclaration, StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target,
-    TargetName, TargetRole, Written,
+    TargetName, TargetRole, Turn, Written,
 };
 
 /// Evaluates the workspace's build files and returns their declarations, validated and sorted.
 ///
-/// The walk starts at the workspace root and follows `subdir` requests breadth-first, evaluating
-/// each directory once. Nothing is discovered from the filesystem: the evaluated build files are
-/// exactly the root's and those a `subdir` call reaches. The result is sorted by declaring
-/// directory, then declared name, then the whole declaration, so it does not depend on the order
-/// anything was evaluated or declared in.
+/// The walk starts at the workspace root and follows `subdir` requests, evaluating each directory
+/// once, with `dispatcher` deciding how many files are evaluated at a time. Nothing is discovered
+/// from the filesystem: the evaluated build files are exactly the root's and those a `subdir`
+/// call reaches. The result is sorted by declaring directory, then declared name, then the whole
+/// declaration, and the error is the one a walk in breadth-first order would meet first, so
+/// neither depends on the order anything was evaluated or declared in.
 ///
 /// # Errors
 ///
-/// Returns the first error met, one of:
+/// Returns the first error met in breadth-first order, one of:
 ///
 /// - whatever `source` returns for a build file it cannot evaluate;
 /// - [`Error::MissingBuildFile`] when the root or a requested directory holds no build file;
 /// - [`Error::InvalidDeclaration`] when a staged value fails its grammar, including a `subdir`
 ///   that would leave the workspace;
-/// - [`Error::ActionConflict`] when a target names both or neither of `rule` and `run`.
-pub fn load<S: DeclarationSource>(source: &S, entry: &EntryName) -> Result<Vec<Declaration>> {
-    let mut queue = VecDeque::from([(Directory::root(), None)]);
-    let mut seen = BTreeSet::from([Directory::root()]);
-    let mut declarations = Vec::new();
+/// - [`Error::ActionConflict`] when a target names both or neither of `rule` and `run`;
+/// - [`Error::LostBuildFiles`] when `dispatcher` returned without evaluating a build file it was
+///   given;
+///
+/// or the error `dispatcher` itself returns.
+pub fn load<S: DeclarationSource, D: Dispatcher>(
+    source: &S,
+    dispatcher: &mut D,
+    entry: &EntryName,
+) -> Result<Vec<Declaration>> {
     let stop = AtomicBool::new(false);
-
-    while let Some((directory, requested_by)) = queue.pop_front() {
-        match evaluate_file(source, entry, &directory, &stop) {
-            FileResult::Loaded {
-                subdirs,
-                declarations: found,
-            } => {
-                let requester = build_file(&directory, entry).provenance().clone();
-                for next in subdirs {
-                    if seen.insert(next.clone()) {
-                        queue.push_back((next, Some(requester.clone())));
-                    }
-                }
-                declarations.extend(found);
-            }
-            FileResult::Absent => {
-                return Err(Error::MissingBuildFile {
-                    directory,
-                    requested_by,
-                });
-            }
-            FileResult::Failed(error) => return Err(error),
-            // Nothing in this loop sets the flag.
-            FileResult::Stopped => break,
-        }
-    }
-
-    sort(&mut declarations);
-    Ok(declarations)
+    let mut loading = Loading::new(entry, &stop);
+    dispatcher.dispatch(
+        |directory: Directory, _tell: &(dyn Fn(()) + Sync)| {
+            let result = evaluate_file(source, entry, &directory, &stop);
+            (directory, result)
+        },
+        |turn: Turn<(), (Directory, FileResult)>| match turn {
+            Turn::Begin => loading.begin(),
+            Turn::Told(()) => Vec::new(),
+            Turn::Done((directory, result)) => loading.done(directory, result),
+        },
+    )?;
+    loading.finish()
 }
 
 /// The build file of `directory`: the entry name, joined under the directory.
@@ -303,11 +295,6 @@ pub(crate) fn declaration_order(a: &Declaration, b: &Declaration) -> Ordering {
         .then_with(|| a.cmp(b))
 }
 
-/// Sorts by [`declaration_order`].
-fn sort(declarations: &mut [Declaration]) {
-    declarations.sort_by(declaration_order);
-}
-
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -317,7 +304,7 @@ mod tests {
 
     use std::path::{Path, PathBuf};
 
-    use super::{build_file, convert, resolve_subdirs, sort};
+    use super::{build_file, convert, declaration_order, resolve_subdirs};
     use crate::error::{ActionFound, DeclarationField, Error};
     use crate::types::{
         Action, Declaration, DeclarationOrder, Declared, Directory, EntryName, Freshness, Label,
@@ -645,13 +632,13 @@ mod tests {
         let declare_in = |directory: &str, name: &str| {
             convert_target_in(directory, staged_target(name)).unwrap()
         };
-        let mut declarations = vec![
+        let mut declarations = [
             declare_in("lib", "a"),
             declare_in("", "zeta"),
             declare_in("", "alpha"),
             declare_in("app", "m"),
         ];
-        sort(&mut declarations);
+        declarations.sort_by(declaration_order);
         let rendered: Vec<String> = declarations
             .iter()
             .map(|d| target_of(d).label.to_string())
@@ -667,7 +654,7 @@ mod tests {
             convert_target_in("lib", target).unwrap()
         };
         let sorted = |mut declarations: Vec<Declaration>| {
-            sort(&mut declarations);
+            declarations.sort_by(declaration_order);
             declarations
         };
         let forward = sorted(vec![tool("ar"), tool("cc")]);

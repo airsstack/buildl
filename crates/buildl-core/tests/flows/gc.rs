@@ -14,7 +14,8 @@ use buildl_core::{
 };
 
 use crate::common::{
-    FakeHistory, FakePorts, FakeSource, Script, file, label, root_only, script, target, workspace,
+    FakeDispatcher, FakeHistory, FakePorts, FakeSource, Script, file, label, root_only, script,
+    target, workspace,
 };
 
 fn entry() -> EntryName {
@@ -64,6 +65,7 @@ fn gc(pipeline: &mut Pipeline<FakePorts>, source: &FakeSource, history: &FakeHis
     let ports = pipeline.ports_mut();
     pipeline::gc(
         source,
+        &mut FakeDispatcher::default(),
         &entry(),
         &mut ports.cache,
         &ports.cas,

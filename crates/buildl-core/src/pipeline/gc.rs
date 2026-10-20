@@ -1,10 +1,10 @@
 //! The gc command: drop the cache rows of targets no longer declared, then remove the stored
 //! blobs nothing still reads.
 //!
-//! Its own file because it is a function over five ports, the build file source, the action
-//! cache, the content store, the store's sweep and the build log's history, that sits beside the
-//! [`Pipeline`](super::Pipeline) driver and builds nothing: it loads once, as `build` does, and
-//! changes only what the cache and the store hold.
+//! Its own file because it is a function over six ports, the build file source, the dispatcher
+//! that runs its evaluations, the action cache, the content store, the store's sweep and the
+//! build log's history, that sits beside the [`Pipeline`](super::Pipeline) driver and builds
+//! nothing: it loads once, as `build` does, and changes only what the cache and the store hold.
 //!
 //! Responsibilities: [`Collected`] and [`gc`](fn@gc).
 //!
@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use crate::error::Result;
 use crate::history::logged_outputs;
 use crate::load::load;
-use crate::ports::{ActionCache, ContentStore, DeclarationSource, RunHistory, Sweep};
+use crate::ports::{ActionCache, ContentStore, DeclarationSource, Dispatcher, RunHistory, Sweep};
 use crate::resolve::resolve;
 use crate::types::{CacheRow, Digest, EntryName, Label, OutputManifest};
 
@@ -37,7 +37,7 @@ pub struct Collected {
 ///
 /// In order:
 ///
-/// 1. Loads the workspace once through `source` and resolves it into the target graph.
+/// 1. Loads the workspace once through `source`, run by `dispatcher`, and resolves it into the target graph.
 /// 2. Forgets each row of `cache` whose label is not a target of that graph.
 /// 3. Marks what is still read: for each remaining row, its output manifests, the files each
 ///    manifest names, and its stdout and stderr; and what the build log names, through `history`.
@@ -53,8 +53,9 @@ pub struct Collected {
 /// Returns whatever the load returns, then whatever [`resolve`](fn@crate::resolve) returns, then
 /// the first port failure of steps 2 and 3, then a failure of `sweep.held()` in step 4, all
 /// before any blob is removed. A failure while removing returns at once; what was already removed stays removed.
-pub fn gc<S, A, C, W, H>(
+pub fn gc<S, D, A, C, W, H>(
     source: &S,
+    dispatcher: &mut D,
     entry: &EntryName,
     cache: &mut A,
     store: &C,
@@ -63,12 +64,13 @@ pub fn gc<S, A, C, W, H>(
 ) -> Result<Collected>
 where
     S: DeclarationSource,
+    D: Dispatcher,
     A: ActionCache,
     C: ContentStore,
     W: Sweep,
     H: RunHistory,
 {
-    let graph = resolve(load(source, entry)?)?;
+    let graph = resolve(load(source, dispatcher, entry)?)?;
     let declared: BTreeSet<&Label> = graph.nodes().iter().map(|node| &node.label).collect();
     let mut rows_dropped = 0;
     for label in cache.labels() {
@@ -131,18 +133,20 @@ mod tests {
     )]
 
     use std::cell::RefCell;
-    use std::collections::{BTreeMap, BTreeSet};
+    use std::collections::{BTreeMap, BTreeSet, VecDeque};
     use std::rc::Rc;
 
     use super::{Collected, gc};
     use crate::error::{Error, EvaluationFailure, PortName, Result};
-    use crate::ports::{ActionCache, ContentStore, DeclarationSource, RunHistory, Sweep};
+    use crate::ports::{
+        ActionCache, ContentStore, DeclarationSource, Dispatcher, RunHistory, Sweep,
+    };
     use crate::types::{
         ActionKey, Argument, BuildFile, CacheRow, Command, DeclarationOrder, Diagnostic, Digest,
         EntryName, Evaluated, FileMode, Freshness, KeyComponents, Label, LogLine, LoggedRun,
         NetworkAccess, OutcomeClass, OutputManifest, OutputName, OutputPath, OwnComponents,
         Platform, Provenance, StagedDeclaration, StagedFile, StagedItem, StagedTarget, StoredFile,
-        TargetName, TargetRole, Timestamp, Tree, TreeEntry, TreePath, Written,
+        TargetName, TargetRole, Timestamp, Tree, TreeEntry, TreePath, Turn, Written,
     };
 
     /// The calls the cache and the sweep received, in order, shared by both.
@@ -152,6 +156,28 @@ mod tests {
         Error::Adapter {
             port,
             diagnostic: Diagnostic::new("fake failure"),
+        }
+    }
+
+    /// A dispatcher that runs each task on the calling thread, oldest first. A load tells nothing
+    /// while it works, so a message is dropped.
+    struct Inline;
+
+    impl Dispatcher for Inline {
+        fn dispatch<T, M, R, W, S>(&mut self, work: W, mut step: S) -> Result<()>
+        where
+            T: Send,
+            M: Send,
+            R: Send,
+            W: Fn(T, &(dyn Fn(M) + Sync)) -> R + Sync,
+            S: FnMut(Turn<M, R>) -> Vec<T>,
+        {
+            let mut waiting: VecDeque<T> = step(Turn::Begin).into();
+            while let Some(task) = waiting.pop_front() {
+                let result = work(task, &|_message| {});
+                waiting.extend(step(Turn::Done(result)));
+            }
+            Ok(())
         }
     }
 
@@ -393,6 +419,7 @@ mod tests {
         fn run(&mut self) -> Result<Collected> {
             gc(
                 &self.source,
+                &mut Inline,
                 &EntryName::parse("build.lua").unwrap(),
                 &mut self.cache,
                 &self.store,

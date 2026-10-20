@@ -1429,7 +1429,7 @@ mod tests {
         let targets = names.iter().map(|name| target(name, &[])).collect();
         let source = FakeSource::new(workspace(vec![("", file(targets, &[]))]));
         let entry = EntryName::parse("build.lua").unwrap();
-        resolve(load(&source, &entry).unwrap()).unwrap()
+        resolve(load(&source, &mut FakeDispatcher::default(), &entry).unwrap()).unwrap()
     }
 
     #[test]

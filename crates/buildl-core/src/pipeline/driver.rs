@@ -19,7 +19,7 @@ use crate::error::{Error, Result};
 use crate::execute::execute;
 use crate::load::{declaration_order, load};
 use crate::plan::plan;
-use crate::ports::{DeclarationSource, GraphRecord, PortSet, Ports};
+use crate::ports::{DeclarationSource, Dispatcher, GraphRecord, PortSet, Ports};
 use crate::resolve::{narrow, reach, resolve};
 use crate::types::{
     ActionOutcome, Declaration, EntryName, Label, LiveOutput, OnFailure, Plan, Purpose, Query,
@@ -71,8 +71,8 @@ impl<P: Ports> Pipeline<P> {
     ///
     /// Returns whatever either load returns, and [`Error::Nondeterministic`] when the two loads
     /// declare different things.
-    pub fn check(&self, entry: &EntryName) -> Result<Vec<Declaration>> {
-        check(&self.ports.source, entry)
+    pub fn check(&mut self, entry: &EntryName) -> Result<Vec<Declaration>> {
+        check(&self.ports.source, &mut self.ports.dispatcher, entry)
     }
 
     /// Loads the workspace once and resolves its declarations into the target graph.
@@ -85,8 +85,8 @@ impl<P: Ports> Pipeline<P> {
     /// Returns whatever the load returns, and otherwise whatever [`resolve`] returns: a name
     /// declared more than once, a reference that names nothing or the wrong kind of thing, or a
     /// dependency cycle.
-    pub fn graph(&self, entry: &EntryName) -> Result<TargetGraph> {
-        graph(&self.ports.source, entry)
+    pub fn graph(&mut self, entry: &EntryName) -> Result<TargetGraph> {
+        graph(&self.ports.source, &mut self.ports.dispatcher, entry)
     }
 
     /// Loads the workspace once, resolves it, and answers `asked`: the targets it reaches, in
@@ -96,8 +96,8 @@ impl<P: Ports> Pipeline<P> {
     ///
     /// Returns whatever [`Pipeline::graph`] returns, and [`Error::UnknownTarget`] when the target
     /// `asked` names is neither a target nor an alias.
-    pub fn query(&self, entry: &EntryName, asked: &Query) -> Result<BTreeSet<Label>> {
-        query(&self.ports.source, entry, asked)
+    pub fn query(&mut self, entry: &EntryName, asked: &Query) -> Result<BTreeSet<Label>> {
+        query(&self.ports.source, &mut self.ports.dispatcher, entry, asked)
     }
 
     /// Loads the workspace once, resolves it, and plans a build of the part of the graph `scope`
@@ -121,7 +121,7 @@ impl<P: Ports> Pipeline<P> {
         scope: &Scope,
         overrides: &BTreeMap<SettingName, SettingValue>,
     ) -> Result<Plan> {
-        let whole = resolve(load(&self.ports.source, entry)?)?;
+        let whole = resolve(load(&self.ports.source, &mut self.ports.dispatcher, entry)?)?;
         let graph = narrow(&whole, scope, Purpose::Build)?;
         plan(&graph, overrides, Rerun::Off, &mut self.ports)
     }
@@ -156,7 +156,7 @@ impl<P: Ports> Pipeline<P> {
         on_failure: OnFailure,
         live: LiveOutput,
     ) -> Result<Vec<ActionOutcome>> {
-        let whole = resolve(load(&self.ports.source, entry)?)?;
+        let whole = resolve(load(&self.ports.source, &mut self.ports.dispatcher, entry)?)?;
         self.ports.graph.record(&whole)?;
         let graph = narrow(&whole, scope, Purpose::Build)?;
         let plan = plan(&graph, overrides, Rerun::Off, &mut self.ports)?;
@@ -206,7 +206,7 @@ impl<P: Ports> Pipeline<P> {
         live: LiveOutput,
         rerun: Rerun,
     ) -> Result<Vec<ActionOutcome>> {
-        let whole = resolve(load(&self.ports.source, entry)?)?;
+        let whole = resolve(load(&self.ports.source, &mut self.ports.dispatcher, entry)?)?;
         self.ports.graph.record(&whole)?;
         let graph = narrow(&whole, scope, Purpose::Test)?;
         let plan = plan(&graph, overrides, rerun, &mut self.ports)?;
@@ -223,7 +223,8 @@ impl<P: Ports> Pipeline<P> {
 }
 
 /// Loads the workspace twice through `source` and returns its declarations when both loads
-/// agree: what [`Pipeline::check`] does, for a caller that holds a source and no other port.
+/// agree: what [`Pipeline::check`] does, for a caller that holds a source and a dispatcher and no
+/// other port.
 ///
 /// A command that only evaluates build files reads no state a build keeps, so it needs none of
 /// the ports that hold it.
@@ -232,24 +233,33 @@ impl<P: Ports> Pipeline<P> {
 ///
 /// Returns whatever either load returns, and [`Error::Nondeterministic`] when the two loads
 /// declare different things.
-pub fn check<S: DeclarationSource>(source: &S, entry: &EntryName) -> Result<Vec<Declaration>> {
-    let first = load(source, entry)?;
-    let second = load(source, entry)?;
+pub fn check<S: DeclarationSource, D: Dispatcher>(
+    source: &S,
+    dispatcher: &mut D,
+    entry: &EntryName,
+) -> Result<Vec<Declaration>> {
+    let first = load(source, dispatcher, entry)?;
+    let second = load(source, dispatcher, entry)?;
     first_difference(&first, &second).map_or(Ok(first), Err)
 }
 
 /// Loads the workspace once through `source` and resolves its declarations into the target
-/// graph: what [`Pipeline::graph`] does, for a caller that holds a source and no other port.
+/// graph: what [`Pipeline::graph`] does, for a caller that holds a source and a dispatcher and no
+/// other port.
 ///
 /// # Errors
 ///
 /// Returns whatever the load returns, and otherwise whatever [`resolve`] returns.
-pub fn graph<S: DeclarationSource>(source: &S, entry: &EntryName) -> Result<TargetGraph> {
-    resolve(load(source, entry)?)
+pub fn graph<S: DeclarationSource, D: Dispatcher>(
+    source: &S,
+    dispatcher: &mut D,
+    entry: &EntryName,
+) -> Result<TargetGraph> {
+    resolve(load(source, dispatcher, entry)?)
 }
 
 /// Loads the workspace once through `source`, resolves it, and answers `asked`: what
-/// [`Pipeline::query`] does, for a caller that holds a source and no other port.
+/// [`Pipeline::query`] does, for a caller that holds a source and a dispatcher and no other port.
 ///
 /// The answer is in label order and does not hold the target `asked` names.
 ///
@@ -257,12 +267,13 @@ pub fn graph<S: DeclarationSource>(source: &S, entry: &EntryName) -> Result<Targ
 ///
 /// Returns whatever [`graph`] returns, and [`Error::UnknownTarget`] when the target `asked` names
 /// is neither a target nor an alias.
-pub fn query<S: DeclarationSource>(
+pub fn query<S: DeclarationSource, D: Dispatcher>(
     source: &S,
+    dispatcher: &mut D,
     entry: &EntryName,
     asked: &Query,
 ) -> Result<BTreeSet<Label>> {
-    reach(&graph(source, entry)?, asked)
+    reach(&graph(source, dispatcher, entry)?, asked)
 }
 
 /// The error naming the first place two sorted declaration lists differ, if they do.

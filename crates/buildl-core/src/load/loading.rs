@@ -26,10 +26,6 @@ use crate::types::{Declaration, Directory, EntryName, Provenance};
 /// on arrival order. The first error the replay meets sets the stop flag, and every later result is
 /// dropped.
 #[derive(Debug)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "`load` starts calling it in the next change")
-)]
 pub(crate) struct Loading<'a> {
     entry: EntryName,
     stop: &'a AtomicBool,
@@ -105,10 +101,6 @@ impl Replay {
     }
 }
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "`load` starts calling it in the next change")
-)]
 impl<'a> Loading<'a> {
     /// A load of the workspace that reads `entry` in each directory and raises `stop` on its
     /// first error.

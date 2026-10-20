@@ -103,7 +103,11 @@ impl Workspace {
     ///
     /// Returns whatever [`pipeline::check`] returns.
     pub fn check(&self) -> Result<Vec<Declaration>> {
-        pipeline::check(&self.wiring.source(), self.wiring.entry())
+        pipeline::check(
+            &self.wiring.source(),
+            &mut self.wiring.dispatcher(),
+            self.wiring.entry(),
+        )
     }
 
     /// Evaluates every build file once and resolves the declarations into the target graph.
@@ -114,7 +118,11 @@ impl Workspace {
     ///
     /// Returns whatever [`pipeline::graph`] returns.
     pub fn graph(&self) -> Result<TargetGraph> {
-        pipeline::graph(&self.wiring.source(), self.wiring.entry())
+        pipeline::graph(
+            &self.wiring.source(),
+            &mut self.wiring.dispatcher(),
+            self.wiring.entry(),
+        )
     }
 
     /// Evaluates every build file once and answers `query`: the targets it reaches, in label
@@ -126,7 +134,12 @@ impl Workspace {
     ///
     /// Returns whatever [`pipeline::query`] returns.
     pub fn query(&self, query: &Query) -> Result<BTreeSet<Label>> {
-        pipeline::query(&self.wiring.source(), self.wiring.entry(), query)
+        pipeline::query(
+            &self.wiring.source(),
+            &mut self.wiring.dispatcher(),
+            self.wiring.entry(),
+            query,
+        )
     }
 
     /// The newest logged run of `label` that stored its output, with what it printed read back
@@ -257,6 +270,7 @@ impl Workspace {
         let log = LocalLog::new(layout);
         let collected = pipeline::gc(
             &self.wiring.source(),
+            &mut self.wiring.dispatcher(),
             self.wiring.entry(),
             &mut cache,
             &cas,

@@ -230,11 +230,19 @@ impl Wiring {
         })
     }
 
+    /// The dispatcher that runs several tasks at once: as many workers as the manifest says.
+    ///
+    /// A command that loads build files without taking the lock runs them through one of these.
+    #[must_use]
+    pub fn dispatcher(&self) -> ThreadPool {
+        ThreadPool::new(self.workspace.execution.workers)
+    }
+
     /// Every port, for one plan or one build. `lock` proves the state directory is this
     /// process's own.
     ///
     /// The worker count and the timeout of the manifest reach the dispatcher and the strategy
-    /// here and nowhere else, and the program lookup and the strategy are handed one search
+    /// through here and nowhere else, and the program lookup and the strategy are handed one search
     /// path, so the file that is run is the file that was fingerprinted.
     ///
     /// # Errors
@@ -263,7 +271,7 @@ impl Wiring {
                 self.workspace.execution.timeout,
                 self.search.clone(),
             ),
-            dispatcher: ThreadPool::new(self.workspace.execution.workers),
+            dispatcher: self.dispatcher(),
             clock: SystemClock,
             graph: GraphFile::new(layout),
             reporter,
