@@ -9,9 +9,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use buildl_core::{
-    Declaration, DeclarationField, Declared, Direction, Directory, EntryName, Error,
-    EvaluationFailure, EvaluationLimit, Label, LiveOutput, OnFailure, Pipeline, Query, Scope, json,
-    load, pipeline,
+    Declaration, DeclarationField, Declared, Diagnostic, Direction, Directory, Dispatcher,
+    EntryName, Error, EvaluationFailure, EvaluationLimit, Label, LiveOutput, OnFailure, Pipeline,
+    PortName, Query, Scope, Turn, json, load, pipeline,
 };
 
 use crate::common::{
@@ -312,6 +312,41 @@ fn a_lost_load_task_is_lost_build_files() {
             }
             other => unreachable!("{loss:?}: expected LostBuildFiles, got {other:?}"),
         }
+    }
+}
+
+/// A dispatcher that takes the first task and then fails, as an adapter whose workers cannot start.
+struct FailingDispatcher;
+
+impl Dispatcher for FailingDispatcher {
+    fn dispatch<T, M, R, W, S>(&mut self, _work: W, mut step: S) -> buildl_core::Result<()>
+    where
+        T: Send,
+        M: Send,
+        R: Send,
+        W: Fn(T, &(dyn Fn(M) + Sync)) -> R + Sync,
+        S: FnMut(Turn<M, R>) -> Vec<T>,
+    {
+        step(Turn::Begin);
+        Err(Error::Adapter {
+            port: PortName::Dispatcher,
+            diagnostic: Diagnostic::new("workers did not start"),
+        })
+    }
+}
+
+#[test]
+fn a_dispatcher_that_fails_fails_the_load_with_its_error() {
+    let source = FakeSource::new(workspace(vec![
+        ("", file(vec![], &["a"])),
+        ("a", file(vec![], &[])),
+    ]));
+    match load(&source, &mut FailingDispatcher, &entry()).unwrap_err() {
+        Error::Adapter { port, diagnostic } => {
+            assert_eq!(port, PortName::Dispatcher);
+            assert_eq!(diagnostic.to_string(), "workers did not start");
+        }
+        other => unreachable!("expected Adapter, got {other:?}"),
     }
 }
 

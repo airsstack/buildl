@@ -34,8 +34,37 @@ pub(crate) struct Loading<'a> {
     /// Directories whose result has been received and kept.
     arrived: BTreeSet<Directory>,
     /// Results the replay has not read yet.
-    results: BTreeMap<Directory, FileResult>,
+    results: BTreeMap<Directory, Evaluated>,
     replay: Replay,
+}
+
+/// A [`FileResult`] of a file that was evaluated, which is all the replay ever reads.
+#[derive(Debug)]
+enum Evaluated {
+    Loaded {
+        subdirs: Vec<Directory>,
+        declarations: Vec<Declaration>,
+    },
+    Absent,
+    Failed(Error),
+}
+
+impl Evaluated {
+    /// The result of a file that was evaluated; `None` for one that was never evaluated.
+    fn from_result(result: FileResult) -> Option<Self> {
+        match result {
+            FileResult::Stopped => None,
+            FileResult::Absent => Some(Self::Absent),
+            FileResult::Failed(error) => Some(Self::Failed(error)),
+            FileResult::Loaded {
+                subdirs,
+                declarations,
+            } => Some(Self::Loaded {
+                subdirs,
+                declarations,
+            }),
+        }
+    }
 }
 
 /// The serial walk, reading results instead of evaluating files.
@@ -59,7 +88,7 @@ impl Replay {
     }
 
     /// Reads results from the front of the queue until one is missing or an error is met.
-    fn advance(&mut self, results: &mut BTreeMap<Directory, FileResult>, entry: &EntryName) {
+    fn advance(&mut self, results: &mut BTreeMap<Directory, Evaluated>, entry: &EntryName) {
         while self.error.is_none() {
             let Some(result) = self
                 .queue
@@ -72,7 +101,7 @@ impl Replay {
                 return;
             };
             match result {
-                FileResult::Loaded {
+                Evaluated::Loaded {
                     subdirs,
                     declarations,
                 } => {
@@ -84,18 +113,13 @@ impl Replay {
                     }
                     self.declarations.extend(declarations);
                 }
-                FileResult::Absent => {
+                Evaluated::Absent => {
                     self.error = Some(Error::MissingBuildFile {
                         directory,
                         requested_by,
                     });
                 }
-                FileResult::Failed(error) => self.error = Some(error),
-                // A stopped file was never evaluated, so the walk cannot pass it.
-                FileResult::Stopped => {
-                    self.queue.push_front((directory, requested_by));
-                    return;
-                }
+                Evaluated::Failed(error) => self.error = Some(error),
             }
         }
     }
@@ -126,25 +150,27 @@ impl<'a> Loading<'a> {
     /// Returns nothing once the replay has met its error, then or earlier. A result that says the
     /// file was never evaluated is ignored.
     pub(crate) fn done(&mut self, directory: Directory, result: FileResult) -> Vec<Directory> {
-        if self.replay.error.is_some() || matches!(result, FileResult::Stopped) {
+        if self.replay.error.is_some() {
             return Vec::new();
         }
-        let next = match &result {
-            FileResult::Loaded { subdirs, .. } => subdirs
-                .iter()
-                .filter(|subdir| self.dispatched.insert((*subdir).clone()))
-                .cloned()
-                .collect(),
-            _ => Vec::new(),
+        let Some(result) = Evaluated::from_result(result) else {
+            return Vec::new();
         };
         self.arrived.insert(directory.clone());
+        let subdirs = match &result {
+            Evaluated::Loaded { subdirs, .. } => subdirs.clone(),
+            Evaluated::Absent | Evaluated::Failed(_) => Vec::new(),
+        };
         self.results.insert(directory, result);
         self.replay.advance(&mut self.results, &self.entry);
         if self.replay.error.is_some() {
             self.stop.store(true, Ordering::Release);
             return Vec::new();
         }
-        next
+        subdirs
+            .into_iter()
+            .filter(|subdir| self.dispatched.insert(subdir.clone()))
+            .collect()
     }
 
     /// What the load came to: the declarations sorted, or the error serial load would give.

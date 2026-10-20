@@ -37,7 +37,8 @@ pub struct Collected {
 ///
 /// In order:
 ///
-/// 1. Loads the workspace once through `source`, run by `dispatcher`, and resolves it into the target graph.
+/// 1. Loads the workspace once through `source`, run by `dispatcher`, and resolves it into the
+///    target graph.
 /// 2. Forgets each row of `cache` whose label is not a target of that graph.
 /// 3. Marks what is still read: for each remaining row, its output manifests, the files each
 ///    manifest names, and its stdout and stderr; and what the build log names, through `history`.

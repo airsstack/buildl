@@ -6,7 +6,7 @@
 //!
 //! Responsibilities: [`FileResult`] and [`evaluate_file`].
 //!
-//! Non-responsibilities: choosing which files to evaluate or in what order, which the traversal
+//! Non-responsibilities: choosing which files to evaluate or in what order, which `loading`
 //! does; and evaluating the file itself, which the
 //! [`DeclarationSource`] port does.
 

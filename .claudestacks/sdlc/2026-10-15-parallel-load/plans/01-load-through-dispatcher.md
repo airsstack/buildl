@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-19
 built-on: 62323287dd81
 ---
@@ -132,6 +132,7 @@ set. `traversal::load` still runs serially in this task, now through `evaluate_f
 
 **Files:**
 - Create `crates/buildl-core/src/load/loading.rs` — `pub(crate) struct Loading` with
+  `new(entry, stop)` (the replay needs the entry to rebuild a requester's provenance),
   `begin() -> Vec<Directory>`, `done(directory, FileResult) -> Vec<Directory>`, and
   `finish(self) -> Result<Vec<Declaration>>`; holds the results map (`BTreeMap`), the dispatched
   set, the replay's queue, seen set and requesters, and a reference to the stop `AtomicBool`
@@ -253,3 +254,28 @@ Commit `test(buildl-core): prove load is the same in any dispatch order`.
 - `cargo make dod` (with every `guard-*`, including `guard-core-purity`: core still starts no
   thread) and `cargo deny check` green after each task.
 - `grep -rn "thread::" crates/buildl-core/src` still matches nothing.
+
+## Review findings
+
+- test-coverage (risk) — no test ran `load` over a dispatcher whose `dispatch` errs — `load/traversal.rs:70` — fixed: `a_dispatcher_that_fails_fails_the_load_with_its_error` (fails with `LostBuildFiles` when the `?` is dropped); `cargo test -p buildl-core --test flows load` → `test result: ok. 18 passed; 0 failed`
+- doc — `dispatched` held directories never handed out after an error — `load/loading.rs:32` — fixed: inserted after the error check
+- modularity — unreachable `Stopped` arm in the replay — `load/loading.rs:95` — fixed: a private `Evaluated` drops `Stopped` before the replay
+- doc — evaluation order credited to "the traversal" — `load/evaluation.rs:9` — fixed
+- doc — traversal module doc claimed the whole walk and sort — `load/traversal.rs:3` — fixed
+- style — 108-column doc line — `pipeline/gc.rs:40` — fixed
+- doc — `ports` claimed to be the one place workers reach a dispatcher — `local_ports.rs:244` — fixed: names `Wiring::dispatcher`; `cargo make dod` → `Build Done in 14.78 seconds`
+- plan hygiene — `Loading::new(entry, stop)` not named in Task 4 — plan text amended
+
+## Probe results
+
+- Anchors re-checked before Tasks 1–3: `pub trait DeclarationSource {` at `declaration_source.rs:58`; `DispatcherFault {` at `error.rs:373`; `exit.rs:114`; `traversal.rs` `load` :44, `build_file` :76, `resolve_subdirs` :120, `convert` :139, `mod tests` :302 — as the plan said.
+- `pipeline/gc.rs`'s test source is a tuple struct over `Option<Vec<&'static str>>`, already `Sync`: Task 1 left `gc.rs` unchanged — against the plan's expectation of a `Cell`/`RefCell` to move, harmless.
+- `grep -rn "thread::" crates/buildl-core/src` → 0 matches after Task 5.
+- Task 6's tests 2–4 each failed against a deliberately wrong expectation before being restored.
+
+## Deviations
+
+- 2026-10-20 — Task 1: `gc.rs` needed no change; its test source was already `Sync`.
+- 2026-10-20 — Task 4: `Loading::new(entry, stop)` added; plan text amended.
+- 2026-10-20 — Task 5: the `sort` helper in `traversal.rs` went with the serial loop; two traversal unit tests sort with `declaration_order` directly. `graph.rs` flows needed no change (no free `graph` caller there).
+- 2026-10-20 — Review ran once over the whole plan; its fix round is its own commit.

@@ -232,7 +232,9 @@ impl Wiring {
 
     /// The dispatcher that runs several tasks at once: as many workers as the manifest says.
     ///
-    /// A command that loads build files without taking the lock runs them through one of these.
+    /// The one place the manifest's worker count becomes a dispatcher: `ports` takes its
+    /// dispatcher from here, and a command that loads build files without taking the lock runs
+    /// them through one of these.
     #[must_use]
     pub fn dispatcher(&self) -> ThreadPool {
         ThreadPool::new(self.workspace.execution.workers)
@@ -241,9 +243,10 @@ impl Wiring {
     /// Every port, for one plan or one build. `lock` proves the state directory is this
     /// process's own.
     ///
-    /// The worker count and the timeout of the manifest reach the dispatcher and the strategy
-    /// through here and nowhere else, and the program lookup and the strategy are handed one search
-    /// path, so the file that is run is the file that was fingerprinted.
+    /// The dispatcher comes from [`Wiring::dispatcher`], so the worker count of the manifest
+    /// reaches it from that one place; the timeout reaches the strategy through here. The program
+    /// lookup and the strategy are handed one search path, so the file that is run is the file that
+    /// was fingerprinted.
     ///
     /// # Errors
     ///

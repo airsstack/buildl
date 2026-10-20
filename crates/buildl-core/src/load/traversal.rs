@@ -1,12 +1,13 @@
 //! The traversal: which build files are evaluated, and what their staged values become.
 //!
-//! Its own file because it is the whole of Load's logic: a walk from the workspace root along
-//! `subdir` requests, a conversion of every staged declaration into a validated one, and one sort
-//! that makes the result independent of the order anything was evaluated or declared in.
+//! Its own file because it is where Load meets its ports: the entry point that hands build files to
+//! a dispatcher, and the conversion of staged values into validated declarations. The walk along
+//! `subdir` requests and the sort that makes the result independent of evaluation order live in
+//! `loading`.
 //!
 //! Responsibilities: [`load`], which hands each build file to a
-//! [`Dispatcher`] and returns what `loading` makes of the results; and the per-file steps
-//! `evaluation` calls.
+//! [`Dispatcher`] and returns what `loading` makes of the results; the per-file steps `evaluation`
+//! calls; and the order declarations are returned in.
 //!
 //! Non-responsibilities: evaluating a build file, which the
 //! [`DeclarationSource`] port does; deciding how many files are evaluated at a time, which the
