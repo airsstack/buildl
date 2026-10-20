@@ -1,20 +1,19 @@
 //! Emptying the output directory.
 //!
-//! Its own file because `clean` is the one command that removes outputs, and it must say
-//! whether there was anything to remove, which `clear_path` does not.
+//! Its own file because `clean` is the one command that removes the whole output directory, and it
+//! must say whether there was anything to remove, which `clear_path` does not.
 //!
 //! Responsibilities: [`Cleaned`] and [`clear_out`].
 //!
 //! Non-responsibilities: holding the output directory to the ceiling, and taking the state
 //! directory; the caller does both first.
 
-use std::fs;
-use std::io::{self, ErrorKind};
+use std::io;
 use std::path::Path;
 
 use buildl_core::Directory;
 
-use crate::state::clear_path;
+use crate::state::clear_found;
 
 /// Whether the output directory held anything when it was cleaned.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,25 +26,20 @@ pub enum Cleaned {
 
 /// Removes the output directory `out` of the workspace at `root`, with everything below it.
 ///
-/// A symbolic link at that path is removed and what it points at is left alone, and files are
-/// unlinked, never written to, as [`clear_path`] does.
+/// A symbolic link at the output directory itself is removed and what it points at is left
+/// alone, and files are unlinked, never written to, as [`clear_path`](crate::state::clear_path)
+/// does. Parent directories of `out` are resolved as the build resolves them when it places
+/// outputs, so a link among them is followed.
 ///
 /// # Errors
 ///
 /// Returns the I/O error of looking at the path or of removing what is there.
 pub(crate) fn clear_out(root: &Path, out: &Directory) -> io::Result<Cleaned> {
-    let path = root.join(out.as_str());
-    match fs::symlink_metadata(&path) {
-        Ok(_) => {
-            clear_path(&path)?;
-            Ok(Cleaned::Removed)
-        }
-        // A parent that is a file holds nothing either.
-        Err(error) if matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
-            Ok(Cleaned::Absent)
-        }
-        Err(error) => Err(error),
-    }
+    Ok(if clear_found(&root.join(out.as_str()))? {
+        Cleaned::Removed
+    } else {
+        Cleaned::Absent
+    })
 }
 
 #[cfg(test)]

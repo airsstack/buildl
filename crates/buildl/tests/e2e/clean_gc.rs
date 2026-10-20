@@ -6,8 +6,9 @@
 
 use std::fs;
 
+use buildl::Cleaned;
 use buildl::buildl_core::{Error, OutcomeClass, PortName};
-use buildl::state::{Cleaned, StateLock};
+use buildl::state::StateLock;
 
 use crate::common::{Fixture, ended};
 

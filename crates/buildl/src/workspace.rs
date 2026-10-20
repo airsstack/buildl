@@ -29,8 +29,9 @@ use crate::state::{Cleaned, clear_out};
 /// A workspace wired with the real adapters.
 ///
 /// Opening one reads its manifest and nothing else. The state directory is taken by
-/// [`Workspace::plan`], [`Workspace::build`], [`Workspace::test`], [`Workspace::gc`] and [`Workspace::clean`] only,
-/// and only while one of them runs, so a workspace kept open holds nothing while it is idle.
+/// [`Workspace::plan`], [`Workspace::build`], [`Workspace::test`], [`Workspace::gc`] and
+/// [`Workspace::clean`] only, and only while one of them runs, so a workspace kept open holds
+/// nothing while it is idle.
 /// [`Workspace::check`], [`Workspace::graph`], [`Workspace::query`] and [`Workspace::log`]
 /// hold nothing even while they run.
 #[derive(Debug)]
@@ -243,9 +244,11 @@ impl Workspace {
     /// Returns [`Error::Adapter`](buildl_core::Error::Adapter), naming
     /// [`PortName::ActionCache`](buildl_core::PortName::ActionCache), when another process
     /// holds the workspace; [`Error::Refused`](buildl_core::Error::Refused) when the state
-    /// directory is outside what the workspace allows a build to write into. After that,
-    /// whatever [`pipeline::gc`](fn@pipeline::gc) returns: the store is left whole when the build files fail to
-    /// load. A `gc` that succeeded and whose rows could not be folded returns the fold's error.
+    /// directory is outside what the workspace allows a build to write into. Otherwise returns
+    /// whatever making the adapters returns, then whatever
+    /// [`pipeline::gc`](fn@pipeline::gc) returns: the store is left whole when the build files
+    /// fail to load. A `gc` that succeeded and whose rows could not be folded returns the
+    /// fold's error.
     pub fn gc(&self) -> Result<Collected> {
         let lock = self.wiring.lock()?;
         let layout = lock.layout();
@@ -263,6 +266,8 @@ impl Workspace {
         let folded = cache.fold();
         // The adapters are let go before the lock that kept the directory theirs.
         drop(cache);
+        drop(cas);
+        drop(log);
         drop(lock);
         concluded(collected, folded)
     }

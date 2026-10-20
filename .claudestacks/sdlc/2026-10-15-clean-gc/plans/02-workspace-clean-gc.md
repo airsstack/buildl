@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-19
 depends-on: [01]
 built-on: 137a1ada1042
@@ -180,3 +180,24 @@ wins). `gc_line` uses `counted` (`message.rs:25`) for all three counts:
 
 - `cargo make dod` (which runs every `guard-*`) and `cargo deny check` green after each task.
 - `cargo test -p buildl --test e2e clean_gc` passes as a whole.
+
+## Review findings
+
+- correctness (risk) — a symlinked parent of `out` is followed by `clean` — `state/clear_out.rs:33` — resolved by documenting: the build's `place` writes through the same parents, so `clean` resolves them alike; a link at `out` itself is removed, not followed (`a_symlink_is_removed_not_followed`)
+- modularity — `clear_out` looked at the path twice — `state/clear_out.rs:34` — fixed: `clear_found` decides from one lookup; `clear_found_says_whether_anything_stood_there`; `cargo make dod` → `Build Done in 15.43 seconds`
+- doc — module doc said `clean` is the one command that removes outputs — `state/clear_out.rs:3` — fixed
+- strong-types — `buildl::Cleaned` re-export unused — `lib.rs:168` — fixed: the e2e imports `buildl::Cleaned`
+- style — `Workspace` doc line of 116 characters — `workspace.rs:32` — fixed
+- doc — gc's `# Errors` left out the adapter-opening failure — `workspace.rs:243` — fixed
+- comment vs code — "adapters are let go before the lock" held for `cache` only — `workspace.rs:264` — fixed: `cas` and `log` dropped before the lock; `cargo test -p buildl --test e2e clean_gc` → `test result: ok. 11 passed; 0 failed`
+
+## Probe results
+
+- `quiet` in fixture `logged` (`build.lua`: `run = { "cp", "$deps", "$out" }`) copies `hello`'s output and prints nothing, so removing it frees no blob: the gc e2e as first written saw `blobs_removed == 0` — **against the plan**. Plan-only claim (the spec names no fixture), so no `disproves` marker.
+
+## Deviations
+
+- 2026-10-20 — Task 3: the gc e2e copies `logged` and gives `quiet` its own `quiet.txt`, so its blobs are its own; the checked-in fixture is unchanged. Plan text amended.
+- 2026-10-20 — Task 3: `counted`'s bound is `N: Copy + Display + PartialEq + From<u8>`; clippy `needless_pass_by_value` needs `Copy`. Plan text amended.
+- 2026-10-20 — Fix round: `state::clear_found` (returns whether anything stood at the path) added beside `clear_path`, which now delegates to it.
+- 2026-10-20 — Review ran once over the whole plan; its fix round is its own commit.
