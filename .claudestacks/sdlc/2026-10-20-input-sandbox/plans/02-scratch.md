@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-20
 built-on: 5fb250597c90
 ---
@@ -53,18 +53,23 @@ crates/buildl/tests/e2e/facade.rs          — [modify] `acquire` calls (`:45`, 
   `temp/buildl-<first 32 hex digits of Digest::of(root's bytes)>` (`Digest::of`,
   `buildl-core/src/types/digest.rs:43`; its `Display` is hex, `:127`). Touches nothing on disk.
 - `pub fn dir(&self) -> &Path`.
-- `pub(crate) fn action(&self, label: &Label) -> PathBuf` — `dir/<first 32 hex of Digest::of(label text)>`.
+- `pub fn action(&self, label: &Label) -> PathBuf` — `dir/<first 32 hex of Digest::of(label text)>`.
 - `pub struct Owner(u32)` (`Debug`, `Clone`, `Copy`, `PartialEq`, `Eq`): the user a directory
-  belongs to, built only from file metadata (`pub(crate) fn of(&Metadata) -> Self`, through
+  belongs to, built only from file metadata (`pub fn of(&Metadata) -> Self`, through
   `MetadataExt::uid`), so a uid never travels as a bare `u32` (rust guideline, strong-types).
-- `pub(crate) fn claim(&self, owner: Owner) -> io::Result<()>` — creates the directory with mode
+- `pub fn claim(&self, owner: Owner) -> io::Result<()>` — creates the directory with mode
   `0700` (`DirBuilderExt::mode`); on `AlreadyExists` (another worker, or a leftover) falls through
   to the check. The check (`symlink_metadata`, `MetadataExt::{uid, mode}`): a directory, not a
   link; `Owner::of(metadata) == owner`; `mode & 0o777 == 0o700`; its canonical path does not start with the
   canonical root. Each refusal is an `io::Error` whose text gives the reason and **no path**
   (spec §2 Diagnostics): "the scratch directory is a symbolic link", "… is not a directory",
   "… belongs to another user", "… has mode 0755, not 0700", "… lies inside the workspace".
-- `pub(crate) fn remove(&self) -> io::Result<()>` — `clear_path(dir)` (`state/clear.rs:25`).
+- `pub fn remove(&self) -> io::Result<()>` — `clear_path(dir)` (`state/clear.rs:25`).
+
+These four are `pub`, not `pub(crate)`: `state` is a `pub mod` (`lib.rs:160`), and a
+`pub(crate)` item with only test callers fails `dead_code` under `-D warnings`. After Task 1
+none of the four has another caller, so Task 1 could not be green; Task 2's lock then calls
+`Owner::of` and `remove`, while `action` and `claim` wait for the sandbox.
 
 No `unsafe`. The module doc says why it is outside the workspace (tools that search upward
 would find the workspace from inside it; spec P16) and why the path is stable per target (a
@@ -154,3 +159,20 @@ directory before unlocking and ignores a failure. Every command that locks (`wor
 
 - `cargo make dod` and `cargo deny check` green after each task.
 - `cargo make guard-adapter-isolation` green: only `state` and `local_ports` change.
+
+## Review findings
+
+- plan amendment accuracy — the amendment's reason for `pub` held only for `action` and `claim`; `Owner::of` and `remove` gain non-test callers in Task 2 — `state/scratch.rs`; fixed in the plan text: the reason now says Task 1 alone could not be green with `pub(crate)`. Code unchanged (all four stay `pub` so each task's commit stands on its own).
+- Verified on the combined tree with plan 01: `cargo make dod` → exit 0, 1501 tests passed, 0 failed, 0 warnings; `cargo make guard-adapter-isolation` → OK (30 edges, reviewer run); `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`.
+
+## Probe results
+
+- No separate probe: every claim the plan rests on is under a named test, whose red-green run was the probe (coder: `cargo test -p buildl` → 323 lib, 59 e2e, 8 other passed).
+- **Against the plan:** `pub(crate)` for `Owner::of`, `Scratch::action`, `claim`, `remove` fails `dead_code` under `-D warnings` while they have only test callers (coder's build). Plan amended to `pub`.
+
+## Deviations
+
+- 2026-10-21 — visibility: the four items above are `pub`, not `pub(crate)`; plan text amended (Task 1).
+- 2026-10-21 — one extra unit test, `claim_refuses_a_file`, beside the plan's eight; the scratch tests' helper makes a real workspace root under the temp base because `claim` canonicalises the root.
+- 2026-10-21 — built in a separate worktree in parallel with plan 01 (disjoint crates), then copied into this worktree; `diff -rq` showed the `crates/buildl` differences were exactly the plan's file list.
+- 2026-10-21 — one coder ran both tasks in sequence instead of one per task.

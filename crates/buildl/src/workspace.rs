@@ -174,7 +174,9 @@ impl Workspace {
     /// outside what the workspace allows a build to write into, and
     /// [`Error::Adapter`](buildl_core::Error::Adapter), naming
     /// [`PortName::ActionCache`](buildl_core::PortName::ActionCache), when another process
-    /// holds the workspace. Otherwise returns whatever making the adapters returns, then
+    /// holds the workspace, and naming
+    /// [`PortName::ExecStrategy`](buildl_core::PortName::ExecStrategy) when the scratch
+    /// directory cannot be removed. Otherwise returns whatever making the adapters returns, then
     /// whatever [`Pipeline::plan`] returns.
     pub fn plan(
         &self,
@@ -229,7 +231,9 @@ impl Workspace {
     /// state directory is outside what the workspace allows a build to write into; nothing has
     /// been made or removed then. Returns [`Error::Adapter`](buildl_core::Error::Adapter),
     /// naming [`PortName::ActionCache`](buildl_core::PortName::ActionCache), when another
-    /// process holds the workspace, and naming
+    /// process holds the workspace, naming
+    /// [`PortName::ExecStrategy`](buildl_core::PortName::ExecStrategy) when the scratch
+    /// directory cannot be removed, and naming
     /// [`PortName::ContentStore`](buildl_core::PortName::ContentStore) when the output
     /// directory cannot be removed.
     pub fn clean(&self) -> Result<Cleaned> {
@@ -256,8 +260,10 @@ impl Workspace {
     ///
     /// Returns [`Error::Adapter`](buildl_core::Error::Adapter), naming
     /// [`PortName::ActionCache`](buildl_core::PortName::ActionCache), when another process
-    /// holds the workspace; [`Error::Refused`](buildl_core::Error::Refused) when the state
-    /// directory is outside what the workspace allows a build to write into. Otherwise returns
+    /// holds the workspace, and naming
+    /// [`PortName::ExecStrategy`](buildl_core::PortName::ExecStrategy) when the scratch
+    /// directory cannot be removed; [`Error::Refused`](buildl_core::Error::Refused) when the
+    /// state directory is outside what the workspace allows a build to write into. Otherwise returns
     /// whatever making the adapters returns, then whatever
     /// [`pipeline::gc`](fn@pipeline::gc) returns: the store is left whole when the build files
     /// fail to load. A `gc` that succeeded and whose rows could not be folded returns the

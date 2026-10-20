@@ -176,14 +176,15 @@ mod tests {
     };
 
     use super::LocalStatCache;
-    use crate::state::{StateLayout, StateLock};
+    use crate::state::{Scratch, StateLayout, StateLock};
 
     /// A new workspace whose state directory this test holds: its root, and the lock, whose
     /// stamp is when the run began.
     fn workspace() -> (tempfile::TempDir, StateLock) {
         let dir = tempfile::tempdir().unwrap();
         let layout = StateLayout::new(dir.path(), &Directory::parse(".buildl").unwrap());
-        let lock = StateLock::acquire(layout).unwrap();
+        let scratch = Scratch::new(dir.path(), dir.path());
+        let lock = StateLock::acquire(layout, scratch).unwrap();
         (dir, lock)
     }
 

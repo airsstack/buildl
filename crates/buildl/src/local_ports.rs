@@ -32,7 +32,7 @@ use crate::log::LocalLog;
 use crate::manifest::{TomlManifest, WorkspaceRoot};
 use crate::search_path::SearchPath;
 use crate::statcache::LocalStatCache;
-use crate::state::{StateLayout, StateLock};
+use crate::state::{LockError, Scratch, StateLayout, StateLock};
 use crate::tools::PathTools;
 
 /// The file a workspace's manifest is read from, as a refusal names it.
@@ -73,6 +73,7 @@ pub struct Wiring {
     manifest: TomlManifest,
     workspace: buildl_core::Workspace,
     search: SearchPath,
+    scratch: Scratch,
 }
 
 impl Wiring {
@@ -90,12 +91,20 @@ impl Wiring {
         let root = WorkspaceRoot::find(start)?;
         let manifest = TomlManifest::read(&root)?;
         let workspace = manifest.workspace()?;
+        let scratch = Scratch::new(&std::env::temp_dir(), root.as_path());
         Ok(Self {
             root,
             manifest,
             workspace,
             search: SearchPath::from_process(),
+            scratch,
         })
+    }
+
+    /// The scratch directory of this workspace, outside it. Naming it makes nothing.
+    #[must_use]
+    pub const fn scratch(&self) -> &Scratch {
+        &self.scratch
     }
 
     /// The workspace root, and where the search for it began.
@@ -213,7 +222,8 @@ impl Wiring {
     /// Returns [`Error::Refused`] when the state directory lies in no directory the workspace
     /// allows a build to write into. Returns [`Error::Adapter`], naming
     /// [`PortName::ActionCache`], when another process holds the directory, and when the
-    /// directory or its lock file cannot be made.
+    /// directory or its lock file cannot be made, and naming [`PortName::ExecStrategy`] when
+    /// the scratch directory cannot be removed.
     pub fn lock(&self) -> Result<StateLock> {
         let state = &self.workspace.state;
         let ceiling = &self.workspace.ceiling;
@@ -224,9 +234,15 @@ impl Wiring {
                 ceiling: Box::new(ceiling.clone()),
             });
         }
-        StateLock::acquire(self.layout()).map_err(|error| Error::Adapter {
-            port: PortName::ActionCache,
-            diagnostic: Diagnostic::new(error.to_string()),
+        StateLock::acquire(self.layout(), self.scratch.clone()).map_err(|error| {
+            let port = match error {
+                LockError::Scratch { .. } => PortName::ExecStrategy,
+                _ => PortName::ActionCache,
+            };
+            Error::Adapter {
+                port,
+                diagnostic: Diagnostic::new(error.to_string()),
+            }
         })
     }
 
@@ -572,6 +588,35 @@ mod tests {
         // Free again as soon as the holder lets go.
         drop(held);
         wiring.lock().unwrap();
+    }
+
+    #[test]
+    fn a_scratch_that_cannot_be_removed_is_the_exec_strategys_adapter_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (_dir, root) = workspace(BARE);
+        let wiring = Wiring::read(&root).unwrap();
+        let locked = wiring.scratch().dir().join("locked");
+        fs::create_dir_all(&locked).unwrap();
+        fs::write(locked.join("file"), b"bytes").unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o500)).unwrap();
+
+        let error = wiring.lock();
+
+        // Restore the mode first, so the directory can be removed whatever happens.
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::remove_dir_all(wiring.scratch().dir()).unwrap();
+        let error = error.unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                Error::Adapter {
+                    port: PortName::ExecStrategy,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
     }
 
     #[test]

@@ -84,7 +84,7 @@ fn rows_left_in_the_journal_are_folded_by_the_next_run() {
     let rows = chain.rows();
     fs::remove_file(layout.cache()).unwrap();
     {
-        let lock = StateLock::acquire(chain.state()).unwrap();
+        let lock = StateLock::acquire(chain.state(), chain.scratch()).unwrap();
         let mut cache = LocalCache::open(lock.layout()).unwrap();
         for (label, row) in rows {
             cache.record(label, row).unwrap();
