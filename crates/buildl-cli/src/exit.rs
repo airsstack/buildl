@@ -112,6 +112,7 @@ impl Exit {
             | Error::FloatRejected { .. }
             | Error::ForeignPlan
             | Error::DispatcherFault { .. }
+            | Error::LostBuildFiles { .. }
             | Error::InvalidTree { .. }
             | _ => Self::Internal,
         }
@@ -368,6 +369,9 @@ mod tests {
             Error::DispatcherFault {
                 targets: vec![label("//:app")],
             },
+            Error::LostBuildFiles {
+                directories: vec![Directory::root()],
+            },
             Error::InvalidTree {
                 fault: TreeFault::Empty,
             },
@@ -463,6 +467,18 @@ mod tests {
     }
 
     #[test]
+    fn a_lost_build_file_is_an_internal_fault() {
+        let lost = Error::LostBuildFiles {
+            directories: vec![Directory::root()],
+        };
+        let fault = Error::DispatcherFault {
+            targets: vec![label("//:app")],
+        };
+        assert_eq!(Exit::of_error(&lost), Exit::of_error(&fault));
+        assert_eq!(Exit::of_error(&lost), Exit::Internal);
+    }
+
+    #[test]
     fn missing_output_is_an_infrastructure_failure() {
         let error = Error::MissingOutput {
             label: label("//:app"),
@@ -487,12 +503,12 @@ mod tests {
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [5, 3, 1, 16, 3, 6]);
+        assert_eq!(counts, [5, 3, 1, 16, 3, 7]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 34, "a variant is listed twice");
+        assert_eq!(variants.len(), 35, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");
