@@ -605,7 +605,7 @@ A new stack plugin is mostly a matter of instantiating these five idioms for one
 ### 11.1 Big monorepos
 
 - **Loading:** 10,000 build files × ~136 µs ≈ 1.4 s single-threaded, and Load parallelises across engines on `[execution] workers` threads. Not the bottleneck.
-- **Lazy loading falls out of labels:** `//services/api:server` encodes its own directory, so demand-driven loading (load only directories reachable from the requested targets, as Bazel does) is a traversal change, not a redesign. Start eager; flip when a repo makes it matter.
+- **Lazy loading falls out of labels:** `//services/api:server` encodes its own directory, so demand-driven loading (load only directories reachable from the requested targets, as Bazel does) is mostly a traversal change, but not only one: a build setting is a workspace-global name with no directory to load (§5, §10.2), `graph.json` and the output-collision check both cover the whole graph, and a build file is evaluated only because a `subdir` named it (§14). Each would have to change first, or a named build could fail where the whole build passes. Load is eager; flip when a repo makes it matter.
 - **Reverse queries are the killer feature:** `buildl query "rdeps(//proto:go)"` maps a diff to the targets that must rebuild and the tests that must run. The reverse edges already exist for the executor; this is a CLI command over an existing structure, and it is worth more than remote execution to most teams.
 - **No-op speed past ~100k files:** a filesystem watcher keeping the stat cache warm between runs — a merge of watch mode and the stat cache, both already designed.
 
@@ -715,7 +715,7 @@ Two things a workspace sets are deliberately outside the ledger, because neither
 Dependency-ordered, with the airsl extension work interleaved:
 
 1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `check`/`graph`/`plan`/`build`, local cache and cas. Needs only shipped airsl.
-2. **`query` (`deps()`, `rdeps()`)** — small work, transforms CI for large repos. With it the commands around a build: `test`, `log`, `clean` and `gc` (§7). Demand-driven and parallel loading of build files (§11.1) land here.
+2. **`query` (`deps()`, `rdeps()`)** — small work, transforms CI for large repos. With it the commands around a build: `test`, `log`, `clean` and `gc` (§7). Parallel loading of build files (§11.1) lands here; demand-driven loading does not (§11.1).
 3. **Local input sandbox (tier 2)** — the correctness discipline everything remote depends on. `verify` (§12.3) lands here.
 4. **Grant negotiation UX** — wanted set, ceiling intersection, approver, and `doctor`, which prints the result (§7). Consumes the airsl extension host's ceiling + `Approver` (buildl is their first consumer; the manifest parser and `ext.on` dispatcher are not needed yet). Per-target grant narrowing (§14) is settled here.
 5. **Plugins** — manifest, attribution, `b.use()`. Consumes the extension manifest format. Discovery targets (§10) land here.

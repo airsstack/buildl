@@ -1,5 +1,5 @@
 ---
-status: draft
+status: dropped
 created: 2026-10-15
 milestone: buildl/02
 ---
@@ -25,3 +25,12 @@ Not explored yet — parked by milestone buildl/02.
 ## Non-goals
 
 Not explored yet — parked by milestone buildl/02.
+
+## Dropped
+
+Dropped 2026-10-20. Demand-driven load breaks four settled rules: build settings are
+workspace-global names with no directory to load (design §5, §10.2); `graph.json` is always the
+whole graph, and output places are checked over the whole graph (architecture §6); and a build
+file is evaluated only because a `subdir` named it (design §14). A named build could then fail
+where the whole build passes. The gain is under 0.2 s on 10,000 build files now that Load is
+parallel, and design §11.1 says to start eager.
