@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-10-21
 depends-on: [01]
 built-on: 6c7f83a41771
@@ -42,7 +42,9 @@ crates/buildl/tests/e2e/main.rs              — [modify] `mod verify;`
 
 ### Task 1 — A sandbox that leaves `out/` alone
 
-**Files:** `exec/sandbox.rs`, `exec/mod.rs`.
+**Files:** `exec/sandbox.rs`, `exec/mod.rs`; and the `InputSandbox::new` call sites in
+`local_ports.rs` and in `exec/local.rs`'s tests, which pass `OutPaths::Cleared`. *(Amended
+2026-10-21.)*
 
 **Change:** add `pub enum OutPaths { Cleared, Untouched }`, a field of `InputSandbox`, taken by
 `InputSandbox::new` (`sandbox.rs:52`). In `prepare` (`:92-101`) the loop that clears each output
@@ -108,7 +110,7 @@ removing one target's output blob touches no other row:
   differ.
 A test target is not needed: `narrow`'s handling is core-tested in plan 01.
 
-**Proof:** written first, seen failing, then passing (each starts from `Fixture::copy_of("verified", …)` and a `build`):
+**Proof:** written first, seen failing, then passing (each starts from `Fixture::copy_of("verified", …)` and a `build`, except the refusal test, which builds nothing — amended 2026-10-21):
 - `verify_names_only_the_target_that_does_not_reproduce` — `plain`, `copied`, `site` verified;
   `stamp` mismatched naming output `stamp` with `File(Bytes)`.
 - `verify_leaves_the_cache_and_the_log_as_they_were` — `cache.json` and the log are
@@ -127,7 +129,7 @@ A test target is not needed: `narrow`'s handling is core-tested in plan 01.
 - `verify_is_refused_under_bare_and_os_sandbox` — the two refusal texts; nothing locked.
 - `gc_after_verify_removes_what_the_reruns_stored` — the set of cas blobs after `gc` equals the set
   before verify.
-- `exec_dirs_are_gone_after_verify` — the scratch directory holds nothing (`Fixture::scratch`).
+- `verify_leaves_no_scratch_directory` — the scratch directory is gone after verify (`Fixture::scratch`). *(Amended 2026-10-21: renamed from `exec_dirs_are_gone_after_verify`; the lock removes the whole scratch directory, so the test cannot see per-action cleanup, which the sandbox unit tests prove.)*
 
 **Done when:** `cargo test -p buildl --test e2e verify` passes and `cargo make dod` is green. Commit
 `test(buildl): prove verify end to end`.
@@ -148,3 +150,41 @@ A test target is not needed: `narrow`'s handling is core-tested in plan 01.
 
 - `cargo make dod`, `cargo deny check` and `cargo make guard-adapter-isolation` green after each task.
 - The `sandbox`, `facade` and `identical` e2e suites pass unchanged (`build` is untouched).
+
+## Review findings
+
+Task 1 — reviewer: code 0🔴 0🟡 1🔵, spec 0🔴 0🟡 2🔵, no blocking finding; `cargo make dod` and `cargo deny check` green; `cargo test -p buildl --lib exec::` → `54 passed`.
+- doc-comment-discipline — `OutPaths::Cleared` gave the wrong reason for clearing (tier 2 never reads `out/` by a relative path; the reason is that a failed or timed-out action leaves nothing there, design §12.2) — `exec/sandbox.rs:33` — fixed
+- amendment hygiene — the Files list left out the `InputSandbox::new` call sites in `local_ports.rs` and `exec/local.rs`'s tests — task 1 — fixed (plan amended)
+- amendment hygiene — line citations moved (`prepare_clears_the_real_output_paths` is now `sandbox.rs:436`) — task 1 — declined: the plan records what was planned; the symbols it names stand
+
+Task 2 — reviewer: code 0🔴 2🟡 4🔵, spec compliant; `cargo make dod`, `cargo deny check`, `cargo make guard-adapter-isolation` (30 edges) green; `cargo test -p buildl --lib` → `358 passed`.
+- doc-comment-discipline — `Workspace::verify`'s doc said the output directory is left as it is; verify puts cached outputs back — `workspace.rs:226-227` — fixed (the one blocking finding)
+- unit-test-mandate — nothing pinned that `verify_ports` builds the sandbox with `OutPaths::Untouched` — `local_ports.rs:320-330` — fixed and verified: `a_verifys_ports_use_the_input_sandbox_and_leave_the_output_paths_alone`; with `Cleared` it fails (`assertion left == right failed`, `local_ports.rs:834`); `cargo test -p buildl --lib local_ports::` → `17 passed; 0 failed`
+- doc-comment-discipline — "this makes the sandbox whatever the manifest names" read two ways — `local_ports.rs:313-315` — fixed; a token type making `verifies` a precondition of `verify_ports` — declined: `Workspace::verify` is the one caller and `verify_under_bare_takes_no_lock` tests its order
+- style — doc lines at 116 columns — `lib.rs:16`, `workspace.rs:33` — fixed
+- doc-comment-discipline — "re-runs a sample of the cached targets", where the default is all — `lib.rs:74-75` — fixed
+
+Task 3 — reviewer: code 0🔴 1🟡 2🔵, spec 0🔴 0🟡 2🔵, no blocking finding; `cargo make dod`, `cargo deny check`, `cargo make guard-adapter-isolation` green.
+- test-coverage — `exec_dirs_are_gone_after_verify` cannot see per-action cleanup: the lock's `Drop` removes the whole scratch directory — `tests/e2e/verify.rs:261` — fixed: renamed `verify_leaves_no_scratch_directory` and documented; per-action removal stays proven by the sandbox unit tests; plan amended; `cargo test -p buildl --test e2e verify` → `9 passed; 0 failed`
+- doc-comment-discipline — the `blob` helper's doc was unclear — `tests/e2e/verify.rs:72` — fixed
+- modularity — the cas shard layout is rebuilt by hand, a third copy (`identical.rs:126`, `log.rs:77`) — `tests/e2e/verify.rs:73` — declined: merging the other suites' copies into `common.rs` reaches beyond this task's files; the layout is fixed by `state/layout.rs`
+- drift — the fixture's `timeout = "1m"`, where the plan said "as `sandboxed`'s" (`2s`) — task 3 — recorded under Deviations
+- drift — the refusal test builds nothing, where the Proof header said each test builds — task 3 — fixed (plan amended)
+
+Plan-wide, after all three tasks: `cargo make dod` exit 0, 1595 tests passed, 0 failed, 0 warnings; `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`.
+
+## Probe results
+
+- Structural facts of tasks 1–3 — grep at `30a4716`: `InputSandbox::new` `exec/sandbox.rs:52`; the clearing loop in `prepare` `:92-101`; `prepare_clears_the_real_output_paths` `:407`; `Local::refusal` `exec/local.rs:54`; `Wiring::runs` `local_ports.rs:158`, `lock` `:212`, `strategy` `:235` (the plan says `:236`), the `InputSandbox::new` call `:240`, `ports` `:275`; `Workspace::build` order `workspace.rs:205-216`; `Fixture::copy_of` `tests/e2e/common.rs:57`, `scratch` `:86`, `log_lines` `:143`, `snapshot` `:165`; `tests/fixtures/sandboxed/buildl.toml` has `proc.run = ["cp", "sh"]` and no `strategy`; `tests/fixtures/chain/lib/build.lua:9` runs `cp -R`; the cas directory `state/layout.rs:90` — all present.
+- The plan's Risks, settled by task 3's tests as they ran: `$$` differs between the build and the re-run (`stamp` is the one `Mismatched`, output `stamp`, `File(Bytes)`); `cache.json` is byte-identical and no journal appears after verify; removing `plain`'s file blob gives `plain` not cached, `copied` `Skipped { because: //:plain }`, `site` and `stamp` still checked. None came out against the plan.
+- Task 3 seen failing first: with the fixture directory moved away, all 9 tests failed (`no fixture at …/fixtures/verified`); restored, all 9 passed with no assertion changed (coder's report).
+
+## Deviations
+
+- 2026-10-21 — task 1: the first coder stalled for 30 minutes before any edit; it was stopped and the task given to a fresh coder.
+- 2026-10-21 — task 1: `exec/local.rs`'s test call of `InputSandbox::new` passes `OutPaths::Cleared` (plan amended).
+- 2026-10-21 — task 2: no separate re-export of `Sample`, `Verification`, `Check` in `buildl/src/lib.rs`: the crate root re-exports `buildl_core` whole, and buildl-core's root holds them.
+- 2026-10-21 — task 2: the shared private builder is `assemble(lock, reporter, Local)`, with `sandbox(lock, OutPaths)` making the input sandbox; `ports` passes `self.strategy(lock)`, `verify_ports` passes `Local::Sandbox` with `OutPaths::Untouched`.
+- 2026-10-21 — task 3: the fixture's `buildl.toml` sets `timeout = "1m"`, not `sandboxed`'s `2s`, so a slow machine does not time the shell scripts out; the test helpers (`built`, `verify`, `blob`, `outputs`, `blobs`, `labels`) are local to `tests/e2e/verify.rs`.
+- 2026-10-21 — task 3: `exec_dirs_are_gone_after_verify` renamed `verify_leaves_no_scratch_directory` (plan amended).

@@ -26,3 +26,4 @@ mod parallel_load;
 mod recovery;
 mod sandbox;
 mod test;
+mod verify;
