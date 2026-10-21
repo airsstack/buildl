@@ -20,6 +20,7 @@
 //! - [`Silent`] — the reporter that shows nothing.
 //! - [`plan_text`] — a plan as lines for a person.
 //! - [`query_text`] — the answer to a query as lines for a person.
+//! - [`verify_text`] — what a verify found as lines for a person.
 //! - [`graph_dot`] — a target graph as Graphviz DOT.
 //! - [`check_line`] — what a check of the build files says when they are sound.
 //! - [`clean_line`] — what cleaning the output directory says.
@@ -44,6 +45,7 @@ mod plan_text;
 mod query_text;
 mod silent;
 mod terminal;
+mod verify_text;
 
 pub use block::{block, command_text, summary_line, test_line, trailer};
 pub use dot::graph_dot;
@@ -54,3 +56,4 @@ pub use plan_text::plan_text;
 pub use query_text::query_text;
 pub use silent::Silent;
 pub use terminal::{Mode, Report, TerminalReporter, TestBlocks};
+pub use verify_text::verify_text;
