@@ -10,6 +10,8 @@
 //!   workspace itself.
 //! - [`InputSandbox`] and [`ExecDir`] — the implementation that runs an action in a directory of
 //!   its own outside the workspace, holding copies of only what the action declared.
+//! - [`Local`] and [`LocalDir`] — the one strategy the real ports name, which runs an action
+//!   under whichever of the two the workspace chose.
 //!
 //! Non-responsibilities: confining an action beyond that, and judging what it left. The first
 //! tier settles how a command is started and nothing about what the command may reach; the
@@ -23,6 +25,7 @@
 
 mod bare;
 mod capture;
+mod local;
 #[cfg(test)]
 mod memory_store;
 mod outcome;
@@ -31,4 +34,5 @@ mod run;
 mod sandbox;
 
 pub use bare::Bare;
+pub use local::{Local, LocalDir};
 pub use sandbox::{ExecDir, InputSandbox};
