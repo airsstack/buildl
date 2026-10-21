@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-21
 depends-on: [02]
 built-on: 6c7f83a41771
@@ -55,6 +55,8 @@ Report). Line shapes:
   `:189` `header`), the diagnostic, then what it printed.
 - skipped: `skipped <label>: needs <because>, which could not be checked`.
 - unplaced: `unplaced <label>: <diagnostic>`.
+The summary line has no unplaced slot: an unplaced target is counted under `skipped` (both could
+not be checked, both exit 3), so the counts add up to the report's lines.
 Failure-class lines painted as `build`'s failures (`Paint::failure`).
 
 **Proof:** written first, seen failing, then passing —
@@ -110,3 +112,28 @@ Failure-class lines painted as `build`'s failures (`Paint::failure`).
 
 - `cargo make dod` and `cargo deny check` green after each task.
 - `buildl verify --help` lists `--sample` and the targets.
+
+## Review findings
+
+Tasks 1–2 — one reviewer over both: code 0🔴 0🟡 7🔵, spec 0🔴 1🟡, no blocking finding; `cargo make dod` and `cargo deny check` green; `buildl verify --help` lists `--sample <N>` and `[TARGET]...`.
+- doc-comment-discipline — the module doc said a failed re-run is worded exactly as `build` words a failed target; the order and lines differ — `report/verify_text.rs:3` — fixed
+- consistency — printed bytes go through `from_utf8_lossy` where `build`'s block writes them raw — `report/verify_text.rs:50` — declined: the planned `-> String` signature requires it
+- strong-types — stdout and stderr taken as a positional `(&[u8], &[u8])` — `report/verify_text.rs:66` — fixed: takes `buildl_core::Captured`
+- correctness — a `Failed` check whose class has no failure text printed `FAILED <label>: ` — `report/verify_text.rs:74` — fixed: no trailing separator; test `a_failure_of_another_class_has_no_trailing_separator`
+- strong-types — the summary's counts passed as a positional `[usize; 4]` — `report/verify_text.rs:157` — fixed: a private named `Counts`
+- doc-comment-discipline — `--sample` help said "the same N every time" — `buildl-cli/src/cli.rs:178` — fixed: "the same ones while their keys stay the same"; help snapshot updated
+- modularity — `SANDBOX_MANIFEST` copied `MANIFEST` by hand; a test rebuilt `common::manifest` — `buildl-cli/src/run.rs:387`, `tests/cli/verify.rs` — fixed: one shared prefix; the bare case uses `common::manifest`
+- amendment hygiene — counting an unplaced target under `skipped` was recorded only in rustdoc — task 1 — fixed (plan amended)
+
+After the fix round: `cargo test -p buildl --lib report::` → `100 passed`; `cargo test -p buildl-cli` → 71 unit + 87 binary passed. Plan-wide, with plan 04: `cargo make dod` exit 0, 1622 tests passed, 0 failed, 0 warnings; `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`.
+
+## Probe results
+
+- Structural facts of tasks 1–2 — grep at `922bb89`: `failure_text` `report/block.rs:135`, `header` `:189`, `Paint::failure` `report/paint.rs:40`; `Selection` `buildl-cli/src/cli.rs:105-109`; the `Build` arm `run.rs:106`; `of_class` `exit.rs:47`, `of_error` `:76`, `severity` `:123`; `common::manifest` `tests/cli/common.rs:44` writes `strategy = "bare"`; `workspace`, `program`, `run`, `code`, `stdout`, `stderr` helpers present; the `Ran` harness `run.rs:415` — all present.
+- Task 1 seen failing first: 10 tests against a stub, all failed; then green. Task 2's `cli.rs` tests failed first on the missing `Command::Verify`. None came out against the plan.
+
+## Deviations
+
+- 2026-10-21 — task 1: the summary counts an unplaced target under `skipped` (plan amended); five unit tests beyond the five named (bytes/mode, kind, failed block, two-line failure, painting).
+- 2026-10-21 — task 2: `exit.rs`'s tests and `of_verification` were written together, with no separate red run; `tests/cli/arguments.rs` also changed (the command-list help snapshots gain the `verify` row).
+- 2026-10-21 — tasks 1 and 2 were reviewed by one reviewer pass over both, not one per task.

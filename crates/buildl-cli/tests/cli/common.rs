@@ -42,9 +42,20 @@ pub(crate) fn append(root: &Path, relative: &str, bytes: &str) {
 /// A manifest that allows `programs`, every read, and the two writes a build makes, and runs
 /// one action at a time with nothing between the action and the machine.
 pub(crate) fn manifest(programs: &[&str]) -> String {
+    manifest_with(programs, "strategy = \"bare\"\n")
+}
+
+/// A manifest like [`manifest`] that names no strategy, so every action runs in the input
+/// sandbox.
+pub(crate) fn sandboxed_manifest(programs: &[&str]) -> String {
+    manifest_with(programs, "")
+}
+
+/// A manifest like [`manifest`] whose `[execution]` table holds `lines` after `workers = 1`.
+pub(crate) fn manifest_with(programs: &[&str], lines: &str) -> String {
     let programs: Vec<String> = programs.iter().map(|name| format!("{name:?}")).collect();
     format!(
-        "[ceiling]\nproc.run = [{}]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nworkers = 1\nstrategy = \"bare\"\n",
+        "[ceiling]\nproc.run = [{}]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nworkers = 1\n{lines}",
         programs.join(", ")
     )
 }

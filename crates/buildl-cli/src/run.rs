@@ -23,13 +23,14 @@ use buildl::buildl_core::json::canonical;
 use buildl::buildl_core::{Error, Scope};
 use buildl::report::{
     Mode, Paint, Report, TerminalReporter, check_line, clean_line, damage, error_text, gc_line,
-    graph_dot, header, plan_text, query_text,
+    graph_dot, header, plan_text, query_text, verify_text,
 };
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 
 use crate::cli::{
-    BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, QueryArgs, Streams, TestArgs, overrides,
+    BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, QueryArgs, Streams, TestArgs,
+    VerifyArgs, overrides,
 };
 use crate::exit::Exit;
 use crate::terminal::Terminal;
@@ -105,6 +106,7 @@ where
         Command::Plan(args) => plan(&start, args, stdout),
         Command::Build(args) => build(&start, args, terminal.mode(), paint, stderr),
         Command::Test(args) => test(&start, args, terminal.mode(), paint, stderr),
+        Command::Verify(args) => verify(&start, args, paint, stderr),
         Command::Log(args) => log(&start, &args, stdout, stderr),
         Command::Clean => clean(&start, stderr),
         Command::Gc => gc(&start, stderr),
@@ -301,6 +303,24 @@ fn test<E: Write>(
     Ok(Exit::of_outcomes(&tested?))
 }
 
+/// `verify`: re-runs the cached actions of the selected targets in the input sandbox and says on
+/// `stderr` which reproduced their cached outputs and which did not, and returns the status of
+/// the most severe way a target ended. Nothing is recorded.
+fn verify<E: Write>(
+    start: &Path,
+    args: VerifyArgs,
+    paint: Paint,
+    stderr: &mut E,
+) -> Result<Exit, Stop> {
+    let sample = args.sample();
+    let settings = overrides(args.overrides)?;
+    let workspace = Workspace::open(start)?;
+    let scope = scope(&workspace, &args.targets)?;
+    let verification = workspace.verify(&scope, &settings, sample)?;
+    let _ = stderr.write_all(verify_text(&verification, paint).as_bytes());
+    Ok(Exit::of_verification(&verification))
+}
+
 /// `log`: writes to `stderr` the header of the target's last logged run and a warning of any
 /// damaged line of the log, then the bytes that run printed as stored: standard output to
 /// `stdout` and standard error to `stderr`, or the one stream asked for to `stdout`. A target
@@ -359,9 +379,20 @@ mod tests {
     use crate::exit::Exit;
     use crate::terminal::Terminal;
 
+    /// The manifest text up to the `strategy` line: allows a build to write its outputs and its
+    /// state, to read every file, and to run `cp`, one action at a time.
+    macro_rules! manifest_head {
+        () => {
+            "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nworkers = 1\n"
+        };
+    }
+
     /// A manifest that allows a build to write its outputs and its state, to read every file,
     /// and to run `cp`, one action at a time.
-    const MANIFEST: &str = "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nworkers = 1\nstrategy = \"bare\"\n";
+    const MANIFEST: &str = concat!(manifest_head!(), "strategy = \"bare\"\n");
+
+    /// A manifest like [`MANIFEST`] that runs actions in the input sandbox.
+    const SANDBOX_MANIFEST: &str = concat!(manifest_head!(), "strategy = \"sandbox\"\n");
 
     /// One target, `//:copy`, that copies `a.txt`.
     const COPY: &str = "buildl.target(\"copy\", { inputs = { \"a.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\n";
@@ -466,6 +497,25 @@ mod tests {
             &mut stderr,
         );
         (exit, String::from_utf8(stderr).unwrap())
+    }
+
+    #[test]
+    fn verify_writes_its_report_to_stderr() {
+        let (_dir, root) = workspace(&[
+            ("buildl.toml", SANDBOX_MANIFEST),
+            ("build.lua", COPY),
+            ("a.txt", "a\n"),
+        ]);
+        assert_eq!(ran(&root, &["build"]).exit, Exit::Success);
+
+        let verified = ran(&root, &["verify"]);
+
+        assert_eq!(verified.exit, Exit::Success);
+        assert_eq!(verified.stdout, "");
+        assert_eq!(
+            verified.stderr,
+            "verified //:copy\n1 verified, 0 mismatched, 0 failed, 0 skipped, 0 not cached, 0 not sampled\n"
+        );
     }
 
     #[test]
