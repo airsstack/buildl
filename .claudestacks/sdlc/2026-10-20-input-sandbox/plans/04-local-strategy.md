@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-20
 depends-on: [01, 02, 03]
 built-on: 5fb250597c90
@@ -87,7 +87,10 @@ Commit `feat(buildl): choose bare or the input sandbox per workspace`.
   tests `build_refuses_a_strategy_it_cannot_run_before_anything_is_made` (`:1020`) and
   `a_test_run_refuses_a_strategy_it_cannot_run_before_anything_is_made` (`:1052`) replace
   `strategy = "bare"` with `strategy = "os-sandbox"` instead of removing it, and expect the new
-  refusal text (today `:1043-1045`)
+  refusal text (today `:1043-1045`); and `plan_works_under_a_strategy_this_version_cannot_run`
+  (`:662`), which removes the `strategy` line and so would plan under the now-runnable default,
+  replaces `strategy = "bare"` with `strategy = "os-sandbox"` instead (found by the Risks grep at
+  execute time; the plan had named five)
 - Modify `crates/buildl-cli/src/run.rs` — `a_build_that_ends_in_an_error_says_so_once` (`:772`)
   writes `[execution]\nstrategy = "os-sandbox"\n` as its manifest; its comment says the strategy
   is one this buildl cannot run; it still expects `Exit::Definition`, one stderr line starting
@@ -113,6 +116,8 @@ and `container` are refused by `build` and `test` before anything is made, and p
 - `facade.rs` refusal test — `plan` has 6 targets; `build` is the `Manifest` error; nothing made.
 - `workspace.rs` the two refusal tests — `build` and `test` under `os-sandbox` are the `Manifest`
   error with the new text, and the root still holds only `a.txt`, `build.lua`, `buildl.toml`.
+- `workspace.rs` `plan_works_under_a_strategy_this_version_cannot_run` — under `os-sandbox`,
+  `plan` has 1 target.
 - `run.rs` `a_build_that_ends_in_an_error_says_so_once` — exit 5, one stderr line.
 - `exit_codes.rs` refusal test — `plan` exits 0; `build` exits 5 with
   `error: manifest: buildl.toml: [execution] strategy is "os-sandbox", and this version of buildl
@@ -133,7 +138,8 @@ and `container` are refused by `build` and `test` before anything is made, and p
   - `build.lua`: `visible` (inputs `a.txt`, `cp $in $out`); `hidden` (inputs `a.txt`,
     `cp secret.txt $out` — reads an undeclared file); `partial` (inputs `partial.sh`,
     `sh $in $out`, the script writes `part` to `$1` then `exit 1`); `slow` (inputs `slow.sh`,
-    `sh $in $out`, the script writes `part` to `$1` then `exec sleep 30`)
+    `sh $in $out`, the script writes `part` to `$1` then `exec /bin/sleep 30` — by absolute path,
+    since the action's environment has no `PATH`)
   - `a.txt`, `secret.txt`, `partial.sh`, `slow.sh`
 - Create `crates/buildl/tests/e2e/sandbox.rs`; modify `crates/buildl/tests/e2e/main.rs` — `mod sandbox;`
 
@@ -163,8 +169,11 @@ and `container` are refused by `build` and `test` before anything is made, and p
 - `tests_run_sandboxed` — `tested` with its strategy line removed:
   `test(&["same", "flagged"], Rerun::Off)` gives `same` passed and `flagged` failed (it reads
   `flag.txt` undeclared, `e2e/test.rs:11`); under `bare` both pass.
-- `no_log_line_names_the_scratch_directory` — after the `hidden`, `partial` and `slow` failures,
-  no line of `log_lines()` contains `scratch().dir()`'s text, in either its written form or its
+- `no_log_line_names_the_scratch_directory` — a regular file written at `out` makes `visible`
+  fail in the sandbox's prepare (`InfraFailure { kind: Prepare }`), whose diagnostic reaches the
+  log (a log line holds "making the directory of out/visible"); no line of `log_lines()` contains
+  `scratch().dir()`'s text. (Amended at execute: `hidden`, `partial` and `slow` log a null
+  diagnostic — their stdout and stderr go to the cas — so they could not prove this.) The check is, in either its written form or its
   canonical form (`fs::canonicalize` of `std::env::temp_dir()` joined with the same name: on
   macOS `/var` is `/private/var`).
 
@@ -180,7 +189,8 @@ Commit `test(buildl): prove the input sandbox end to end`.
   before Task 2 lists the ones that keep `bare`. The tests that expect the default to be refused
   are the five Task 2 names (`facade.rs:71`, `exit_codes.rs:522`, `workspace.rs:1020`, `:1052`,
   `run.rs:772`); `grep -rn 'cannot_run\|cannot be run\|left to its default' crates` before Task 2
-  re-checks there is no sixth.
+  re-checks there is no sixth. At execute time it found a sixth, `workspace.rs:662`
+  (`plan_works_under_a_strategy_this_version_cannot_run`); Task 2 now names it.
 - **`slow` depends on the timeout** (`2s`) against `sleep 30`; the test asserts the class, not a
   duration.
 - **`partial` and `slow` fail the build;** they are only ever selected by name, never in a
@@ -194,3 +204,28 @@ Commit `test(buildl): prove the input sandbox end to end`.
   there (it is `100644` in git; `Fixture::copy_of` sets the bit, `common.rs:56-71`), remove its
   `strategy` line, and run the built binary from inside it,
   `cd <copy> && <repo>/target/debug/buildl build`: exit 0.
+
+## Review findings
+
+- unit-test-mandate 🟡 — `no_log_line_names_the_scratch_directory` could not fail: `hidden`, `partial` and `slow` log `"diagnostic": null` — `tests/e2e/sandbox.rs`; fixed: a file at `out` fails `visible` in the sandbox's prepare, whose diagnostic reaches the log; with the scratch dir put into that diagnostic on purpose the test failed, then restored; Task 3 text amended.
+- unit-test-mandate 🔵 — two assertions in `refused_prepares_nothing_and_returns_the_refusal` could not fail (`Refused` holds no root or scratch) — `exec/local.rs`; fixed: dropped.
+- modularity 🔵 — `BARE` repeated `CEILING` — `local_ports.rs`; fixed: `bare()` builds it from `CEILING`.
+- doc-comment-discipline 🔵 — badly wrapped `# Errors` lines in `build` and `test` — `workspace.rs`; fixed: reflowed.
+- strong-types 🔵 — `chain(bare: bool)` — `tests/e2e/sandbox.rs`; fixed: takes an `Isolation`.
+- Verified on the whole tree after both fix rounds and plan 05: `cargo make dod` → exit 0, 1540 passed, 0 failed, 0 warnings; `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`; `cargo make guard-adapter-isolation` → `OK (30 edges)`.
+
+## Probe results
+
+- Risks grep `grep -rn 'cannot_run\|cannot be run\|left to its default' crates` → five named plus `workspace.rs:662` `plan_works_under_a_strategy_this_version_cannot_run`. **Against the plan** ("no sixth"); Task 2 amended to name it.
+- By-hand Proof (coder and reviewer each): a copy of `chain`, `greet.sh` made executable, `strategy` line removed, `target/debug/buildl build` → `6 built`, exit 0.
+- `hidden`, `partial`, `slow` through the CLI: each log row has `"diagnostic":null`. **Against the plan** (Task 3's log test premise); amended.
+- A climbing program `../cp` is refused at Plan (`program ../cp is outside the ceiling`, exit 4), so a sandbox-only prepare failure was made with a file at `out` instead: log row `"diagnostic":"exec strategy: //:visible: making the directory of out/visible: File exists (os error 17)"`.
+
+## Deviations
+
+- 2026-10-21 — Task 2 names a sixth test (`workspace.rs:662`), moved to `os-sandbox`.
+- 2026-10-21 — `slow.sh` runs `exec /bin/sleep 30`: the action's environment has no `PATH`; Task 3 text amended.
+- 2026-10-21 — `a_test_run_refuses_a_strategy_it_cannot_run_before_anything_is_made` gained the refusal-text assertion the plan asks for, through a shared `REFUSAL` constant in `workspace.rs`.
+- 2026-10-21 — the log test uses a prepare failure, not the three action failures; Task 3 text amended.
+- 2026-10-21 — Task 3's e2e tests passed on their first run (the library work of Tasks 1–2 was already in place), so they had no red step.
+- 2026-10-21 — one coder ran the three tasks in sequence.

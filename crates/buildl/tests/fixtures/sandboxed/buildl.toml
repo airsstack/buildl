@@ -1,0 +1,15 @@
+[workspace]
+name   = "sandboxed"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["cp", "sh"]
+env.read = []
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
+
+[execution]
+workers = 4
+timeout = "2s"
