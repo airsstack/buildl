@@ -1,6 +1,6 @@
 # buildl — design document
 
-**Status: the core pipeline is implemented; the rest is design.** Item 1 of the sequence in §13 is built: Load, Resolve, Plan, Execute and Record, the `check`, `graph`, `plan` and `build` commands, the local cache and the cas, with actions run at isolation tier 1 (§12.2). Of item 2, the `query`, `test` and `log` commands are built. Everything else from item 2 on is described here and not built. Every design decision builds on the shipped `airsl` runtime [1][2]; sections note where buildl depends on airsl work that is itself still proposed (the extension system).
+**Status: the core pipeline is implemented; the rest is design.** Item 1 of the sequence in §13 is built: Load, Resolve, Plan, Execute and Record, the `check`, `graph`, `plan` and `build` commands, the local cache and the cas, with actions run in the input sandbox, isolation tier 2, by default and at tier 1 on request (§12.2). Of item 2, the `query`, `test`, `log`, `clean` and `gc` commands are built. Of item 3, the input sandbox is built; the tiers above it are not. Everything else from item 2 on is described here and not built. Every design decision builds on the shipped `airsl` runtime [1][2]; sections note where buildl depends on airsl work that is itself still proposed (the extension system).
 
 **Author:** rstlix0x0 · **Date:** 2026-08-23 · **Reviewers:** —
 
@@ -127,7 +127,7 @@ The manifest is read strictly. A key this version of buildl does not read is an 
 |`timeout`|a whole number directly followed by one unit — `ms`, `s`, `m` or `h` — and never zero: `500ms`, `90s`, `10m`, `2h`|`"10m"`|
 |`strategy`|exactly one of `bare`, `sandbox`, `os-sandbox`, `container`, in order of increasing isolation (§12.2)|`"sandbox"`|
 
-Until the input sandbox ships (§13 item 3) buildl runs `bare` alone. `build` refuses a manifest whose strategy is anything else, the default `sandbox` included, rather than run its actions under a weaker tier than the one asked for; the error names the line to write, `strategy = "bare"`. `check`, `graph`, `query`, `plan` and `log` run nothing, and work under any strategy.
+`build` and `test` run `bare` and `sandbox`, and `sandbox` is the default: a manifest that writes no `strategy` line runs its actions in the input sandbox (§12.2). `build` and `test` refuse a manifest whose strategy is `os-sandbox` or `container`, rather than run its actions under a weaker tier than the one asked for; the error names the line to write, `strategy = "sandbox"`. `check`, `graph`, `query`, `plan`, `log`, `clean` and `gc` run no action, and work under any strategy. A workspace whose tools read files they do not declare fails under `sandbox`; where that is the tools' doing and not a missing declaration, the manifest writes `strategy = "bare"` to run as before.
 
 None of the three is an action-key component (§8.3): they decide how an action is run, never which action it is.
 
@@ -302,7 +302,7 @@ stateDiagram-v2
 
 The ordering is the consistency story: **a cache row is written only after its outputs exist in the cas.** An interrupted build means some finished work is remembered and unfinished work is not; the next run re-plans and continues. For a build that is interrupted — stopped, killed, or ended with its terminal — no "corrupt cache, run clean" state is representable: every state file and every blob is renamed into place whole, and a row follows its content. The same holds for removing a row: a failure under the key a row was recorded under forgets that row, and the forgetting is durable before the target's log line, as a recorded row is. Nothing is synced to disk, so that does not cover the machine itself dying mid-build; the remedy then is to remove `.buildl/` and `out/` and build again. `gc` keeps the same order: it forgets rows before it removes any blob, so a `gc` that is interrupted leaves extra blobs, never a row naming a missing one. The hash-into-cas step also yields early cutoff: a byte-identical rebuilt output leaves downstream action keys unchanged, so dependents stay clean.
 
-Where an action writes depends on the tier. At tier 1 it runs in the workspace root and writes its outputs in place under `out/`; what it left there is then hashed into the cas and placed again from the cas, so a finished output is always a link into the store or a copy of it. An action that fails or is interrupted can leave a partial output at its path: no cache row names it, nothing reads it as a result, and the next build clears the path before it runs the action again (§12.2). From tier 2 an action writes in a directory of its own, and nothing partial reaches `out/`.
+Where an action writes depends on the tier. At tier 1 it runs in the workspace root and writes its outputs in place under `out/`; what it left there is then hashed into the cas and placed again from the cas, so a finished output is always a link into the store or a copy of it. An action that fails or is interrupted can leave a partial output at its path: no cache row names it, nothing reads it as a result, and the next build clears the path before it runs the action again (§12.2). From tier 2 an action runs and writes in an exec dir of its own, outside the workspace (§12.2), and `out/` is filled only from the cas, after an output is stored. A failed or timed-out action leaves nothing at its output paths under `out/`: the build clears them before it runs the action, and the action does not write there through its relative paths.
 
 Hashing into the cas means every regular file the action left at an output path, then one manifest per output (§3). Linking into `out/` starts by removing whatever is at the output's path, so nothing an earlier build left there outlives it — a file where a directory now belongs, or a file a rebuilt directory no longer holds — and then places the file, or each file of the directory, with its mode. When a file cannot be placed, the output's path is cleared again before the target fails, so `out/` holds an output whole or not at all, and the failure reported is the placement's. Should that second clearing fail as well, it is not reported in the placement's stead: what was placed stays at the path until the next build, which removes it before placing anything there.
 
@@ -360,7 +360,7 @@ Each class maps to a distinct process exit code, so CI distinguishes "fix your c
 |2|fix the command line|a flag or argument that is wrong, a target nothing declares, a target `test` is given that is not a test, `--set` on a setting nothing declares, `log` of a target with no run that stored output|
 |3|fix your builder, or run again|an infrastructure failure: a missing tool, a command that cannot be started or runs past the timeout, an output that cannot be stored, an output `log` finds gone from the store, a file of the store or the state that cannot be read or written, a workspace another buildl is using|
 |4|the build wants more than the ceiling|a policy refusal|
-|5|fix your build files or `buildl.toml`|a build file that fails, is missing or declares differently twice; a duplicate, an unknown reference or a cycle; an input that is missing or is not a regular file; two outputs at one path; a command that names no program; no `buildl.toml`, an invalid one, or a strategy this version cannot run (§4)|
+|5|fix your build files or `buildl.toml`|a build file that fails, is missing or declares differently twice; a duplicate, an unknown reference or a cycle; an input that is missing or is not a regular file; two outputs at one path; a command that names no program; a target that declares a variable the sandbox sets itself (§12.3); no `buildl.toml`, an invalid one, or a strategy this version cannot run (§4)|
 |6|a state file is not what buildl writes|`cache.json`, or a line of its journal, that is damaged or was edited (§3)|
 |7|buildl is at fault|an internal error|
 
@@ -675,15 +675,43 @@ Tier 2 is Bazel's execroot discipline — undeclared inputs are simply absent, s
 
 **Tier 1, `bare`, runs an action as a plain process in the workspace root.** It guarantees five things: the command is started as an argument vector, never through a shell; its program, when the command writes it out or names it through a build setting, is the file the plan fingerprinted; its environment holds exactly the variables the target declared that have a value, and nothing of the host's; its standard input is empty; and its own process is stopped when it runs past the workspace's `timeout`. A program the command names through `$in`, `$out` or `$deps` has no fingerprint: it is known only once the command is expanded, when its expanded text is held to `proc.run` and the file is found by the rule every program is found by. Named through `$deps` it is a dependency's output under `out/`, the file that dependency's build placed, and its bytes are in this action's key. Named through `$in` it is the input file, its digest in the key, when the input's path holds a `/`; an input at the workspace root is a bare name, looked for on buildl's `PATH` like any other and never in the workspace. `$out` names the action's own output, which is not there when the action starts. Tier 1 confines nothing. An action can read any file the user can, declared or not, so a hidden input is silent instead of an error; it can reach the network whatever `network` says; it can write anywhere the user can, another target's output included; the processes it starts are not stopped with it, at a timeout or at its exit; and it writes its outputs in place, so an action that fails, times out or is interrupted can leave a partial output at its path. No cache row names such a file, buildl never reads it as a result, and the next build clears the path before it runs the action again. A dependency's output under `out/` is read-only, and a tool that changes its mode first can damage the store. The machine's clock, time zone and locale are the action's. Tier 2 is where an undeclared input becomes an error, and tier 3 where the network does.
 
+**Tier 2, `sandbox`, runs an action in a directory of its own that holds its declared inputs and nothing else of the workspace.** The directory is the action's **exec dir**, `<temp>/buildl-<workspace id>/<action id>`. `<temp>` is the machine's temporary directory, read once when the workspace is opened. `<workspace id>` is the first 32 hex digits of the SHA-256 of the workspace root's path, and `<action id>` the first 32 of the SHA-256 of the target's label, so the path is the same on every run of one target in one workspace on one machine, and no two targets share one. It lies outside the workspace on purpose: from inside it, tools that search upward for a `go.mod`, a `node_modules` or a Cargo workspace find the workspace's own and read what the action did not declare.
+
+|In the exec dir|How|
+|---|---|
+|each declared input|a copy at its workspace-relative path, mode kept|
+|each file of each dependency's output|a copy at its path under `out/`, mode kept|
+|the program, when the command writes it out or names it through a setting as a relative path|a copy at its path, unless it is already there as an input or a dependency output, so the file run is the file the plan fingerprinted; a relative program with a `..` component is an infrastructure failure, naming the program: name it by an absolute path or declare it|
+|the parent directory of each declared output|exists, so the command can write its output there; nothing is at the output path|
+|the environment|the declared variables that have a value, plus the three the sandbox pins (§12.3); nothing of the host's|
+
+Inputs are copied, never linked. A symbolic link makes the file's real path the workspace's, and a tool that follows it resolves its imports from there: a script linked in found the workspace's `node_modules`, and the same script copied in did not. A hard link lets a tool that writes to its input overwrite the workspace's file. A copy of a file on one disk costs little (measured near-instant on APFS; on a file system that cannot share the bytes the copy is real, and a target with large inputs pays for it on every run). The command is the same text as at tier 1, and its paths are true in the exec dir (§8.5). A program given by an absolute path is run from where it is, as at tier 1, and a bare name is looked for on buildl's `PATH`.
+
+The action does not write into `out/` through its relative paths: it writes in its exec dir. Its outputs are read from there into the cas; `out/` is filled from the cas afterwards (§8.5), and the build clears each declared output path under `out/` before the run, as at tier 1. The exec dir is removed when the action is done, whatever the result. Every command that takes the state lock also removes the whole `<temp>/buildl-<workspace id>` directory when it takes the lock and again when it lets it go, so an interrupted build's exec dirs go at the next `plan`, `build`, `test`, `clean` or `gc`, and a finished command leaves nothing in the temporary directory. buildl makes that directory with mode `0700` and uses an existing one only when it is a directory, not a link, owned by the user who owns the state lock file, of mode exactly `0700`, and outside the workspace; otherwise the action fails as an infrastructure failure naming the reason. No message the sandbox prints names an exec dir: it names the target, workspace-relative paths, and the program as the command wrote it.
+
+Tier 2 stops an action reading a workspace file it did not declare, and nothing else. An action that names a workspace file by its absolute path, or climbs out of its exec dir with `..`, reaches the workspace; it reads `/usr`, `$HOME` and tool caches as it did at tier 1; it reaches the network; and the processes it starts outlive it. Tier 3 is where those are closed. An action that reads an undeclared file fails with the tool's own message ("file not found", "cannot find module"); buildl does not name the file.
+
+`strategy` is no part of the action key (§8.3), so a target built under `bare` is a cache hit under `sandbox`: switching the manifest does not rebuild it, and so does not re-check it. `buildl verify` (§12.3) is how a cached target is checked. The two tiers also differ in the directory the action runs in, and the sandbox pins `TZ`, `LC_ALL` and `SOURCE_DATE_EPOCH` where `bare` pins nothing. Outputs are therefore byte-identical across them only for tools that neither record the directory nor read the clock, the locale or the time zone: a compile with debug information records the directory (`rustc -g` run in two directories gave two different files), and `cp` and `cat` read none of these. The exec dir is the same path on each run, so a tool that records it records the same bytes each time.
+
 ### 12.3 Determinism: guarantee, mitigate, verify
 
 |Property|Status|
 |---|---|
 |Same declared inputs → same action invoked|**guaranteed** — the action key|
-|Action sees only declared inputs|**enforced** from tier 2 up|
-|Hidden env, locale, timezone variation|**mitigated** from tier 2 up — the sandbox sets `TZ=UTC`, `LC_ALL=C`, `SOURCE_DATE_EPOCH` [3]; at tier 1 the time zone, the locale and the clock are the machine's|
+|Action sees only declared inputs|**enforced** from tier 2 up, for the files of the workspace; a file named by an absolute path, or outside the workspace, is still the action's to read (§12.2)|
+|Hidden env, locale, timezone variation|**mitigated** from tier 2 up — the sandbox sets `TZ=UTC`, `LC_ALL=C`, `SOURCE_DATE_EPOCH=315532800` [3]; at tier 1 the time zone, the locale and the clock are the machine's|
 |Network as a hidden input|**eliminated** at tier 3|
 |Same action → byte-identical output|**the tool's property** — verified, not promised|
+
+The three values the sandbox pins, for every strategy above `bare`:
+
+|Variable|Value|Why|
+|---|---|---|
+|`LC_ALL`|`C`|sorting, message text and number formats do not follow the machine's locale|
+|`SOURCE_DATE_EPOCH`|`315532800`, 1980-01-01T00:00:00Z|the time a tool stamps into its output [3]; this date because it is the earliest a ZIP file can record (an earlier one is refused), so a tool that packs a ZIP from it never fails on it|
+|`TZ`|`UTC`|local time is the same everywhere|
+
+A pinned variable is not the target's to set. A target that declares one of them in `env` fails Plan under any strategy above `bare`, exit 5, with an error naming the variable, the first target (in label order) that declares it and the value the sandbox sets; nothing is hashed or run. Under `bare` such a target plans as before, and its value is its own.
 
 buildl cannot make a compiler reproducible; it can pin every input the compiler sees and verify the rest. `buildl verify` re-runs a sample of cache-hit actions and compares output digests — nondeterminism becomes a named, attributable defect instead of silent cache poisoning (which a shared remote cache would amplify). In practice Go is fully reproducible, rustc very nearly; `docker build` needs `SOURCE_DATE_EPOCH`-aware BuildKit flags [3], which the docker plugin passes so users never learn they exist.
 
@@ -699,12 +727,12 @@ The governing principle: **every behavioral difference between two builds must b
 |Tools|fingerprint (level 1) or toolchain target (level 3, §9.6)|
 |Host OS and CPU architecture|an `os/arch` pair in every action key — a mac and a Linux machine must never share entries|
 |Network|absent by default (tier 3); `b.fetch` re-admits it behind a checksum; `network = true` is a plan-visible declaration|
-|Time, locale, timezone|pinned by the sandbox: `SOURCE_DATE_EPOCH`, `LC_ALL=C`, `TZ=UTC` [3]|
+|Time, locale, timezone|pinned by the sandbox: `SOURCE_DATE_EPOCH=315532800`, `LC_ALL=C`, `TZ=UTC`; a target may not declare them (§12.3) [3]|
 |Build-file logic itself|a build file reaches a key through the fields it declares, not through its own hash (§7); declaration is sandboxed, `os`-free, and double-run checkable (§12.1)|
 
 What remains honestly implicit — the kernel version, libc, filesystem semantics, CPU microarchitecture as it affects codegen — is exactly the set that tier 4 (containers) and `verify` exist to contain. The ledger is finite and named; "surprise" is defined as any behavior difference not in it, and every such surprise is a bug in buildl, not in the user's build.
 
-Two things a workspace sets are deliberately outside the ledger, because neither changes what an action produces from its declared inputs: the `[execution]` settings — `workers`, `timeout`, `strategy` (§8.3) — and a rule's `desc` (§5).
+Two things a workspace sets are deliberately outside the ledger: the `[execution]` settings — `workers`, `timeout`, `strategy` (§8.3) — and a rule's `desc` (§5). Neither is a key component. `workers`, `timeout` and `desc` change nothing an action produces from its declared inputs. `strategy` changes none of the key's components either, but under `sandbox` the action runs in another directory and with `TZ`, `LC_ALL` and `SOURCE_DATE_EPOCH` pinned, so a tool that records its directory or reads the clock, the locale or the time zone can give other bytes than under `bare` (§12.2).
 
 ## 13. Sequencing
 
