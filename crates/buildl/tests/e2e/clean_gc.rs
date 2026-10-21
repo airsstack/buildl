@@ -192,7 +192,7 @@ fn a_broken_build_file_stops_gc_and_leaves_the_store() {
 #[test]
 fn gc_is_refused_while_the_lock_is_held() {
     let logged = built();
-    let _held = StateLock::acquire(logged.state()).unwrap();
+    let _held = StateLock::acquire(logged.state(), logged.scratch()).unwrap();
 
     let error = logged.open().gc().unwrap_err();
 

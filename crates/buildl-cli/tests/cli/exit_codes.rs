@@ -523,7 +523,7 @@ fn a_strategy_that_cannot_be_run_fails_build_and_not_plan() {
     let (_dir, root) = workspace(&[
         (
             "buildl.toml",
-            "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n",
+            "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nstrategy = \"os-sandbox\"\n",
         ),
         ("build.lua", COPY),
         ("a.txt", "a\n"),
@@ -535,14 +535,31 @@ fn a_strategy_that_cannot_be_run_fails_build_and_not_plan() {
         (
             5,
             concat!(
-                "error: manifest: buildl.toml: [execution] strategy is \"sandbox\" ",
-                "(the default when it is not written), and this version of buildl runs \"bare\" only: ",
-                "write strategy = \"bare\" under [execution]\n",
+                "error: manifest: buildl.toml: [execution] strategy is \"os-sandbox\", ",
+                "and this version of buildl runs \"bare\" and \"sandbox\" only: ",
+                "write strategy = \"sandbox\" under [execution]\n",
             )
             .to_owned()
         )
     );
     assert!(!root.join("out").exists());
+}
+
+#[test]
+fn a_workspace_without_a_strategy_line_builds() {
+    let (_dir, root) = workspace(&[
+        (
+            "buildl.toml",
+            "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n",
+        ),
+        ("build.lua", COPY),
+        ("a.txt", "a\n"),
+    ]);
+
+    let built = run(&root, &["build"], &[]);
+
+    assert_eq!(code(&built), 0, "{}", stderr(&built));
+    assert_eq!(fs::read(root.join("out/copy")).unwrap(), b"a\n");
 }
 
 #[test]
@@ -592,6 +609,38 @@ fn a_program_that_is_not_found_is_an_infrastructure_failure() {
         stderr(&output),
         "error: build.lua: //:app: program cc was not found\n"
     );
+}
+
+#[test]
+fn a_pinned_variable_exits_5() {
+    let manifest = |execution: &str| {
+        format!(
+            "[ceiling]\nproc.run = [\"cp\"]\nenv.read = [\"TZ\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n{execution}"
+        )
+    };
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest("")),
+        (
+            "build.lua",
+            "buildl.target(\"app\", { inputs = { \"a.txt\" }, env = { \"TZ\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+        ),
+        ("a.txt", "a\n"),
+    ]);
+    assert_eq!(
+        failed(&root, &["plan"]),
+        (
+            5,
+            "error: build.lua: //:app: env TZ is set to UTC by the sandbox and cannot be declared\n"
+                .to_owned()
+        )
+    );
+
+    write(
+        &root,
+        "buildl.toml",
+        &manifest("\n[execution]\nstrategy = \"bare\"\n"),
+    );
+    assert_eq!(code(&run(&root, &["plan"], &[])), 0);
 }
 
 #[test]

@@ -54,7 +54,7 @@ fn log_after_a_cached_build_shows_the_real_run() {
 #[test]
 fn log_while_a_build_holds_the_lock_still_reads() {
     let logged = built();
-    let _held = StateLock::acquire(logged.state()).unwrap();
+    let _held = StateLock::acquire(logged.state(), logged.scratch()).unwrap();
 
     let shown = logged.open().log(&label(&logged, "//:hello")).unwrap();
 

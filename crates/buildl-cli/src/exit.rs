@@ -5,13 +5,13 @@
 //! They are chosen from what happened as a value, the class of an outcome or the variant of an
 //! error, and never from the text of a message.
 //!
-//! Responsibilities: [`Exit`], and the three mappings onto it: [`Exit::of_class`],
-//! [`Exit::of_outcomes`] and [`Exit::of_error`].
+//! Responsibilities: [`Exit`], and the four mappings onto it: [`Exit::of_class`],
+//! [`Exit::of_outcomes`], [`Exit::of_verification`] and [`Exit::of_error`].
 //!
 //! Non-responsibilities: what a refused command line gets, which the argument parser's own
 //! verdict decides; and ending the process, which `main` does.
 
-use buildl::buildl_core::{ActionOutcome, Error, OutcomeClass, PortName};
+use buildl::buildl_core::{ActionOutcome, Check, Error, OutcomeClass, PortName, Verification};
 
 /// The status the process ends with.
 ///
@@ -70,6 +70,26 @@ impl Exit {
             .unwrap_or(Self::Success)
     }
 
+    /// The status of a verify that found `verification`: the most severe one any check has.
+    ///
+    /// A mismatch is the code's fault. A re-run that failed gets the status `build` would give
+    /// its class. A check that could not be made, because the content the cache names was not
+    /// held or not put back, is the store's failure and not the action's. A verify that checked
+    /// nothing succeeds.
+    pub(crate) fn of_verification(verification: &Verification) -> Self {
+        verification
+            .checked()
+            .iter()
+            .map(|(_, check)| match check {
+                Check::Verified => Self::Success,
+                Check::Mismatched { .. } => Self::ActionFailure,
+                Check::Failed { class, .. } => Self::of_class(class),
+                Check::Skipped { .. } | Check::Unplaced { .. } => Self::Infrastructure,
+            })
+            .max_by_key(|exit| exit.severity())
+            .unwrap_or(Self::Success)
+    }
+
     /// The status of a command that ended in `error`.
     ///
     /// An error this binary has no row for is buildl's fault, never the user's.
@@ -102,6 +122,7 @@ impl Exit {
             | Error::TooManyTargets { .. }
             | Error::MissingInput { .. }
             | Error::InputNotAFile { .. }
+            | Error::PinnedEnv { .. }
             | Error::OutputConflict { .. }
             | Error::NoProgram { .. } => Self::Definition,
             Error::CorruptState { .. }
@@ -145,10 +166,11 @@ mod tests {
 
     use buildl::buildl_core::json::canonical;
     use buildl::buildl_core::{
-        ActionFound, ActionOutcome, Ceiling, DeclarationField, DeclarationOrder, DeclarationSite,
-        DeclaredKind, Diagnostic, Directory, Error, EvaluationFailure, InfraKind, InputKind, Label,
-        OutcomeClass, OutputName, OutputPath, OutputRefusal, PortName, Program, Provenance,
-        SettingName, SourcePath, TargetRole, TreeFault, Want,
+        ActionFound, ActionOutcome, Ceiling, Check, DeclarationField, DeclarationOrder,
+        DeclarationSite, DeclaredKind, Diagnostic, Directory, Error, EvaluationFailure, FileChange,
+        InfraKind, InputKind, Label, OutcomeClass, OutputDifference, OutputName, OutputPath,
+        OutputRefusal, PortName, Program, Provenance, SettingName, SourcePath, TargetRole,
+        TreeFault, Verification, Want,
     };
 
     use super::Exit;
@@ -594,5 +616,89 @@ mod tests {
     #[test]
     fn a_build_of_nothing_succeeds() {
         assert_eq!(Exit::of_outcomes(&[]), Exit::Success);
+    }
+
+    /// The status of a verify whose only check, of `//:app`, is `check`.
+    fn verified_as(check: Check) -> Exit {
+        Exit::of_verification(&Verification::new(vec![(label("//:app"), check)], 0, 0))
+    }
+
+    /// A check of a re-run that ended in `class`.
+    fn failed_as(class: OutcomeClass) -> Check {
+        Check::Failed {
+            class,
+            diagnostic: None,
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_mismatch_exits_as_an_action_failure() {
+        let mismatch = Check::Mismatched {
+            output: OutputName::parse("app").unwrap(),
+            difference: OutputDifference::File(FileChange::Bytes),
+        };
+        assert_eq!(verified_as(mismatch), Exit::ActionFailure);
+    }
+
+    #[test]
+    fn a_skip_or_an_unplaced_exits_as_infrastructure() {
+        let skipped = Check::Skipped {
+            because: label("//:lib"),
+        };
+        let unplaced = Check::Unplaced {
+            diagnostic: Diagnostic::new("the blob is gone"),
+        };
+        assert_eq!(verified_as(skipped), Exit::Infrastructure);
+        assert_eq!(verified_as(unplaced), Exit::Infrastructure);
+    }
+
+    #[test]
+    fn a_failed_rerun_exits_as_its_class() {
+        for (class, exit) in every_class() {
+            assert_eq!(verified_as(failed_as(class.clone())), exit, "{class:?}");
+        }
+    }
+
+    #[test]
+    fn the_most_severe_check_decides() {
+        let checks = vec![
+            (label("//:a"), Check::Verified),
+            (
+                label("//:b"),
+                failed_as(OutcomeClass::ActionFailure { status: 1 }),
+            ),
+            (
+                label("//:c"),
+                Check::Skipped {
+                    because: label("//:d"),
+                },
+            ),
+        ];
+        assert_eq!(
+            Exit::of_verification(&Verification::new(checks, 0, 0)),
+            Exit::Infrastructure
+        );
+        let milder = vec![
+            (label("//:a"), Check::Verified),
+            (
+                label("//:b"),
+                failed_as(OutcomeClass::ActionFailure { status: 1 }),
+            ),
+        ];
+        assert_eq!(
+            Exit::of_verification(&Verification::new(milder, 0, 0)),
+            Exit::ActionFailure
+        );
+        assert_eq!(verified_as(Check::Verified), Exit::Success);
+    }
+
+    #[test]
+    fn nothing_checked_is_success() {
+        assert_eq!(
+            Exit::of_verification(&Verification::new(Vec::new(), 3, 1)),
+            Exit::Success
+        );
     }
 }

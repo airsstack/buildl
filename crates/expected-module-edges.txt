@@ -17,6 +17,7 @@ pipeline -> plan
 pipeline -> ports
 pipeline -> resolve
 pipeline -> types
+pipeline -> verify
 plan -> error
 plan -> ports
 plan -> types
@@ -27,3 +28,7 @@ resolve -> suggest
 resolve -> types
 types -> error
 types -> json
+verify -> error
+verify -> execute
+verify -> ports
+verify -> types

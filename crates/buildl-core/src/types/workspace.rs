@@ -29,9 +29,10 @@ pub struct Workspace {
 /// How a workspace wants its actions run: the manifest's `[execution]` table.
 ///
 /// These settings are for whoever assembles the adapters that run a build: `workers` for the
-/// one that dispatches actions, `timeout` and `strategy` for the one that runs them. No phase
-/// of the pipeline reads them, and none is part of an action key: they decide how an action is
-/// run, never which action it is.
+/// one that dispatches actions, `timeout` and `strategy` for the one that runs them. None is
+/// part of an action key: they decide how an action is run, never which action it is. The one
+/// thing the Plan phase reads is the variables `strategy` pins, to refuse a target that
+/// declares one.
 ///
 /// The default is what each setting is when a manifest leaves it out: one worker per core, ten
 /// minutes, and the input sandbox.

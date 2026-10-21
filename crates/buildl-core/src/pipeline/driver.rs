@@ -2,10 +2,11 @@
 //!
 //! Its own file because the driver owns the sequence of phases: one method per command, each
 //! running the phases up to the one the command stops at. It runs Load, Resolve, Plan and
-//! Execute.
+//! Execute, and hands a verify the plan to re-run.
 //!
 //! Responsibilities: [`Pipeline`], its ports, [`Pipeline::check`], [`Pipeline::graph`],
-//! [`Pipeline::query`], [`Pipeline::plan`], [`Pipeline::build`] and [`Pipeline::test`]; and
+//! [`Pipeline::query`], [`Pipeline::plan`], [`Pipeline::build`], [`Pipeline::test`] and
+//! [`Pipeline::verify`]; and
 //! [`check`], [`graph`] and [`query`], the three commands that reach only build files, for a
 //! caller that holds only a source of them.
 //!
@@ -23,8 +24,9 @@ use crate::ports::{DeclarationSource, Dispatcher, GraphRecord, PortSet, Ports};
 use crate::resolve::{narrow, reach, resolve};
 use crate::types::{
     ActionOutcome, Declaration, EntryName, Label, LiveOutput, OnFailure, Plan, Purpose, Query,
-    Rerun, Scope, SettingName, SettingValue, TargetGraph,
+    Rerun, Sample, Scope, SettingName, SettingValue, TargetGraph, Verification,
 };
+use crate::verify::verify;
 
 /// The pipeline over one chosen implementation of each port.
 pub struct Pipeline<P: Ports> {
@@ -219,6 +221,37 @@ impl<P: Ports> Pipeline<P> {
             rerun,
             &mut self.ports,
         )
+    }
+
+    /// Loads the workspace once, resolves it, plans a build of the part of the graph `scope` asks
+    /// for, and re-runs the cached targets of that part to see whether they reproduce what was
+    /// cached.
+    ///
+    /// Planned as [`Pipeline::build`] plans: `overrides` gives values to build settings for this
+    /// run, and a whole workspace means every target but tests, with a test checked when it is
+    /// named or a checked target depends on it. `sample` says which of the cached targets
+    /// re-run. Each target is one [`Check`](crate::Check) in the [`Verification`]; a target whose
+    /// re-run differs from the cache, or fails, is a result and not an error.
+    ///
+    /// Nothing a build keeps is changed: the graph is not recorded, no row is recorded or
+    /// forgotten, no event is logged, and nothing is reported.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first of: whatever the load returns; whatever [`resolve`] returns;
+    /// [`Error::UnknownTarget`] for a label of `scope` that names neither a target nor an alias;
+    /// whatever [`plan`](fn@plan) returns; and whatever [`verify`](fn@verify) returns.
+    pub fn verify(
+        &mut self,
+        entry: &EntryName,
+        scope: &Scope,
+        overrides: &BTreeMap<SettingName, SettingValue>,
+        sample: Sample,
+    ) -> Result<Verification> {
+        let whole = resolve(load(&self.ports.source, &mut self.ports.dispatcher, entry)?)?;
+        let graph = narrow(&whole, scope, Purpose::Build)?;
+        let plan = plan(&graph, overrides, Rerun::Off, &mut self.ports)?;
+        verify(&whole, &graph, &plan, sample, &mut self.ports)
     }
 }
 

@@ -2,6 +2,7 @@
 //! must agree on.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -14,7 +15,7 @@ use buildl::buildl_core::{
     Result, Scope,
 };
 use buildl::report::{Mode, Paint, Report, Silent, TerminalReporter};
-use buildl::state::StateLayout;
+use buildl::state::{Scratch, StateLayout};
 
 /// The graph of the fixture `chain` as canonical JSON, followed by one newline.
 pub(crate) const CHAIN_GRAPH: &str = include_str!("golden/chain.graph.json");
@@ -79,6 +80,11 @@ impl Fixture {
     /// Where the workspace keeps its state.
     pub(crate) fn state(&self) -> StateLayout {
         StateLayout::new(&self.root, &Directory::parse(".buildl").unwrap())
+    }
+
+    /// Where the workspace's actions run, in the process's temporary directory.
+    pub(crate) fn scratch(&self) -> Scratch {
+        Scratch::new(&env::temp_dir(), &self.root)
     }
 
     /// Adds `bytes` to the end of the file at `relative`. Every edit of an input goes through

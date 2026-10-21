@@ -13,8 +13,8 @@
 //! # Using it
 //!
 //! A caller opens a [`Workspace`] and calls a command on it: [`Workspace::check`],
-//! [`Workspace::graph`], [`Workspace::plan`] or [`Workspace::build`]. It names no adapter. A
-//! build is lent the caller's own [`Reporter`]: [`report::TerminalReporter`] writes what the
+//! [`Workspace::graph`], [`Workspace::plan`], [`Workspace::build`] or [`Workspace::verify`]. It
+//! names no adapter. A build is lent the caller's own [`Reporter`]: [`report::TerminalReporter`] writes what the
 //! `buildl` binary shows, and [`report::Silent`] shows nothing. The values a command takes and
 //! returns are `buildl-core`'s, re-exported here as [`buildl_core`], so a caller depends on this
 //! crate alone.
@@ -35,9 +35,6 @@
 //! proc.run = ["cp"]
 //! fs.read  = ["."]
 //! fs.write = ["out", ".buildl"]
-//!
-//! [execution]
-//! strategy = "bare"
 //! "#,
 //! )?;
 //! fs::write(
@@ -71,9 +68,12 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! Actions run as plain processes in the workspace, the strategy a manifest names `bare`. A
-//! build of a workspace that asks for any other strategy is refused, never run under less
-//! isolation than its manifest asked for.
+//! Actions run as plain processes, under the strategy the manifest names: `sandbox`, the default,
+//! runs each in a directory of its own holding only the files it declared, and `bare` runs it in
+//! the workspace. A build of a workspace that asks for `os-sandbox` or `container` is refused,
+//! never run under less isolation than its manifest asked for. A verify re-runs every
+//! cached target, or a sample of them when asked, in the input sandbox, and refuses a workspace
+//! on `bare`.
 //!
 //! # Where things live
 //!

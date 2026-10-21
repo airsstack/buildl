@@ -13,13 +13,13 @@
 mod admission;
 pub mod assembly;
 mod expand;
-mod layout;
-mod perform;
-mod record;
+pub(crate) mod layout;
+pub(crate) mod perform;
+pub(crate) mod record;
 mod schedule;
-mod settle;
+pub(crate) mod settle;
 
 #[cfg(test)]
-mod fixtures;
+pub(crate) mod fixtures;
 
 pub use assembly::execute;

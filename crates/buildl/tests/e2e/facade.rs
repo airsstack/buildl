@@ -42,7 +42,7 @@ fn a_relative_target_resolves_from_where_it_was_opened() {
 #[test]
 fn a_workspace_another_buildl_holds_is_refused() {
     let chain = Fixture::copy_of("chain", &["greet.sh"]);
-    let _held = StateLock::acquire(chain.state()).unwrap();
+    let _held = StateLock::acquire(chain.state(), chain.scratch()).unwrap();
 
     for refused in [chain.try_build().map(drop), chain.try_plan().map(drop)] {
         let error = refused.unwrap_err();
@@ -70,7 +70,11 @@ fn a_workspace_another_buildl_holds_is_refused() {
 #[test]
 fn build_refuses_a_strategy_it_cannot_run_and_plan_does_not() {
     let chain = Fixture::copy_of("chain", &["greet.sh"]);
-    chain.replace_line("buildl.toml", "strategy = \"bare\"", "");
+    chain.replace_line(
+        "buildl.toml",
+        "strategy = \"bare\"",
+        "strategy = \"os-sandbox\"",
+    );
 
     let plan = chain.try_plan().unwrap();
     let error = chain.try_build().unwrap_err();
@@ -175,7 +179,7 @@ fn a_query_for_a_target_nothing_declares_suggests_the_nearest() {
 #[test]
 fn a_query_is_answered_while_another_buildl_holds_the_workspace() {
     let chain = Fixture::copy_of("chain", &["greet.sh"]);
-    let _held = StateLock::acquire(chain.state()).unwrap();
+    let _held = StateLock::acquire(chain.state(), chain.scratch()).unwrap();
 
     assert_eq!(answer(&chain.open(), "deps(//:site)"), "//lib:assets\n");
 }

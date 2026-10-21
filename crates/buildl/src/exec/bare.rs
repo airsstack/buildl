@@ -1,26 +1,23 @@
 //! The strategy that runs an action as a plain process in the workspace root.
 //!
-//! Its own file because it is the one place where the three steps of running an action meet:
+//! Its own file because it is where the three steps of running an action meet at the first tier:
 //! clearing the paths the action writes, running its command, and reporting what the command
-//! left. Each step is short here; waiting for a process and walking an output have files of
-//! their own.
+//! left. Each step is short here; waiting for a process, walking an output, and the parts every
+//! tier shares have files of their own.
 //!
 //! Responsibilities: [`Bare`].
 
-use core::fmt;
 use std::fs;
-use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
-use std::process::Command;
 use std::time::Duration;
 
 use buildl_core::{
-    Argument, ContentStore, Diagnostic, Error, ExecStrategy, Exit, Found, Label, LiveSink,
-    PortName, Program, RawOutcome, ReadyAction, Result, Timeout,
+    ContentStore, ExecStrategy, Found, LiveSink, RawOutcome, ReadyAction, Result, Timeout,
 };
 
-use crate::exec::capture::{Capture, capture};
-use crate::exec::outputs::{Unread, found};
+use crate::exec::capture::capture;
+use crate::exec::outcome::{ended, fault};
+use crate::exec::run::{Started, collect_in, start};
 use crate::search_path::SearchPath;
 use crate::state::clear_path;
 
@@ -78,35 +75,11 @@ impl ExecStrategy for Bare {
     }
 
     fn run(&self, (): &(), action: &ReadyAction, live: Option<LiveSink<'_>>) -> Result<RawOutcome> {
-        let Some((named, rest)) = action.command.arguments().split_first() else {
-            return Err(fault(
-                &action.label,
-                "starting the command",
-                "it names no program",
-            ));
-        };
-        let located =
-            Program::of(named).and_then(|program| self.search.locate(&program, &self.root));
-        let Some(program) = located else {
-            return Err(fault(
-                &action.label,
-                "starting the command",
-                format!("the program {named} was not found"),
-            ));
-        };
-        // The located path is what the process is started by; every other argument is as
-        // written.
-        let mut command = Command::new(&program);
-        command
-            .args(rest.iter().map(Argument::as_str))
-            .current_dir(&self.root)
-            .env_clear()
-            .envs(
-                action
-                    .env
-                    .iter()
-                    .map(|(name, value)| (name.as_str(), value.as_str())),
-            );
+        let Started {
+            mut command,
+            program,
+            ..
+        } = start(action, &self.search, &self.root)?;
         let captured = capture(&mut command, self.timeout, live).map_err(|error| {
             fault(
                 &action.label,
@@ -127,44 +100,7 @@ impl ExecStrategy for Bare {
         action: &ReadyAction,
         cas: &C,
     ) -> Result<Vec<Found>> {
-        action
-            .outputs
-            .iter()
-            .map(|output| {
-                found(&self.root.join(output.as_str()), cas).map_err(|unread| match unread {
-                    Unread::Io(error) => fault(
-                        &action.label,
-                        &format!("reading the output {output}"),
-                        error,
-                    ),
-                    Unread::Store(error) => error,
-                })
-            })
-            .collect()
-    }
-}
-
-/// How a process ended: stopped for running too long, with a status of its own, or by a
-/// signal.
-///
-/// Running too long is read from what the wait recorded, never from the signal that stopped
-/// the process: anything can send that signal.
-fn ended(captured: &Capture) -> Exit {
-    if captured.timed_out {
-        return Exit::TimedOut;
-    }
-    captured.status.code().map_or_else(
-        // Waiting for a process gives a status or a signal, never neither.
-        || Exit::Signaled(captured.status.signal().unwrap_or_default()),
-        Exit::Exited,
-    )
-}
-
-/// The error for the action of `label`: what was being done, and why it could not be.
-fn fault(label: &Label, doing: &str, why: impl fmt::Display) -> Error {
-    Error::Adapter {
-        port: PortName::ExecStrategy,
-        diagnostic: Diagnostic::new(format!("{label}: {doing}: {why}")),
+        collect_in(&self.root, action, cas)
     }
 }
 

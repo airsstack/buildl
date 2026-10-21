@@ -166,7 +166,7 @@ pub fn execute<P: Ports>(
 
 /// Whether `plan` holds exactly the targets of `graph`, under the same ids, and a value for
 /// exactly the settings `graph` declares.
-fn made_from(plan: &Plan, graph: &TargetGraph) -> bool {
+pub(crate) fn made_from(plan: &Plan, graph: &TargetGraph) -> bool {
     plan.len() == graph.len()
         && graph
             .nodes()
@@ -224,15 +224,15 @@ fn ready(
 }
 
 /// One target, with everything about it that is settled before anything runs.
-struct Prepared<'a> {
+pub(crate) struct Prepared<'a> {
     /// The target as the graph holds it.
-    node: &'a Node,
+    pub(crate) node: &'a Node,
     /// Its own key components, from its verdict.
     own: &'a OwnComponents,
     /// The labels of the targets it depends on, in the order they were written.
-    deps: Vec<&'a Label>,
+    pub(crate) deps: Vec<&'a Label>,
     /// Its action, ready to hand to a strategy.
-    action: ReadyAction,
+    pub(crate) action: ReadyAction,
 }
 
 /// Every target of `graph` prepared, in id order: its command expanded and admitted, and its
@@ -246,7 +246,7 @@ struct Prepared<'a> {
 ///
 /// Returns [`Error::NoProgram`] or [`Error::Refused`] for the first target, in id order, whose
 /// expanded command cannot run under `ceiling`.
-fn prepared<'a>(
+pub(crate) fn prepared<'a>(
     graph: &'a TargetGraph,
     plan: &'a Plan,
     layout: &Layout,

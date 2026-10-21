@@ -24,4 +24,6 @@ mod log;
 mod named;
 mod parallel_load;
 mod recovery;
+mod sandbox;
 mod test;
+mod verify;

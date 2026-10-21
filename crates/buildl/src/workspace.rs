@@ -15,8 +15,8 @@ use std::path::Path;
 
 use buildl_core::{
     ActionOutcome, Collected, Declaration, Diagnostic, Directory, Error, Label, LiveOutput,
-    OnFailure, Pipeline, Plan, PortName, Query, Reporter, Rerun, Result, Scope, SettingName,
-    SettingValue, Shown, TargetGraph, pipeline,
+    OnFailure, Pipeline, Plan, PortName, Query, Reporter, Rerun, Result, Sample, Scope,
+    SettingName, SettingValue, Shown, TargetGraph, Verification, pipeline,
 };
 
 use crate::cache::LocalCache;
@@ -29,9 +29,9 @@ use crate::state::{Cleaned, clear_out};
 /// A workspace wired with the real adapters.
 ///
 /// Opening one reads its manifest and nothing else. The state directory is taken by
-/// [`Workspace::plan`], [`Workspace::build`], [`Workspace::test`], [`Workspace::gc`] and
-/// [`Workspace::clean`] only, and only while one of them runs, so a workspace kept open holds
-/// nothing while it is idle.
+/// [`Workspace::plan`], [`Workspace::build`], [`Workspace::test`], [`Workspace::verify`],
+/// [`Workspace::gc`] and [`Workspace::clean`] only, and only while one of them runs, so a
+/// workspace kept open holds nothing while it is idle.
 /// [`Workspace::check`], [`Workspace::graph`], [`Workspace::query`] and [`Workspace::log`]
 /// hold nothing even while they run.
 #[derive(Debug)]
@@ -174,7 +174,9 @@ impl Workspace {
     /// outside what the workspace allows a build to write into, and
     /// [`Error::Adapter`](buildl_core::Error::Adapter), naming
     /// [`PortName::ActionCache`](buildl_core::PortName::ActionCache), when another process
-    /// holds the workspace. Otherwise returns whatever making the adapters returns, then
+    /// holds the workspace, and naming
+    /// [`PortName::ExecStrategy`](buildl_core::PortName::ExecStrategy) when the scratch
+    /// directory cannot be removed. Otherwise returns whatever making the adapters returns, then
     /// whatever [`Pipeline::plan`] returns.
     pub fn plan(
         &self,
@@ -196,9 +198,10 @@ impl Workspace {
     ///
     /// Returns [`Error::Adapter`](buildl_core::Error::Adapter), naming
     /// [`PortName::Manifest`](buildl_core::PortName::Manifest), when the workspace asks for a
-    /// strategy other than `bare`: nothing has been made then, and nothing was run. After that,
-    /// as [`Workspace::plan`], then whatever [`Pipeline::build`] returns. A build that
-    /// succeeded and whose rows could not be folded returns the fold's error.
+    /// strategy this version cannot run (`os-sandbox` or `container`): nothing has been made
+    /// then, and nothing was run. After that, as [`Workspace::plan`], then whatever
+    /// [`Pipeline::build`] returns. A build that succeeded and whose rows could not be folded
+    /// returns the fold's error.
     pub fn build<R: Reporter>(
         &self,
         scope: &Scope,
@@ -217,6 +220,36 @@ impl Workspace {
         concluded(built, folded)
     }
 
+    /// Re-runs the cached targets of `scope` that `sample` picks, in the input sandbox, and
+    /// compares each re-run with what the last build stored.
+    ///
+    /// Holds the state directory while it runs. Every cached target's outputs are put back in
+    /// the output directory as a build would put them; a re-run's own outputs are never placed
+    /// there. Nothing is recorded: no row, graph or log line is written, so there are no rows
+    /// to fold.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Adapter`](buildl_core::Error::Adapter), naming
+    /// [`PortName::Manifest`](buildl_core::PortName::Manifest), when the workspace's strategy is
+    /// not `sandbox` (`bare`, `os-sandbox` or `container`): nothing has been made then, and
+    /// nothing was run. After that, as [`Workspace::plan`], then whatever [`Pipeline::verify`]
+    /// returns.
+    pub fn verify(
+        &self,
+        scope: &Scope,
+        overrides: &BTreeMap<SettingName, SettingValue>,
+        sample: Sample,
+    ) -> Result<Verification> {
+        self.wiring.verifies()?;
+        let lock = self.wiring.lock()?;
+        let mut pipeline = Pipeline::new(self.wiring.verify_ports(&lock, Silent)?);
+        let verified = pipeline.verify(self.wiring.entry(), scope, overrides, sample);
+        // The adapters are let go before the lock that kept the directory theirs.
+        drop(pipeline);
+        verified
+    }
+
     /// Removes the output directory and everything below it.
     ///
     /// Holds the state directory while it runs, and sweeps the staging leftovers of an
@@ -229,7 +262,9 @@ impl Workspace {
     /// state directory is outside what the workspace allows a build to write into; nothing has
     /// been made or removed then. Returns [`Error::Adapter`](buildl_core::Error::Adapter),
     /// naming [`PortName::ActionCache`](buildl_core::PortName::ActionCache), when another
-    /// process holds the workspace, and naming
+    /// process holds the workspace, naming
+    /// [`PortName::ExecStrategy`](buildl_core::PortName::ExecStrategy) when the scratch
+    /// directory cannot be removed, and naming
     /// [`PortName::ContentStore`](buildl_core::PortName::ContentStore) when the output
     /// directory cannot be removed.
     pub fn clean(&self) -> Result<Cleaned> {
@@ -256,8 +291,10 @@ impl Workspace {
     ///
     /// Returns [`Error::Adapter`](buildl_core::Error::Adapter), naming
     /// [`PortName::ActionCache`](buildl_core::PortName::ActionCache), when another process
-    /// holds the workspace; [`Error::Refused`](buildl_core::Error::Refused) when the state
-    /// directory is outside what the workspace allows a build to write into. Otherwise returns
+    /// holds the workspace, and naming
+    /// [`PortName::ExecStrategy`](buildl_core::PortName::ExecStrategy) when the scratch
+    /// directory cannot be removed; [`Error::Refused`](buildl_core::Error::Refused) when the
+    /// state directory is outside what the workspace allows a build to write into. Otherwise returns
     /// whatever making the adapters returns, then whatever
     /// [`pipeline::gc`](fn@pipeline::gc) returns: the store is left whole when the build files
     /// fail to load. A `gc` that succeeded and whose rows could not be folded returns the
@@ -297,9 +334,10 @@ impl Workspace {
     ///
     /// Returns [`Error::Adapter`](buildl_core::Error::Adapter), naming
     /// [`PortName::Manifest`](buildl_core::PortName::Manifest), when the workspace asks for a
-    /// strategy other than `bare`: nothing has been made then, and nothing was run. After that,
-    /// as [`Workspace::plan`], then whatever [`Pipeline::test`] returns. A run that succeeded
-    /// and whose rows could not be folded returns the fold's error.
+    /// strategy this version cannot run (`os-sandbox` or `container`): nothing has been made
+    /// then, and nothing was run. After that, as [`Workspace::plan`], then whatever
+    /// [`Pipeline::test`] returns. A run that succeeded and whose rows could not be folded
+    /// returns the fold's error.
     pub fn test<R: Reporter>(
         &self,
         scope: &Scope,
@@ -349,8 +387,8 @@ mod tests {
     use buildl_core::json::canonical;
     use buildl_core::{
         Captured, Channel, Diagnostic, Error, Label, LiveOutput, NameKind, OnFailure, OutcomeClass,
-        OutcomeEvent, PortName, ReadyAction, Reporter, Rerun, Result, Scope, Summary, Tally,
-        Verdict, Want,
+        OutcomeEvent, PortName, ReadyAction, Reporter, Rerun, Result, Sample, Scope, Summary,
+        Tally, Verdict, Want,
     };
 
     use crate::report::Silent;
@@ -424,6 +462,9 @@ mod tests {
             .map(|outcome| (outcome.label.to_string(), outcome.class))
             .collect())
     }
+
+    /// What a build or a test run says when the manifest asks for `os-sandbox`.
+    const REFUSAL: &str = "manifest: buildl.toml: [execution] strategy is \"os-sandbox\", and this version of buildl runs \"bare\" and \"sandbox\" only: write strategy = \"sandbox\" under [execution]";
 
     /// [`BARE`], with `cmp` allowed in place of `false`.
     const COMPARING: &str = "[ceiling]\nproc.run = [\"cp\", \"cmp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nworkers = 1\nstrategy = \"bare\"\n";
@@ -654,7 +695,7 @@ mod tests {
 
     #[test]
     fn plan_works_under_a_strategy_this_version_cannot_run() {
-        let manifest = BARE.replace("strategy = \"bare\"\n", "");
+        let manifest = BARE.replace("strategy = \"bare\"", "strategy = \"os-sandbox\"");
         let (_dir, root) = workspace(&[
             ("buildl.toml", &manifest),
             ("build.lua", COPY),
@@ -1018,7 +1059,7 @@ mod tests {
 
     #[test]
     fn build_refuses_a_strategy_it_cannot_run_before_anything_is_made() {
-        let manifest = BARE.replace("strategy = \"bare\"\n", "");
+        let manifest = BARE.replace("strategy = \"bare\"", "strategy = \"os-sandbox\"");
         let (_dir, root) = workspace(&[
             ("buildl.toml", &manifest),
             ("build.lua", COPY),
@@ -1038,19 +1079,14 @@ mod tests {
             ),
             "{error:?}"
         );
-        assert_eq!(
-            error.to_string(),
-            "manifest: buildl.toml: [execution] strategy is \"sandbox\" (the default when it is \
-             not written), and this version of buildl runs \"bare\" only: write strategy = \
-             \"bare\" under [execution]"
-        );
+        assert_eq!(error.to_string(), REFUSAL);
         // Refused before the lock was taken: no state directory, no output.
         assert_eq!(names(&root), ["a.txt", "build.lua", "buildl.toml"]);
     }
 
     #[test]
     fn a_test_run_refuses_a_strategy_it_cannot_run_before_anything_is_made() {
-        let manifest = COMPARING.replace("strategy = \"bare\"\n", "");
+        let manifest = COMPARING.replace("strategy = \"bare\"", "strategy = \"os-sandbox\"");
         let (_dir, root) = workspace(&[
             ("buildl.toml", &manifest),
             ("build.lua", CHECKED),
@@ -1079,7 +1115,36 @@ mod tests {
             ),
             "{error:?}"
         );
+        assert_eq!(error.to_string(), REFUSAL);
         // Refused before the lock was taken: no state directory, no output.
+        assert_eq!(names(&root), ["a.txt", "build.lua", "buildl.toml"]);
+    }
+
+    #[test]
+    fn verify_under_bare_takes_no_lock() {
+        let (_dir, root) = copying();
+        let workspace = Workspace::open(&root).unwrap();
+
+        let error = workspace
+            .verify(&Scope::Workspace, &BTreeMap::new(), Sample::All)
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                Error::Adapter {
+                    port: PortName::Manifest,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "manifest: buildl.toml: [execution] strategy is \"bare\", and verify re-runs \
+             actions in the input sandbox only: write strategy = \"sandbox\" under [execution]"
+        );
+        // Refused before the lock was taken: no state directory, no lock file.
         assert_eq!(names(&root), ["a.txt", "build.lua", "buildl.toml"]);
     }
 }

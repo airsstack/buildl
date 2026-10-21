@@ -15,6 +15,7 @@
 //! | `buildl plan [TARGET]... [--set NAME=VALUE]... [--json]` | what a build would run and why, or the plan as canonical JSON | nothing |
 //! | `buildl build [TARGET]... [--set NAME=VALUE]... [-k \| --keep-going] [--stream]` | nothing | a block for each action that printed or failed, and a summary |
 //! | `buildl test [TARGET]... [--set NAME=VALUE]... [--stop] [--stream] [--rerun] [--verbose]` | nothing | a block for each failing test (and each test that printed, with `--verbose`) and for each other target that printed or failed, and a line counting the tests |
+//! | `buildl verify [TARGET]... [--set NAME=VALUE]... [--sample N]` | nothing | a line for each checked target that was verified, mismatched, failed, skipped or not put back, and a line counting them and the targets left out |
 //! | `buildl log <TARGET> [--stdout \| --stderr]` | the stored stdout, or the one stream asked for | the header, a warning of damaged lines, and the stored stderr when no flag is given |
 //! | `buildl clean` | nothing | `clean: removed out` (naming the manifest's `out` directory), or `clean: out holds nothing` |
 //! | `buildl gc` | nothing | `gc: dropped 1 row, removed 5 blobs (2048 bytes)` |
@@ -26,9 +27,11 @@
 //! does not stop, and `--stream` shows one running action's output as it is printed. `--stop`
 //! starts nothing new after the first failure. `--rerun` runs the selected tests even when
 //! nothing they depend on changed. `--verbose` shows what every test printed, not only what a
-//! failing one did. Every command takes `--color auto|always|never`: under `auto`, what is
-//! printed is coloured only when standard error is a terminal whose `TERM` is set and not
-//! `dumb`, and `NO_COLOR` is unset or empty.
+//! failing one did. `--sample N`, with `N` at least one, makes `verify` re-run only the `N` cached
+//! actions whose key digests are lowest, the same ones every time; `verify` runs under
+//! `strategy = "sandbox"` only and records nothing. Every command takes
+//! `--color auto|always|never`: under `auto`, what is printed is coloured only when standard
+//! error is a terminal whose `TERM` is set and not `dumb`, and `NO_COLOR` is unset or empty.
 //!
 //! An expression is `deps(TARGET)`, every target TARGET depends on, or `rdeps(TARGET)`, every
 //! target that depends on TARGET. Either reaches any number of steps away, and TARGET itself is
@@ -51,7 +54,10 @@
 //! | 7 | buildl itself is at fault |
 //!
 //! Under `--keep-going`, which `test` has unless `--stop` is given, the most severe status wins:
-//! 7, then 3, then 1.
+//! 7, then 3, then 1. `verify` ends with the most severe status of its checks as well: 1 for a
+//! mismatch, the status a build would give for a re-run that failed, and 3 for a target that was
+//! skipped or whose outputs could not be put back. It ends with 0 when it found nothing wrong,
+//! and so when there was nothing cached to check.
 //!
 //! # Platforms
 //!

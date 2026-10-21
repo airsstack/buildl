@@ -605,6 +605,36 @@ fn a_variable_an_input_and_a_directory_outside_the_ceiling_are_each_refused() {
 }
 
 #[test]
+fn a_pinned_variable_is_refused_after_the_ceiling_and_before_any_tool() {
+    let mut pipeline = root_only(vec![target_with("app", |target| {
+        target.env = vec![Written::new("TZ")];
+        target.inputs = vec![Written::new("missing.c")];
+    })]);
+    pipeline.ports_mut().tools.fingerprints.clear();
+
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
+    assert!(matches!(error, Error::Refused { .. }), "{error}");
+
+    pipeline.ports_mut().manifest.workspace.ceiling.env = BTreeSet::from([env_name("TZ")]);
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
+    assert_eq!(
+        error.to_string(),
+        "build.lua: //:app: env TZ is set to UTC by the sandbox and cannot be declared"
+    );
+    assert!(matches!(error, Error::PinnedEnv { .. }), "{error}");
+
+    pipeline.ports_mut().manifest.workspace.execution.strategy = Isolation::Bare;
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
+    assert!(matches!(error, Error::MissingTool { .. }), "{error}");
+}
+
+#[test]
 fn a_program_that_cannot_be_found_names_the_lowest_labelled_target_running_it() {
     let mut pipeline = chain();
     pipeline.ports_mut().tools.fingerprints.clear();

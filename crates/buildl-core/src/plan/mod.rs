@@ -15,6 +15,7 @@ mod components;
 mod difference;
 mod inputs;
 mod order;
+mod pinned;
 mod settings;
 mod tools;
 mod verdict;

@@ -8,8 +8,8 @@
 //!
 //! - [`Cli`] and [`Command`] — the commands and the flags of each.
 //! - [`Color`] — when to colour what is printed, as asked for.
-//! - [`GraphArgs`], [`QueryArgs`], [`PlanArgs`], [`BuildArgs`], [`TestArgs`], [`LogArgs`] and
-//!   [`Selection`] — the arguments of a command.
+//! - [`GraphArgs`], [`QueryArgs`], [`PlanArgs`], [`BuildArgs`], [`TestArgs`], [`VerifyArgs`],
+//!   [`LogArgs`] and [`Selection`] — the arguments of a command.
 //! - [`Streams`] — which streams of a run `log` prints.
 //! - [`Override`] and [`overrides`] — `--set NAME=VALUE`, and the settings of one run.
 //!
@@ -19,8 +19,9 @@
 
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
+use std::num::NonZeroUsize;
 
-use buildl::buildl_core::{LiveOutput, OnFailure, Rerun, SettingName, SettingValue};
+use buildl::buildl_core::{LiveOutput, OnFailure, Rerun, Sample, SettingName, SettingValue};
 use buildl::report::TestBlocks;
 use clap::error::ErrorKind;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
@@ -64,6 +65,8 @@ pub(crate) enum Command {
     Build(BuildArgs),
     /// Run test targets and what they need
     Test(TestArgs),
+    /// Re-run cached actions and name those whose outputs differ
+    Verify(VerifyArgs),
     /// Show what a target printed when it last ran
     Log(LogArgs),
     /// Remove the output directory
@@ -163,6 +166,20 @@ pub(crate) struct TestArgs {
     pub verbose: bool,
 }
 
+/// The arguments of `verify`.
+#[derive(Debug, Args)]
+pub(crate) struct VerifyArgs {
+    /// Targets, as //dir:name, :name or name; with none, every target but tests
+    #[arg(value_name = "TARGET")]
+    pub targets: Vec<String>,
+    /// Give a build setting a value for this run; may be repeated
+    #[arg(long = "set", value_name = "NAME=VALUE", value_parser = parse_override)]
+    pub overrides: Vec<Override>,
+    /// Re-run only the N cached actions whose keys sort lowest: the same ones while their keys stay the same
+    #[arg(long, value_name = "N")]
+    sample: Option<NonZeroUsize>,
+}
+
 /// The arguments of `log`.
 #[derive(Debug, Args)]
 pub(crate) struct LogArgs {
@@ -206,6 +223,16 @@ impl LogArgs {
             Streams::Stderr
         } else {
             Streams::Both
+        }
+    }
+}
+
+impl VerifyArgs {
+    /// How many of the cached actions the verify re-runs.
+    pub(crate) const fn sample(&self) -> Sample {
+        match self.sample {
+            Some(count) => Sample::Lowest(count),
+            None => Sample::All,
         }
     }
 }
@@ -319,13 +346,16 @@ mod tests {
     )]
 
     use std::iter;
+    use std::num::NonZeroUsize;
 
-    use buildl::buildl_core::{LiveOutput, OnFailure, Rerun};
+    use buildl::buildl_core::{LiveOutput, OnFailure, Rerun, Sample};
     use buildl::report::TestBlocks;
     use clap::error::ErrorKind;
     use clap::{CommandFactory, Parser};
 
-    use super::{BuildArgs, Cli, Color, Command, LogArgs, PlanArgs, Streams, TestArgs, overrides};
+    use super::{
+        BuildArgs, Cli, Color, Command, LogArgs, PlanArgs, Streams, TestArgs, VerifyArgs, overrides,
+    };
 
     /// The command line `args` after the program's name, parsed.
     fn parsed(args: &[&str]) -> Cli {
@@ -371,6 +401,14 @@ mod tests {
         }
     }
 
+    /// The arguments of the `verify` command line `args`.
+    fn verify(args: &[&str]) -> VerifyArgs {
+        match parsed(args).command {
+            Command::Verify(verify) => verify,
+            other => panic!("expected verify, got {other:?}"),
+        }
+    }
+
     #[test]
     fn the_definition_is_consistent() {
         Cli::command().debug_assert();
@@ -383,6 +421,7 @@ mod tests {
         assert!(matches!(parsed(&["plan"]).command, Command::Plan(_)));
         assert!(matches!(parsed(&["build"]).command, Command::Build(_)));
         assert!(matches!(parsed(&["test"]).command, Command::Test(_)));
+        assert!(matches!(parsed(&["verify"]).command, Command::Verify(_)));
         assert!(matches!(parsed(&["log", "app"]).command, Command::Log(_)));
     }
 
@@ -540,5 +579,45 @@ mod tests {
     #[test]
     fn there_is_no_flag_for_a_start_directory() {
         assert_eq!(refused(&["-C", "/tmp", "plan"]), ErrorKind::UnknownArgument);
+    }
+
+    #[test]
+    fn verify_takes_targets_and_settings_as_build_does() {
+        let args = verify(&["verify", "//lib:text", "app", "--set", "a=b"]);
+        assert_eq!(args.targets, ["//lib:text", "app"]);
+        let settings = overrides(args.overrides).unwrap();
+        assert_eq!(settings.len(), 1);
+        assert_eq!(verify(&["verify"]).targets, Vec::<String>::new());
+    }
+
+    #[test]
+    fn verify_samples_everything_unless_told_a_number() {
+        assert_eq!(verify(&["verify"]).sample(), Sample::All);
+        assert_eq!(
+            verify(&["verify", "--sample", "3"]).sample(),
+            Sample::Lowest(NonZeroUsize::new(3).unwrap())
+        );
+    }
+
+    #[test]
+    fn verify_refuses_a_sample_that_is_not_a_positive_number() {
+        for raw in ["0", "two", ""] {
+            assert_eq!(
+                refused(&["verify", "--sample", raw]),
+                ErrorKind::ValueValidation,
+                "{raw:?}"
+            );
+        }
+        assert_eq!(
+            refused(&["verify", "--sample=-1"]),
+            ErrorKind::ValueValidation
+        );
+        assert_eq!(refused(&["verify", "--sample"]), ErrorKind::InvalidValue);
+    }
+
+    #[test]
+    fn verify_takes_no_build_flags() {
+        assert_eq!(refused(&["verify", "-k"]), ErrorKind::UnknownArgument);
+        assert_eq!(refused(&["verify", "--stream"]), ErrorKind::UnknownArgument);
     }
 }

@@ -58,6 +58,8 @@
 //! - [`ActionOutcome`], [`OutcomeClass`], [`InfraKind`] and [`OutputRefusal`] — how the build of
 //!   one target ended; [`Tally`] — how many targets ended in each way;
 //!   [`Summary`] — a build's tally, and the tally of its tests.
+//! - [`Sample`] — how many of the cached targets a verify re-runs; [`Verification`], [`Check`] and
+//!   [`OutputDifference`] with its parts [`FileChange`] and [`EntryChange`] — what it found.
 //! - [`OutcomeEvent`] — one line of the build log: an outcome, with when and under which key.
 //! - [`LoggedRun`] and [`LogLine`] — a line of the build log as it reads back: an event, or a
 //!   damaged line.
@@ -80,6 +82,7 @@ pub mod build_file;
 pub mod cache_row;
 pub mod captured;
 pub mod channel;
+pub mod check;
 pub mod declaration;
 pub mod description;
 pub mod diagnostic;
@@ -115,6 +118,7 @@ pub mod query;
 pub mod raw_outcome;
 pub mod ready_action;
 pub mod rerun;
+pub mod sample;
 pub mod scope;
 pub mod setting;
 pub mod source_path;
@@ -126,6 +130,7 @@ pub mod timestamp;
 pub mod tree;
 pub mod tree_path;
 pub mod turn;
+pub mod verification;
 pub mod workers;
 pub mod workspace;
 pub mod written;
@@ -142,6 +147,7 @@ pub use build_file::{
 pub use cache_row::CacheRow;
 pub use captured::Captured;
 pub use channel::Channel;
+pub use check::{Check, EntryChange, FileChange, OutputDifference};
 pub use declaration::{
     Action, Alias, Declaration, Declared, Freshness, NetworkAccess, Rule, Setting, Target,
     TargetRole,
@@ -180,6 +186,7 @@ pub use query::{Direction, Query};
 pub use raw_outcome::{Exit, RawOutcome};
 pub use ready_action::ReadyAction;
 pub use rerun::Rerun;
+pub use sample::Sample;
 pub use scope::Scope;
 pub use setting::{SettingName, SettingValue};
 pub use source_path::SourcePath;
@@ -191,6 +198,7 @@ pub use timestamp::Timestamp;
 pub use tree::{Tree, TreeEntry};
 pub use tree_path::TreePath;
 pub use turn::Turn;
+pub use verification::Verification;
 pub use workers::Workers;
 pub use workspace::{Execution, Workspace};
 pub use written::Written;
