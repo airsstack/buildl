@@ -25,7 +25,7 @@ use crate::cas::LocalCas;
 use crate::clock::SystemClock;
 use crate::digest::FileDigester;
 use crate::dispatch::ThreadPool;
-use crate::exec::{Bare, InputSandbox, Local};
+use crate::exec::{Bare, InputSandbox, Local, OutPaths};
 use crate::graph::GraphFile;
 use crate::host::LocalHost;
 use crate::log::LocalLog;
@@ -243,6 +243,7 @@ impl Wiring {
                 lock.owner(),
                 timeout,
                 self.search.clone(),
+                OutPaths::Cleared,
             )),
             strategy @ (Isolation::OsSandbox | Isolation::Container) => Local::Refused(strategy),
         }
@@ -318,7 +319,7 @@ mod tests {
     use crate::cas::LocalCas;
     use crate::digest::FileDigester;
     use crate::dispatch::ThreadPool;
-    use crate::exec::{Bare, InputSandbox, Local};
+    use crate::exec::{Bare, InputSandbox, Local, OutPaths};
     use crate::graph::GraphFile;
     use crate::host::LocalHost;
     use crate::local_ports::{LocalPipeline, Wiring};
@@ -704,6 +705,7 @@ mod tests {
                     lock.owner(),
                     timeout,
                     wiring.search.clone(),
+                    OutPaths::Cleared,
                 ))
             )
         );

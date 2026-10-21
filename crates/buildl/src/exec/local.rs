@@ -133,7 +133,7 @@ mod tests {
     use super::{Local, LocalDir};
     use crate::exec::bare::Bare;
     use crate::exec::memory_store::MemoryStore;
-    use crate::exec::sandbox::InputSandbox;
+    use crate::exec::sandbox::{InputSandbox, OutPaths};
     use crate::search_path::SearchPath;
     use crate::state::{Owner, Scratch};
 
@@ -173,6 +173,7 @@ mod tests {
                 self.owner,
                 patient(),
                 system(),
+                OutPaths::Cleared,
             ))
         }
     }

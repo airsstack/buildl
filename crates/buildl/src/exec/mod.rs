@@ -35,4 +35,4 @@ mod sandbox;
 
 pub use bare::Bare;
 pub use local::{Local, LocalDir};
-pub use sandbox::{ExecDir, InputSandbox};
+pub use sandbox::{ExecDir, InputSandbox, OutPaths};

@@ -26,6 +26,16 @@ use crate::exec::run::{Started, collect_in, start};
 use crate::search_path::SearchPath;
 use crate::state::{Owner, Scratch, clear_path};
 
+/// What an [`InputSandbox`] does with the real output paths in the workspace before it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutPaths {
+    /// Unlinks whatever stands at each output path and makes the directory above it, so an
+    /// action that fails or runs out of time leaves nothing at its output paths.
+    Cleared,
+    /// Leaves the workspace's output directory as it is: nothing is unlinked or made there.
+    Untouched,
+}
+
 /// Tier 2: a plain process in a directory of its own, outside the workspace.
 ///
 /// The directory holds a copy of each file the action declares as an input, of every file of
@@ -34,7 +44,8 @@ use crate::state::{Owner, Scratch, clear_path};
 /// another workspace file by a relative path nor change one. The command runs there, started
 /// as it is at the first tier, with the variables of the action and the ones this tier pins.
 /// The directory has the same path on every run of the same target, and is removed when the
-/// [`ExecDir`] that names it is dropped.
+/// [`ExecDir`] that names it is dropped. Whether the real output paths in the workspace are
+/// cleared first is the [`OutPaths`] it was made with; nothing else differs between the two.
 #[derive(Debug)]
 pub struct InputSandbox {
     root: PathBuf,
@@ -42,12 +53,14 @@ pub struct InputSandbox {
     owner: Owner,
     timeout: Duration,
     search: SearchPath,
+    out_paths: OutPaths,
 }
 
 impl InputSandbox {
     /// `root` is the absolute workspace root; `scratch` the directory the action directories are
     /// made in, which `owner` must own; `timeout` the longest one action may run; and `search`
-    /// the search path the programs of a plan were fingerprinted through.
+    /// the search path the programs of a plan were fingerprinted through. `out_paths` says
+    /// whether the real output paths are cleared before the action runs or left alone.
     #[must_use]
     pub const fn new(
         root: PathBuf,
@@ -55,6 +68,7 @@ impl InputSandbox {
         owner: Owner,
         timeout: Timeout,
         search: SearchPath,
+        out_paths: OutPaths,
     ) -> Self {
         Self {
             root,
@@ -62,6 +76,7 @@ impl InputSandbox {
             owner,
             timeout: timeout.as_duration(),
             search,
+            out_paths,
         }
     }
 }
@@ -91,15 +106,17 @@ impl ExecStrategy for InputSandbox {
 
     fn prepare(&self, action: &ReadyAction) -> Result<ExecDir> {
         let label = &action.label;
-        for output in &action.outputs {
-            let path = self.root.join(output.as_str());
-            // Unlinked, never written through: what an earlier build left at the path is a
-            // link to a file the content store still holds.
-            clear_path(&path)
-                .map_err(|error| fault(label, &format!("clearing {output}"), error))?;
-            make_parent(&path).map_err(|error| {
-                fault(label, &format!("making the directory of {output}"), error)
-            })?;
+        if self.out_paths == OutPaths::Cleared {
+            for output in &action.outputs {
+                let path = self.root.join(output.as_str());
+                // Unlinked, never written through: what an earlier build left at the path is a
+                // link to a file the content store still holds.
+                clear_path(&path)
+                    .map_err(|error| fault(label, &format!("clearing {output}"), error))?;
+                make_parent(&path).map_err(|error| {
+                    fault(label, &format!("making the directory of {output}"), error)
+                })?;
+            }
         }
         self.scratch
             .claim(self.owner)
@@ -274,7 +291,7 @@ mod tests {
         PortName, ReadyAction, SourcePath, StoredFile, TargetName, Timeout,
     };
 
-    use super::InputSandbox;
+    use super::{InputSandbox, OutPaths};
     use crate::exec::memory_store::MemoryStore;
     use crate::search_path::SearchPath;
     use crate::state::{Owner, Scratch};
@@ -315,6 +332,18 @@ mod tests {
                 self.owner,
                 timeout,
                 search,
+                OutPaths::Cleared,
+            )
+        }
+
+        fn untouched(&self) -> InputSandbox {
+            InputSandbox::new(
+                self.root.clone(),
+                self.scratch.clone(),
+                self.owner,
+                patient(),
+                system(),
+                OutPaths::Untouched,
             )
         }
 
@@ -424,6 +453,60 @@ mod tests {
             );
         }
         assert!(fixture.root.join("out/fresh/deep").is_dir());
+    }
+
+    #[test]
+    fn an_untouched_sandbox_leaves_the_real_output_paths_alone() {
+        let fixture = fixture();
+        fixture.write("out/lib/file", "from an earlier build");
+        fixture.write("out/lib/tree/old", "old");
+        let mut action = sh("true");
+        action.outputs = vec![
+            output("lib", "file"),
+            output("lib", "tree"),
+            output("fresh/deep", "made"),
+        ];
+
+        let _dir = fixture.untouched().prepare(&action).unwrap();
+
+        assert_eq!(
+            fs::read(fixture.root.join("out/lib/file")).unwrap(),
+            b"from an earlier build"
+        );
+        assert_eq!(
+            fs::read(fixture.root.join("out/lib/tree/old")).unwrap(),
+            b"old"
+        );
+        assert!(!fixture.root.join("out/fresh").exists());
+    }
+
+    #[test]
+    fn an_untouched_sandbox_still_copies_inputs_and_dependency_outputs() {
+        let fixture = fixture();
+        fixture.write("a.txt", "a");
+        fixture.write("secret.txt", "secret");
+        fixture.write("out/lib/tree/x", "x");
+        fixture.write("out/made/result", "from an earlier build");
+        let mut action = sh("true");
+        action.inputs = vec![source("a.txt")];
+        action.deps = vec![output("lib", "tree")];
+        action.outputs = vec![output("made", "result")];
+
+        let dir = fixture.untouched().prepare(&action).unwrap();
+
+        assert_eq!(
+            listing(dir.path()),
+            [
+                "a.txt",
+                "out",
+                "out/lib",
+                "out/lib/tree",
+                "out/lib/tree/x",
+                "out/made",
+            ]
+        );
+        assert_eq!(fs::read(dir.path().join("a.txt")).unwrap(), b"a");
+        assert_eq!(fs::read(dir.path().join("out/lib/tree/x")).unwrap(), b"x");
     }
 
     #[test]
