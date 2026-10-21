@@ -523,7 +523,7 @@ fn a_strategy_that_cannot_be_run_fails_build_and_not_plan() {
     let (_dir, root) = workspace(&[
         (
             "buildl.toml",
-            "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n",
+            "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nstrategy = \"os-sandbox\"\n",
         ),
         ("build.lua", COPY),
         ("a.txt", "a\n"),
@@ -535,14 +535,31 @@ fn a_strategy_that_cannot_be_run_fails_build_and_not_plan() {
         (
             5,
             concat!(
-                "error: manifest: buildl.toml: [execution] strategy is \"sandbox\" ",
-                "(the default when it is not written), and this version of buildl runs \"bare\" only: ",
-                "write strategy = \"bare\" under [execution]\n",
+                "error: manifest: buildl.toml: [execution] strategy is \"os-sandbox\", ",
+                "and this version of buildl runs \"bare\" and \"sandbox\" only: ",
+                "write strategy = \"sandbox\" under [execution]\n",
             )
             .to_owned()
         )
     );
     assert!(!root.join("out").exists());
+}
+
+#[test]
+fn a_workspace_without_a_strategy_line_builds() {
+    let (_dir, root) = workspace(&[
+        (
+            "buildl.toml",
+            "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n",
+        ),
+        ("build.lua", COPY),
+        ("a.txt", "a\n"),
+    ]);
+
+    let built = run(&root, &["build"], &[]);
+
+    assert_eq!(code(&built), 0, "{}", stderr(&built));
+    assert_eq!(fs::read(root.join("out/copy")).unwrap(), b"a\n");
 }
 
 #[test]

@@ -25,7 +25,7 @@ use crate::cas::LocalCas;
 use crate::clock::SystemClock;
 use crate::digest::FileDigester;
 use crate::dispatch::ThreadPool;
-use crate::exec::Bare;
+use crate::exec::{Bare, InputSandbox, Local};
 use crate::graph::GraphFile;
 use crate::host::LocalHost;
 use crate::log::LocalLog;
@@ -34,9 +34,6 @@ use crate::search_path::SearchPath;
 use crate::statcache::LocalStatCache;
 use crate::state::{LockError, Scratch, StateLayout, StateLock};
 use crate::tools::PathTools;
-
-/// The file a workspace's manifest is read from, as a refusal names it.
-const MANIFEST_FILE: &str = "buildl.toml";
 
 /// The bundle of real adapters. `R` is the reporter a build is lent.
 ///
@@ -55,7 +52,7 @@ impl<R: Reporter> Ports for LocalPorts<R> {
     type Cache = LocalCache;
     type Cas = LocalCas;
     type Log = LocalLog;
-    type Strategy = Bare;
+    type Strategy = Local;
     type Dispatcher = ThreadPool;
     type Clock = SystemClock;
     type Graph = GraphFile;
@@ -150,33 +147,21 @@ impl Wiring {
 
     /// Whether this version of buildl can run actions under the workspace's strategy.
     ///
-    /// It runs `bare` and nothing else. A workspace that asks for more isolation is refused
-    /// instead of being built under less, so a build never drops a guarantee its manifest
-    /// asked for.
+    /// It runs `bare` and `sandbox`, the default. A workspace that asks for more isolation is
+    /// refused instead of being built under less, so a build never drops a guarantee its
+    /// manifest asked for.
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Adapter`], naming [`PortName::Manifest`], for every strategy but
-    /// [`Isolation::Bare`].
+    /// Returns [`Error::Adapter`], naming [`PortName::Manifest`], for `os-sandbox` and
+    /// `container`.
     pub fn runs(&self) -> Result<()> {
-        let strategy = self.workspace.execution.strategy;
-        if strategy == Isolation::Bare {
-            return Ok(());
+        match self.workspace.execution.strategy {
+            Isolation::Bare | Isolation::Sandbox => Ok(()),
+            strategy @ (Isolation::OsSandbox | Isolation::Container) => {
+                Err(Local::refusal(strategy))
+            }
         }
-        let unwritten = if strategy == Isolation::default() {
-            " (the default when it is not written)"
-        } else {
-            ""
-        };
-        Err(Error::Adapter {
-            port: PortName::Manifest,
-            diagnostic: Diagnostic::new(format!(
-                "{MANIFEST_FILE}: [execution] strategy is \"{strategy}\"{unwritten}, and this \
-                 version of buildl runs \"{bare}\" only: write strategy = \"{bare}\" under \
-                 [execution]",
-                bare = Isolation::Bare,
-            )),
-        })
     }
 
     /// Where the state directory's files are, read without taking the directory: for a command
@@ -246,6 +231,23 @@ impl Wiring {
         })
     }
 
+    /// The strategy the manifest names, made from the root, the timeout and the search path.
+    fn strategy(&self, lock: &StateLock) -> Local {
+        let root = self.root.as_path().to_path_buf();
+        let timeout = self.workspace.execution.timeout;
+        match self.workspace.execution.strategy {
+            Isolation::Bare => Local::Bare(Bare::new(root, timeout, self.search.clone())),
+            Isolation::Sandbox => Local::Sandbox(InputSandbox::new(
+                root,
+                self.scratch.clone(),
+                lock.owner(),
+                timeout,
+                self.search.clone(),
+            )),
+            strategy @ (Isolation::OsSandbox | Isolation::Container) => Local::Refused(strategy),
+        }
+    }
+
     /// The dispatcher that runs several tasks at once: as many workers as the manifest says.
     ///
     /// The one place the manifest's worker count becomes a dispatcher: `ports` takes its
@@ -260,7 +262,9 @@ impl Wiring {
     /// process's own.
     ///
     /// The dispatcher comes from [`Wiring::dispatcher`], so the worker count of the manifest
-    /// reaches it from that one place; the timeout reaches the strategy through here. The program
+    /// reaches it from that one place; the timeout reaches the strategy through here. The strategy
+    /// is the one the manifest names, and a strategy this version cannot run is made too, as one
+    /// that refuses to run anything, so that `plan` works under every strategy. The program
     /// lookup and the strategy are handed one search path, so the file that is run is the file that
     /// was fingerprinted.
     ///
@@ -285,11 +289,7 @@ impl Wiring {
             cache: LocalCache::open(layout)?,
             cas: LocalCas::new(root, layout),
             log: LocalLog::new(layout),
-            strategy: Bare::new(
-                root.to_path_buf(),
-                self.workspace.execution.timeout,
-                self.search.clone(),
-            ),
+            strategy: self.strategy(lock),
             dispatcher: self.dispatcher(),
             clock: SystemClock,
             graph: GraphFile::new(layout),
@@ -311,14 +311,14 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use buildl_core::{
-        Directory, Error, Pipeline, PortName, Scope, Timeout, Verdict, Want, Workers,
+        Directory, Error, Isolation, Pipeline, PortName, Scope, Timeout, Verdict, Want, Workers,
     };
     use buildl_lua::{DeclarationLimits, LuaSource};
 
     use crate::cas::LocalCas;
     use crate::digest::FileDigester;
     use crate::dispatch::ThreadPool;
-    use crate::exec::Bare;
+    use crate::exec::{Bare, InputSandbox, Local};
     use crate::graph::GraphFile;
     use crate::host::LocalHost;
     use crate::local_ports::{LocalPipeline, Wiring};
@@ -345,8 +345,15 @@ mod tests {
         names
     }
 
-    /// A manifest that allows a build to write its outputs and its state, and to run `cp`.
-    const BARE: &str = "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nstrategy = \"bare\"\n";
+    /// The ceiling of a manifest that allows a build to write its outputs and its state, and
+    /// to run `cp`.
+    const CEILING: &str =
+        "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n";
+
+    /// That manifest, under the first tier.
+    fn bare() -> String {
+        format!("{CEILING}[execution]\nstrategy = \"bare\"\n")
+    }
 
     #[test]
     fn reading_finds_the_root_above_the_start_and_makes_nothing() {
@@ -431,12 +438,18 @@ mod tests {
     }
 
     #[test]
-    fn only_bare_can_be_run() {
-        let (_dir, root) = workspace("[execution]\nstrategy = \"bare\"\n");
-        Wiring::read(&root).unwrap().runs().unwrap();
-
-        for manifest in ["", "[execution]\nstrategy = \"sandbox\"\n"] {
+    fn bare_and_sandbox_can_be_run() {
+        for manifest in [
+            "[execution]\nstrategy = \"bare\"\n",
+            "[execution]\nstrategy = \"sandbox\"\n",
+            "",
+        ] {
             let (_dir, root) = workspace(manifest);
+            Wiring::read(&root).unwrap().runs().unwrap();
+        }
+
+        for strategy in ["os-sandbox", "container"] {
+            let (_dir, root) = workspace(&format!("[execution]\nstrategy = \"{strategy}\"\n"));
             let error = Wiring::read(&root).unwrap().runs().unwrap_err();
             assert!(
                 matches!(
@@ -450,22 +463,10 @@ mod tests {
             );
             assert_eq!(
                 error.to_string(),
-                "manifest: buildl.toml: [execution] strategy is \"sandbox\" (the default when it \
-                 is not written), and this version of buildl runs \"bare\" only: write strategy \
-                 = \"bare\" under [execution]",
-                "{manifest:?}"
-            );
-        }
-
-        for strategy in ["os-sandbox", "container"] {
-            let (_dir, root) = workspace(&format!("[execution]\nstrategy = \"{strategy}\"\n"));
-            let error = Wiring::read(&root).unwrap().runs().unwrap_err();
-            assert_eq!(
-                error.to_string(),
                 format!(
                     "manifest: buildl.toml: [execution] strategy is \"{strategy}\", and this \
-                     version of buildl runs \"bare\" only: write strategy = \"bare\" under \
-                     [execution]"
+                     version of buildl runs \"bare\" and \"sandbox\" only: write strategy = \
+                     \"sandbox\" under [execution]"
                 )
             );
         }
@@ -550,7 +551,7 @@ mod tests {
 
     #[test]
     fn the_layout_is_made_without_the_lock() {
-        let (_dir, root) = workspace(BARE);
+        let (_dir, root) = workspace(&bare());
         let wiring = Wiring::read(&root).unwrap();
 
         let layout = wiring.layout();
@@ -561,7 +562,7 @@ mod tests {
 
     #[test]
     fn a_busy_lock_is_the_action_caches_adapter_error() {
-        let (_dir, root) = workspace(BARE);
+        let (_dir, root) = workspace(&bare());
         let wiring = Wiring::read(&root).unwrap();
         let held = wiring.lock().unwrap();
 
@@ -594,7 +595,7 @@ mod tests {
     fn a_scratch_that_cannot_be_removed_is_the_exec_strategys_adapter_error() {
         use std::os::unix::fs::PermissionsExt;
 
-        let (_dir, root) = workspace(BARE);
+        let (_dir, root) = workspace(&bare());
         let wiring = Wiring::read(&root).unwrap();
         let locked = wiring.scratch().dir().join("locked");
         fs::create_dir_all(&locked).unwrap();
@@ -621,7 +622,7 @@ mod tests {
 
     #[test]
     fn a_state_directory_that_cannot_be_made_is_the_action_caches_adapter_error() {
-        let (_dir, root) = workspace(BARE);
+        let (_dir, root) = workspace(&bare());
         fs::write(root.join(".buildl"), "not a directory").unwrap();
 
         let error = Wiring::read(&root).unwrap().lock().unwrap_err();
@@ -647,7 +648,7 @@ mod tests {
 
     #[test]
     fn every_port_is_made_from_the_manifest_the_root_and_the_lock() {
-        let (_dir, root) = workspace(&format!("{BARE}workers = 3\ntimeout = \"7s\"\n"));
+        let (_dir, root) = workspace(&format!("{}workers = 3\ntimeout = \"7s\"\n", bare()));
         let wiring = Wiring::read(&root).unwrap();
         let lock = wiring.lock().unwrap();
         let layout = lock.layout();
@@ -665,7 +666,10 @@ mod tests {
         let timeout = Timeout::parse("7s").unwrap();
         assert_eq!(
             format!("{:?}", ports.strategy),
-            format!("{:?}", Bare::new(root.clone(), timeout, search))
+            format!(
+                "{:?}",
+                Local::Bare(Bare::new(root.clone(), timeout, search))
+            )
         );
         assert_eq!(
             format!("{:?}", ports.dispatcher),
@@ -683,11 +687,43 @@ mod tests {
             format!("{:?}", ports.graph),
             format!("{:?}", GraphFile::new(layout))
         );
+
+        // With no strategy line the workspace runs the input sandbox, which is handed the
+        // scratch directory and the owner of the lock.
+        let (_dir, root) = workspace(&format!("{CEILING}[execution]\ntimeout = \"7s\"\n"));
+        let wiring = Wiring::read(&root).unwrap();
+        let lock = wiring.lock().unwrap();
+        let ports = wiring.ports(&lock, Silent).unwrap();
+        assert_eq!(
+            format!("{:?}", ports.strategy),
+            format!(
+                "{:?}",
+                Local::Sandbox(InputSandbox::new(
+                    root,
+                    wiring.scratch().clone(),
+                    lock.owner(),
+                    timeout,
+                    wiring.search.clone(),
+                ))
+            )
+        );
+
+        // A strategy this version cannot run is still made, so that `plan` has every port.
+        let (_dir, root) = workspace(&format!(
+            "{CEILING}[execution]\nstrategy = \"os-sandbox\"\n"
+        ));
+        let wiring = Wiring::read(&root).unwrap();
+        let lock = wiring.lock().unwrap();
+        let ports = wiring.ports(&lock, Silent).unwrap();
+        assert_eq!(
+            format!("{:?}", ports.strategy),
+            format!("{:?}", Local::Refused(Isolation::OsSandbox))
+        );
     }
 
     #[test]
     fn a_cache_that_is_not_canonical_stops_the_wiring_with_its_own_error() {
-        let (_dir, root) = workspace(BARE);
+        let (_dir, root) = workspace(&bare());
         let wiring = Wiring::read(&root).unwrap();
         let lock = wiring.lock().unwrap();
         fs::write(lock.layout().cache(), "{} ").unwrap();
@@ -702,7 +738,7 @@ mod tests {
 
     #[test]
     fn a_pipeline_over_the_ports_plans_a_workspace() {
-        let (_dir, root) = workspace(BARE);
+        let (_dir, root) = workspace(&bare());
         fs::write(root.join("a.txt"), "a\n").unwrap();
         fs::write(
             root.join("build.lua"),

@@ -198,9 +198,10 @@ impl Workspace {
     ///
     /// Returns [`Error::Adapter`](buildl_core::Error::Adapter), naming
     /// [`PortName::Manifest`](buildl_core::PortName::Manifest), when the workspace asks for a
-    /// strategy other than `bare`: nothing has been made then, and nothing was run. After that,
-    /// as [`Workspace::plan`], then whatever [`Pipeline::build`] returns. A build that
-    /// succeeded and whose rows could not be folded returns the fold's error.
+    /// strategy this version cannot run (`os-sandbox` or `container`): nothing has been made
+    /// then, and nothing was run. After that, as [`Workspace::plan`], then whatever
+    /// [`Pipeline::build`] returns. A build that succeeded and whose rows could not be folded
+    /// returns the fold's error.
     pub fn build<R: Reporter>(
         &self,
         scope: &Scope,
@@ -303,9 +304,10 @@ impl Workspace {
     ///
     /// Returns [`Error::Adapter`](buildl_core::Error::Adapter), naming
     /// [`PortName::Manifest`](buildl_core::PortName::Manifest), when the workspace asks for a
-    /// strategy other than `bare`: nothing has been made then, and nothing was run. After that,
-    /// as [`Workspace::plan`], then whatever [`Pipeline::test`] returns. A run that succeeded
-    /// and whose rows could not be folded returns the fold's error.
+    /// strategy this version cannot run (`os-sandbox` or `container`): nothing has been made
+    /// then, and nothing was run. After that, as [`Workspace::plan`], then whatever
+    /// [`Pipeline::test`] returns. A run that succeeded and whose rows could not be folded
+    /// returns the fold's error.
     pub fn test<R: Reporter>(
         &self,
         scope: &Scope,
@@ -430,6 +432,9 @@ mod tests {
             .map(|outcome| (outcome.label.to_string(), outcome.class))
             .collect())
     }
+
+    /// What a build or a test run says when the manifest asks for `os-sandbox`.
+    const REFUSAL: &str = "manifest: buildl.toml: [execution] strategy is \"os-sandbox\", and this version of buildl runs \"bare\" and \"sandbox\" only: write strategy = \"sandbox\" under [execution]";
 
     /// [`BARE`], with `cmp` allowed in place of `false`.
     const COMPARING: &str = "[ceiling]\nproc.run = [\"cp\", \"cmp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nworkers = 1\nstrategy = \"bare\"\n";
@@ -660,7 +665,7 @@ mod tests {
 
     #[test]
     fn plan_works_under_a_strategy_this_version_cannot_run() {
-        let manifest = BARE.replace("strategy = \"bare\"\n", "");
+        let manifest = BARE.replace("strategy = \"bare\"", "strategy = \"os-sandbox\"");
         let (_dir, root) = workspace(&[
             ("buildl.toml", &manifest),
             ("build.lua", COPY),
@@ -1024,7 +1029,7 @@ mod tests {
 
     #[test]
     fn build_refuses_a_strategy_it_cannot_run_before_anything_is_made() {
-        let manifest = BARE.replace("strategy = \"bare\"\n", "");
+        let manifest = BARE.replace("strategy = \"bare\"", "strategy = \"os-sandbox\"");
         let (_dir, root) = workspace(&[
             ("buildl.toml", &manifest),
             ("build.lua", COPY),
@@ -1044,19 +1049,14 @@ mod tests {
             ),
             "{error:?}"
         );
-        assert_eq!(
-            error.to_string(),
-            "manifest: buildl.toml: [execution] strategy is \"sandbox\" (the default when it is \
-             not written), and this version of buildl runs \"bare\" only: write strategy = \
-             \"bare\" under [execution]"
-        );
+        assert_eq!(error.to_string(), REFUSAL);
         // Refused before the lock was taken: no state directory, no output.
         assert_eq!(names(&root), ["a.txt", "build.lua", "buildl.toml"]);
     }
 
     #[test]
     fn a_test_run_refuses_a_strategy_it_cannot_run_before_anything_is_made() {
-        let manifest = COMPARING.replace("strategy = \"bare\"\n", "");
+        let manifest = COMPARING.replace("strategy = \"bare\"", "strategy = \"os-sandbox\"");
         let (_dir, root) = workspace(&[
             ("buildl.toml", &manifest),
             ("build.lua", CHECKED),
@@ -1085,6 +1085,7 @@ mod tests {
             ),
             "{error:?}"
         );
+        assert_eq!(error.to_string(), REFUSAL);
         // Refused before the lock was taken: no state directory, no output.
         assert_eq!(names(&root), ["a.txt", "build.lua", "buildl.toml"]);
     }

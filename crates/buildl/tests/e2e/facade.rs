@@ -70,7 +70,11 @@ fn a_workspace_another_buildl_holds_is_refused() {
 #[test]
 fn build_refuses_a_strategy_it_cannot_run_and_plan_does_not() {
     let chain = Fixture::copy_of("chain", &["greet.sh"]);
-    chain.replace_line("buildl.toml", "strategy = \"bare\"", "");
+    chain.replace_line(
+        "buildl.toml",
+        "strategy = \"bare\"",
+        "strategy = \"os-sandbox\"",
+    );
 
     let plan = chain.try_plan().unwrap();
     let error = chain.try_build().unwrap_err();

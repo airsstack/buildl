@@ -35,9 +35,6 @@
 //! proc.run = ["cp"]
 //! fs.read  = ["."]
 //! fs.write = ["out", ".buildl"]
-//!
-//! [execution]
-//! strategy = "bare"
 //! "#,
 //! )?;
 //! fs::write(
@@ -71,9 +68,10 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 //!
-//! Actions run as plain processes in the workspace, the strategy a manifest names `bare`. A
-//! build of a workspace that asks for any other strategy is refused, never run under less
-//! isolation than its manifest asked for.
+//! Actions run as plain processes, under the strategy the manifest names: `sandbox`, the default,
+//! runs each in a directory of its own holding only the files it declared, and `bare` runs it in
+//! the workspace. A build of a workspace that asks for `os-sandbox` or `container` is refused,
+//! never run under less isolation than its manifest asked for.
 //!
 //! # Where things live
 //!

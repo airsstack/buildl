@@ -770,8 +770,11 @@ mod tests {
 
     #[test]
     fn a_build_that_ends_in_an_error_says_so_once() {
-        // The strategy is left to its default, which this buildl cannot run.
-        let (_dir, root) = workspace(&[("buildl.toml", ""), ("build.lua", COPY)]);
+        // The manifest names a strategy this buildl cannot run.
+        let (_dir, root) = workspace(&[
+            ("buildl.toml", "[execution]\nstrategy = \"os-sandbox\"\n"),
+            ("build.lua", COPY),
+        ]);
         let ran = ran(&root, &["build"]);
         assert_eq!(ran.exit, Exit::Definition);
         assert!(
