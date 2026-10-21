@@ -12,11 +12,11 @@ use crate::types::{ActionKey, Label, Sample};
 
 /// The targets a sample re-runs, and how many it left out.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Chosen {
+pub(crate) struct Chosen {
     /// The labels to re-run, in label order.
-    pub rerun: Vec<Label>,
+    pub(crate) rerun: Vec<Label>,
     /// How many candidates the sample left out.
-    pub left_out: usize,
+    pub(crate) left_out: usize,
 }
 
 /// Chooses the candidates `sample` re-runs.
@@ -26,7 +26,7 @@ pub struct Chosen {
 /// for more than there are. Candidates with equal digests are taken in label order, so the
 /// choice is the same whatever order `candidates` come in.
 #[must_use]
-pub fn chosen(mut candidates: Vec<(Label, ActionKey)>, sample: Sample) -> Chosen {
+pub(crate) fn chosen(mut candidates: Vec<(Label, ActionKey)>, sample: Sample) -> Chosen {
     let total = candidates.len();
     candidates.sort_by(|(left_label, left_key), (right_label, right_key)| {
         left_key

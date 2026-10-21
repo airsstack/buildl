@@ -344,6 +344,16 @@ struct CasState {
     unstorable: BTreeSet<Vec<u8>>,
     unplaceable: BTreeSet<OutputPath>,
     modes: BTreeMap<OutputPath, FileMode>,
+    touches: Vec<Touch>,
+}
+
+/// What the content store was asked to do to content, in the order it was asked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Touch {
+    /// Content was stored.
+    Stored,
+    /// Content was placed at a workspace path.
+    Placed,
 }
 
 /// A content store held in memory, with the workspace paths content was placed at.
@@ -389,6 +399,18 @@ impl FakeCas {
         self.state().blobs.remove(digest);
     }
 
+    /// Every store and every placement that succeeded, in the order made.
+    #[must_use]
+    pub fn touches(&self) -> Vec<Touch> {
+        self.state().touches.clone()
+    }
+
+    /// Makes `digest` name `bytes`, whatever it named before: a store whose content no longer
+    /// matches its name.
+    pub fn corrupt(&self, digest: Digest, bytes: Vec<u8>) {
+        self.state().blobs.insert(digest, bytes);
+    }
+
     /// Makes every later attempt to place content at `path` fail.
     pub fn fail_place(&self, path: OutputPath) {
         self.state().unplaceable.insert(path);
@@ -417,6 +439,7 @@ impl ContentStore for FakeCas {
         }
         let digest = Digest::of(bytes);
         state.blobs.insert(digest, bytes.to_vec());
+        state.touches.push(Touch::Stored);
         drop(state);
         Ok(digest)
     }
@@ -458,6 +481,7 @@ impl ContentStore for FakeCas {
         }
         state.placed.insert(at.clone(), *digest);
         state.placements.push((at.clone(), *digest));
+        state.touches.push(Touch::Placed);
         state.modes.insert(at.clone(), mode);
         drop(state);
         Ok(())

@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-10-21
 built-on: 6c7f83a41771
 ---
@@ -113,8 +113,9 @@ tests if it is not).
 
 **Change:**
 - Visibility only: `execute/mod.rs` declares `layout`, `perform`, `record` and `settle`
-  `pub(crate)`; `prepared`, `Prepared` and its fields (`execute/assembly.rs:227-283`), `own_of`
-  and `made_from` become `pub(crate)`. No body changes.
+  `pub(crate)`; `prepared`, `Prepared` and the fields verify reads (`execute/assembly.rs:227-283`)
+  and `made_from` become `pub(crate)`. No body changes. *(Amended 2026-10-21: `own_of` and
+  `Prepared::own` stay private — verify reads neither.)*
 - `verify/assembly.rs`: `pub fn verify<P: Ports>(whole, graph, plan, sample, ports: &mut PortSet<P>) -> Result<Verification>`:
   1. `made_from(plan, graph)` else `Error::ForeignPlan`; `Layout::of(whole, …)` and `Layout::of(graph, …)`
      and `prepared(...)` as `execute` does (`execute/assembly.rs:113-119`).
@@ -148,6 +149,9 @@ tests if it is not).
   → `plan(…, Rerun::Off, …)` → `verify` (spec §3.2; no `graph.record`).
 - `lib.rs`: re-export `verify` and the new types; the crate docs' module list names `verify`, and
   rule 1 says `verify`, like `history`, is not a phase (Architecture, above).
+- `verify/mod.rs`: `chosen`, `Chosen` and `first_difference` narrow to `pub(crate)` once
+  `assembly.rs` uses them; only the `verify` function leaves the crate (as `history` keeps
+  `last_run` `pub(crate)`). *(Amended 2026-10-21, after task 2's review.)*
 
 **Proof:** written first, seen failing, then passing. Flow tests go in `tests/flows/verify.rs`,
 through `Pipeline::verify`, against the fakes of `tests/flows/common.rs` (`FakeCache::recorded`/
@@ -195,3 +199,44 @@ scripted `FakeStrategy` `:633-693`), as `lib.rs` rule 5 requires. The pure parts
 - `cargo make dod` and `cargo deny check` green after each task.
 - `cargo make guard-adapter-isolation` OK (no adapter touched).
 - The `execute` module's existing tests pass with no change to their bodies.
+
+## Review findings
+
+Task 1 — reviewer: code 0🔴 1🟡 4🔵, spec compliant; `cargo make dod` and `cargo deny check` green.
+- doc-comment-discipline — `Check::Skipped` and its `because` said "not checked"; a skip follows a dependency not put back in place — `types/check.rs:79` — fixed and verified: `cargo test -p buildl-core types::` → `261 passed; 0 failed`
+- doc-comment-discipline — "the phase that verifies", where `verify` is not a phase — `types/check.rs:10`, `types/sample.rs:9`, `types/verification.rs:8` — fixed ("the `verify` module")
+- unit-test-mandate — module doc said the one test covers this file's types; it also covers `Verification` — `types/check.rs:13` — fixed (doc reworded)
+- strong-types — the `Send` test built `Check::Failed` with class `Built` — `types/check.rs:104` — fixed (`ActionFailure { status: 1 }`)
+- strong-types — `Verification::new` takes two `usize` counts side by side — `types/verification.rs:26` — declined: spec §3.1 sets the constructor; its one caller is the verify assembly, whose flow tests assert both counts
+
+Task 2 — reviewer: code 0🔴 3🟡 2🔵, spec 0🔴 2🟡 1🔵; DoD green (1557 tests), deny green.
+- modularity — crate-root `pub use verify::{Chosen, chosen, first_difference}` had no plan basis — `lib.rs:154` — fixed: removed; task 3 amended to narrow them to `pub(crate)` (done in task 3)
+- unit-test-mandate — the sample tests could not tell digest order from label order — `verify/sample.rs:99` — fixed and verified: six candidates, n = 3; a label-only mutant fails `lowest_takes_the_lowest_key_digests` (`left: [a, b, c]`, `right: [b, e, f]`); `cargo test -p buildl-core verify::` → `16 passed; 0 failed`
+- unit-test-mandate — a tree entry's bytes-before-mode order was unguarded — `verify/difference.rs:82` — fixed and verified: `bytes_outrank_mode_for_a_tree_entry`; a mode-first mutant fails it (`left: Some(Entry { path: TreePath("a"), change: Mode })`, `right: … change: Bytes`)
+- doc-comment-discipline — Status paragraph claimed verify re-runs targets before the flow existed — `lib.rs:102` — fixed
+- doc-comment-discipline — a non-sequitur clause on distinct keys — `verify/sample.rs:26` — fixed
+- process — tests and code written in one pass, not seen failing first — task 2 Proof — the two mutants above show the key tests fail without the code
+- drift — the crate-docs module list, rule 1 and Status landed in task 2, not task 3 — `lib.rs` — accepted: the module-list entry is needed as soon as `pub mod verify` exists
+
+Task 3 — reviewer: code 0🔴 1🟡 6🔵, spec 0🔴 0🟡 1🔵, no blocking finding; DoD green, deny green; execute changes confirmed visibility-only.
+- test-coverage — no test covered a lost or not-begun task becoming `Error::DispatcherFault` — `verify/assembly.rs:146-154` — fixed and verified: `a_task_the_dispatcher_loses_is_a_dispatcher_fault`; with the check removed it fails (`called Result::unwrap_err() on an Ok value: Verification { checked: [(… "a" …, Verified)], … }`); `cargo test -p buildl-core --test flows verify` → `18 passed; 0 failed`
+- minimal visibility — `Prepared::own` made `pub(crate)` though verify does not read it — `execute/assembly.rs:231` — fixed (back to private)
+- amendment hygiene — the plan said `own_of` becomes `pub(crate)`; the code rightly leaves it private — task 3 Visibility bullet — fixed (plan amended)
+- perf — the lost-task check compares every task with every result — `verify/assembly.rs:148` — declined: a verify holds at most a workspace's targets, run once
+- missing guard — a result for a node never handed out is skipped silently — `verify/assembly.rs:157-162` — declined: the dispatcher returns only what it was given (its port contract); the lost-task check covers the failure that can happen
+- micro — the cache row is read for every target, clean or not — `verify/assembly.rs:225` — declined: one map lookup per target
+- dead code — the fallback text for an unplaced target is unreachable (`restore` always carries the store's error) — `verify/assembly.rs:252` — declined: it replaces an `expect`, which the workspace denies
+- missing guard — `compared` stops at the shortest of three equal-by-construction lists — `verify/assembly.rs:347-358` — declined: the lists are built from the same declared outputs
+
+## Probe results
+
+- Structural facts of tasks 1–3 — grep at `30a4716`: `Difference` `types/plan.rs:30`; `OutputName` `types/output_name.rs:24`, `OutcomeClass` `types/outcome.rs:63`, `Diagnostic` `types/diagnostic.rs:18`, `Label` `types/label.rs:28`, `TreePath` `types/tree_path.rs:26`, `OutputManifest` `types/output_manifest.rs:27`, `ActionKey::digest` `types/action_key.rs:168`; helpers `execute/fixtures.rs:105-126`; `Shared` fields `execute/perform.rs:44-51`; `Worked::NotBegun` `:69`; `perform` `:313`; `Error::DispatcherFault` `error.rs:388`; `unplaced` `execute/record.rs:106`, `restore` `:240`, `shown` `:284`; `execute` `execute/assembly.rs:104-119` — all present as the plan states. None came out against the plan.
+- Task 3 flow tests seen failing first: with `Pipeline::verify` and `verify::verify` stubbed to an empty `Verification`, all 17 failed on their assertions (coder's report).
+
+## Deviations
+
+- 2026-10-21 — task 2: `execute/mod.rs` declares `fixtures` `#[cfg(test)] pub(crate) mod`, so the verify tests reach the manifest helpers (the plan's Fixtures note allowed it). `crates/expected-module-edges.txt` gained `verify -> execute`, `verify -> types` (task 2) and `pipeline -> verify`, `verify -> error`, `verify -> ports` (task 3), as `guard-module-edges` requires.
+- 2026-10-21 — task 2 put the crate-docs module list, rule 1 and the Status line in `lib.rs` ahead of task 3; task 3 completed the Status line.
+- 2026-10-21 — task 3: `verify/sample.rs` and `verify/difference.rs` (task 2's files) were edited to narrow `chosen`, `Chosen` and `first_difference` to `pub(crate)`, per the amended task 3 bullet; `unreachable_pub` requires the items themselves be narrowed.
+- 2026-10-21 — task 3: `own_of` and `Prepared::own` stay private (plan amended).
+- 2026-10-21 — task 3: `tests/flows/common.rs` gained `FakeCas::touches()` (stores and placements in order) and `FakeCas::corrupt(digest, bytes)`; `OutputManifest::from_bytes` rejects non-canonical bytes, so the not-hash-to-its-digest case is reached only by a store that returns other content under a digest. Two tests beyond the plan's list: `a_rerun_that_changes_only_a_mode_is_mismatched_in_mode`, `a_rerun_that_cannot_begin_fails_with_what_the_builder_said`.

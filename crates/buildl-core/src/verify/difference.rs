@@ -22,7 +22,7 @@ use crate::types::{
 /// only one holds, else a path whose bytes differ, else a path whose mode differs. A file
 /// against a tree, either way round, differs in kind.
 #[must_use]
-pub fn first_difference(
+pub(crate) fn first_difference(
     cached: &OutputManifest,
     rerun: &OutputManifest,
 ) -> Option<OutputDifference> {
