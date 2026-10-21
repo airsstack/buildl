@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-20
 depends-on: [01, 02]
 built-on: 5fb250597c90
@@ -29,6 +29,7 @@ building an adapter error move to `exec/outcome.rs` so neither strategy names th
 crates/buildl/src/exec/outcome.rs   — [create] `ended` and `fault`, moved from bare.rs, with their unit tests
 crates/buildl/src/exec/bare.rs      — [modify] use the moved helpers
 crates/buildl/src/exec/sandbox.rs   — [create] `InputSandbox`, `ExecDir`, and their unit tests
+crates/buildl/src/exec/run.rs       — [create] `start` and `collect_in`, the run and collect steps both strategies share (review fix round)
 crates/buildl/src/exec/mod.rs       — [modify] declare `outcome`, `sandbox`; export `InputSandbox`, `ExecDir`; module doc
 ```
 
@@ -170,3 +171,26 @@ Commit `feat(buildl): run an action in its exec dir with the pinned environment`
 - `cargo make guard-adapter-isolation` green: `exec` names only `state` and `search_path`.
 - `grep -rn "display()" crates/buildl/src/exec/sandbox.rs` finds no diagnostic built from a path
   under the exec dir.
+
+## Review findings
+
+- unit-test-mandate 🟡 — `prepare_clears_the_real_output_paths` pre-created the parent it then checked, so it proved nothing about prepare — `exec/sandbox.rs`; fixed: the pre-created file removed; with prepare's parent-making step removed the test fails (`20 passed; 1 failed`), restored.
+- comment-matches-code 🔵 — `bare.rs` module doc called `Bare` "the one place" a run's steps meet — `exec/bare.rs:3`; fixed: reworded for two tiers.
+- modularity 🔵 — `run` and `collect` repeated `Bare`'s bodies — `exec/sandbox.rs`; fixed: new `exec/run.rs` (`start`, `collect_in`) shared by both; each strategy keeps its own error wording and the sandbox adds the pinned variables.
+- strong-types 🔵 — copy helpers took three `&Path`s each — `exec/sandbox.rs`; fixed: a private `Copier { root, exec }` with `file`, `tree`, `program`.
+- correctness 🔵 — every error looking for a written-out program read as "absent" — `exec/sandbox.rs`; fixed: only `NotFound` is absent; test `a_program_that_cannot_be_looked_at_fails_the_prepare`.
+- unit-test-mandate 🔵 — the two choices below had no test; fixed: `a_relative_program_absent_from_the_workspace_is_not_found_at_run`, `an_input_below_a_dependency_directory_is_copied_once` (each fails with its choice undone).
+- Verified after the fix round: `cargo make dod` → exit 0, 0 warnings (buildl lib 350 passed); `cargo make guard-adapter-isolation` → `OK (30 edges)`; `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok` (coder, before the fix round, which changed no dependency).
+
+## Probe results
+
+- **Risks: does a fixture action leave a read-only directory that defeats `ExecDir`'s removal?** Throwaway unit test built each action of `chain` (`greet`, `assets` `cp -R`, `site` `cp -R` of a dependency holding read-only files) and `tested` (`copy`, `same`, `flagged`) through `InputSandbox` (prepare → run → collect → drop): no exec dir survived. No fix needed; probe deleted.
+- Every other claim is under a named test, whose red-green run was its probe (Task 3: `9 passed; 9 failed` against a stub, then `18 passed`).
+
+## Deviations
+
+- 2026-10-21 — step 7: a written-out relative program absent from the workspace is not copied and `run` reports "the program … was not found", as tier 1 does, rather than failing the copy at prepare (Plan does not refuse a program it cannot find).
+- 2026-10-21 — a file already copied in this prepare (an input that also lies under a dependency directory, whose copies are read-only) is left alone; the dependency walk copies regular files only, since outputs hold nothing else.
+- 2026-10-21 — `exec/run.rs` added off the file list in the review fix round (shared run and collect); file list amended.
+- 2026-10-21 — two extra tests in Task 3 (`a_store_that_fails_fails_the_collect_with_its_own_error`, `a_program_that_cannot_start_is_named_as_written`).
+- 2026-10-21 — one coder ran the three tasks in sequence; Tasks 2 and 3 both write `sandbox.rs`, so they cannot be split into separate commits by file.
