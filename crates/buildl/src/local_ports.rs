@@ -164,6 +164,26 @@ impl Wiring {
         }
     }
 
+    /// Whether a verify can re-run actions under the workspace's strategy.
+    ///
+    /// A verify re-runs in the input sandbox and nowhere else: it is the one strategy that keeps
+    /// a re-run from touching the workspace, so a workspace on `bare` is refused, and not
+    /// re-run under a sandbox it did not ask for.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Adapter`], naming [`PortName::Manifest`], for `bare`, `os-sandbox` and
+    /// `container`.
+    pub fn verifies(&self) -> Result<()> {
+        match self.workspace.execution.strategy {
+            Isolation::Sandbox => Ok(()),
+            Isolation::Bare => Err(Local::verify_refusal()),
+            strategy @ (Isolation::OsSandbox | Isolation::Container) => {
+                Err(Local::refusal(strategy))
+            }
+        }
+    }
+
     /// Where the state directory's files are, read without taking the directory: for a command
     /// that only reads it.
     #[must_use]
@@ -231,20 +251,26 @@ impl Wiring {
         })
     }
 
+    /// The input sandbox, made from the root, the timeout and the search path, over the output
+    /// paths as `out_paths` says.
+    fn sandbox(&self, lock: &StateLock, out_paths: OutPaths) -> InputSandbox {
+        InputSandbox::new(
+            self.root.as_path().to_path_buf(),
+            self.scratch.clone(),
+            lock.owner(),
+            self.workspace.execution.timeout,
+            self.search.clone(),
+            out_paths,
+        )
+    }
+
     /// The strategy the manifest names, made from the root, the timeout and the search path.
     fn strategy(&self, lock: &StateLock) -> Local {
         let root = self.root.as_path().to_path_buf();
         let timeout = self.workspace.execution.timeout;
         match self.workspace.execution.strategy {
             Isolation::Bare => Local::Bare(Bare::new(root, timeout, self.search.clone())),
-            Isolation::Sandbox => Local::Sandbox(InputSandbox::new(
-                root,
-                self.scratch.clone(),
-                lock.owner(),
-                timeout,
-                self.search.clone(),
-                OutPaths::Cleared,
-            )),
+            Isolation::Sandbox => Local::Sandbox(self.sandbox(lock, OutPaths::Cleared)),
             strategy @ (Isolation::OsSandbox | Isolation::Container) => Local::Refused(strategy),
         }
     }
@@ -278,6 +304,40 @@ impl Wiring {
         lock: &StateLock,
         reporter: R,
     ) -> Result<PortSet<LocalPorts<R>>> {
+        self.assemble(lock, reporter, self.strategy(lock))
+    }
+
+    /// Every port, for one verify: the ports of [`Wiring::ports`], with the input sandbox as
+    /// the strategy and the output paths left as the last build placed them.
+    ///
+    /// A verify re-runs actions to compare them with the cache, so what it re-runs must not
+    /// clear or make the real output paths. These ports always use the input sandbox, whatever
+    /// strategy the manifest names; [`Wiring::verifies`] is what refuses the others, so call it
+    /// first.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever an adapter returns when it is made, as [`Wiring::ports`] does.
+    pub fn verify_ports<R: Reporter>(
+        &self,
+        lock: &StateLock,
+        reporter: R,
+    ) -> Result<PortSet<LocalPorts<R>>> {
+        self.assemble(
+            lock,
+            reporter,
+            Local::Sandbox(self.sandbox(lock, OutPaths::Untouched)),
+        )
+    }
+
+    /// The adapters of [`Wiring::ports`] and [`Wiring::verify_ports`], which differ only in the
+    /// strategy they are given.
+    fn assemble<R: Reporter>(
+        &self,
+        lock: &StateLock,
+        reporter: R,
+        strategy: Local,
+    ) -> Result<PortSet<LocalPorts<R>>> {
         let layout = lock.layout();
         let root = self.root.as_path();
         Ok(PortSet {
@@ -290,7 +350,7 @@ impl Wiring {
             cache: LocalCache::open(layout)?,
             cas: LocalCas::new(root, layout),
             log: LocalLog::new(layout),
-            strategy: self.strategy(lock),
+            strategy,
             dispatcher: self.dispatcher(),
             clock: SystemClock,
             graph: GraphFile::new(layout),
@@ -462,6 +522,45 @@ mod tests {
                 ),
                 "{error:?}"
             );
+            assert_eq!(
+                error.to_string(),
+                format!(
+                    "manifest: buildl.toml: [execution] strategy is \"{strategy}\", and this \
+                     version of buildl runs \"bare\" and \"sandbox\" only: write strategy = \
+                     \"sandbox\" under [execution]"
+                )
+            );
+        }
+    }
+
+    #[test]
+    fn verify_runs_only_under_sandbox() {
+        for manifest in ["[execution]\nstrategy = \"sandbox\"\n", ""] {
+            let (_dir, root) = workspace(manifest);
+            Wiring::read(&root).unwrap().verifies().unwrap();
+        }
+
+        let (_dir, root) = workspace("[execution]\nstrategy = \"bare\"\n");
+        let error = Wiring::read(&root).unwrap().verifies().unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                Error::Adapter {
+                    port: PortName::Manifest,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "manifest: buildl.toml: [execution] strategy is \"bare\", and verify re-runs \
+             actions in the input sandbox only: write strategy = \"sandbox\" under [execution]"
+        );
+
+        for strategy in ["os-sandbox", "container"] {
+            let (_dir, root) = workspace(&format!("[execution]\nstrategy = \"{strategy}\"\n"));
+            let error = Wiring::read(&root).unwrap().verifies().unwrap_err();
             assert_eq!(
                 error.to_string(),
                 format!(
@@ -720,6 +819,31 @@ mod tests {
         assert_eq!(
             format!("{:?}", ports.strategy),
             format!("{:?}", Local::Refused(Isolation::OsSandbox))
+        );
+    }
+
+    #[test]
+    fn a_verifys_ports_use_the_input_sandbox_and_leave_the_output_paths_alone() {
+        // The manifest names `bare`; the verify's strategy is the sandbox all the same.
+        let (_dir, root) = workspace(&format!("{}timeout = \"7s\"\n", bare()));
+        let wiring = Wiring::read(&root).unwrap();
+        let lock = wiring.lock().unwrap();
+
+        let ports = wiring.verify_ports(&lock, Silent).unwrap();
+
+        assert_eq!(
+            format!("{:?}", ports.strategy),
+            format!(
+                "{:?}",
+                Local::Sandbox(InputSandbox::new(
+                    root,
+                    wiring.scratch().clone(),
+                    lock.owner(),
+                    Timeout::parse("7s").unwrap(),
+                    wiring.search.clone(),
+                    OutPaths::Untouched,
+                ))
+            )
         );
     }
 

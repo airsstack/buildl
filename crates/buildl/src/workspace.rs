@@ -15,8 +15,8 @@ use std::path::Path;
 
 use buildl_core::{
     ActionOutcome, Collected, Declaration, Diagnostic, Directory, Error, Label, LiveOutput,
-    OnFailure, Pipeline, Plan, PortName, Query, Reporter, Rerun, Result, Scope, SettingName,
-    SettingValue, Shown, TargetGraph, pipeline,
+    OnFailure, Pipeline, Plan, PortName, Query, Reporter, Rerun, Result, Sample, Scope,
+    SettingName, SettingValue, Shown, TargetGraph, Verification, pipeline,
 };
 
 use crate::cache::LocalCache;
@@ -29,9 +29,9 @@ use crate::state::{Cleaned, clear_out};
 /// A workspace wired with the real adapters.
 ///
 /// Opening one reads its manifest and nothing else. The state directory is taken by
-/// [`Workspace::plan`], [`Workspace::build`], [`Workspace::test`], [`Workspace::gc`] and
-/// [`Workspace::clean`] only, and only while one of them runs, so a workspace kept open holds
-/// nothing while it is idle.
+/// [`Workspace::plan`], [`Workspace::build`], [`Workspace::test`], [`Workspace::verify`],
+/// [`Workspace::gc`] and [`Workspace::clean`] only, and only while one of them runs, so a
+/// workspace kept open holds nothing while it is idle.
 /// [`Workspace::check`], [`Workspace::graph`], [`Workspace::query`] and [`Workspace::log`]
 /// hold nothing even while they run.
 #[derive(Debug)]
@@ -220,6 +220,36 @@ impl Workspace {
         concluded(built, folded)
     }
 
+    /// Re-runs the cached targets of `scope` that `sample` picks, in the input sandbox, and
+    /// compares each re-run with what the last build stored.
+    ///
+    /// Holds the state directory while it runs. Every cached target's outputs are put back in
+    /// the output directory as a build would put them; a re-run's own outputs are never placed
+    /// there. Nothing is recorded: no row, graph or log line is written, so there are no rows
+    /// to fold.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Adapter`](buildl_core::Error::Adapter), naming
+    /// [`PortName::Manifest`](buildl_core::PortName::Manifest), when the workspace's strategy is
+    /// not `sandbox` (`bare`, `os-sandbox` or `container`): nothing has been made then, and
+    /// nothing was run. After that, as [`Workspace::plan`], then whatever [`Pipeline::verify`]
+    /// returns.
+    pub fn verify(
+        &self,
+        scope: &Scope,
+        overrides: &BTreeMap<SettingName, SettingValue>,
+        sample: Sample,
+    ) -> Result<Verification> {
+        self.wiring.verifies()?;
+        let lock = self.wiring.lock()?;
+        let mut pipeline = Pipeline::new(self.wiring.verify_ports(&lock, Silent)?);
+        let verified = pipeline.verify(self.wiring.entry(), scope, overrides, sample);
+        // The adapters are let go before the lock that kept the directory theirs.
+        drop(pipeline);
+        verified
+    }
+
     /// Removes the output directory and everything below it.
     ///
     /// Holds the state directory while it runs, and sweeps the staging leftovers of an
@@ -357,8 +387,8 @@ mod tests {
     use buildl_core::json::canonical;
     use buildl_core::{
         Captured, Channel, Diagnostic, Error, Label, LiveOutput, NameKind, OnFailure, OutcomeClass,
-        OutcomeEvent, PortName, ReadyAction, Reporter, Rerun, Result, Scope, Summary, Tally,
-        Verdict, Want,
+        OutcomeEvent, PortName, ReadyAction, Reporter, Rerun, Result, Sample, Scope, Summary,
+        Tally, Verdict, Want,
     };
 
     use crate::report::Silent;
@@ -1087,6 +1117,34 @@ mod tests {
         );
         assert_eq!(error.to_string(), REFUSAL);
         // Refused before the lock was taken: no state directory, no output.
+        assert_eq!(names(&root), ["a.txt", "build.lua", "buildl.toml"]);
+    }
+
+    #[test]
+    fn verify_under_bare_takes_no_lock() {
+        let (_dir, root) = copying();
+        let workspace = Workspace::open(&root).unwrap();
+
+        let error = workspace
+            .verify(&Scope::Workspace, &BTreeMap::new(), Sample::All)
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                Error::Adapter {
+                    port: PortName::Manifest,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        assert_eq!(
+            error.to_string(),
+            "manifest: buildl.toml: [execution] strategy is \"bare\", and verify re-runs \
+             actions in the input sandbox only: write strategy = \"sandbox\" under [execution]"
+        );
+        // Refused before the lock was taken: no state directory, no lock file.
         assert_eq!(names(&root), ["a.txt", "build.lua", "buildl.toml"]);
     }
 }

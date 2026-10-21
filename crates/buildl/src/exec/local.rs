@@ -5,8 +5,8 @@
 //! ways to run an action have to meet in one. Each method does what its variant does and
 //! nothing besides.
 //!
-//! Responsibilities: [`Local`], [`LocalDir`], and the one refusal text for a strategy this
-//! version of buildl cannot run.
+//! Responsibilities: [`Local`], [`LocalDir`], and the refusal texts: one for a strategy this
+//! version of buildl cannot run, and one for a verify of a workspace on `bare`.
 //!
 //! Non-responsibilities: running an action, which [`Bare`] and [`InputSandbox`] do; and
 //! deciding which strategy a workspace asks for, which its manifest does.
@@ -58,6 +58,22 @@ impl Local {
                 "{MANIFEST_FILE}: [execution] strategy is \"{strategy}\", and this version of \
                  buildl runs \"{bare}\" and \"{sandbox}\" only: write strategy = \"{sandbox}\" \
                  under [execution]",
+                bare = Isolation::Bare,
+                sandbox = Isolation::Sandbox,
+            )),
+        }
+    }
+
+    /// The error for a verify of a workspace whose strategy is `bare`: a verify re-runs actions
+    /// in the input sandbox only, and it names the line to write for that.
+    #[must_use]
+    pub fn verify_refusal() -> Error {
+        Error::Adapter {
+            port: PortName::Manifest,
+            diagnostic: Diagnostic::new(format!(
+                "{MANIFEST_FILE}: [execution] strategy is \"{bare}\", and verify re-runs \
+                 actions in the input sandbox only: write strategy = \"{sandbox}\" under \
+                 [execution]",
                 bare = Isolation::Bare,
                 sandbox = Isolation::Sandbox,
             )),
@@ -218,6 +234,18 @@ mod tests {
 
     fn adapter(error: &Error, port: PortName) -> bool {
         matches!(error, Error::Adapter { port: found, .. } if *found == port)
+    }
+
+    #[test]
+    fn the_verify_refusal_names_bare_and_the_line_to_write() {
+        let error = Local::verify_refusal();
+
+        assert!(adapter(&error, PortName::Manifest), "{error:?}");
+        assert_eq!(
+            error.to_string(),
+            "manifest: buildl.toml: [execution] strategy is \"bare\", and verify re-runs \
+             actions in the input sandbox only: write strategy = \"sandbox\" under [execution]"
+        );
     }
 
     #[test]
