@@ -27,3 +27,5 @@ resolve -> suggest
 resolve -> types
 types -> error
 types -> json
+verify -> execute
+verify -> types

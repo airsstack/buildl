@@ -20,6 +20,6 @@ mod schedule;
 mod settle;
 
 #[cfg(test)]
-mod fixtures;
+pub(crate) mod fixtures;
 
 pub use assembly::execute;

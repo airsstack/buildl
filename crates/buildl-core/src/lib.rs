@@ -31,13 +31,16 @@
 //! | [`execute`](mod@execute) | Execute and Record, the last phase: a plan to one outcome per target, each result recorded as the last step of its action and reported once it is logged |
 //! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command, and the commands that need only some of the ports as functions over those ports alone: the three that reach only build files, and `log` |
 //! | [`history`] | the read side of the build log: the newest run of a target that left output |
+//! | [`verify`](mod@verify) | verify, which serves one command and is not a phase: which cached targets a sample re-runs, and where a re-run's output first differs from the cached one |
 //! | `suggest` | the nearest declared name to one that names nothing, for any module that refuses a name |
 //!
 //! Each phase has its own module, named for the phase. Five rules keep that arrangement
 //! navigable:
 //!
 //! 1. No phase module names another. Phases communicate through values, and [`pipeline`] owns
-//!    the sequence, so a phase that imported the next would be bypassing it.
+//!    the sequence, so a phase that imported the next would be bypassing it. [`history`] and
+//!    [`verify`](mod@verify) are not phases: each serves a command, and may name a phase's
+//!    internals.
 //! 2. [`types`] holds no decisions between *different* concepts. A type there may decide things
 //!    about its own kind — [`Timestamp::duration_since`] decides whether two instants of the
 //!    same type went backwards, [`Label::resolve`] decides which of three reference forms it was
@@ -96,6 +99,10 @@
 //! [`RunHistory`], and [`pipeline::log`](fn@pipeline::log) returns a target's last run with what it
 //! printed.
 //!
+//! The [`verify`](mod@verify) module chooses which cached targets a [`Sample`] re-runs, by key
+//! digest, and names where two [`OutputManifest`]s of one output first differ, as an
+//! [`OutputDifference`].
+//!
 //! This file holds only module declarations and re-exports, so it carries no logic to
 //! unit-test.
 
@@ -110,6 +117,7 @@ pub mod ports;
 pub mod resolve;
 mod suggest;
 pub mod types;
+pub mod verify;
 
 pub use error::{
     ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
@@ -128,16 +136,17 @@ pub use ports::{
 pub use resolve::{narrow, reach, resolve};
 pub use types::{
     Action, ActionKey, ActionOutcome, Alias, Argument, BuildFile, CacheRow, Captured, Ceiling,
-    Channel, Command, Declaration, DeclarationOrder, Declared, DepProducts, Description,
-    Diagnostic, Difference, Digest, Direction, Directory, DirtyReason, EntryName, EnvName,
-    EnvValue, Evaluated, Execution, Exit, ExpandedDescription, FieldName, FileMode, FileStat,
-    Found, FoundEntry, FoundKind, Freshness, Hasher, InfraKind, InputDigest, InputKind, InputStat,
-    Isolation, KeyComponents, Label, LiveOutput, LiveSink, LogLine, LoggedRun, NetworkAccess, Node,
-    NodeId, OnFailure, OutcomeClass, OutcomeEvent, OutputManifest, OutputName, OutputPath,
-    OutputRefusal, OwnComponents, Plan, PlannedKey, Platform, Produced, Program, Provenance,
-    Purpose, Query, RawOutcome, ReadyAction, Rerun, Rule, Scope, Setting, SettingName,
-    SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
-    StagedSetting, StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, Tally, Target,
-    TargetGraph, TargetName, TargetRole, Timeout, Timestamp, ToolIdentity, Tree, TreeEntry,
-    TreePath, Turn, Unfinished, Verdict, Want, WantedSet, Workers, Workspace, Written,
+    Channel, Check, Command, Declaration, DeclarationOrder, Declared, DepProducts, Description,
+    Diagnostic, Difference, Digest, Direction, Directory, DirtyReason, EntryChange, EntryName,
+    EnvName, EnvValue, Evaluated, Execution, Exit, ExpandedDescription, FieldName, FileChange,
+    FileMode, FileStat, Found, FoundEntry, FoundKind, Freshness, Hasher, InfraKind, InputDigest,
+    InputKind, InputStat, Isolation, KeyComponents, Label, LiveOutput, LiveSink, LogLine,
+    LoggedRun, NetworkAccess, Node, NodeId, OnFailure, OutcomeClass, OutcomeEvent,
+    OutputDifference, OutputManifest, OutputName, OutputPath, OutputRefusal, OwnComponents, Plan,
+    PlannedKey, Platform, Produced, Program, Provenance, Purpose, Query, RawOutcome, ReadyAction,
+    Rerun, Rule, Sample, Scope, Setting, SettingName, SettingValue, SourcePath, StagedAlias,
+    StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir,
+    StagedTarget, StatEntry, StoredFile, Summary, Tally, Target, TargetGraph, TargetName,
+    TargetRole, Timeout, Timestamp, ToolIdentity, Tree, TreeEntry, TreePath, Turn, Unfinished,
+    Verdict, Verification, Want, WantedSet, Workers, Workspace, Written,
 };
