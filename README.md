@@ -4,7 +4,7 @@
 
 The positioning in one sentence: Lua where Starlark sits in Bazel [5], ninja's execution discipline underneath [4], and airsl's capability model as the trust layer neither of them has.
 
-> **Status: the core pipeline is built.** The `buildl` binary runs `check`, `graph`, `query`, `plan`, `build`, `test`, `log`, `clean` and `gc` on a real workspace: it evaluates build files on airsl, in parallel, keys every target, runs what is dirty in parallel with its output captured, and keeps results in a local content-addressed store and action cache, so a second build runs nothing and a build repeated in another directory is byte-identical. Actions run by default at isolation tier 2, the input sandbox: each in a directory of its own outside the workspace, holding copies of its declared inputs and nothing else of the workspace, with `TZ`, `LC_ALL` and `SOURCE_DATE_EPOCH` fixed; tier 1, a plain process holding only its declared environment, runs on request. That is the first item of the [roadmap](#roadmap), with `query`, `test`, `log`, `clean`, `gc` and parallel loading from the second and the input sandbox from the third; `verify`, grant negotiation, plugins, the remote cache and watch mode are designed and not built. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
+> **Status: the core pipeline is built.** The `buildl` binary runs `check`, `graph`, `query`, `plan`, `build`, `test`, `verify`, `log`, `clean` and `gc` on a real workspace: it evaluates build files on airsl, in parallel, keys every target, runs what is dirty in parallel with its output captured, and keeps results in a local content-addressed store and action cache, so a second build runs nothing and a build repeated in another directory is byte-identical. Actions run by default at isolation tier 2, the input sandbox: each in a directory of its own outside the workspace, holding copies of its declared inputs and nothing else of the workspace, with `TZ`, `LC_ALL` and `SOURCE_DATE_EPOCH` fixed; tier 1, a plain process holding only its declared environment, runs on request. That is the first item of the [roadmap](#roadmap), with `query`, `test`, `log`, `clean`, `gc` and parallel loading from the second and the input sandbox and `verify` from the third; grant negotiation, plugins, the remote cache and watch mode are designed and not built. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
 
 ---
 
@@ -122,11 +122,12 @@ Each CLI command is the Load → Resolve → Plan → Execute → Record pipelin
 | `buildl watch [target]` | loops | persistent process, re-plans on file change | not yet |
 | `buildl query <expr>` | Resolve | graph queries: `deps()`, `rdeps()` | yes |
 | `buildl test [target]...` | Record | run test targets and what they need | yes |
+| `buildl verify [target]... [--sample N]` | Execute | re-run cached actions in the sandbox and name those whose outputs differ | yes |
 | `buildl clean` / `gc` | `out/`; rows + cas | remove outputs; drop rows of undeclared targets and blobs nothing needs | yes |
 | `buildl log <target> [--stdout \| --stderr]` | log + cas | show what a target printed when it last ran | yes |
 | `buildl doctor` | — | print the effective ceiling, grants, workers | not yet |
 
-`plan`, `build` and `test` take any number of targets and `--set name=value`; `build` adds `--keep-going` and `--stream`; with no targets `plan` and `build` take every target but the tests, while `test` takes every test, keeps going after a failure and adds `--stop`, `--stream`, `--rerun` and `--verbose`, and naming a target that is not a test is a usage error; `log` takes one target and at most one of `--stdout` and `--stderr`, and takes no lock, so it answers while a build runs; `clean` and `gc` take no arguments and take the lock. A command finds its workspace at the nearest `buildl.toml` at or above the current directory. The exit code says what kind of end it was, so CI need not read text: `0` done, `1` an action failed, `2` a wrong command line, `3` a sick builder, `4` the build wants more than the ceiling, `5` a mistake in a build file or in `buildl.toml`, `6` a state file that is not what buildl writes, `7` a fault in buildl.
+`plan`, `build` and `test` take any number of targets and `--set name=value`; `build` adds `--keep-going` and `--stream`; with no targets `plan` and `build` take every target but the tests, while `test` takes every test, keeps going after a failure and adds `--stop`, `--stream`, `--rerun` and `--verbose`, and naming a target that is not a test is a usage error; `verify` takes the targets and `--set` as `build` does, writes no cache row and no log event, and never leaves a re-run's bytes in `out/`; it runs only under `strategy = "sandbox"`; `log` takes one target and at most one of `--stdout` and `--stderr`, and takes no lock, so it answers while a build runs; `clean` and `gc` take no arguments and take the lock. A command finds its workspace at the nearest `buildl.toml` at or above the current directory. The exit code says what kind of end it was, so CI need not read text: `0` done, `1` an action failed or a `verify` re-run differed, `2` a wrong command line, `3` a sick builder, or a `verify` target skipped or not put back, `4` the build wants more than the ceiling, `5` a mistake in a build file or in `buildl.toml`, `6` a state file that is not what buildl writes, `7` a fault in buildl.
 
 ## Running it
 
@@ -145,6 +146,8 @@ buildl plan                   # what would run, and why
 buildl build                  # build every target
 buildl build //lib:text -k    # one target and what it needs, carrying on past a failure
 buildl log //lib:text         # what that target printed when it last ran
+buildl verify                 # re-run every cached target in the sandbox, name those that differ
+buildl verify --sample 5      # the same for five targets, the same five while their keys stay the same
 ```
 
 The manifest needs no `strategy` line: `build` and `test` run each action in the input sandbox by default. An action that reads a file it did not declare then fails with the tool's own message. Where the tools read files they cannot be made to declare, run as before, at tier 1:
@@ -154,7 +157,7 @@ The manifest needs no `strategy` line: `build` and `test` run each action in the
 strategy = "bare"
 ```
 
-`os-sandbox` and `container` are not built: `build` and `test` refuse them, and the error says to write `strategy = "sandbox"`. `check`, `graph`, `query`, `plan`, `log`, `clean` and `gc` work under any strategy.
+`os-sandbox` and `container` are not built: `build`, `test` and `verify` refuse them, and the error says to write `strategy = "sandbox"`. `verify` also refuses `bare`, because a re-run at tier 1 would write into `out/`. `check`, `graph`, `query`, `plan`, `log`, `clean` and `gc` work under any strategy.
 
 ## Repository layout
 
@@ -182,7 +185,7 @@ Dependency-ordered, from [`design.md` §13](./docs/design.md); progress is track
 
 1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `check`/`graph`/`plan`/`build`, local cache and cas
 2. **`query` (`deps()`, `rdeps()`)** — small work, transforms CI for large repos; with it the `test`, `log`, `clean` and `gc` commands, and parallel loading of build files
-3. **Local input sandbox (tier 2)** — the correctness discipline everything remote depends on; with it `verify`
+3. **Local input sandbox (tier 2)** — the correctness discipline everything remote depends on; with it `verify`, which re-runs cached actions and names those that differ
 4. **Grant negotiation UX** — wanted set, ceiling intersection, approver, and the `doctor` command; per-target grant narrowing is settled here
 5. **Plugins** — manifest, attribution, `b.use()`; with them discovery targets
 6. **Remote cache via REAPI** [7] — most of the remote value at a fraction of the complexity
