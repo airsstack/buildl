@@ -1,6 +1,6 @@
 # buildl — architecture building blocks
 
-**Status: built for the core pipeline.** What this document describes exists, except what arrives with a later item of design §13: for grant negotiation the `Approver` port, the `Grants` value and the `grants` logic, and for the input sandbox the `InputSandbox` strategy. Companion to [`design.md`](./design.md) and [`architecture.md`](./architecture.md): `design.md` says _what buildl is and why_, `architecture.md` says _how each part works_ — algorithms, types, determinism rules, runtime decision records — and this document says _how the parts are put together_: the C4 views of the system [2], the four crates, the ports between them, and the dependency rules that keep the logic of a build testable without any concrete implementation. It is the building block view of the architecture [8] and owns the workspace layout; `architecture.md` §1 defers to it.
+**Status: built for the core pipeline.** What this document describes exists, except what arrives with a later item of design §13: for grant negotiation the `Approver` port, the `Grants` value and the `grants` logic. Companion to [`design.md`](./design.md) and [`architecture.md`](./architecture.md): `design.md` says _what buildl is and why_, `architecture.md` says _how each part works_ — algorithms, types, determinism rules, runtime decision records — and this document says _how the parts are put together_: the C4 views of the system [2], the four crates, the ports between them, and the dependency rules that keep the logic of a build testable without any concrete implementation. It is the building block view of the architecture [8] and owns the workspace layout; `architecture.md` §1 defers to it.
 
 **Author:** rstlix0x0 · **Date:** 2026-09-13 · **Reviewers:** —
 
@@ -144,11 +144,11 @@ Inside `buildl` there is one module per adapter, two shared modules that impleme
 |`log`|`log.jsonl`, appended to and read back|`EventLog` and `RunHistory`|
 |`statcache`|`statcache.json`|`StatCache`|
 |`graph`|`graph.json`|`GraphRecord`|
-|`exec`|tier 1, `bare`|`ExecStrategy`|
+|`exec`|tier 1, `bare`; tier 2, `sandbox`; and `Local`, which picks between them from the manifest|`ExecStrategy`|
 |`dispatch`|worker threads for Load and Execute|`Dispatcher`|
 |`clock`|the system clock|`Clock`|
 |`report`|terminal output, and every rendering of a value into text|`Reporter`|
-|`state`|shared: where each state file is, the state lock, writing a file whole, clearing a path|—|
+|`state`|shared: where each state file is, the state lock, writing a file whole, clearing a path, the scratch directory the sandbox runs actions in|—|
 |`search_path`|shared: the lookup of a program name|—|
 |`local_ports`|composition: the `Ports` bundle and its wiring|—|
 |`workspace`|composition: the `Workspace` facade|—|
@@ -435,7 +435,7 @@ classDiagram
 
 ## 6. Port catalog
 
-"Since" is the item of design §13 an adapter arrives with; item 1 is built, and so is each item-2 row listed here (today `RunHistory` and `Sweep`); a row with a later item describes what is designed.
+"Since" is the item of design §13 an adapter arrives with; item 1 is built, and so is each item-2 row listed here (today `RunHistory` and `Sweep`) and the item-3 row, `InputSandbox`; a row with a later item describes what is designed.
 
 |Port|`buildl-core` uses it for|v1 adapter|Crate|Since|
 |---|---|---|---|---|
@@ -451,7 +451,7 @@ classDiagram
 |`RunHistory`|the log's lines, oldest first, each an event or a damaged line|`.buildl/log.jsonl`, read only: never created, cut or written; a last line without a newline is left out|`buildl`|2|
 |`Sweep`|the cas, listed and pruned: every digest it holds a blob or a twin for, and removing the blob and twin of one digest, answering the bytes they took. Kept apart from `ContentStore` and out of `Ports`, so a build cannot remove what it stored|the same `.buildl/cas` that `LocalCas` stores into: `held` lists the digests of its blobs and twins, `remove` unlinks both|`buildl`|2|
 |`ExecStrategy`|running one action, started with each output's containing directory in place and nothing at the output's own path, handing over what it prints as it prints when asked to, then reporting what the action left at each output path — a file, a directory with everything below it, or neither — and storing every regular file of it|`Bare` (tier 1)|`buildl`|1|
-|`ExecStrategy`|the same, with undeclared inputs absent|`InputSandbox` (tier 2)|`buildl`|3|
+|`ExecStrategy`|the same, in a directory of its own outside the workspace that holds copies of the action's declared inputs and its dependencies' outputs and nothing else of the workspace, with `TZ`, `LC_ALL` and `SOURCE_DATE_EPOCH` pinned|`InputSandbox` (tier 2), the default. `Local` is the one strategy `LocalPorts` names: `Bare`, `InputSandbox`, or `Refused` for `os-sandbox` and `container`, which `build` and `test` refuse before anything runs|`buildl`|3|
 |`Dispatcher`|evaluating build files and running ready actions in parallel, and carrying what a running action says to the scheduling thread|std scoped threads + `mpsc`, started as tasks need them|`buildl`|1|
 |`Approver`|turning the wanted set into grants|interactive, manifest|`buildl`|4|
 |`Clock`|log timestamps and durations|system clock|`buildl`|1|
@@ -559,7 +559,15 @@ The same promises against the real adapters, through the `Workspace` facade (`cr
 |the states an interrupted build leaves: blobs with no row, rows in the journal, staging files, a partial output|the next build finishes: it trusts no blob without a row, folds the journal, sweeps the staging and clears the partial output|
 |a corrupt `cache.json`|`Error::CorruptState` naming the file, the file untouched, no action run; `check`, `graph` and `query` still work|
 |a workspace another buildl holds|`plan` and `build` refused; `check`, `graph` and `query` succeed|
-|a strategy other than `bare`; a state directory outside `fs.write`|`build` refused and `plan` not; `plan` refused before `.buildl/` is made|
+|a strategy other than `bare` or `sandbox`; a state directory outside `fs.write`|`build` refused and `plan` not; `plan` refused before `.buildl/` is made (the same refusal of `test` is a unit test in `src/workspace.rs`)|
+|the sandbox fixtures: a manifest with no `strategy` line|the default manifest builds the whole chain|
+|a target that reads a file it did not declare|it fails under `sandbox` and builds under `bare`|
+|the same chain under `bare` and under `sandbox`|`out/` is byte-identical across the two|
+|a target built under `bare`, then the `strategy` line removed|every target cached — `strategy` is no part of the key|
+|an action that fails, and one that outlasts the timeout|nothing is left under `out/` for either|
+|a leftover in the sandbox directory from an earlier build; a finished build|the leftover is removed, and nothing is left in the temporary directory after the build|
+|test targets run under the default manifest|a test that reads an undeclared file fails under `sandbox` and passes under `bare`|
+|a build the sandbox cannot prepare|the log line names the target and no sandbox path|
 
 ## 9. Publishing
 
