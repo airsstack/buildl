@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-20
 depends-on: [01, 02, 03, 04]
 built-on: 5fb250597c90
@@ -25,9 +25,9 @@ records cite.
 ## Files that change
 
 ```
-docs/design.md                         — [modify] §4, §8.5, §8.7, §12.2, §12.3, §12.4
-docs/architecture.md                   — [modify] §3.4, §6, §8
-docs/architecture-building-blocks.md   — [modify] status line, §6 port catalog row
+docs/design.md                         — [modify] status line, §4, §8.5, §8.7, §12.2, §12.3, §12.4
+docs/architecture.md                   — [modify] status line, §3.3, §3.4, §4, §6, §7, §8
+docs/architecture-building-blocks.md   — [modify] status line, §4 module rows, §6 port catalog row and intro, §8 test tables
 README.md                              — [modify] status paragraph, "Running it"
 CLAUDE.md                              — [modify] Status paragraph
 ```
@@ -123,3 +123,25 @@ workspace with no `strategy` line now runs sandboxed and that `strategy = "bare"
 - `cargo make dod` and `cargo deny check` green after each task.
 - No `mermaid` block in `docs/` is removed or converted (`grep -c '```mermaid' docs/*.md` equal
   before and after).
+
+## Review findings
+
+One review, against the code as built by plans 01–04; every finding fixed in one round.
+
+- status lines 🟡 — design.md and architecture.md headers still said actions run at tier 1 — `docs/design.md:3`, `docs/architecture.md:3`; fixed: tier 2 by default, tier 1 on request; file list amended.
+- matches-code 🟡 — the code both strategies share named as one file — `docs/architecture.md:267`; fixed: `exec/outcome.rs` and `exec/run.rs`.
+- now false 🟡 — a §6 record and design §12.4 said `strategy` does not change what an action produces — `docs/architecture.md:384`, `docs/design.md:735`; fixed: not a key component, yet the working directory and pinned variables differ, so a tool that records its directory or reads the clock, locale or time zone can differ (design §12.2).
+- overclaim 🟡 — §8.5 and §12.2 said the action cannot write into `out/` — `docs/design.md:305,690`; fixed: not through its relative paths.
+- incomplete 🟡 — "Same results" named only the working directory — `docs/design.md:694`; fixed: also clock, locale, time zone.
+- 🔵 `..` component, the output's parent "exists", mode exactly `0700` and owner of the lock file, search path used by both strategies, the e2e table (`test` refusal is a unit test; rows for `tests/e2e/sandbox.rs`), §4 and README listing the same commands, plain words in `CLAUDE.md` — all fixed.
+- 🔵 edits outside the named sections (architecture §3.3, §4, §7; building-blocks §4, §6 intro, §8) — accepted, each corrects a claim the built code made false; file list amended.
+
+## Probe results
+
+- Every Proof grep holds after the fix round: the two removed phrases in design.md → no match; `grep -c 315532800 docs/design.md` → 3; `symlinked declared inputs`, `for the input sandbox the`, `Only the first isolation tier is built` → no match; mermaid counts design 13, fundamental-walkthrough 10, architecture 3, architecture-building-blocks 7, unchanged; every `§` in design.md resolves.
+- `git ls-files | grep -iE 'change|release'` → nothing: the release note is the pull request's description.
+
+## Deviations
+
+- 2026-10-21 — written in parallel with plans 03–04 (disjoint files) and reviewed against the code once they were built.
+- 2026-10-21 — sections outside the file list were changed (status lines and the sections above); file list amended.
