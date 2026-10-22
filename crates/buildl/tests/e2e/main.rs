@@ -17,6 +17,7 @@
 mod approver;
 mod clean_gc;
 mod common;
+mod doctor;
 mod facade;
 mod failure;
 mod identical;

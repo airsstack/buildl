@@ -21,7 +21,7 @@ use buildl_core::{
 use buildl_lua::{DeclarationLimits, LuaSource};
 
 use crate::approver::{
-    Console, DataDir, DenyApprover, InteractiveApprover, LocalApprover, ManifestApprover,
+    Approvals, Console, DataDir, DenyApprover, InteractiveApprover, LocalApprover, ManifestApprover,
 };
 use crate::cache::LocalCache;
 use crate::cas::LocalCas;
@@ -128,6 +128,24 @@ impl Wiring {
     #[must_use]
     pub const fn entry(&self) -> &EntryName {
         self.manifest.entry()
+    }
+
+    /// The manifest, as it was read.
+    #[must_use]
+    pub const fn manifest(&self) -> &TomlManifest {
+        &self.manifest
+    }
+
+    /// The approvals this workspace remembers, where the `interactive` approver keeps them.
+    /// Touches nothing on disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns an approver error when they are kept in the user's data directory and the
+    /// environment names no absolute one.
+    pub fn approvals(&self) -> Result<Approvals> {
+        let data = self.data.resolve(|name| std::env::var_os(name))?;
+        Ok(Approvals::new(&data, self.root.as_path()))
     }
 
     /// The source of build files: all that checking them and resolving their graph need.

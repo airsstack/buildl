@@ -5,7 +5,8 @@
 //! needs of the workspace is decided here.
 //!
 //! Responsibilities: [`Workspace`]: opening one, reading a target or a query as a person writes
-//! it, and the commands.
+//! it, and the commands; [`RunOptions`], a caller's choices for one run; and [`Doctor`], what
+//! `doctor` reports.
 //!
 //! Non-responsibilities: the sequence of phases, which is the pipeline's; making the adapters,
 //! which is the wiring's; and showing anything, which is the caller's.
@@ -14,9 +15,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
-    ActionOutcome, Collected, Declaration, Diagnostic, Directory, Error, Label, LiveOutput,
-    OnFailure, Pipeline, Plan, PortName, Query, Reporter, Rerun, Result, Sample, Scope,
-    SettingName, SettingValue, Shown, TargetGraph, Verification, pipeline,
+    ActionOutcome, ApproverMode, Checkup, Collected, Declaration, Diagnostic, Directory, Error,
+    Label, LiveOutput, OnFailure, Pipeline, Plan, PortName, Query, Reporter, Rerun, Result, Sample,
+    Scope, SettingName, SettingValue, Shown, TargetGraph, Verification, WantedSet, pipeline,
 };
 
 use crate::approver::{Console, NoTerminal};
@@ -46,14 +47,44 @@ impl RunOptions {
     }
 }
 
+/// What `doctor` reports: what the workspace allows and wants, where it is, and which of its
+/// wants its approver has not approved.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Doctor {
+    checkup: Checkup,
+    root: PathBuf,
+    unapproved: WantedSet,
+}
+
+impl Doctor {
+    /// What the workspace allows and wants.
+    #[must_use]
+    pub const fn checkup(&self) -> &Checkup {
+        &self.checkup
+    }
+
+    /// The workspace root: canonical and absolute.
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    /// The wants the workspace's approver has not approved: none under `manifest`, all of them
+    /// under `deny`, and under `interactive` those its remembered approvals do not hold.
+    #[must_use]
+    pub const fn unapproved(&self) -> &WantedSet {
+        &self.unapproved
+    }
+}
+
 /// A workspace wired with the real adapters.
 ///
 /// Opening one reads its manifest and nothing else. The state directory is taken by
 /// [`Workspace::plan`], [`Workspace::build`], [`Workspace::test`], [`Workspace::verify`],
 /// [`Workspace::gc`] and [`Workspace::clean`] only, and only while one of them runs, so a
 /// workspace kept open holds nothing while it is idle.
-/// [`Workspace::check`], [`Workspace::graph`], [`Workspace::query`] and [`Workspace::log`]
-/// hold nothing even while they run.
+/// [`Workspace::check`], [`Workspace::graph`], [`Workspace::query`], [`Workspace::doctor`] and
+/// [`Workspace::log`] hold nothing even while they run.
 #[derive(Debug)]
 pub struct Workspace {
     wiring: Wiring,
@@ -168,6 +199,35 @@ impl Workspace {
             self.wiring.entry(),
             query,
         )
+    }
+
+    /// Evaluates every build file once and reports what the workspace allows, what its build
+    /// wants, and which of those wants are outside its ceiling or not yet approved.
+    ///
+    /// Takes no lock, opens no state file and asks nothing: under `interactive` it reads the
+    /// remembered approvals, and it writes nothing anywhere.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever [`pipeline::doctor`](fn@pipeline::doctor) returns, and under
+    /// `interactive` whatever reading the remembered approvals returns.
+    pub fn doctor(&self) -> Result<Doctor> {
+        let checkup = pipeline::doctor(
+            &self.wiring.source(),
+            &mut self.wiring.dispatcher(),
+            self.wiring.manifest(),
+            self.wiring.entry(),
+        )?;
+        let unapproved = match checkup.workspace().approver {
+            ApproverMode::Manifest => WantedSet::default(),
+            ApproverMode::Deny => checkup.wanted().clone(),
+            ApproverMode::Interactive => checkup.wanted().minus(&self.wiring.approvals()?.read()?),
+        };
+        Ok(Doctor {
+            checkup,
+            root: self.root().to_path_buf(),
+            unapproved,
+        })
     }
 
     /// The newest logged run of `label` that stored its output, with what it printed read back

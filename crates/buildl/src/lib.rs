@@ -180,4 +180,4 @@ mod workspace;
 pub use buildl_core;
 pub use local_ports::{LocalPipeline, LocalPorts, Wiring};
 pub use state::Cleaned;
-pub use workspace::{RunOptions, Workspace};
+pub use workspace::{Doctor, RunOptions, Workspace};
