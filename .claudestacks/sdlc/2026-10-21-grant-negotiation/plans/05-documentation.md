@@ -41,7 +41,10 @@ crates/buildl-core/README.md, crates/buildl/README.md, crates/buildl-cli/README.
 **Change** (lines from a read at `8707b21`):
 - §4 (`:90`): the `[approver]` table, `default = "manifest" | "interactive" | "deny"`, absent
   means `manifest`; `proc.run` names host programs, and a program a dependency built needs no
-  entry.
+  entry. The sentence (`:120`) saying an `[approver]` table is an unknown key until grant
+  negotiation ships goes. The design's `buildl.toml` example and the `DESIGN_EXAMPLE` test
+  constant in `crates/buildl/src/manifest/toml_manifest.rs` (which holds the `[approver]` table
+  since plan 03) stay the same text (amended 2026-10-22, execution of plan 03).
 - §6 (`:176`): the negotiation as built — wanted set → ceiling → approver → run; the prompt
   text of spec §4; the approvals file `<data>/buildl/approved/<workspace id>.json` outside the
   workspace and why; no terminal refuses; `deny` refuses even a cached build. The diagram ends

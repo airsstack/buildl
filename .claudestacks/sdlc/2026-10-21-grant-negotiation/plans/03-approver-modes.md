@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-22
 depends-on: [02]
 built-on: 5d10ef9b2f2e
@@ -70,7 +70,9 @@ deserialize_with = "table")]`, as the other four); `ApproverTable` is
 `#[serde(deny_unknown_fields)]` with `default: Option<Spanned<String>>`. `interpret::workspace`
 (`:60-68`) sets `approver` from `optional(text, "approver.default", ..., ApproverMode::parse)`
 `.unwrap_or_default()`, the same shape as `execution.strategy` (`:136-137`), replacing plan 02's
-fixed `ApproverMode::Manifest`. The module docs listing the tables gain `[approver]`.
+fixed `ApproverMode::Manifest`. (Amended 2026-10-22, execution: no module doc lists the
+tables, so none changes. `toml_manifest.rs`'s `DESIGN_EXAMPLE` gains the `[approver]` table,
+which it left out only because the reader refused it.)
 
 **Proof:** written first, seen failing, then passing (`toml_manifest.rs` tests) —
 - `no_approver_table_means_manifest`
@@ -113,7 +115,8 @@ fixed `ApproverMode::Manifest`. The module docs listing the tables gain `[approv
     (`Access::Rewritable`); any failure → `Error::Adapter { port: Approver }` naming the file.
 
 **Proof:** written first, seen failing, then passing —
-- `state/name.rs`: the existing `name_of` tests move with it; `scratch.rs` tests pass unchanged.
+- `state/name.rs`: `name_of` gains tests of its own (amended 2026-10-22, execution: it had none
+  to move; `scratch.rs` reached it only through `Scratch`); `scratch.rs` tests pass unchanged.
 - `approver/data_dir.rs`: `xdg_data_home_wins`, `an_empty_xdg_data_home_is_ignored`,
   `home_gives_its_local_share`, `neither_set_is_an_approver_error`, `a_given_directory_is_used_as_is`.
 - `approver/approvals.rs` (temp dirs): `the_file_is_named_for_the_workspace_root`,
@@ -161,7 +164,10 @@ module: answers, terminal flag, prompts seen) —
   `anything_else_is_not_approved_and_nothing_is_remembered` (`""`, `n`, `yeah`),
   `the_prompt_lists_only_the_new_wants`, `the_prompt_is_the_same_text_every_time`,
   `no_terminal_refuses_with_the_remedy_and_never_asks`,
-  `a_failed_write_after_yes_is_an_error_not_a_grant`,
+  `a_failed_write_after_yes_is_an_error_not_a_grant` (amended 2026-10-22, execution: its
+  setup must let the read find no file and make only the write fail, so the prompt is shown
+  and the write is reached), `a_yes_is_remembered_with_what_was_already_allowed` (added 2026-10-22: a yes keeps
+  what was remembered before),
   `a_corrupt_file_is_an_error_before_anything_is_asked`.
 - `local.rs`: `each_mode_answers_as_its_approver`.
 
@@ -182,7 +188,10 @@ module: answers, terminal flag, prompts seen) —
   workspace's `approver` mode names (`Interactive` built with the root and the `DataDir`).
 - `Workspace::build`, `test` and `verify` (`workspace.rs:205`, `:341`, `:238`) gain
   `console: &mut C` with `C: Console` as their last parameter (`verify` has no reporter,
-  `workspace.rs:238-243`); `plan` (`:181`) passes `NoTerminal`.
+  `workspace.rs:238-243`); `plan` (`:181`) passes `NoTerminal`. (Amended 2026-10-22,
+  execution: with `console` added, `test` passes clippy's `too_many_arguments` limit, so the
+  plain value flags `build` and `test` take are grouped into one options value; reporter and
+  console stay separate `&mut` parameters, as spec §8 words it.)
   `Workspace::with_data_dir(self, dir: impl Into<PathBuf>) -> Self` sets `DataDir::At`. Their
   `# Errors` docs add `Error::NotApproved` and the approvals file's errors. `lib.rs`
   re-exports `Console`, `NoTerminal` and `DataDir` if public API needs them, and its crate docs
@@ -255,3 +264,63 @@ to a temp directory (child env only; nothing in-process).
 - `cargo make dod` and `cargo deny check` green after each task.
 - `cargo make guard-adapter-isolation` OK: `approver` names only `state` and `buildl_core`.
 - Every existing e2e and CLI test passes with only call-site changes.
+
+## Review findings
+
+Commits: `cdd481f` (task 1), `e401b52` (task 2), `92b53f6` (task 3), `0ad7c3c` (task 4),
+`308bee9` (task 5). Tasks 1 and 2 ran in parallel and shared one review.
+
+- security — `DataDir` accepted an empty `HOME` or a relative `XDG_DATA_HOME`, so the approvals
+  file could resolve inside the workspace — task 2 — fixed: only absolute values count; a
+  relative `XDG_DATA_HOME` falls back to `HOME`; tests for each case.
+- test — the approvals file's "cannot be read" branch had no test — task 2 — fixed: a directory
+  in the file's place gives `Adapter { Approver }` naming the file.
+- doc-comment / modularity — `write`'s `# Errors` left out the serializer error; an unreachable
+  `"."` fallback; an empty `WantedSet` built by hand (`WantedSet` now derives `Default`);
+  `name_of`'s docs said "directory" only — task 2 — fixed.
+- test — `DESIGN_EXAMPLE` left out the `[approver]` table the reader now accepts — task 1 —
+  fixed, asserts `Interactive`; a duplicate unknown-key case removed.
+- plan — task 1's module-doc line and task 2's "existing `name_of` tests" were wrong; plan 05
+  did not name the design's "unknown key" sentence or `DESIGN_EXAMPLE` — amended.
+- test — `a_failed_write_after_yes_is_an_error_not_a_grant` failed at the read (the reviewer's
+  probe: `NotADirectory notfound=false`) and never reached the write — task 3 — fixed and
+  verified: the `approved` directory is made read-only; with the write's error ignored the test
+  failed; `cargo test -p buildl approver::interactive` → `test result: ok. 10 passed; 0 failed`.
+- test — nothing checked that a yes keeps what was approved before — task 3 — fixed and
+  verified: `a_yes_is_remembered_with_what_was_already_allowed`; writing only the new wants
+  made it fail.
+- doc-comment — "when the first build asks" — task 3 — fixed.
+- design — the first cut of task 4 bundled reporter and console into a public `Lent` value to
+  pass clippy's `too_many_arguments`; spec §8 says build, test and verify take the console as
+  they take a reporter — task 4 — redesigned: a `RunOptions` value groups `on_failure` and
+  `live`; reporter and console stay separate `&mut` parameters; plan amended.
+- doc-comment — a garbled sentence in `console.rs`, a 125-column line in `run.rs`, the
+  `buildl` README's Facade row, "`deny` refuses every build", three "wants" — task 4 — fixed.
+- test — nothing guarded "both stdin and stderr are terminals" — task 4 — fixed:
+  `both_terminals` and `one_terminal_alone_is_not_enough_to_ask`.
+- test — nothing automated shows the CLI hands its console, not `NoTerminal`, to a build:
+  every test run has no terminal — task 4 — accepted, unguarded.
+- modularity — the e2e `Fake` console repeats the crate's test-only `Scripted` — task 4 —
+  accepted: the crate boundary hides `Scripted`.
+- test / doc — `run`'s doc said stdin was piped; `approved_by` spelled `PathBuf` in full;
+  `deny_exits_four` matched only `deny` — task 5 — fixed: it matches spec §4's reason
+  `the workspace's approver is deny`; `cargo test -p buildl-cli --test cli exit_codes` →
+  `test result: ok. 40 passed; 0 failed`.
+
+## Probe results
+
+- Claim: the plan's sites exist — `name_of` at `state/scratch.rs:45`, `Raw` at
+  `manifest/schema.rs:51`, the `[approver]`-refused case at `toml_manifest.rs:321`,
+  `Workspace::plan`/`build`/`verify`/`test` at `workspace.rs:181`/`:205`/`:238`/`:341`,
+  `write_whole` at `state/write.rs:57`, `canonical::from_slice` at `json/canonical.rs:129` —
+  `grep -n` — held.
+- Claim: `name_of` had tests to move — against the plan: it had none (`scratch.rs` reached it
+  only through `Scratch`).
+
+## Deviations
+
+- 2026-10-22 — task 4: `build` and `test` take a `RunOptions` value (on failure, live output)
+  in place of those two parameters, so adding the console stays within clippy's
+  `too_many_arguments`; reporter and console are separate `&mut` parameters as planned.
+- 2026-10-22 — task 3: a test was added, `a_yes_is_remembered_with_what_was_already_allowed`.
+- 2026-10-22 — task 1: `DESIGN_EXAMPLE` gained the `[approver]` table.
