@@ -1,8 +1,10 @@
 error -> types
 execute -> error
+execute -> grants
 execute -> placement
 execute -> ports
 execute -> types
+grants -> types
 history -> error
 history -> suggest
 history -> types

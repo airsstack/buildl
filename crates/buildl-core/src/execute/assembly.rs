@@ -266,7 +266,12 @@ pub(crate) fn prepared<'a>(
                 outputs,
                 deps: &dep_paths,
             };
-            let command = admit(expand(&node.run, &own.settings, &lists), node, ceiling)?;
+            let command = admit(
+                expand(&node.run, &own.settings, &lists),
+                node,
+                ceiling,
+                &dep_paths,
+            )?;
             let description = node
                 .description
                 .as_ref()

@@ -856,10 +856,8 @@ fn tested() -> Pipeline<FakePorts> {
 }
 
 #[test]
-fn a_test_that_runs_what_its_dependency_built_is_built_when_the_workspace_allows_that_program() {
+fn a_test_that_runs_what_its_dependency_built_is_built_with_no_ceiling_entry() {
     let mut pipeline = tested();
-    let ceiling = &mut pipeline.ports_mut().manifest.workspace.ceiling;
-    ceiling.run.insert(program("out/app"));
 
     let outcomes = build_named(&mut pipeline, &["//:app_test"], OnFailure::Stop).unwrap();
 
@@ -985,19 +983,23 @@ fn a_test_targets_outcomes_carry_its_role_whether_built_cached_failed_or_skipped
 
 #[test]
 fn a_program_first_named_by_expansion_is_refused_before_anything_runs() {
-    let mut pipeline = tested();
+    let mut pipeline = root_only(vec![target_with("gen", |target| {
+        target.run = Some(vec![Written::new("$in")]);
+        target.inputs = vec![Written::new("scripts/gen.sh")];
+    })]);
+    put(&mut pipeline, "scripts/gen.sh", "echo gen", 100);
 
-    let error = build_named(&mut pipeline, &["//:app_test"], OnFailure::Stop).unwrap_err();
+    let error = refused(&mut pipeline);
 
     assert_eq!(
         error.to_string(),
-        "build.lua: //:app_test: program out/app is outside the ceiling (proc.run allows: cc)"
+        "build.lua: //:gen: program scripts/gen.sh is outside the ceiling (proc.run allows: cc)"
     );
     match &error {
         Error::Refused { want, site, .. } => {
-            assert_eq!(want, &Want::Program(program("out/app")));
+            assert_eq!(want, &Want::Program(program("scripts/gen.sh")));
             let site = site.as_deref().unwrap();
-            assert_eq!(site.label, label("//:app_test"));
+            assert_eq!(site.label, label("//:gen"));
         }
         other => unreachable!("expected Refused, got {other:?}"),
     }
