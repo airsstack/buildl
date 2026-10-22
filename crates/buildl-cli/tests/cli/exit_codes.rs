@@ -4,9 +4,13 @@ use std::ffi::OsStr;
 use std::fs::{self, File};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::symlink;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use crate::common::{append, code, manifest, program, run, stderr, stdout, workspace, write};
+use buildl::approver::Approvals;
+
+use crate::common::{
+    append, code, data_home, manifest, program, run, run_at_home, stderr, stdout, workspace, write,
+};
 
 /// One target, `//:copy`, that copies `a.txt`.
 const COPY: &str =
@@ -788,7 +792,7 @@ fn a_state_directory_that_cannot_be_used_is_an_infrastructure_failure() {
 }
 
 /// The workspace of [`COPY`], not built.
-fn copying() -> (tempfile::TempDir, std::path::PathBuf) {
+fn copying() -> (tempfile::TempDir, PathBuf) {
     workspace(&[
         ("buildl.toml", &manifest(&["cp"])),
         ("build.lua", COPY),
@@ -797,7 +801,7 @@ fn copying() -> (tempfile::TempDir, std::path::PathBuf) {
 }
 
 /// The workspace of [`COPY`], built once.
-fn built_copying() -> (tempfile::TempDir, std::path::PathBuf) {
+fn built_copying() -> (tempfile::TempDir, PathBuf) {
     let (dir, root) = copying();
     assert_eq!(code(&run(&root, &["build"], &[])), 0);
     (dir, root)
@@ -875,4 +879,148 @@ fn test_with_no_tests_exits_0() {
     ]);
     assert_eq!(failed(&root, &["test"]), (0, "no tests\n".to_owned()));
     assert!(!root.join("out/copy").exists());
+}
+
+/// A workspace that copies `a.txt` and whose approver is `mode`, and a home for the process
+/// that runs in it, the home as an absolute path.
+fn approved_by(mode: &str) -> (tempfile::TempDir, PathBuf, tempfile::TempDir, PathBuf) {
+    let manifest = format!("{}\n[approver]\ndefault = \"{mode}\"\n", manifest(&["cp"]));
+    let (dir, root) = workspace(&[
+        ("buildl.toml", &manifest),
+        ("build.lua", COPY),
+        ("a.txt", "a\n"),
+    ]);
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = fs::canonicalize(home_dir.path()).unwrap();
+    (dir, root, home_dir, home)
+}
+
+#[test]
+fn interactive_with_piped_stdin_exits_four_with_the_remedy() {
+    let (_dir, root, _home_dir, home) = approved_by("interactive");
+
+    let output = run_at_home(&root, &["build"], &home);
+
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 4, "{}", stderr(&output));
+    let text = stderr(&output);
+    assert!(text.contains("no terminal to ask on"), "{text}");
+    assert!(text.contains("[approver] default = \"manifest\""), "{text}");
+    assert!(
+        text.contains("  run programs: cp\n  write into:   .buildl, out\n"),
+        "{text}"
+    );
+    assert!(!root.join("out").exists());
+    assert!(!data_home(&home).exists(), "nothing was remembered");
+}
+
+#[test]
+fn deny_exits_four() {
+    let (_dir, root, _home_dir, home) = approved_by("deny");
+
+    let output = run_at_home(&root, &["build"], &home);
+
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 4, "{}", stderr(&output));
+    assert!(
+        stderr(&output).contains("the workspace's approver is deny"),
+        "{}",
+        stderr(&output)
+    );
+    assert!(!root.join("out").exists());
+}
+
+#[test]
+fn a_corrupt_approvals_file_exits_six() {
+    let (_dir, root, _home_dir, home) = approved_by("interactive");
+    let file = Approvals::new(&data_home(&home), &root)
+        .file()
+        .to_path_buf();
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "not what buildl writes").unwrap();
+
+    let output = run_at_home(&root, &["build"], &home);
+
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 6, "{}", stderr(&output));
+    let text = stderr(&output);
+    assert!(text.contains(&file.display().to_string()), "{text}");
+    assert!(!root.join("out").exists());
+}
+
+#[test]
+fn doctor_exits_zero_with_refused_wants() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        (
+            "build.lua",
+            "buildl.target(\"fetch\", { run = { \"curl\", \"$out\" } })\n",
+        ),
+    ]);
+
+    let output = run(&root, &["doctor"], &[]);
+
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("  run curl       REFUSED  -\n"),
+        "{}",
+        stdout(&output)
+    );
+    assert_eq!(stderr(&output), "");
+}
+
+#[test]
+fn doctor_exits_five_on_an_output_conflict() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        (
+            "build.lua",
+            "buildl.target(\"a\", { outputs = { \"x\" }, run = { \"cp\" } })\nbuildl.target(\"b\", { outputs = { \"x\" }, run = { \"cp\" } })\n",
+        ),
+    ]);
+
+    assert_eq!(
+        failed(&root, &["doctor"]),
+        (
+            5,
+            "error: out/x: //:a (build.lua) and //:b (build.lua) cannot both write here\n"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn doctor_exits_six_on_a_corrupt_approvals_file() {
+    let (_dir, root, _home_dir, home) = approved_by("interactive");
+    let file = Approvals::new(&data_home(&home), &root)
+        .file()
+        .to_path_buf();
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "not what buildl writes").unwrap();
+
+    let output = run_at_home(&root, &["doctor"], &home);
+
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 6, "{}", stderr(&output));
+    let text = stderr(&output);
+    assert!(text.contains(&file.display().to_string()), "{text}");
+}
+
+#[test]
+fn doctor_exits_five_on_a_build_file_error() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        ("build.lua", "buildl.target(\"a\", {\n"),
+    ]);
+    assert_eq!(
+        failed(&root, &["doctor"]),
+        (
+            5,
+            concat!(
+                "error: build.lua: syntax error: lua error in build.lua: ",
+                "syntax error: build.lua:2: unexpected symbol near <eof>\n",
+            )
+            .to_owned()
+        )
+    );
 }

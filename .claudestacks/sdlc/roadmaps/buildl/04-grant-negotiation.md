@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-15
 ---
 
@@ -9,8 +9,8 @@ created: 2026-10-15
 
 Grants are negotiated: the wanted set is intersected with the ceiling, an approver
 decides, and `doctor` prints the result (design §7). Per-target grant narrowing (design
-§14) is settled. It consumes the airsl extension host's ceiling and `Approver`. This is
-design §13 item 4.
+§14) is settled. It follows airsl's model (intersect, never union; the approver only
+narrows; fail closed) rather than consuming airsl's types. This is design §13 item 4.
 
 ## Non-goals
 

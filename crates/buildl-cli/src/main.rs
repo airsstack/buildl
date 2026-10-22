@@ -16,6 +16,7 @@
 //! | `buildl build [TARGET]... [--set NAME=VALUE]... [-k \| --keep-going] [--stream]` | nothing | a block for each action that printed or failed, and a summary |
 //! | `buildl test [TARGET]... [--set NAME=VALUE]... [--stop] [--stream] [--rerun] [--verbose]` | nothing | a block for each failing test (and each test that printed, with `--verbose`) and for each other target that printed or failed, and a line counting the tests |
 //! | `buildl verify [TARGET]... [--set NAME=VALUE]... [--sample N]` | nothing | a line for each checked target that was verified, mismatched, failed, skipped or not put back, and a line counting them and the targets left out |
+//! | `buildl doctor` | the workspace root, its approver, its run settings, its ceiling, and one row per want saying whether the ceiling allows it and whether it is approved | nothing |
 //! | `buildl log <TARGET> [--stdout \| --stderr]` | the stored stdout, or the one stream asked for | the header, a warning of damaged lines, and the stored stderr when no flag is given |
 //! | `buildl clean` | nothing | `clean: removed out` (naming the manifest's `out` directory), or `clean: out holds nothing` |
 //! | `buildl gc` | nothing | `gc: dropped 1 row, removed 5 blobs (2048 bytes)` |
@@ -37,6 +38,13 @@
 //! target that depends on TARGET. Either reaches any number of steps away, and TARGET itself is
 //! not in the answer. `query`, like `check` and `graph`, takes no lock and writes nothing.
 //!
+//! `doctor` evaluates every build file once, takes no lock, writes nothing and asks nothing. It
+//! reports the wants of every target at the settings' defaults, and ends with 0 even when a want
+//! is outside the ceiling or not approved; what stops it from making the report ends with the
+//! status that mistake has everywhere: 5 for a build file or an output two targets claim, 6 for
+//! a remembered approvals file that is not what buildl writes, and 3 when that file cannot be
+//! read or there is no data directory to find it in.
+//!
 //! `log` takes no lock and loads no build file, and writes nothing but the store's own removal of
 //! a blob that fails its digest; it does not follow an alias.
 //!
@@ -48,9 +56,9 @@
 //! | 1 | an action failed: fix the code being built |
 //! | 2 | the command line is wrong |
 //! | 3 | the builder or the machine failed: fix it, or run again |
-//! | 4 | the build wants more than `buildl.toml`'s ceiling allows |
+//! | 4 | the build wants more than `buildl.toml`'s ceiling allows or than was approved |
 //! | 5 | a build file or `buildl.toml` is wrong |
-//! | 6 | a file in `.buildl/` is not what buildl writes |
+//! | 6 | a file in `.buildl/`, or the remembered approvals file, is not what buildl writes |
 //! | 7 | buildl itself is at fault |
 //!
 //! Under `--keep-going`, which `test` has unless `--stop` is given, the most severe status wins:
@@ -71,6 +79,8 @@ use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
 mod cli;
+mod console;
+mod doctor_text;
 mod exit;
 mod run;
 mod terminal;
@@ -87,6 +97,7 @@ fn main() -> ExitCode {
         &terminal,
         &mut io::stdout(),
         &mut io::stderr(),
+        &mut console::StdConsole,
     );
     ExitCode::from(exit as u8)
 }

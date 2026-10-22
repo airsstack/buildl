@@ -5,6 +5,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 
+use buildl::RunOptions;
+use buildl::approver::NoTerminal;
 use buildl::buildl_core::{LiveOutput, OnFailure, OutcomeClass, Scope, SettingName, SettingValue};
 use buildl::report::Silent;
 
@@ -111,9 +113,9 @@ fn a_setting_override_rebuilds_what_names_it() {
         .build(
             &Scope::Workspace,
             &overrides,
-            OnFailure::Stop,
-            LiveOutput::Off,
+            RunOptions::new(OnFailure::Stop, LiveOutput::Off),
             &mut Silent,
+            &mut NoTerminal,
         )
         .unwrap();
 

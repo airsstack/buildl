@@ -116,15 +116,16 @@ mod tests {
     use std::path::PathBuf;
 
     use buildl_core::{
-        Action, ActionCache, ActionKey, Argument, BuildFile, CacheRow, Ceiling, Clock, Command,
-        ContentStore, Declaration, DeclarationSource, Declared, DepProducts, Diagnostic, Digest,
-        Digester, Directory, DirtyReason, Dispatcher, EnvName, EnvValue, Error, Evaluated,
-        EventLog, ExecStrategy, Execution, FileMode, FileStat, Found, Freshness, GraphRecord, Host,
-        InputDigest, InputStat, KeyComponents, Label, LiveSink, Manifest, NetworkAccess,
-        OutcomeEvent, OutputName, OutputPath, OwnComponents, Plan, PlannedKey, Platform, PortName,
-        PortSet, Ports, Program, Provenance, RawOutcome, ReadyAction, Rerun, Result, Setting,
-        SettingName, SettingValue, SourcePath, StatCache, StatEntry, Target, TargetGraph,
-        TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn, Verdict, Workspace, plan, resolve,
+        Action, ActionCache, ActionKey, Approval, Approver, ApproverMode, Argument, BuildFile,
+        CacheRow, Ceiling, Clock, Command, ContentStore, Declaration, DeclarationSource, Declared,
+        DepProducts, Diagnostic, Digest, Digester, Directory, DirtyReason, Dispatcher, EnvName,
+        EnvValue, Error, Evaluated, EventLog, ExecStrategy, Execution, FileMode, FileStat, Found,
+        Freshness, GraphRecord, Host, InputDigest, InputStat, KeyComponents, Label, LiveSink,
+        Manifest, NetworkAccess, OutcomeEvent, OutputName, OutputPath, OwnComponents, Plan,
+        PlannedKey, Platform, PortName, PortSet, Ports, Produced, Program, Provenance, RawOutcome,
+        ReadyAction, Rerun, Result, Setting, SettingName, SettingValue, SourcePath, StatCache,
+        StatEntry, Target, TargetGraph, TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn,
+        Verdict, WantedSet, Workspace, plan, resolve,
     };
 
     use super::{plan_text, reason_text};
@@ -147,6 +148,7 @@ mod tests {
                     write: BTreeSet::from([Directory::parse("out")?, Directory::parse(".buildl")?]),
                 },
                 execution: Execution::default(),
+                approver: ApproverMode::Manifest,
             })
         }
     }
@@ -316,6 +318,12 @@ mod tests {
         }
     }
 
+    impl Approver for Unused {
+        fn approve(&mut self, _wanted: &WantedSet) -> Result<Approval> {
+            Err(unused(PortName::Approver))
+        }
+    }
+
     /// The bundle a plan is made over here.
     struct Planning;
 
@@ -334,6 +342,7 @@ mod tests {
         type Clock = Unused;
         type Graph = Unused;
         type Reporter = Silent;
+        type Approver = Unused;
     }
 
     /// The plan of `graph` on the machine, against what `rows` recorded.
@@ -353,6 +362,7 @@ mod tests {
             clock: Unused,
             graph: Unused,
             reporter: Silent,
+            approver: Unused,
         };
         plan(graph, &BTreeMap::new(), Rerun::Off, &mut ports).unwrap()
     }
@@ -430,7 +440,10 @@ mod tests {
                 ..target("//:changed", &["cc", "-O$opt:mode", "$in", "-o", "$out"])
             }),
             declared(target("//:docs", &["cc", "--doc"])),
-            declared(target("//:leaf", &["cc", "--leaf"])),
+            declared(Target {
+                outputs: vec![OutputName::parse("leaf").unwrap()],
+                ..target("//:leaf", &["cc", "--leaf"])
+            }),
             declared(Target {
                 inputs: paths(&["main.c"]),
                 ..target("//:main.o", &["cc", "-c", "$in"])
@@ -466,8 +479,9 @@ mod tests {
         }
     }
 
-    /// The row of a build under the key made of `own` and `deps`, which printed nothing.
-    fn row(own: OwnComponents, deps: &[&str]) -> CacheRow {
+    /// The row of a build under the key made of `own` and `deps`, which printed nothing. Every
+    /// output, a dependency's included, is recorded as the digest of its name.
+    fn row(graph: &TargetGraph, own: OwnComponents, deps: &[&str]) -> CacheRow {
         let outputs = own
             .outputs
             .iter()
@@ -475,9 +489,20 @@ mod tests {
             .collect();
         let deps = deps
             .iter()
-            .map(|dep| DepProducts {
-                label: label(dep),
-                outputs: Vec::new(),
+            .map(|dep| {
+                let label = label(dep);
+                let node = graph.id_of(&label).and_then(|id| graph.node(id)).unwrap();
+                DepProducts {
+                    outputs: node
+                        .outputs
+                        .iter()
+                        .map(|name| Produced {
+                            name: name.clone(),
+                            digest: Digest::of(name.as_str().as_bytes()),
+                        })
+                        .collect(),
+                    label,
+                }
             })
             .collect();
         let key = ActionKey::new(KeyComponents { own, deps }).unwrap();
@@ -495,29 +520,32 @@ mod tests {
         };
 
         // Built before, and nothing changed since.
-        record("//:always", row(own("//:always"), &[]));
-        record("//:docs", row(own("//:docs"), &[]));
-        record("//:leaf", row(own("//:leaf"), &[]));
+        record("//:always", row(&graph, own("//:always"), &[]));
+        record("//:docs", row(&graph, own("//:docs"), &[]));
+        record("//:leaf", row(&graph, own("//:leaf"), &[]));
         // Built before from the same declaration; `//:main.o` is about to run again.
-        record("//:app", row(own("//:app"), &["//:main.o"]));
+        record("//:app", row(&graph, own("//:app"), &["//:main.o"]));
         // Built before from another `main.c`.
         let mut main = own("//:main.o");
         main.inputs = vec![InputDigest {
             path: SourcePath::parse("main.c").unwrap(),
             digest: Digest::of(b"an older main.c"),
         }];
-        record("//:main.o", row(main, &[]));
+        record("//:main.o", row(&graph, main, &[]));
         // Built before with the same inputs and dependencies, each list in the other order.
         let mut reordered = own("//:reordered");
         reordered.inputs.reverse();
-        record("//:reordered", row(reordered, &["//:docs", "//:leaf"]));
+        record(
+            "//:reordered",
+            row(&graph, reordered, &["//:docs", "//:leaf"]),
+        );
         // Built before by a program that was found on the machine.
         let mut script = own("//:script");
         script.tool = Some(ToolIdentity {
             program: Program::parse("cc").unwrap(),
             fingerprint: Digest::of(b"cc"),
         });
-        record("//:script", row(script, &["//:leaf"]));
+        record("//:script", row(&graph, script, &["//:leaf"]));
         // Built before with every part of its key different, and no dependency.
         let before = OwnComponents {
             command: command(&["cc", "$in"]),
@@ -538,7 +566,7 @@ mod tests {
             network: NetworkAccess::Declared,
             platform: Platform::parse("macos/aarch64").unwrap(),
         };
-        record("//:changed", row(before, &[]));
+        record("//:changed", row(&graph, before, &[]));
 
         assert_eq!(
             plan_text(&planned(&graph, rows)),

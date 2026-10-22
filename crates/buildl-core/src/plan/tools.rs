@@ -4,16 +4,22 @@
 //! workspace: it has to be allowed before anything runs, it has to be found, and what was found
 //! is part of every key of every target that runs it.
 //!
-//! Responsibilities: [`program_of`], [`programs`] and [`fingerprints`].
+//! Responsibilities: [`program_of`], [`naming`] and [`fingerprints`].
 //!
-//! Non-responsibilities: whether a program may run, which is decided against the ceiling, and
-//! finding one, which is the [`ToolResolver`] port's.
+//! Non-responsibilities: whether a program may run, which is decided against the ceiling; which
+//! programs are built, which is Grants'; and finding one, which is the [`ToolResolver`] port's.
+//! A program a dependency builds is no tool of the machine: it is never listed here, so it is
+//! never looked up or fingerprinted.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{DeclarationSite, Error, Result};
+use crate::grants::built::built;
+use crate::placement::layout::Layout;
 use crate::ports::ToolResolver;
-use crate::types::{Command, Digest, Node, Program, SettingName, SettingValue, TargetGraph};
+use crate::types::{
+    Command, Digest, Label, Node, NodeId, Program, SettingName, SettingValue, TargetGraph,
+};
 
 /// The program `command` names under `settings`: its first argument, with each reference to a
 /// setting replaced by that setting's value, when that is a program name.
@@ -30,19 +36,43 @@ pub(crate) fn program_of(
     Program::of(&first.with_settings(settings))
 }
 
-/// Every distinct program `graph`'s commands name under `settings`, each with the
-/// lowest-labelled target naming it.
-pub(crate) fn programs<'g>(
+/// What `graph`'s commands name under some settings: the programs of the machine, and the
+/// targets that run a program a dependency built.
+#[derive(Debug)]
+pub(crate) struct Named<'g> {
+    /// Every distinct program named that is not built, each with the lowest-labelled target
+    /// naming it.
+    pub(crate) programs: BTreeMap<Program, &'g Node>,
+    /// The label of every target whose command's program is built for it.
+    pub(crate) built_runners: BTreeSet<&'g Label>,
+}
+
+/// What `graph`'s commands name under `settings`, in one pass over the targets.
+///
+/// A program is built for a target when it is, or lies below, an output of one of the target's
+/// dependencies as `layout` places them. A built program is left out of
+/// [`Named::programs`]: it is no tool of the machine.
+pub(crate) fn naming<'g>(
     graph: &'g TargetGraph,
     settings: &BTreeMap<SettingName, SettingValue>,
-) -> BTreeMap<Program, &'g Node> {
-    let mut named = BTreeMap::new();
-    for node in graph.nodes() {
-        if let Some(program) = program_of(&node.run, settings) {
-            named.entry(program).or_insert(node);
+    layout: &Layout,
+) -> Named<'g> {
+    let mut programs = BTreeMap::new();
+    let mut built_runners = BTreeSet::new();
+    for (node, id) in graph.nodes().iter().zip((0_u32..).map(NodeId::new)) {
+        let Some(program) = program_of(&node.run, settings) else {
+            continue;
+        };
+        if built(&program, &layout.deps(graph, id)) {
+            built_runners.insert(&node.label);
+        } else {
+            programs.entry(program).or_insert(node);
         }
     }
-    named
+    Named {
+        programs,
+        built_runners,
+    }
 }
 
 /// The fingerprint of every program in `programs`, asked for in program order.
@@ -70,11 +100,35 @@ pub(crate) fn fingerprints<T: ToolResolver>(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    #![expect(
+        clippy::unwrap_used,
+        reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
+    )]
 
-    use super::{program_of, programs};
-    use crate::plan::fixtures::{command, graph, node, settings};
-    use crate::types::Program;
+    use super::{naming, program_of};
+    use crate::grants::fixtures::{command, dir, graph, node, settings};
+    use crate::placement::layout::Layout;
+    use crate::types::{Program, TargetGraph};
+
+    /// The programs `graph` names under `pairs`, each with its lowest-labelled target.
+    fn listed(graph: &TargetGraph, pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        let layout = Layout::of(graph, &dir("out")).unwrap();
+        naming(graph, &settings(pairs), &layout)
+            .programs
+            .into_iter()
+            .map(|(program, node)| (program.to_string(), node.label.to_string()))
+            .collect()
+    }
+
+    /// The labels of the targets whose program is built for them.
+    fn runners(graph: &TargetGraph, pairs: &[(&str, &str)]) -> Vec<String> {
+        let layout = Layout::of(graph, &dir("out")).unwrap();
+        naming(graph, &settings(pairs), &layout)
+            .built_runners
+            .into_iter()
+            .map(ToString::to_string)
+            .collect()
+    }
 
     /// The program a command starting with `first` names under these `(name, value)` settings.
     fn named(first: &str, pairs: &[(&str, &str)]) -> Option<String> {
@@ -133,12 +187,8 @@ mod tests {
             ],
             &[&[], &[], &[], &[]],
         );
-        let named: Vec<(String, String)> = programs(&graph, &BTreeMap::new())
-            .into_iter()
-            .map(|(program, node)| (program.to_string(), node.label.to_string()))
-            .collect();
         assert_eq!(
-            named,
+            listed(&graph, &[]),
             [
                 ("ar".to_owned(), "//lib:d".to_owned()),
                 ("cc".to_owned(), "//:b".to_owned()),
@@ -157,21 +207,15 @@ mod tests {
             ],
             &[&[], &[], &[]],
         );
-        let listed = |pairs: &[(&str, &str)]| -> Vec<(String, String)> {
-            programs(&graph, &settings(pairs))
-                .into_iter()
-                .map(|(program, node)| (program.to_string(), node.label.to_string()))
-                .collect()
-        };
         assert_eq!(
-            listed(&[("tool", "cc"), ("linker", "ld")]),
+            listed(&graph, &[("tool", "cc"), ("linker", "ld")]),
             [
                 ("cc".to_owned(), "//:a".to_owned()),
                 ("ld".to_owned(), "//:c".to_owned()),
             ]
         );
         assert_eq!(
-            listed(&[("tool", "clang"), ("linker", "")]),
+            listed(&graph, &[("tool", "clang"), ("linker", "")]),
             [
                 ("cc".to_owned(), "//:b".to_owned()),
                 ("clang".to_owned(), "//:a".to_owned()),
@@ -188,6 +232,29 @@ mod tests {
             ],
             &[&[], &[]],
         );
-        assert!(programs(&graph, &BTreeMap::new()).is_empty());
+        assert_eq!(listed(&graph, &[]), []);
+    }
+
+    #[test]
+    fn a_program_a_dependency_builds_is_not_listed_and_its_target_is_a_runner() {
+        let graph = graph(
+            vec![
+                node("//:gen", |_| {}),
+                node("//:own", |node| node.run = command(&["out/gen", "$out"])),
+                node("//:set", |node| node.run = command(&["$opt:tool"])),
+                node("//:stray", |node| node.run = command(&["out/gen"])),
+            ],
+            &[&[], &[0], &[0], &[]],
+        );
+        let held = [("tool", "out/gen")];
+        assert_eq!(
+            listed(&graph, &held),
+            [
+                ("cc".to_owned(), "//:gen".to_owned()),
+                ("out/gen".to_owned(), "//:stray".to_owned()),
+            ],
+            "only the target that does not depend on //:gen names it as a tool"
+        );
+        assert_eq!(runners(&graph, &held), ["//:own", "//:set"]);
     }
 }

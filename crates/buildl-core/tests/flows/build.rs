@@ -12,15 +12,15 @@ use buildl_core::{
     ActionOutcome, Digest, EntryName, Error, EvaluationFailure, FileMode, FileStat, Freshness,
     InfraKind, OnFailure, OutcomeClass, OutcomeEvent, OutputManifest, OutputName, OutputPath,
     OutputRefusal, Pipeline, PortName, SettingName, SettingValue, SourcePath, StagedItem,
-    StagedSetting, StoredFile, Summary, Tally, TargetRole, Timestamp, TreePath, Want, Written,
-    json,
+    StagedSetting, StoredFile, Summary, Tally, TargetRole, Timestamp, TreePath, Want, WantedSet,
+    Written, json,
 };
 use buildl_core::{LiveOutput, Scope};
 
 use crate::common::{
-    Content, Ends, FakeContent, FakeFile, FakePorts, FakeSource, Leaf, Loss, Order, Script, alias,
-    classes, dir, ending, expected, file, label, ports, program, root_only, rule, script, setting,
-    skipped, target, target_with, tree, workspace,
+    Answer, Content, Ends, FakeApprover, FakeContent, FakeFile, FakePorts, FakeSource, Leaf, Loss,
+    Order, Script, classes, dir, ending, expected, file, label, ports, program, root_only, rule,
+    script, setting, skipped, target, target_with, tree, workspace,
 };
 
 /// The events of [`two_directories`] built once, one canonical JSON object per line, pinned.
@@ -856,10 +856,8 @@ fn tested() -> Pipeline<FakePorts> {
 }
 
 #[test]
-fn a_test_that_runs_what_its_dependency_built_is_built_when_the_workspace_allows_that_program() {
+fn a_test_that_runs_what_its_dependency_built_is_built_with_no_ceiling_entry() {
     let mut pipeline = tested();
-    let ceiling = &mut pipeline.ports_mut().manifest.workspace.ceiling;
-    ceiling.run.insert(program("out/app"));
 
     let outcomes = build_named(&mut pipeline, &["//:app_test"], OnFailure::Stop).unwrap();
 
@@ -883,6 +881,72 @@ fn a_test_that_runs_what_its_dependency_built_is_built_when_the_workspace_allows
         .collect();
     assert_eq!(command, ["out/app"]);
     assert_eq!(test.deps, [out("//:app", "app")]);
+}
+
+/// `//:gen`, built from `gen.go` by `go`, and `//:banner`, which depends on it and runs
+/// `command`. The ceiling allows `go` and nothing else, and `go` can be found.
+fn generated(command: &[&str]) -> Pipeline<FakePorts> {
+    let mut pipeline = root_only(vec![
+        target_with("gen", |target| {
+            target.run = Some(["go", "build"].map(Written::new).to_vec());
+            target.inputs = vec![Written::new("gen.go")];
+        }),
+        target_with("banner", |target| {
+            target.run = Some(
+                command
+                    .iter()
+                    .map(|argument| Written::new(*argument))
+                    .collect(),
+            );
+            target.deps = vec![Written::new("gen")];
+        }),
+    ]);
+    put(&mut pipeline, "gen.go", "package main", 100);
+    let ports = pipeline.ports_mut();
+    ports.manifest.workspace.ceiling.run = BTreeSet::from([program("go")]);
+    ports
+        .tools
+        .fingerprints
+        .insert(program("go"), Digest::of(b"go 1.23"));
+    pipeline
+}
+
+#[test]
+fn a_tool_a_dependency_built_runs_without_a_ceiling_entry() {
+    let mut pipeline = generated(&["$deps", "$out"]);
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[
+            ("//:banner", OutcomeClass::Built),
+            ("//:gen", OutcomeClass::Built),
+        ])
+    );
+    assert_eq!(
+        handed(&pipeline, "//:banner")[0],
+        texts(&["out/gen", "out/banner"])
+    );
+}
+
+#[test]
+fn a_written_out_tool_a_dependency_built_runs_on_a_clean_build() {
+    let mut pipeline = generated(&["out/gen", "$out"]);
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[
+            ("//:banner", OutcomeClass::Built),
+            ("//:gen", OutcomeClass::Built),
+        ])
+    );
+    assert_eq!(
+        handed(&pipeline, "//:banner")[0],
+        texts(&["out/gen", "out/banner"])
+    );
 }
 
 #[test]
@@ -985,19 +1049,23 @@ fn a_test_targets_outcomes_carry_its_role_whether_built_cached_failed_or_skipped
 
 #[test]
 fn a_program_first_named_by_expansion_is_refused_before_anything_runs() {
-    let mut pipeline = tested();
+    let mut pipeline = root_only(vec![target_with("gen", |target| {
+        target.run = Some(vec![Written::new("$in")]);
+        target.inputs = vec![Written::new("scripts/gen.sh")];
+    })]);
+    put(&mut pipeline, "scripts/gen.sh", "echo gen", 100);
 
-    let error = build_named(&mut pipeline, &["//:app_test"], OnFailure::Stop).unwrap_err();
+    let error = refused(&mut pipeline);
 
     assert_eq!(
         error.to_string(),
-        "build.lua: //:app_test: program out/app is outside the ceiling (proc.run allows: cc)"
+        "build.lua: //:gen: program scripts/gen.sh is outside the ceiling (proc.run allows: cc)"
     );
     match &error {
         Error::Refused { want, site, .. } => {
-            assert_eq!(want, &Want::Program(program("out/app")));
+            assert_eq!(want, &Want::Program(program("scripts/gen.sh")));
             let site = site.as_deref().unwrap();
-            assert_eq!(site.label, label("//:app_test"));
+            assert_eq!(site.label, label("//:gen"));
         }
         other => unreachable!("expected Refused, got {other:?}"),
     }
@@ -1153,46 +1221,11 @@ fn a_load_error_and_a_refusal_of_the_plan_reach_the_caller_unchanged() {
     assert_nothing_ran(&disallowed);
 }
 
-/// The workspace of the graph flows, with one change: its test target runs what it depends on,
-/// `$deps`, where the graph flows' runs `$out/app`. The root holds a rule, a target using it, a
-/// target with dependencies in two directories, an alias, the test target and a setting; `lib`
-/// holds one target. `cc` can be found, and the workspace allows `out/app` to run.
+/// The workspace of the graph flows, [`crate::graph::fixture`]: a rule, a target using it, a target
+/// with dependencies in two directories, an alias, the test target and a setting. `cc` can be
+/// found, and the workspace allows `out/app` to run.
 fn two_directories(order: Order) -> Pipeline<FakePorts> {
-    let root = vec![
-        rule(
-            "cc",
-            &["cc", "-c", "$in", "-o", "$out"],
-            Some("compile $in"),
-        ),
-        target_with("main.o", |target| {
-            target.run = None;
-            target.rule = Some(Written::new("cc"));
-            target.inputs = vec![Written::new("main.c")];
-        }),
-        target_with("app", |target| {
-            target.run = Some(["cc", "$deps", "-o", "$out"].map(Written::new).to_vec());
-            target.deps = vec![Written::new("main.o"), Written::new("//lib:text")];
-        }),
-        alias("default", "app"),
-        target_with("app_test", |target| {
-            target.role = TargetRole::Test;
-            target.run = Some(
-                ["$deps", "--filter=$opt:test_filter"]
-                    .map(Written::new)
-                    .to_vec(),
-            );
-            target.deps = vec![Written::new("default")];
-        }),
-        setting("test_filter"),
-    ];
-    let lib = vec![target_with("text", |target| {
-        target.inputs = vec![Written::new("text.c")];
-    })];
-    let source = FakeSource::new(workspace(vec![
-        ("", file(root, &["lib"])),
-        ("lib", file(lib, &[])),
-    ]));
-    let mut pipeline = Pipeline::new(ports(source));
+    let mut pipeline = Pipeline::new(ports(crate::graph::fixture()));
     put(&mut pipeline, "main.c", "main.c", 100);
     put(&mut pipeline, "lib/text.c", "lib/text.c", 100);
     let ports = pipeline.ports_mut();
@@ -2219,4 +2252,76 @@ fn an_output_that_cannot_be_put_back_exactly_is_refused_and_never_recorded() {
     let ports = pipeline.ports();
     assert_eq!(ports.cache.rows.len(), 0, "a refusal is never recorded");
     assert_eq!(ports.cas.placements(), [], "and nothing is put in place");
+}
+
+/// The set a build of `pipeline` is planned to want.
+fn planned_wants(pipeline: &mut Pipeline<FakePorts>) -> WantedSet {
+    pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap()
+        .wanted()
+        .clone()
+}
+
+#[test]
+fn a_build_asks_the_approver_once_with_the_planned_wanted_set() {
+    let mut pipeline = chain();
+    let wanted = planned_wants(&mut pipeline);
+    assert!(!wanted.is_empty(), "the fixture runs a program");
+
+    build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(pipeline.ports().approver.asked, [wanted]);
+}
+
+#[test]
+fn a_denied_build_runs_nothing_records_nothing_and_logs_nothing() {
+    let mut pipeline = chain();
+    pipeline.ports_mut().approver = FakeApprover::answering(Answer::Deny("not today".to_owned()));
+
+    let error = refused(&mut pipeline);
+
+    let Error::NotApproved { unapproved, reason } = error else {
+        unreachable!("expected a refusal by the approver, got {error:?}");
+    };
+    assert_eq!(reason.to_string(), "not today");
+    assert_eq!(*unapproved, pipeline.ports().approver.asked[0]);
+    assert_nothing_ran(&pipeline);
+}
+
+#[test]
+fn a_denied_build_of_cached_targets_is_still_refused() {
+    let mut pipeline = chain();
+    build(&mut pipeline, OnFailure::Stop);
+    let runs = pipeline.ports().strategy.ran().len();
+    let events = pipeline.ports().log.events.len();
+    let rows = pipeline.ports().cache.recorded().len();
+    pipeline.ports_mut().approver = FakeApprover::answering(Answer::Deny("no".to_owned()));
+
+    let error = refused(&mut pipeline);
+
+    assert!(matches!(error, Error::NotApproved { .. }), "{error:?}");
+    assert_eq!(pipeline.ports().strategy.ran().len(), runs);
+    assert_eq!(pipeline.ports().log.events.len(), events);
+    assert_eq!(pipeline.ports().cache.recorded().len(), rows);
+}
+
+#[test]
+fn an_approver_error_stops_the_build() {
+    let mut pipeline = chain();
+    pipeline.ports_mut().approver = FakeApprover::answering(Answer::Fail("no terminal".to_owned()));
+
+    let error = refused(&mut pipeline);
+
+    assert!(
+        matches!(
+            error,
+            Error::Adapter {
+                port: PortName::Approver,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    assert_nothing_ran(&pipeline);
 }

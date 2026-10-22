@@ -1,0 +1,50 @@
+# Built tools in the build, and host-program consent — survey
+
+Fetched 2026-10-21 from official docs and source. Quotes are verbatim. "not verified" = official text not found.
+
+## A. Running a program built earlier in the same build
+
+| System | How it works | Source + quote |
+|---|---|---|
+| Bazel `genrule` | Built tool goes in `tools`, built for the **exec** configuration; path via `$(location //x:y)`. Must not go in `srcs`. | https://bazel.build/reference/be/general — "they are built using the exec configuration, since these tools are executed as part of the build." / "Any `*_binary` or tool to be executed by `cmd` must appear in this list, not in `srcs`" / "The path of an individual `tools` target `//x:y` can be obtained using `$(location //x:y)`." |
+| Bazel `exec_tools` | Absent from current genrule docs (`tools` now does the exec build). Removal version not verified. | same page — not listed |
+| Bazel Starlark rules | Tool attributes declared `cfg = "exec"`; executable rules return the binary via `DefaultInfo(executable=…)`. | https://bazel.build/extending/rules — tools "should be built for an exec configuration" … "specify `cfg = "exec"` in the attribute"; "Executable rules define targets that can be invoked by a `bazel run` command." |
+| Buck2 `genrule` | `$(exe …)` macro runs an executable target; `attrs.exec_dep` transitions dep to exec platform; tool read as `[RunInfo]`. | https://buck2.build/docs/prelude/rules/core/genrule/ — "Marking an output as executable makes `buck run` and `$(exe ...)` macro expansion work with this target." https://buck2.build/docs/api/build/attrs/ — "The dependency will transition to the execution platform." (RunInfo pattern: https://buck2.build/docs/rule_authors/writing_toolchains/ — via search summary, quote not verified) |
+| Please `genrule` | `tools` arg; built tools via `$(exe //path:tool)`; non-label entries = system commands (host tools). `gentest` has `test_tools`. | https://please.build/lexicon.html — "Should be accessed via $(exe //path/to:tool) or similar." / "Entries that are not build labels are assumed to be system-level commands." |
+| Pants `adhoc_tool` | Runs any runnable target (incl. one built in the repo) for its outputs. | https://www.pantsbuild.org/stable/reference/targets/adhoc_tool — "Execute any runnable target for its side effects." `runnable`: "Address to a target that can be invoked by the `run` goal" |
+| Nix | Built tools are ordinary derivations in `nativeBuildInputs` (build-platform), put on `PATH`; `builder` may itself be another derivation's output. | https://nixos.org/manual/nixpkgs/stable/ — nativeBuildInputs: "programs and libraries used at build-time … tools used to build the new derivation"; "they are added to the `PATH`". https://nix.dev/manual/nix/latest/language/derivations.html — builder e.g. `"${pkgs.python}/bin/python"` |
+| CMake | `add_custom_command(COMMAND <exe-target>)` auto-replaced by built location. | https://cmake.org/cmake/help/latest/command/add_custom_command.html — "it will automatically be replaced by the location of the executable created at build time" |
+| Cargo | `build.rs` compiled then executed before the package; its own deps in `[build-dependencies]`. | https://doc.rust-lang.org/cargo/reference/build-scripts.html — "Cargo will compile that script and execute it just before building the package." |
+| Ninja / Make | Tool is just an input of the edge; order-only deps for generated headers. No special tool concept. | https://ninja-build.org/manual.html — order-only deps used "to generate a header file before starting a subsequent compilation step". Make: no official quote fetched (not verified). |
+
+Treatment of built vs host tool:
+- Bazel / Buck2 / Nix: built tool is a **graph dependency**, built for the exec/build platform, staged as a declared input (sandbox sees it). No allow-listing needed — it is a hash-tracked input.
+- Please explicitly splits: labels = built tools, bare names = "system-level commands".
+
+## B. Restricting host programs / asking for consent
+
+| System | Mechanism | Source + quote |
+|---|---|---|
+| Bazel | No host-program allow-list. `--incompatible_strict_action_env` (default true) pins `PATH`; sandbox restricts *inputs*, not host reads. Hermetic toolchains are convention. | https://bazel.build/reference/command-line-reference — "If true, Bazel uses an environment with a static value for PATH and does not inherit LD_LIBRARY_PATH." https://bazel.build/docs/sandboxing — "Sandboxing doesn't hide the host environment in any way. Processes can freely access all files on the file system." `--sandbox_block_path`: "For sandboxed actions, disallow access to this path." |
+| Buck2 | Per-target `enable_sandbox`; hermeticity a goal, enforced in practice by remote execution. No allow-list or prompt found. | https://buck2.build/docs/prelude/rules/core/genrule/ (via search summary; quote not verified) |
+| Please | `[build] path` sets the PATH actions see (de-facto allow-list by directory); `[sandbox]` Linux-only, off by default. | https://please.build/config.html — "The PATH variable that will be passed to the build processes." / sandbox "isolates them from network access, IPC and the repo-local filesystem." |
+| Nix | **Closest to a ceiling.** Sandbox hides host; only store deps + admin-set `sandbox-paths` visible. `allowed-impure-host-deps` = admin allow-list of prefixes derivations may request (Darwin). `trusted-users` gate who may change this. | https://nix.dev/manual/nix/latest/command-ref/conf-file.html — sandbox: "only see their dependencies in the Nix store … and the paths configured with the sandbox-paths option. This is useful to prevent undeclared dependencies on files in directories such as /usr/bin." / "allowed-impure-host-deps Which prefixes to allow derivations to ask for access to (primarily for Darwin)." / "Adding a user to trusted-users is essentially equivalent to giving that user root access" |
+| Nix flakes `nixConfig` | **Prompts the user** before applying a flake's config settings; can remember per (setting, value). | https://nix.dev/manual/nix/latest/command-ref/new-cli/nix3-flake.html — "only a small set of options is allowed to be set without confirmation so long as accept-flake-config is not enabled". Source https://github.com/NixOS/nix/blob/master/src/libflake/config.cc — prompts "do you want to allow configuration setting '%s' to be set to '%s' (y/N)?" then "do you want to permanently mark this value as %s (y/N)?", saved to `~/.local/share/nix/trusted-settings.json` keyed `name → value → bool`. |
+| Cargo | No trust model; build scripts run unrestricted. | build-scripts page has no security/sandbox statement (absence verified on that page). |
+| Gradle | No allow-list/prompt found; `providers.exec` only tracked as a config-cache input. | https://docs.gradle.org/current/userguide/configuration_cache.html — inputs include "built-in providers, like `providers.exec`" |
+| pnpm (package mgr, not build sys) | Dependency install scripts need approval; `pnpm approve-builds` writes allow-map to repo. | https://pnpm.io/cli/approve-builds — "Approve dependencies for running scripts during installation." Approved packages "added to the allowBuilds map in pnpm-workspace.yaml with a value of true." |
+| VS Code Workspace Trust | Restricted Mode blocks tasks/debug/extensions until folder trusted; remembered as a trusted-folders list (path, parent covers children). | https://code.visualstudio.com/docs/editing/workspaces/workspace-trust — "If you try to run or even enumerate tasks" → trust prompt; trusting a parent folder applies to subfolders. |
+| direnv | `direnv allow` once per `.envrc`; remembered by **sha256(abs path + "\n" + file content)** in `$XDG_DATA_HOME/direnv/allow`. Any edit → new hash → blocked again. `deny` keyed by path hash only. | https://direnv.net/man/direnv.1.html — "This is the security mechanism to avoid loading new files automatically." Source https://github.com/direnv/direnv/blob/master/internal/cmd/rc.go — `hasher.Write([]byte(path + "\n"))` then `io.Copy(hasher, fd)`; error "%s is blocked. Run `direnv allow` to approve its content". Also config `whitelist` exact/prefix paths bypass. |
+| mise | `mise trust` gates config parts that run code/change env (templates, env files, secrets tasks). Default: trust by **resolved path** (config root; worktrees inherit). Paranoid mode: trust bound to **file hash**, re-ask on every edit. | https://mise.jdx.dev/cli/trust.html — "Trust lets mise load the parts of a config file that can run code or change your environment." https://mise.jdx.dev/paranoid.html — "Trust is bound to content. `mise trust` stores a hash of the file, and any edit makes it untrusted again." State in `~/.local/state/mise` (https://mise.jdx.dev/directories.html, via search summary). |
+
+## Conclusions
+
+**A.**
+1. Running a tool built earlier in the same build is common and first-class: Bazel `tools`/`cfg="exec"`, Buck2 `exec_dep`+`$(exe)`, Please `$(exe)`, Pants `adhoc_tool`, Nix `nativeBuildInputs`, CMake exe-target substitution, Cargo `build.rs`.
+2. Built tool is a declared graph input, built for the exec/build platform, staged into the sandbox and hashed into the action key.
+3. None allow-list it; being in the graph *is* the authorization. Host tools are the separate, less-controlled category (Please names them "system-level commands").
+
+**B.**
+1. No mainstream build system (Bazel, Buck2, Please, Pants, Cargo, Gradle) allow-lists host programs per workspace or prompts per build; controls are PATH pinning (Bazel strict env, Please `[build] path`) and sandboxes.
+2. Nix comes closest: sandbox hides `/usr/bin`, admin-only `sandbox-paths` / `allowed-impure-host-deps`; and flake `nixConfig` prompts y/N, remembering per (setting, value) in `~/.local/share/nix/trusted-settings.json`.
+3. direnv remembers sha256(path + content) and re-asks on any edit; mise remembers the path by default (edit = no re-ask), hash in paranoid mode (edit = re-ask); VS Code and pnpm remember a path list / repo allow-map.

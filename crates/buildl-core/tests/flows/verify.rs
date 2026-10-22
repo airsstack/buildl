@@ -16,8 +16,9 @@ use buildl_core::{
 };
 
 use crate::common::{
-    Content, Ends, FakeContent, FakePorts, FakeSource, Loss, Script, Touch, dir, ending, file,
-    label, ports, program, root_only, script, target, target_with, tree, workspace,
+    Answer, Content, Ends, FakeApprover, FakeContent, FakePorts, FakeSource, Loss, Script, Touch,
+    dir, ending, file, label, ports, program, root_only, script, target, target_with, tree,
+    workspace,
 };
 
 fn entry() -> EntryName {
@@ -634,4 +635,29 @@ fn pipeline_verify_plans_like_build() {
     .unwrap();
     assert_eq!(checked_labels(&named), ["//:check"]);
     assert_eq!(check(&named, "//:check"), &Check::Verified);
+}
+
+#[test]
+fn a_verify_asks_the_approver_once() {
+    let mut pipeline = root_only(vec![target("app", &[])]);
+    build(&mut pipeline);
+    let asked_by_build = pipeline.ports().approver.asked.len();
+
+    verify(&mut pipeline);
+
+    assert_eq!(pipeline.ports().approver.asked.len(), asked_by_build + 1);
+}
+
+#[test]
+fn a_denied_verify_reruns_nothing() {
+    let mut pipeline = root_only(vec![target("app", &[])]);
+    build(&mut pipeline);
+    let runs = pipeline.ports().strategy.runs(&label("//:app"));
+    pipeline.ports_mut().approver = FakeApprover::answering(Answer::Deny("no".to_owned()));
+
+    let error = verify_scope(&mut pipeline, &Scope::Workspace, Sample::All).unwrap_err();
+
+    assert!(matches!(error, Error::NotApproved { .. }), "{error:?}");
+    assert_eq!(pipeline.ports().approver.asked.len(), 1);
+    assert_eq!(pipeline.ports().strategy.runs(&label("//:app")), runs);
 }

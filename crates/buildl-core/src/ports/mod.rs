@@ -23,6 +23,7 @@
 //! - [`Dispatcher`] — having several tasks worked on at once.
 //! - [`GraphRecord`] — the graph a build resolved, kept where a later reader finds it.
 //! - [`Reporter`] — showing a person what a build is doing.
+//! - [`Approver`] — saying whether a build may do what it wants.
 //! - [`Ports`] — the bundle naming one implementation of each port, so a pipeline takes one type
 //!   parameter instead of one per port.
 //! - [`PortSet`] — one instance of each port a bundle names, so a pipeline is built from one
@@ -34,6 +35,7 @@
 //! This file holds only module declarations and re-exports, so it carries no logic to unit-test.
 
 pub mod action_cache;
+pub mod approver;
 pub mod bundle;
 pub mod clock;
 pub mod content_store;
@@ -53,6 +55,7 @@ pub mod sweep;
 pub mod tool_resolver;
 
 pub use action_cache::ActionCache;
+pub use approver::Approver;
 pub use bundle::Ports;
 pub use clock::Clock;
 pub use content_store::ContentStore;

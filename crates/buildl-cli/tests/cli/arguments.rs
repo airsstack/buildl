@@ -129,6 +129,7 @@ fn help_names_every_command_and_flag() {
             "  build   Build targets and what they need\n",
             "  test    Run test targets and what they need\n",
             "  verify  Re-run cached actions and name those whose outputs differ\n",
+            "  doctor  Print the workspace's ceiling, approver, run settings and what its build wants\n",
             "  log     Show what a target printed when it last ran\n",
             "  clean   Remove the output directory\n",
             "  gc      Drop rows of targets no longer declared and remove what nothing needs\n",
@@ -150,6 +151,17 @@ fn each_command_has_its_help() {
             [
                 "Evaluate every build file twice and run nothing\n\n",
                 "Usage: buildl check [OPTIONS]\n\n",
+                "Options:\n",
+                COLOR,
+                HELP_AND_VERSION,
+            ]
+            .concat(),
+        ),
+        (
+            "doctor",
+            [
+                "Print the workspace's ceiling, approver, run settings and what its build wants\n\n",
+                "Usage: buildl doctor [OPTIONS]\n\n",
                 "Options:\n",
                 COLOR,
                 HELP_AND_VERSION,
@@ -369,6 +381,7 @@ fn no_command_prints_the_short_help_on_stderr() {
             "  build   Build targets and what they need\n",
             "  test    Run test targets and what they need\n",
             "  verify  Re-run cached actions and name those whose outputs differ\n",
+            "  doctor  Print the workspace's ceiling, approver, run settings and what its build wants\n",
             "  log     Show what a target printed when it last ran\n",
             "  clean   Remove the output directory\n",
             "  gc      Drop rows of targets no longer declared and remove what nothing needs\n",

@@ -17,9 +17,9 @@ use std::io::{self, ErrorKind};
 use std::os::unix::fs::{DirBuilderExt, MetadataExt};
 use std::path::{Path, PathBuf};
 
-use buildl_core::{Digest, Label};
+use buildl_core::Label;
 
-use crate::state::clear_path;
+use crate::state::{clear_path, name_of};
 
 /// The user a directory belongs to.
 ///
@@ -35,20 +35,8 @@ impl Owner {
     }
 }
 
-/// How many hexadecimal digits of a digest name a directory.
-const NAME_DIGITS: usize = 32;
-
 /// The mode the scratch directory has: the owner alone may enter it.
 const PRIVATE: u32 = 0o700;
-
-/// The name `bytes` give a directory: the first digits of their digest.
-fn name_of(bytes: &[u8]) -> String {
-    Digest::of(bytes)
-        .to_string()
-        .chars()
-        .take(NAME_DIGITS)
-        .collect()
-}
 
 /// A refusal of the scratch directory for `reason`. It names no path, so a log that holds it
 /// does not say where the directory is.

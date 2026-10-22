@@ -5,31 +5,40 @@
 //! wants before any of it runs. A program written out, or named through a build setting, was
 //! already held to the ceiling when the build was planned. One first named by `$in`, `$out` or
 //! `$deps` is known only here, and so is a command that names no program at all. Every expanded
-//! command goes through the one check, whichever way its program was named.
+//! command goes through the one check, whichever way its program was named. A program one of
+//! the target's dependencies built needs no ceiling entry: depending on that target is the
+//! permission.
 //!
 //! Responsibilities: [`admit`].
 //!
-//! Non-responsibilities: expanding a command; and what a ceiling allows, which is the
-//! manifest's to say.
+//! Non-responsibilities: expanding a command; deciding which programs are built, which is
+//! Grants'; and what a ceiling allows, which is the manifest's to say.
 
 use crate::error::{DeclarationSite, Error, Result};
-use crate::types::{Argument, Ceiling, Command, Node, Program, Want};
+use crate::grants::built::built;
+use crate::types::{Argument, Ceiling, Command, Node, OutputPath, Program, Want};
 
 /// The command `node` runs, from the texts its declared command `expanded` to.
 ///
 /// The first argument is the program the action runs. Every other argument is kept as it is,
-/// an empty one included.
+/// an empty one included. `deps` holds the output paths of the targets `node` depends on: a
+/// program that is one of them, or lies below one, is not held to `ceiling`.
 ///
 /// # Errors
 ///
 /// Returns [`Error::NoProgram`] when `expanded` holds no argument, or when its first argument
 /// is empty or still holds a `$`, with `node` as the site. Otherwise returns
-/// [`Error::Refused`], with the program, `node` as the site and `ceiling`, when `ceiling` does
-/// not allow the program to run.
+/// [`Error::Refused`], with the program, `node` as the site and `ceiling`, when the program is
+/// not built from `deps` and `ceiling` does not allow it to run.
 ///
 /// Returns [`Error::InvalidName`] for a text no argument can hold. Expansion puts together
 /// texts that were each validated when they were declared, so it yields none.
-pub(crate) fn admit(expanded: Vec<String>, node: &Node, ceiling: &Ceiling) -> Result<Command> {
+pub(crate) fn admit(
+    expanded: Vec<String>,
+    node: &Node,
+    ceiling: &Ceiling,
+    deps: &[OutputPath],
+) -> Result<Command> {
     let arguments = expanded
         .into_iter()
         .map(Argument::parse)
@@ -39,7 +48,7 @@ pub(crate) fn admit(expanded: Vec<String>, node: &Node, ceiling: &Ceiling) -> Re
             site: Box::new(DeclarationSite::from(node)),
         });
     };
-    if !ceiling.run.contains(&program) {
+    if !built(&program, deps) && !ceiling.run.contains(&program) {
         return Err(Error::Refused {
             want: Want::Program(program),
             site: Some(Box::new(DeclarationSite::from(node))),
@@ -60,7 +69,7 @@ mod tests {
 
     use super::admit;
     use crate::error::{Error, NameKind};
-    use crate::execute::fixtures::{command, node, program};
+    use crate::execute::fixtures::{command, node, output_path, program};
     use crate::types::{Ceiling, Want};
 
     /// A ceiling allowing `run` and nothing else.
@@ -83,7 +92,7 @@ mod tests {
     /// Asserts that `expanded`, as the command of `//:app`, names no program, whatever may run.
     fn names_no_program(expanded: &[&str]) {
         let app = node("//:app", |_| {});
-        let error = admit(texts(expanded), &app, &ceiling(&["cc", "out/app"])).unwrap_err();
+        let error = admit(texts(expanded), &app, &ceiling(&["cc", "out/app"]), &[]).unwrap_err();
         assert_eq!(
             error.to_string(),
             "build.lua: //:app: the command names no program once expanded"
@@ -98,7 +107,13 @@ mod tests {
     fn a_command_whose_program_may_run_is_admitted_as_it_is() {
         let text = node("//lib:text", |_| {});
         assert_eq!(
-            admit(texts(&["cc", "-c", "lib/a.c"]), &text, &ceiling(&["cc"])).unwrap(),
+            admit(
+                texts(&["cc", "-c", "lib/a.c"]),
+                &text,
+                &ceiling(&["cc"]),
+                &[]
+            )
+            .unwrap(),
             command(&["cc", "-c", "lib/a.c"])
         );
     }
@@ -107,23 +122,40 @@ mod tests {
     fn only_the_first_argument_has_to_name_a_program() {
         let app = node("//:app", |_| {});
         assert_eq!(
-            admit(texts(&["cc", "", "$input"]), &app, &ceiling(&["cc"])).unwrap(),
+            admit(texts(&["cc", "", "$input"]), &app, &ceiling(&["cc"]), &[]).unwrap(),
             command(&["cc", "", "$input"])
         );
     }
 
     #[test]
-    fn a_program_first_named_by_expansion_is_held_to_the_ceiling() {
+    fn a_built_program_outside_the_ceiling_is_admitted() {
         let test = node("//:app_test", |_| {});
-        let expanded = texts(&["out/app", "--filter=Login"]);
 
         assert_eq!(
-            admit(expanded.clone(), &test, &ceiling(&["cc", "out/app"])).unwrap(),
+            admit(
+                texts(&["out/app", "--filter=Login"]),
+                &test,
+                &ceiling(&["cc"]),
+                &[output_path("//:app", "app")]
+            )
+            .unwrap(),
+            command(&["out/app", "--filter=Login"])
+        );
+    }
+
+    #[test]
+    fn a_program_outside_the_ceiling_that_is_not_built_is_refused() {
+        let test = node("//:app_test", |_| {});
+        let expanded = texts(&["out/app", "--filter=Login"]);
+        let deps = [output_path("//:lib", "lib")];
+
+        assert_eq!(
+            admit(expanded.clone(), &test, &ceiling(&["cc", "out/app"]), &deps).unwrap(),
             command(&["out/app", "--filter=Login"])
         );
 
         let allowed = ceiling(&["cc"]);
-        let error = admit(expanded, &test, &allowed).unwrap_err();
+        let error = admit(expanded, &test, &allowed, &deps).unwrap_err();
         assert_eq!(
             error.to_string(),
             "build.lua: //:app_test: program out/app is outside the ceiling (proc.run allows: cc)"
@@ -163,7 +195,7 @@ mod tests {
     fn a_command_naming_no_program_is_not_asked_of_the_ceiling() {
         let app = node("//:app", |_| {});
         assert!(matches!(
-            admit(Vec::new(), &app, &ceiling(&[])).unwrap_err(),
+            admit(Vec::new(), &app, &ceiling(&[]), &[]).unwrap_err(),
             Error::NoProgram { .. }
         ));
     }
@@ -171,7 +203,7 @@ mod tests {
     #[test]
     fn text_no_argument_can_hold_is_refused_as_an_invalid_argument() {
         let app = node("//:app", |_| {});
-        match admit(texts(&["cc", "a\0b"]), &app, &ceiling(&["cc"])).unwrap_err() {
+        match admit(texts(&["cc", "a\0b"]), &app, &ceiling(&["cc"]), &[]).unwrap_err() {
             Error::InvalidName { kind, .. } => assert_eq!(kind, NameKind::Argument),
             other => unreachable!("expected InvalidName, got {other:?}"),
         }

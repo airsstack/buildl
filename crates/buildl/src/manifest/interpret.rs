@@ -17,15 +17,15 @@ use core::ops::Range;
 use std::collections::BTreeSet;
 
 use buildl_core::{
-    Ceiling, Diagnostic, Directory, EntryName, EnvName, Error, Execution, Isolation, PortName,
-    Program, Result, Timeout, Workers, Workspace,
+    ApproverMode, Ceiling, Diagnostic, Directory, EntryName, EnvName, Error, Execution, Isolation,
+    PortName, Program, Result, Timeout, Workers, Workspace,
 };
 use toml::Spanned;
 
 use crate::manifest::memory::memory_bytes;
 use crate::manifest::root::MANIFEST_FILE;
 use crate::manifest::schema::{
-    CeilingTable, DeclarationTable, ExecutionTable, Raw, WorkspaceTable,
+    ApproverTable, CeilingTable, DeclarationTable, ExecutionTable, Raw, WorkspaceTable,
 };
 use crate::manifest::toml_manifest::DeclarationSettings;
 
@@ -53,7 +53,7 @@ pub(crate) fn entry(text: &str, table: &WorkspaceTable) -> Result<EntryName> {
 }
 
 /// The workspace the manifest describes: where its outputs and buildl's own files go, its
-/// ceiling, and how it wants its actions run.
+/// ceiling, how it wants its actions run, and which approver answers for what a build wants.
 ///
 /// Nothing is granted that the manifest does not write: neither the output directory nor the
 /// state directory is added to the ceiling.
@@ -65,6 +65,7 @@ pub(crate) fn workspace(text: &str, raw: &Raw) -> Result<Workspace> {
         state,
         ceiling: ceiling(text, &raw.ceiling)?,
         execution: execution(text, &raw.execution)?,
+        approver: approver(text, &raw.approver)?,
     })
 }
 
@@ -138,6 +139,16 @@ fn execution(text: &str, table: &ExecutionTable) -> Result<Execution> {
         })?
         .unwrap_or_default(),
     })
+}
+
+/// The `[approver]` table: the mode `approver.default` names, or `manifest` when it is left out.
+fn approver(text: &str, table: &ApproverTable) -> Result<ApproverMode> {
+    Ok(
+        optional(text, "approver.default", table.default.as_ref(), |raw| {
+            ApproverMode::parse(raw)
+        })?
+        .unwrap_or_default(),
+    )
 }
 
 /// A ceiling of the declaration phase: a whole number, at least 1.

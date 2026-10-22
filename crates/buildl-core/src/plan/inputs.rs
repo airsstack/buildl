@@ -161,7 +161,7 @@ mod tests {
 
     use super::{Read, Split, hashed, reusable, split};
     use crate::error::{Error, PortName};
-    use crate::plan::fixtures::path;
+    use crate::grants::fixtures::path;
     use crate::types::{Digest, FileStat, StatEntry, Timestamp};
 
     fn stat(modified: u64, size: u64) -> FileStat {

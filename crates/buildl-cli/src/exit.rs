@@ -29,7 +29,7 @@ pub(crate) enum Exit {
     Usage = 2,
     /// The builder or the machine is at fault; running again may help.
     Infrastructure = 3,
-    /// The build wants more than the workspace's ceiling allows.
+    /// The build wants more than the workspace allows or than was approved.
     Refused = 4,
     /// A build file or `buildl.toml` is at fault.
     Definition = 5,
@@ -107,7 +107,7 @@ impl Exit {
                 PortName::Manifest => Self::Definition,
                 _ => Self::Infrastructure,
             },
-            Error::Refused { .. } => Self::Refused,
+            Error::Refused { .. } | Error::NotApproved { .. } => Self::Refused,
             Error::Evaluation { .. }
             | Error::MissingBuildFile { .. }
             | Error::InvalidDeclaration { .. }
@@ -167,10 +167,10 @@ mod tests {
     use buildl::buildl_core::json::canonical;
     use buildl::buildl_core::{
         ActionFound, ActionOutcome, Ceiling, Check, DeclarationField, DeclarationOrder,
-        DeclarationSite, DeclaredKind, Diagnostic, Directory, Error, EvaluationFailure, FileChange,
-        InfraKind, InputKind, Label, OutcomeClass, OutputDifference, OutputName, OutputPath,
-        OutputRefusal, PortName, Program, Provenance, SettingName, SourcePath, TargetRole,
-        TreeFault, Verification, Want,
+        DeclarationSite, DeclaredKind, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
+        Error, EvaluationFailure, FileChange, InfraKind, InputKind, Label, OutcomeClass,
+        OutputDifference, OutputName, OutputPath, OutputRefusal, PortName, Program, Provenance,
+        SettingName, SourcePath, TargetRole, TreeFault, Verification, Want, WantedSet,
     };
 
     use super::Exit;
@@ -251,13 +251,29 @@ mod tests {
         ]
     }
 
-    /// A value of the one variant that is a want beyond the ceiling.
+    /// A value of each variant that is a want the build may not have.
     fn refusals() -> Vec<Error> {
-        vec![Error::Refused {
-            want: Want::Program(Program::parse("cc").unwrap()),
-            site: Some(Box::new(site())),
-            ceiling: Box::new(nothing()),
-        }]
+        vec![
+            Error::Refused {
+                want: Want::Program(Program::parse("cc").unwrap()),
+                site: Some(Box::new(site())),
+                ceiling: Box::new(nothing()),
+            },
+            not_approved(),
+        ]
+    }
+
+    /// The approver's refusal of a build that wants to run `cc`.
+    fn not_approved() -> Error {
+        Error::NotApproved {
+            unapproved: Box::new(WantedSet {
+                programs: BTreeSet::from([Program::parse("cc").unwrap()]),
+                env: BTreeSet::new(),
+                write: BTreeSet::new(),
+                network: BTreeSet::new(),
+            }),
+            reason: DenialReason::new("not approved"),
+        }
     }
 
     /// A value of each variant that is a mistake of a build file found while loading it.
@@ -350,6 +366,11 @@ mod tests {
                 second: Box::new(site()),
             },
             Error::NoProgram {
+                site: Box::new(site()),
+            },
+            Error::PinnedEnv {
+                name: EnvName::parse("TZ").unwrap(),
+                value: EnvValue::parse("UTC").unwrap(),
                 site: Box::new(site()),
             },
         ]
@@ -501,6 +522,12 @@ mod tests {
     }
 
     #[test]
+    fn not_approved_exits_four() {
+        assert_eq!(Exit::of_error(&not_approved()), Exit::Refused);
+        assert_eq!(Exit::Refused as u8, 4);
+    }
+
+    #[test]
     fn missing_output_is_an_infrastructure_failure() {
         let error = Error::MissingOutput {
             label: label("//:app"),
@@ -525,12 +552,12 @@ mod tests {
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [5, 3, 1, 16, 3, 7]);
+        assert_eq!(counts, [5, 3, 2, 17, 3, 7]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 35, "a variant is listed twice");
+        assert_eq!(variants.len(), 37, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");
@@ -550,6 +577,7 @@ mod tests {
             PortName::EventLog,
             PortName::ExecStrategy,
             PortName::Dispatcher,
+            PortName::Approver,
             PortName::GraphRecord,
             PortName::RunHistory,
         ] {

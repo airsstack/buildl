@@ -9,6 +9,7 @@
 //! - [`StateLayout`] — the path of each file of a state directory.
 //! - [`StateLock`] and [`LockError`] — one process using a state directory at a time.
 //! - [`Scratch`] and [`Owner`] — the directory actions run in, outside the workspace.
+//! - [`name_of`] — the name a workspace root or a label gives a directory or file of its own.
 //! - [`write_whole`] and [`Access`] — a file written so that a reader finds it whole.
 //! - `clear_path` and `clear_found` — removing whatever stands at a path.
 //! - [`Cleaned`] and `clear_out` — emptying the output directory.
@@ -23,6 +24,7 @@ mod clear;
 mod clear_out;
 mod layout;
 mod lock;
+mod name;
 mod scratch;
 mod write;
 
@@ -31,5 +33,6 @@ pub use clear_out::Cleaned;
 pub(crate) use clear_out::clear_out;
 pub use layout::StateLayout;
 pub use lock::{LockError, StateLock};
+pub use name::name_of;
 pub use scratch::{Owner, Scratch};
 pub use write::{Access, write_whole};

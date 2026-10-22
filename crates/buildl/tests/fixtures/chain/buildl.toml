@@ -5,7 +5,7 @@ out    = "out"
 config = 1
 
 [ceiling]
-proc.run = ["cp", "sort", "out/greet"]
+proc.run = ["cp", "sort"]
 env.read = ["BUILDL_FIXTURE_FLAVOR"]
 fs.read  = ["."]
 fs.write = ["out", ".buildl"]

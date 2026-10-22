@@ -1,10 +1,10 @@
 //! The assembly: from a target graph, and what the ports report, to one plan.
 //!
 //! Its own file because it is where this phase's steps meet and where their order is fixed:
-//! read the manifest, check the overrides, check every want against the ceiling, refuse a
-//! variable the strategy pins, and only then ask the machine anything — find the tools, digest
-//! the inputs, read the environment — before keying every target and comparing each key with the
-//! one its last build recorded.
+//! read the manifest, check the overrides, place every output, check every want against the
+//! ceiling, refuse a variable the strategy pins, and only then ask the machine anything — find
+//! the tools, digest the inputs, read the environment — before keying every target and comparing
+//! each key with the one its last build recorded.
 //!
 //! Responsibilities: [`plan`].
 //!
@@ -16,13 +16,15 @@
 use std::collections::BTreeMap;
 
 use crate::error::Result;
-use crate::plan::authority::{check, sites};
+use crate::grants::wanted::sites;
+use crate::placement::layout::Layout;
+use crate::plan::authority::check;
 use crate::plan::components::{Gathered, environment, own};
 use crate::plan::inputs::digests;
 use crate::plan::order::topological;
 use crate::plan::pinned::pinned;
 use crate::plan::settings::effective;
-use crate::plan::tools::fingerprints;
+use crate::plan::tools::{Named, fingerprints, naming};
 use crate::plan::verdict;
 use crate::ports::{ActionCache, Host, Manifest, PortSet, Ports};
 use crate::types::{Plan, Rerun, SettingName, SettingValue, TargetGraph};
@@ -43,9 +45,13 @@ use crate::types::{Plan, Rerun, SettingName, SettingValue, TargetGraph};
 ///
 /// The tool a target runs is the program its command's first argument names once each `$opt:`
 /// reference in it is replaced by the setting's value for this run. So a program named through
-/// a setting is held to the ceiling, looked up and keyed exactly as one written out. A first
-/// argument that still holds a `$` after that, as one running what the build produced does,
-/// names no tool here.
+/// a setting is looked up and keyed exactly as one written out. A first argument that still
+/// holds a `$` after that, as one running what the build produced does, names no tool here.
+///
+/// Every program a command runs is held to the ceiling, whichever way it is named: written out,
+/// through a setting, or through `$in` or `$out`. A program one of the target's dependencies
+/// builds, written out, named through a setting or taken from `$deps`, is held to nothing, and
+/// is neither looked up nor part of the key.
 ///
 /// Nothing runs. The one thing a plan writes is the stat cache, and only when it had to hash a
 /// file.
@@ -57,14 +63,17 @@ use crate::types::{Plan, Rerun, SettingName, SettingValue, TargetGraph};
 /// 1. whatever the manifest port returns;
 /// 2. [`Error::UnknownOverride`](crate::Error::UnknownOverride) for an override naming no
 ///    declared setting;
-/// 3. [`Error::Refused`](crate::Error::Refused) for a want outside the workspace's ceiling;
-///    nothing is asked of any other port before this check has passed;
-/// 4. [`Error::PinnedEnv`](crate::Error::PinnedEnv) for a target that declares a variable the
+/// 3. [`Error::OutputConflict`](crate::Error::OutputConflict) for two outputs of the planned
+///    graph that would be written to one place;
+/// 4. [`Error::Refused`](crate::Error::Refused) for a want outside the workspace's ceiling,
+///    a program named through `$in`, `$out` or `$deps` included; nothing is asked of any other
+///    port before this check has passed;
+/// 5. [`Error::PinnedEnv`](crate::Error::PinnedEnv) for a target that declares a variable the
 ///    workspace's strategy pins;
-/// 5. [`Error::MissingTool`](crate::Error::MissingTool) for a program that cannot be found;
-/// 6. [`Error::MissingInput`](crate::Error::MissingInput) for an input that does not exist, and
+/// 6. [`Error::MissingTool`](crate::Error::MissingTool) for a program that cannot be found;
+/// 7. [`Error::MissingInput`](crate::Error::MissingInput) for an input that does not exist, and
 ///    [`Error::InputNotAFile`](crate::Error::InputNotAFile) for one that is not a regular file;
-/// 7. whatever the host port returns for an environment variable.
+/// 8. whatever the host port returns for an environment variable.
 ///
 /// A port's own failure is returned from the step that met it.
 pub fn plan<P: Ports>(
@@ -75,17 +84,23 @@ pub fn plan<P: Ports>(
 ) -> Result<Plan> {
     let workspace = ports.manifest.workspace()?;
     let settings = effective(graph.settings(), overrides)?;
-    let sites = sites(graph, &settings);
+    let layout = Layout::of(graph, &workspace.out)?;
+    let sites = sites(graph, &settings, &layout);
     let wanted = check(graph, &sites, &workspace)?;
     pinned(&sites, &workspace)?;
 
-    let fingerprints = fingerprints(&sites.programs, &ports.tools)?;
+    let Named {
+        programs,
+        built_runners: built,
+    } = naming(graph, &settings, &layout);
+    let fingerprints = fingerprints(&programs, &ports.tools)?;
     let digests = digests(&sites.inputs, &ports.digester, &mut ports.stat_cache)?;
     let platform = ports.host.platform();
     let env = environment(sites.env.keys().copied(), &ports.host)?;
     let gathered = Gathered {
         settings,
         fingerprints,
+        built,
         digests,
         env,
         platform,

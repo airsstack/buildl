@@ -12,7 +12,7 @@
 //! [`Isolation::pinned`]: crate::types::Isolation::pinned
 
 use crate::error::{DeclarationSite, Error, Result};
-use crate::plan::authority::Sites;
+use crate::grants::wanted::Sites;
 use crate::types::Workspace;
 
 /// Refuses the first variable `workspace`'s strategy pins that a target declares.
@@ -47,9 +47,10 @@ mod tests {
 
     use super::pinned;
     use crate::error::{Error, Result};
-    use crate::plan::authority::sites;
-    use crate::plan::fixtures::{dir, env_name, graph, node};
-    use crate::types::{Ceiling, Execution, Isolation, TargetGraph, Workspace};
+    use crate::grants::fixtures::{dir, env_name, graph, node};
+    use crate::grants::wanted::sites;
+    use crate::placement::layout::Layout;
+    use crate::types::{ApproverMode, Ceiling, Execution, Isolation, TargetGraph, Workspace};
 
     fn workspace(strategy: Isolation) -> Workspace {
         Workspace {
@@ -65,6 +66,7 @@ mod tests {
                 strategy,
                 ..Execution::default()
             },
+            approver: ApproverMode::Manifest,
         }
     }
 
@@ -83,7 +85,11 @@ mod tests {
     }
 
     fn pinned_in(graph: &TargetGraph, strategy: Isolation) -> Result<()> {
-        pinned(&sites(graph, &BTreeMap::new()), &workspace(strategy))
+        let layout = Layout::of(graph, &dir("out")).unwrap();
+        pinned(
+            &sites(graph, &BTreeMap::new(), &layout),
+            &workspace(strategy),
+        )
     }
 
     #[test]

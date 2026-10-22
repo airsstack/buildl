@@ -1,8 +1,9 @@
 //! One run of the binary: a command line in, bytes on two streams and a status out.
 //!
 //! Its own file because this is the whole flow of a command, written over values: the
-//! arguments, the directory the command was started in, what is known of the terminal, and the
-//! two streams are all handed in. A test therefore drives a command without a process.
+//! arguments, the directory the command was started in, what is known of the terminal, the
+//! two streams and the console the approver asks on are all handed in. A test therefore drives
+//! a command without a process.
 //!
 //! Standard output carries what the command was asked for and nothing else; standard error
 //! carries everything about how the command went and, for `log`, the stored standard error of
@@ -18,13 +19,14 @@ use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use buildl::Workspace;
+use buildl::approver::Console;
 use buildl::buildl_core::json::canonical;
 use buildl::buildl_core::{Error, Scope};
 use buildl::report::{
     Mode, Paint, Report, TerminalReporter, check_line, clean_line, damage, error_text, gc_line,
     graph_dot, header, plan_text, query_text, verify_text,
 };
+use buildl::{RunOptions, Workspace};
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 
@@ -32,6 +34,7 @@ use crate::cli::{
     BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, QueryArgs, Streams, TestArgs,
     VerifyArgs, overrides,
 };
+use crate::doctor_text::doctor_text;
 use crate::exit::Exit;
 use crate::terminal::Terminal;
 
@@ -70,18 +73,22 @@ impl From<io::Error> for Stop {
 /// `start` is the directory the command was started in, as the process read it: the workspace
 /// is the nearest one at or above it, and a target named without its directory is read against
 /// it. `terminal` is what is known of where standard error goes. What the command was asked
-/// for is written to `stdout`, and everything about how it went to `stderr`.
-pub(crate) fn run<A, O, E>(
+/// for is written to `stdout`, and everything about how it went to `stderr`. `console` is
+/// where a workspace whose approver is `interactive` asks about what a build, a test run or a
+/// verify wants.
+pub(crate) fn run<A, O, E, C>(
     args: A,
     start: io::Result<PathBuf>,
     terminal: &Terminal,
     stdout: &mut O,
     stderr: &mut E,
+    console: &mut C,
 ) -> Exit
 where
     A: IntoIterator<Item: Into<OsString> + Clone>,
     O: Write,
     E: Write,
+    C: Console,
 {
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
@@ -104,9 +111,10 @@ where
         Command::Graph(args) => graph(&start, &args, stdout),
         Command::Query(args) => query(&start, &args, stdout),
         Command::Plan(args) => plan(&start, args, stdout),
-        Command::Build(args) => build(&start, args, terminal.mode(), paint, stderr),
-        Command::Test(args) => test(&start, args, terminal.mode(), paint, stderr),
-        Command::Verify(args) => verify(&start, args, paint, stderr),
+        Command::Build(args) => build(&start, args, terminal.mode(), paint, stderr, console),
+        Command::Test(args) => test(&start, args, terminal.mode(), paint, stderr, console),
+        Command::Verify(args) => verify(&start, args, paint, stderr, console),
+        Command::Doctor => doctor(&start, stdout),
         Command::Log(args) => log(&start, &args, stdout, stderr),
         Command::Clean => clean(&start, stderr),
         Command::Gc => gc(&start, stderr),
@@ -236,6 +244,14 @@ fn query<O: Write>(start: &Path, args: &QueryArgs, stdout: &mut O) -> Result<Exi
     Ok(Exit::Success)
 }
 
+/// `doctor`: writes to `stdout` what the workspace allows and what its build wants. Wants
+/// outside the ceiling or not approved are reported, and the command succeeded.
+fn doctor<O: Write>(start: &Path, stdout: &mut O) -> Result<Exit, Stop> {
+    let doctor = Workspace::open(start)?.doctor()?;
+    product(stdout, doctor_text(&doctor).as_bytes())?;
+    Ok(Exit::Success)
+}
+
 /// `plan`: writes to `stdout` what a build would run and why, as lines for a person, or as
 /// canonical JSON and a newline. Whatever would run, the command succeeded.
 fn plan<O: Write>(start: &Path, args: PlanArgs, stdout: &mut O) -> Result<Exit, Stop> {
@@ -256,19 +272,26 @@ fn plan<O: Write>(start: &Path, args: PlanArgs, stdout: &mut O) -> Result<Exit, 
 
 /// `build`: builds, showing on `stderr` how it goes, and returns the status of the most severe
 /// way a target ended.
-fn build<E: Write>(
+fn build<E: Write, C: Console>(
     start: &Path,
     args: BuildArgs,
     mode: Mode,
     paint: Paint,
     stderr: &mut E,
+    console: &mut C,
 ) -> Result<Exit, Stop> {
     let (on_failure, live) = (args.on_failure(), args.live());
     let settings = overrides(args.selection.overrides)?;
     let workspace = Workspace::open(start)?;
     let scope = scope(&workspace, &args.selection.targets)?;
     let mut reporter = TerminalReporter::new(&mut *stderr, mode, paint, Report::Build);
-    let built = workspace.build(&scope, &settings, on_failure, live, &mut reporter);
+    let built = workspace.build(
+        &scope,
+        &settings,
+        RunOptions::new(on_failure, live),
+        &mut reporter,
+        console,
+    );
     if built.is_err() {
         // The build ended before its summary: whatever is said next starts on a row of its own.
         reporter.close();
@@ -279,12 +302,13 @@ fn build<E: Write>(
 /// `test`: builds what the selected tests need and runs them, showing on `stderr` how it goes
 /// and ending with a line that counts the tests, and returns the status of the most severe way a
 /// target ended.
-fn test<E: Write>(
+fn test<E: Write, C: Console>(
     start: &Path,
     args: TestArgs,
     mode: Mode,
     paint: Paint,
     stderr: &mut E,
+    console: &mut C,
 ) -> Result<Exit, Stop> {
     let (on_failure, live, rerun) = (args.on_failure(), args.live(), args.rerun());
     let report = Report::Test {
@@ -295,7 +319,14 @@ fn test<E: Write>(
     let workspace = Workspace::open(start)?;
     let scope = scope(&workspace, &args.selection.targets)?;
     let mut reporter = TerminalReporter::new(&mut *stderr, mode, paint, report);
-    let tested = workspace.test(&scope, &settings, on_failure, live, rerun, &mut reporter);
+    let tested = workspace.test(
+        &scope,
+        &settings,
+        RunOptions::new(on_failure, live),
+        rerun,
+        &mut reporter,
+        console,
+    );
     if tested.is_err() {
         // The run ended before its summary: whatever is said next starts on a row of its own.
         reporter.close();
@@ -306,17 +337,18 @@ fn test<E: Write>(
 /// `verify`: re-runs the cached actions of the selected targets in the input sandbox and says on
 /// `stderr` which reproduced their cached outputs and which did not, and returns the status of
 /// the most severe way a target ended. Nothing is recorded.
-fn verify<E: Write>(
+fn verify<E: Write, C: Console>(
     start: &Path,
     args: VerifyArgs,
     paint: Paint,
     stderr: &mut E,
+    console: &mut C,
 ) -> Result<Exit, Stop> {
     let sample = args.sample();
     let settings = overrides(args.overrides)?;
     let workspace = Workspace::open(start)?;
     let scope = scope(&workspace, &args.targets)?;
-    let verification = workspace.verify(&scope, &settings, sample)?;
+    let verification = workspace.verify(&scope, &settings, sample, console)?;
     let _ = stderr.write_all(verify_text(&verification, paint).as_bytes());
     Ok(Exit::of_verification(&verification))
 }
@@ -370,6 +402,7 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use buildl::Workspace;
+    use buildl::approver::NoTerminal;
     use buildl::buildl_core::json::canonical;
     use buildl::buildl_core::{Error, Scope};
     use clap::Parser;
@@ -459,6 +492,7 @@ mod tests {
             terminal,
             &mut stdout,
             &mut stderr,
+            &mut NoTerminal,
         );
         Ran {
             exit,
@@ -495,6 +529,7 @@ mod tests {
             &piped(),
             &mut Failing(kind),
             &mut stderr,
+            &mut NoTerminal,
         );
         (exit, String::from_utf8(stderr).unwrap())
     }
@@ -728,6 +763,7 @@ mod tests {
             &piped(),
             &mut Failing(io::ErrorKind::BrokenPipe),
             &mut stderr,
+            &mut NoTerminal,
         );
         assert_eq!(exit, Exit::Success);
         let stderr = String::from_utf8(stderr).unwrap();
@@ -882,6 +918,7 @@ mod tests {
             &piped(),
             &mut stdout,
             &mut stderr,
+            &mut NoTerminal,
         );
         assert_eq!(exit, Exit::Infrastructure);
         let stderr = String::from_utf8(stderr).unwrap();
@@ -901,6 +938,7 @@ mod tests {
             &piped(),
             &mut stdout,
             &mut stderr,
+            &mut NoTerminal,
         );
         assert_eq!(exit, Exit::Success);
         assert_eq!(stdout, b"buildl 0.1.0\n");
