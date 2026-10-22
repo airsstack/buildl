@@ -6,7 +6,7 @@ use std::fs;
 use std::iter;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 
 /// A temporary workspace holding each of `files`, and its canonical root.
 pub(crate) fn workspace(files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
@@ -67,17 +67,47 @@ pub(crate) fn path_with(first: &Path) -> OsString {
     env::join_paths(directories).unwrap()
 }
 
-/// Runs the binary with `args` in `start`, its streams piped.
-///
-/// The process gets the search path of this one and the variables of `variables`, and nothing
-/// else of this process's environment, so what a test does not set is unset.
-pub(crate) fn run(start: &Path, args: &[&str], variables: &[(&str, &OsStr)]) -> Output {
+/// The binary run with `args` in `start`, its environment cleared down to the search path of
+/// this process and `variables`.
+fn command(start: &Path, args: &[&str], variables: &[(&str, &OsStr)]) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_buildl"));
     command.args(args).current_dir(start).env_clear();
     if let Some(path) = env::var_os("PATH") {
         command.env("PATH", path);
     }
     command.envs(variables.iter().copied());
+    command
+}
+
+/// Runs the binary with `args` in `start`: stdout and stderr captured, stdin empty.
+///
+/// The process gets the search path of this one and the variables of `variables`, and nothing
+/// else of this process's environment, so what a test does not set is unset.
+pub(crate) fn run(start: &Path, args: &[&str], variables: &[(&str, &OsStr)]) -> Output {
+    command(start, args, variables).output().unwrap()
+}
+
+/// Where a process whose home is `home` keeps what it remembers across workspaces.
+pub(crate) fn data_home(home: &Path) -> PathBuf {
+    home.join(".local/share")
+}
+
+/// Runs the binary like [`run`], with `home` as its `HOME` and [`data_home`] of it as its
+/// `XDG_DATA_HOME`, and its standard input a pipe that holds nothing.
+///
+/// Both are set on the child alone, so a build that remembers an approval writes under `home`
+/// and never under the real one. `home` must be an absolute path.
+pub(crate) fn run_at_home(start: &Path, args: &[&str], home: &Path) -> Output {
+    assert!(home.is_absolute(), "{}", home.display());
+    let mut command = command(
+        start,
+        args,
+        &[
+            ("HOME", home.as_os_str()),
+            ("XDG_DATA_HOME", data_home(home).as_os_str()),
+        ],
+    );
+    command.stdin(Stdio::piped());
     command.output().unwrap()
 }
 
