@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-22
 depends-on: [01, 03]
 built-on: 5d10ef9b2f2e
@@ -40,6 +40,7 @@ crates/expected-module-edges.txt            — [modify] pipeline -> placement
 crates/buildl-core/tests/flows/doctor.rs    — [create] doctor flow tests
 crates/buildl-core/tests/flows/main.rs      — [modify] `mod doctor;`
 crates/buildl/src/workspace.rs              — [modify] Workspace::doctor and the Doctor value
+crates/buildl/src/local_ports.rs            — [modify] Wiring::manifest and Wiring::approvals (amended 2026-10-22)
 crates/buildl/src/lib.rs                    — [modify] re-export Doctor
 crates/buildl/tests/e2e/doctor.rs           — [create] doctor through Workspace
 crates/buildl/tests/e2e/main.rs             — [modify] `mod doctor;`
@@ -49,6 +50,7 @@ crates/buildl-cli/src/doctor_text.rs        — [create] the text of spec §6
 crates/buildl-cli/src/main.rs               — [modify] `mod doctor_text;`; the command list in the crate docs
 crates/buildl-cli/tests/cli/output.rs       — [modify] doctor's full output
 crates/buildl-cli/tests/cli/exit_codes.rs   — [modify] doctor's exit codes
+crates/buildl-cli/tests/cli/arguments.rs    — [modify] the help goldens list doctor (amended 2026-10-22)
 ```
 
 ## Order of work
@@ -70,8 +72,9 @@ crates/buildl-cli/tests/cli/exit_codes.rs   — [modify] doctor's exit codes
 - `Checkup { workspace: Workspace, wanted: WantedSet, outside: WantedSet }` with a constructor
   and accessors; test `a_checkup_hands_back_what_it_was_built_from`.
 - `pipeline::doctor<S, D, M>(source: &S, dispatcher: &mut D, manifest: &M, entry) ->
-  Result<Checkup>`: loads once, resolves, reads the workspace, `effective(graph.settings(),
-  &BTreeMap::new())` (defaults), `Layout::of(&graph, &workspace.out)?`, `sites`, `wanted`,
+  Result<Checkup>`: loads once, resolves, reads the workspace, takes `graph.settings()` (the
+  defaults; `plan::settings::effective` is private to Plan and with no override returns the
+  same map — amended 2026-10-22), `Layout::of(&graph, &workspace.out)?`, `sites`, `wanted`,
   `outside`. No lock, no write, no hashing, no tool lookup. Errors: load, resolve, the
   manifest's, `OutputConflict`; never `Refused`. Its flow goes through ports, so it is tested in
   `tests/flows/doctor.rs` (`lib.rs` rule 5, `:53-56`); it carries a `#[cfg(test)]` module only
@@ -95,15 +98,16 @@ refusing them`.
 
 ### Task 2 — `Workspace::doctor`
 
-**Files:** `buildl/src/workspace.rs`, `buildl/src/lib.rs`, `tests/e2e/doctor.rs`,
-`tests/e2e/main.rs`.
+**Files:** `buildl/src/workspace.rs`, `buildl/src/local_ports.rs`, `buildl/src/lib.rs`,
+`tests/e2e/doctor.rs`, `tests/e2e/main.rs`.
 
 **Change:** `Doctor` — the `Checkup`, the workspace root (absolute) and `unapproved:
 WantedSet`. `Workspace::doctor(&self) -> Result<Doctor>` takes no lock; it calls
 `pipeline::doctor` with the wiring's source, dispatcher and manifest, then sets `unapproved`
 from the mode: `manifest` → empty; `deny` → the whole wanted set; `interactive` →
 `wanted.minus(&approvals.read()?)` (plan 03's `Approvals` and `DataDir`, honouring
-`with_data_dir`). Errors are the approvals file's, as in plan 03 (6, or 3).
+`with_data_dir`). Errors are the approvals file's, as in plan 03 (6, or 3). `Wiring` gains
+`manifest()` and `approvals()` for it (amended 2026-10-22).
 
 **Proof:** written first, seen failing, then passing (`tests/e2e/doctor.rs`) —
 - `doctor_writes_nothing` — the workspace tree, including `.buildl/`, is byte-identical before
@@ -119,7 +123,8 @@ from the mode: `manifest` → empty; `deny` → the whole wanted set; `interacti
 ### Task 3 — The `doctor` command
 
 **Files:** `cli.rs`, `run.rs`, `doctor_text.rs`, `main.rs`, `tests/cli/output.rs`,
-`tests/cli/exit_codes.rs`.
+`tests/cli/exit_codes.rs`, `tests/cli/arguments.rs`; `buildl/src/workspace.rs` gains a public
+`Doctor::new` so the text's unit tests can build a `Doctor` (amended 2026-10-22).
 
 **Change:**
 - `Command::Doctor` (`cli.rs:55`), with a help line: "Print the workspace's ceiling, approver,
@@ -143,7 +148,7 @@ from the mode: `manifest` → empty; `deny` → the whole wanted set; `interacti
 - `main.rs` crate docs list `doctor` with the other commands and its exit statuses.
 
 **Proof:** written first, seen failing, then passing —
-- `doctor_text.rs` unit tests: `a_full_report_matches_spec_layout` (spec §6's example rows,
+- `doctor_text.rs` unit tests: `a_full_report_matches_the_documented_layout` (spec §6's example rows,
   re-padded by the column rule), `an_empty_ceiling_list_shows_a_dash`, `a_refused_want_has_no_approval`,
   `per_core_workers_say_so`.
 - `tests/cli/output.rs`: `doctor_prints_the_workspace_authority` — a fixture with a program
@@ -174,3 +179,39 @@ from the mode: `manifest` → empty; `deny` → the whole wanted set; `interacti
 - `cargo make dod` and `cargo deny check` green after each task.
 - `cargo make guard-module-edges` and `cargo make guard-adapter-isolation` OK.
 - `buildl doctor` on the `chain` fixture by hand prints the spec §6 layout.
+
+## Review findings
+
+Commits: `ca9754a` (task 1), `0054b03` (task 2), `b0efc47` (task 3), then the fix round.
+One review over the three tasks: code 0🔴 0🟡 7🔵, spec 0🔴 1🟡.
+
+- plan — the plan was not amended for its four deviations (`effective` is private to Plan;
+  `Doctor::new`; `Wiring` accessors; help goldens) — amended in place.
+- modularity — the ceiling key width was a literal `8 + GAP` — fixed: computed from the keys.
+- doc-comment — a test and its doc named an internal document ("spec") — fixed: renamed
+  `a_full_report_matches_the_documented_layout`.
+- doc-comment — `main.rs` exit 3 left out "no data directory"; a 116-column line in
+  `pipeline/mod.rs`; `Doctor::new` did not say it checks nothing — fixed.
+- modularity — `grants::outside` repeats the three ceiling tests `check` makes — accepted: the
+  plan names both; each is tested.
+- modularity — `Wiring::approvals` and `InteractiveApprover` each locate the approvals file —
+  accepted: adapter modules may not share code except through `state`; the e2e tests read the
+  file the approver writes.
+
+## Probe results
+
+- Claim: `effective` can be called from `pipeline` — against the plan: `mod settings` is
+  private to `plan` (`plan/mod.rs:19`); `graph.settings()` is the same map with no override.
+- Claim: `Directory::parse(".")` gives the root — against the test fixture's first draft: `.`
+  is refused by the path grammar; the root is `Directory::root()`, shown `.` by `doctor_text`.
+- Mutation checks: `outside` without its `!`, `doctor` with `outside = wanted` and empty
+  settings, `Workspace::doctor` with swapped approver arms, `doctor_text` with yes/no swapped —
+  each failed its named tests.
+
+## Deviations
+
+- 2026-10-22 — task 1: `graph.settings()` in place of `effective(…, &BTreeMap::new())`.
+- 2026-10-22 — task 2: `Wiring::manifest` and `Wiring::approvals`.
+- 2026-10-22 — task 3: public `Doctor::new`; `arguments.rs` help goldens list `doctor`.
+- 2026-10-22 — by hand, `buildl doctor` on a copy of `chain`: the spec §6 layout, exit 0,
+  nothing written, `out/greet` (built) not listed.
