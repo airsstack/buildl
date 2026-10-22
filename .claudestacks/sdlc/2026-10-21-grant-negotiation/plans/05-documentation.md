@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-22
 depends-on: [01, 02, 03, 04]
 built-on: 5d10ef9b2f2e
@@ -127,3 +127,41 @@ doctor in the READMEs`.
 
 - Every spec §10 item is edited; the intent's "Documents" row holds.
 - `cargo make dod` and `cargo deny check` green.
+
+## Review findings
+
+Commits: `3dcc368` (task 1), `50d4e7b` (task 2), `a0f0f91` (task 3), `9a05b49` (fix round).
+One review over the three tasks: spec compliant; 5 blocking, 7 non-blocking — all fixed.
+
+- false claim — design §8.7 policy-refusal row named `$deps` programs as refused — fixed: a
+  program a dependency built is never refused; the row adds an approver's no.
+- false claim — design §12.2 tier 1 and §10.2 said every written-out or setting-named program
+  is fingerprinted and held to `proc.run` — fixed: unless a dependency built it.
+- false claim — architecture §6 "Program named through a build setting" said only the build-time
+  check knows `$in`/`$out`/`$deps` programs — fixed: Plan expands every command.
+- false claim — "Thirteen" adapter modules (architecture §6, building blocks §10) — fixed:
+  fourteen, with `approver`.
+- false claim — the approvals decision record said a relative `XDG_DATA_HOME` makes the
+  approver fail — fixed: it falls back to `$HOME/.local/share`, failing only when neither is
+  absolute; the direnv sentence now says where, not why.
+- incomplete — `buildl-cli` exit 6 doc and README said "a file in `.buildl/`"; design exit 3
+  left out the approvals file; architecture `CorruptState` said "workspace's state"; building
+  blocks said Plan shares `outside` and listed three non-phase modules; the CLI README said
+  "with none, every target" for every command and `--set` for `plan` and `build` only — fixed.
+
+## Probe results
+
+- Claim: the design's `buildl.toml` example and `DESIGN_EXAMPLE` can be the same text — held:
+  both now carry `[approver] default = "interactive"`.
+- Claim: the prompt in design §6 is the as-built text — held: `WantedSet`'s `Display` pads
+  labels to the longest plus one (`types/authority.rs`), shown with all four lines.
+
+## Deviations
+
+- 2026-10-22 — task 1: also corrected design §8.7 (policy refusals at plan), §9.6 (what
+  `doctor` reports), §10.2 (`$in`/`$out`/`$deps` held at plan) and the exit-code rows 3, 4
+  and 6, which plans 01–04 had made false.
+- 2026-10-22 — task 2: also updated building blocks §10 rows on the reporter (`LocalPorts<R, C>`)
+  and port wiring (`doctor`).
+- 2026-10-22 — task 3: also corrected `crates/buildl/README.md`'s stale tier-1 status and listed
+  every command in `crates/buildl-cli/README.md`.
