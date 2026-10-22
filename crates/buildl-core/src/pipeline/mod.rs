@@ -4,8 +4,8 @@
 //! communicate through values, and the pipeline is what passes each one's output to the next.
 //!
 //! Responsibilities: [`Pipeline`]; the functions [`check`], [`graph`], [`query`],
-//! [`doctor`](fn@doctor), [`log`](fn@log) and [`gc`](fn@gc); [`Shown`], the result of `log`; and [`Collected`], the
-//! result of `gc`.
+//! [`doctor`](fn@doctor), [`log`](fn@log) and [`gc`](fn@gc); [`Shown`], the result of `log`;
+//! and [`Collected`], the result of `gc`.
 //!
 //! Non-responsibilities: any phase's logic, and any port's implementation.
 //!

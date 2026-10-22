@@ -58,7 +58,8 @@ pub struct Doctor {
 
 impl Doctor {
     /// A report of the workspace at `root`, which allows and wants what `checkup` says, and
-    /// whose approver has not approved `unapproved`.
+    /// whose approver has not approved `unapproved`. It checks nothing: the three are taken as
+    /// given.
     #[must_use]
     pub const fn new(checkup: Checkup, root: PathBuf, unapproved: WantedSet) -> Self {
         Self {

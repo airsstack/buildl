@@ -43,7 +43,7 @@
 //! is outside the ceiling or not approved; what stops it from making the report ends with the
 //! status that mistake has everywhere: 5 for a build file or an output two targets claim, 6 for
 //! a remembered approvals file that is not what buildl writes, and 3 when that file cannot be
-//! read.
+//! read or there is no data directory to find it in.
 //!
 //! `log` takes no lock and loads no build file, and writes nothing but the store's own removal of
 //! a blob that fails its digest; it does not follow an alias.

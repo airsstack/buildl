@@ -33,14 +33,17 @@ pub(crate) fn doctor_text(doctor: &Doctor) -> String {
         format!("execution  {}", execution(&workspace.execution)),
         "ceiling".to_owned(),
     ];
+    let entries = [
+        ("proc.run", joined(&ceiling.run)),
+        ("env.read", joined(&ceiling.env)),
+        ("fs.read", directories(&ceiling.read)),
+        ("fs.write", directories(&ceiling.write)),
+    ];
+    let width = column_width(entries.iter().map(|(key, _)| *key));
     lines.extend(
-        [
-            ("proc.run", joined(&ceiling.run)),
-            ("env.read", joined(&ceiling.env)),
-            ("fs.read", directories(&ceiling.read)),
-            ("fs.write", directories(&ceiling.write)),
-        ]
-        .map(|(key, value)| format!("  {key:<width$}{value}", width = 8 + GAP)),
+        entries
+            .iter()
+            .map(|(key, value)| format!("  {key:<width$}{value}")),
     );
 
     let rows = wants(checkup.wanted(), checkup.outside(), doctor.unapproved());
@@ -204,7 +207,7 @@ mod tests {
         raws.iter().map(|raw| Label::parse(raw).unwrap()).collect()
     }
 
-    /// The workspace of spec's example: `go` and `protoc` to run, `HOME` and `PATH` to read,
+    /// The workspace of the documented example: `go` and `protoc` to run, `HOME` and `PATH` to read,
     /// every file to read, `out` and `.buildl` to write, under `approver`.
     fn workspace(approver: ApproverMode, workers: Workers) -> Workspace {
         Workspace {
@@ -241,7 +244,7 @@ mod tests {
     }
 
     #[test]
-    fn a_full_report_matches_spec_layout() {
+    fn a_full_report_matches_the_documented_layout() {
         let wanted = WantedSet {
             programs: programs(&["curl", "go"]),
             env: env(&["HOME"]),
