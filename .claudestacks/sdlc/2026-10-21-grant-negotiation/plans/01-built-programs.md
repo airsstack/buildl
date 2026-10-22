@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-22
 built-on: 5d10ef9b2f2e
 ---
@@ -133,7 +133,12 @@ expansion into placement`.
 **Files:** `grants/wanted.rs`, `grants/mod.rs`, `plan/authority.rs`, `plan/pinned.rs`,
 `plan/tools.rs`, `plan/components.rs`, `plan/assembly.rs`, `pipeline/driver.rs`,
 `grants/fixtures.rs`, `crates/expected-module-edges.txt`, `tests/flows/plan.rs`,
-`tests/flows/build.rs`.
+`tests/flows/build.rs`; amended 2026-10-22 (execution): `plan/fixtures.rs` and the test
+imports of the other `plan/*.rs` files (one copy of the shared helpers, in `grants/fixtures.rs`),
+`tests/flows/graph.rs` with `tests/flows/golden/graph.json` and `golden/plan.json` (the shared
+fixture's test ran `$out/app` with no outputs, a program `/app` plan now holds to the ceiling;
+it runs `$deps` now), and the test module of `crates/buildl/src/report/plan_text.rs` (a
+fixture ran `$deps` over a dependency with no outputs).
 
 **Change:**
 - `grants/wanted.rs`: `Sites` and `sites` move here from `plan/authority.rs:26,37` (fields
@@ -199,7 +204,8 @@ is green. Commit `feat(buildl-core): hold every command's program to the ceiling
 **Change:** `proc.run = ["cp", "sort"]` (drops `"out/greet"`, line 8). `greeting` runs
 `$deps` (`out/greet`), which it depends on, so it needs no entry.
 
-**Proof:** the existing `buildl` e2e and `buildl-cli` tests that build `chain` pass unchanged.
+**Proof:** the existing `buildl` e2e tests that build `chain` pass unchanged (amended
+2026-10-22: no `buildl-cli` test builds `chain`; `cargo test -p buildl-cli` is a regression run).
 On `main` the same fixture change is refused: the spec review re-ran a copy of `chain` without
 `out/greet` and got `error: build.lua: //:greeting: program out/greet is outside the ceiling
 (proc.run allows: cp, sort)`, exit 4 (spec review report, P4 row). So these tests prove the rule
@@ -217,7 +223,8 @@ fixture's ceiling`.
   its `ToolIdentity` from its key components. Key format is unchanged; only such targets' key
   values change, once. Every other key must stay byte-identical: the golden `plan.json`
   (`tests/flows/golden/plan.json`) and the e2e `identical` tests are the guard and must pass
-  unchanged.
+  unchanged. Amended 2026-10-22 (execution): the goldens' key digests are unchanged; their
+  fixture command text changed by one token (`$out/app` → `$deps`), see Task 3's Files.
 - `sites` now expands every command; `expand` is pure and cheap, but plan now refuses an output
   conflict for the planned graph, which only execute refused before. Execute keeps its own
   whole-workspace conflict check unchanged.
@@ -233,4 +240,61 @@ fixture's ceiling`.
 
 - `cargo make dod` and `cargo deny check` green after each task.
 - `cargo make guard-module-edges` and `cargo make guard-adapter-isolation` OK.
-- The golden plan JSON and every existing key-related test pass unchanged.
+- Every key digest in the golden plan JSON is unchanged, and every existing key-related test
+  passes unchanged.
+
+## Review findings
+
+Commits: `0ff0845` (task 1), `0840b18` (task 2), `ba37d17` (task 3), `938134e` (task 4).
+
+- doc-comment — `placement/expand.rs` module doc had a 161-character line — task 1 — fixed
+  (rewrapped); `cargo fmt --all -- --check` clean.
+- doc-comment — `placement/mod.rs` said no user of `placement` may name another, but `verify`
+  names `execute` — task 1 — fixed: "Plan and Execute may not name each other".
+- correctness (security) — `grants/built.rs` matched a dependency's output path as a text
+  prefix, so `$deps/../../../usr/bin/touch` counted as built and skipped `proc.run`; the reviewer
+  ran `/usr/bin/touch` through the binary under `proc.run = ["cp"]` — task 2 — fixed and
+  verified: the remainder after the output path must be empty or `/` plus a path
+  `TreePath::parse` accepts; new tests `a_path_climbing_out_of_a_dependency_is_not_built`,
+  `a_path_with_a_dot_segment_is_not_built`, `a_path_with_an_empty_segment_is_not_built`.
+  `cargo test -p buildl-core --lib grants::built` → `test result: ok. 10 passed; 0 failed`.
+- doc-comment — "a bare name is never built" relied on the manifest refusing a root `out` —
+  task 2 — fixed: `built` is false for any program with no `/`.
+- doc-comment — `grants/mod.rs` claimed re-exports it does not have — task 2 — fixed.
+- doc-comment — `grants/mod.rs` and `lib.rs` said Plan names `grants` before it did — task 2 —
+  true from task 3 (`plan -> grants` edge).
+- test-fixture — the shared flows fixture's test target ran `$out/app` with no outputs (a
+  program `/app`); the first cut added `/app` to the golden test's ceiling — task 3 — fixed: the
+  fixture runs `$deps`; the goldens change one token each, `wanted.programs` stays `["cc"]`, and
+  all four `"digest"` values in `golden/plan.json` are identical to the previous commit's
+  (each appears once removed and once added in `git diff -U0`).
+- plan — task 3's Files list and the "golden passes unchanged" premise were wrong — task 3 —
+  amended above (Task 3 Files, Risks, Proof).
+- modularity — `grants/fixtures.rs` copied nine helpers of `plan/fixtures.rs` — task 3 — fixed:
+  one copy, in `grants/fixtures.rs`; plan tests import it.
+- doc-comment — `Sites.programs` doc left out a `$deps`-named program that is not built; a
+  grammar slip — task 3 — fixed.
+- efficiency — the naming pass ran twice (programs, built runners) — task 3 — fixed: one
+  `naming` pass returns both.
+- test hygiene — `plan_text.rs`'s `row` helper hard-coded `//:leaf` — task 3 — fixed: derived
+  from the graph.
+- plan — task 4's Proof named `buildl-cli` tests that build `chain`; none does — task 4 —
+  amended above.
+
+## Probe results
+
+- Claim: with `proc.run = ["cp", "sort"]` the `chain` workspace builds — a copy of the fixture
+  (`greet.sh` made executable, as the e2e helper does), `BUILDL_FIXTURE_FLAVOR=x buildl build` →
+  `6 built`, exit 0. A first run on a copy made with `cp -R` failed with `the program out/greet
+  was not found`, exit 3, because `greet.sh` had lost its exec bit; not a buildl defect.
+- Claim: `admit`, task 2's refusal site, sits at `execute/admission.rs:42`, called at
+  `execute/assembly.rs:269` — `sed -n '28,50p'` and `grep -n` — held.
+
+## Deviations
+
+- 2026-10-22 — task 3 also changed `plan/fixtures.rs` and the test imports of the other
+  `plan/*.rs` files, `tests/flows/graph.rs`, both goldens, and the test module of
+  `crates/buildl/src/report/plan_text.rs`. Plan now holds `$out`- and `$deps`-named programs to
+  the ceiling, which two test fixtures broke: one ran `$out/app` on a target with no outputs, the
+  other `$deps` over a dependency with no outputs. Each fixture was corrected rather than given a
+  ceiling entry.
