@@ -36,7 +36,7 @@ pub struct Ceiling {
 ///
 /// The files a build reads are not copied here: they are each target's declared inputs, and stay
 /// in the graph.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WantedSet {
     /// Every program a command names.
@@ -163,8 +163,6 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeSet;
-
     use super::WantedSet;
     use crate::json::canonical;
     use crate::types::{Directory, EnvName, Label, Program};
@@ -185,12 +183,7 @@ mod tests {
     }
 
     fn empty() -> WantedSet {
-        WantedSet {
-            programs: BTreeSet::new(),
-            env: BTreeSet::new(),
-            write: BTreeSet::new(),
-            network: BTreeSet::new(),
-        }
+        WantedSet::default()
     }
 
     #[test]
