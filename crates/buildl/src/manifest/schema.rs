@@ -61,6 +61,9 @@ pub(crate) struct Raw {
     /// `[execution]`.
     #[serde(default, deserialize_with = "table")]
     pub(crate) execution: ExecutionTable,
+    /// `[approver]`.
+    #[serde(default, deserialize_with = "table")]
+    pub(crate) approver: ApproverTable,
 }
 
 /// `[workspace]`: what the workspace is called and where its files go.
@@ -146,6 +149,14 @@ pub(crate) struct ExecutionTable {
     pub(crate) strategy: Option<Spanned<String>>,
 }
 
+/// `[approver]`: who approves what a build wants.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ApproverTable {
+    /// The mode that answers: `manifest`, `interactive` or `deny`.
+    pub(crate) default: Option<Spanned<String>>,
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -173,6 +184,7 @@ mod tests {
             assert!(raw.execution.workers.is_none(), "{text:?}");
             assert!(raw.execution.timeout.is_none(), "{text:?}");
             assert!(raw.execution.strategy.is_none(), "{text:?}");
+            assert!(raw.approver.default.is_none(), "{text:?}");
         }
     }
 
@@ -219,6 +231,10 @@ mod tests {
                 "invalid type: sequence, expected a table",
             ),
             (
+                "approver = \"deny\"\n",
+                "invalid type: string \"deny\", expected a table",
+            ),
+            (
                 "[ceiling]\nproc = [[\"cc\"], [\"ld\"]]\n",
                 "invalid type: sequence, expected a table",
             ),
@@ -240,7 +256,8 @@ mod tests {
     #[test]
     fn every_table_refuses_a_key_it_does_not_declare() {
         let cases = [
-            ("approver = 1\n", "approver"),
+            ("[approver]\nmode = \"deny\"\n", "mode"),
+            ("approvers = 1\n", "approvers"),
             ("[workspace]\nroot = \".\"\n", "root"),
             ("[ceiling]\nnet.connect = []\n", "net"),
             ("[ceiling.proc]\nexec = []\n", "exec"),

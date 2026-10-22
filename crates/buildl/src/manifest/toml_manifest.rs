@@ -147,14 +147,14 @@ mod tests {
     use std::fs;
 
     use buildl_core::{
-        Directory, EnvName, Error, Execution, Isolation, Manifest, PortName, Program, Timeout,
-        Workers,
+        ApproverMode, Directory, EnvName, Error, Execution, Isolation, Manifest, PortName, Program,
+        Timeout, Workers,
     };
 
     use super::{DeclarationSettings, TomlManifest};
     use crate::manifest::root::WorkspaceRoot;
 
-    /// The manifest the design shows, without the table for approving grants.
+    /// The manifest the design shows.
     const DESIGN_EXAMPLE: &str = r#"[workspace]
 name    = "myproject"
 entry   = "build.lua"
@@ -176,6 +176,9 @@ walk_entries = 100_000     # directory entries b.sources() may visit per build f
 workers  = 0               # 0 = number of cores
 timeout  = "10m"           # per action
 strategy = "sandbox"       # bare | sandbox | os-sandbox | container
+
+[approver]
+default = "interactive"    # manifest | interactive | deny
 "#;
 
     fn dir(text: &str) -> Directory {
@@ -220,6 +223,7 @@ strategy = "sandbox"       # bare | sandbox | os-sandbox | container
                 strategy: Isolation::Sandbox,
             }
         );
+        assert_eq!(workspace.approver, ApproverMode::Interactive);
         assert_eq!(manifest.entry().as_str(), "build.lua");
         assert_eq!(
             manifest.declaration(),
@@ -306,6 +310,43 @@ strategy = "bare"
     }
 
     #[test]
+    fn no_approver_table_means_manifest() {
+        for text in ["", "[approver]\n", "[workspace]\nout = \"out\"\n"] {
+            let workspace = TomlManifest::parse(text).unwrap().workspace().unwrap();
+            assert_eq!(workspace.approver, ApproverMode::Manifest, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn each_approver_mode_is_read() {
+        for (word, mode) in [
+            ("manifest", ApproverMode::Manifest),
+            ("interactive", ApproverMode::Interactive),
+            ("deny", ApproverMode::Deny),
+        ] {
+            let text = format!("[approver]\ndefault = \"{word}\"\n");
+            let workspace = TomlManifest::parse(&text).unwrap().workspace().unwrap();
+            assert_eq!(workspace.approver, mode, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_approver_mode_is_refused_at_its_position() {
+        assert_eq!(
+            refusal("[approver]\ndefault = \"ask\"\n"),
+            "manifest: buildl.toml:2:11: approver.default: invalid approver mode: \"ask\" — must be one of manifest, interactive and deny"
+        );
+    }
+
+    #[test]
+    fn an_unknown_key_in_the_approver_table_is_refused_at_its_position() {
+        assert_eq!(
+            refusal("[approver]\nmode = \"deny\"\n"),
+            "manifest: buildl.toml:2:1: unknown field `mode`, expected `default`"
+        );
+    }
+
+    #[test]
     fn neither_the_output_nor_the_state_directory_is_granted_unwritten() {
         let manifest = TomlManifest::parse("[ceiling]\nfs.write = [\"target\"]\n").unwrap();
         assert_eq!(
@@ -317,10 +358,6 @@ strategy = "bare"
     #[test]
     fn an_unknown_key_is_refused_at_its_position() {
         let cases = [
-            (
-                "[workspace]\nout = \"out\"\n\n[approver]\ndefault = \"interactive\"\n",
-                "manifest: buildl.toml:4:2: unknown field `approver`, expected one of `workspace`, `ceiling`, `declaration`, `execution`",
-            ),
             (
                 "[ceiling]\nfs.read = [\".\"]\nfs.wirte = [\"out\"]\n",
                 "manifest: buildl.toml:3:4: unknown field `wirte`, expected `read` or `write`",
@@ -335,7 +372,7 @@ strategy = "bare"
             ),
             (
                 "out = \"out\"\n",
-                "manifest: buildl.toml:1:1: unknown field `out`, expected one of `workspace`, `ceiling`, `declaration`, `execution`",
+                "manifest: buildl.toml:1:1: unknown field `out`, expected one of `workspace`, `ceiling`, `declaration`, `execution`, `approver`",
             ),
         ];
         for (text, expected) in cases {
@@ -487,7 +524,7 @@ strategy = "bare"
         let texts = [
             "[workspace\n",
             "[workspace]\nout = \"a\"\nout = \"b\"\n",
-            "[approver]\ndefault = \"interactive\"\n",
+            "[approver]\ndefault = \"ask\"\n",
             "[execution]\nworkers = \"4\"\n",
             "[execution]\ntimeout = \"10\"\n",
             "[workspace]\nconfig = 2\n",
