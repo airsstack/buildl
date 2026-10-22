@@ -11,7 +11,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Output;
 
-use crate::common::{append, code, manifest, program, run, stderr, stdout, workspace, write};
+use crate::common::{
+    append, code, manifest, program, run, run_at_home, stderr, stdout, workspace, write,
+};
 
 /// The root build file of the workspace.
 const BUILD: &str = r#"local b = buildl
@@ -631,4 +633,52 @@ fn gc_reports_rows_blobs_and_bytes() {
     assert_eq!(code(&output), 0);
     assert_eq!(stdout(&output), "");
     assert!(is_gc_line(&stderr(&output)), "{}", stderr(&output));
+}
+
+#[test]
+fn doctor_prints_the_workspace_authority() {
+    let manifest = format!(
+        "{}\n[approver]\ndefault = \"interactive\"\n",
+        manifest(&["cp"])
+    );
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest),
+        (
+            "build.lua",
+            concat!(
+                "buildl.target(\"copy\", { inputs = { \"a.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+                "buildl.target(\"fetch\", { run = { \"curl\", \"-o\", \"$out\" }, network = true })\n",
+            ),
+        ),
+        ("a.txt", "a\n"),
+    ]);
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = fs::canonicalize(home_dir.path()).unwrap();
+
+    let output = run_at_home(&root, &["doctor"], &home);
+
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert_eq!(stderr(&output), "");
+    assert_eq!(
+        stdout(&output),
+        format!(
+            concat!(
+                "workspace  {}\n",
+                "approver   interactive\n",
+                "execution  workers 1, timeout 10m, strategy bare\n",
+                "ceiling\n",
+                "  proc.run  cp\n",
+                "  env.read  -\n",
+                "  fs.read   .\n",
+                "  fs.write  .buildl, out\n",
+                "wants               ceiling  approved\n",
+                "  run cp            allowed  no\n",
+                "  run curl          REFUSED  -\n",
+                "  write .buildl     allowed  no\n",
+                "  write out         allowed  no\n",
+                "  network //:fetch  -        no\n",
+            ),
+            root.display()
+        )
+    );
 }

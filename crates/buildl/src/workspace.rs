@@ -57,6 +57,17 @@ pub struct Doctor {
 }
 
 impl Doctor {
+    /// A report of the workspace at `root`, which allows and wants what `checkup` says, and
+    /// whose approver has not approved `unapproved`.
+    #[must_use]
+    pub const fn new(checkup: Checkup, root: PathBuf, unapproved: WantedSet) -> Self {
+        Self {
+            checkup,
+            root,
+            unapproved,
+        }
+    }
+
     /// What the workspace allows and wants.
     #[must_use]
     pub const fn checkup(&self) -> &Checkup {
@@ -223,11 +234,7 @@ impl Workspace {
             ApproverMode::Deny => checkup.wanted().clone(),
             ApproverMode::Interactive => checkup.wanted().minus(&self.wiring.approvals()?.read()?),
         };
-        Ok(Doctor {
-            checkup,
-            root: self.root().to_path_buf(),
-            unapproved,
-        })
+        Ok(Doctor::new(checkup, self.root().to_path_buf(), unapproved))
     }
 
     /// The newest logged run of `label` that stored its output, with what it printed read back

@@ -34,6 +34,7 @@ use crate::cli::{
     BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, QueryArgs, Streams, TestArgs,
     VerifyArgs, overrides,
 };
+use crate::doctor_text::doctor_text;
 use crate::exit::Exit;
 use crate::terminal::Terminal;
 
@@ -113,6 +114,7 @@ where
         Command::Build(args) => build(&start, args, terminal.mode(), paint, stderr, console),
         Command::Test(args) => test(&start, args, terminal.mode(), paint, stderr, console),
         Command::Verify(args) => verify(&start, args, paint, stderr, console),
+        Command::Doctor => doctor(&start, stdout),
         Command::Log(args) => log(&start, &args, stdout, stderr),
         Command::Clean => clean(&start, stderr),
         Command::Gc => gc(&start, stderr),
@@ -239,6 +241,14 @@ fn query<O: Write>(start: &Path, args: &QueryArgs, stdout: &mut O) -> Result<Exi
         query_text(&answer).into_bytes()
     };
     product(stdout, &text)?;
+    Ok(Exit::Success)
+}
+
+/// `doctor`: writes to `stdout` what the workspace allows and what its build wants. Wants
+/// outside the ceiling or not approved are reported, and the command succeeded.
+fn doctor<O: Write>(start: &Path, stdout: &mut O) -> Result<Exit, Stop> {
+    let doctor = Workspace::open(start)?.doctor()?;
+    product(stdout, doctor_text(&doctor).as_bytes())?;
     Ok(Exit::Success)
 }
 

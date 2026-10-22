@@ -947,3 +947,80 @@ fn a_corrupt_approvals_file_exits_six() {
     assert!(text.contains(&file.display().to_string()), "{text}");
     assert!(!root.join("out").exists());
 }
+
+#[test]
+fn doctor_exits_zero_with_refused_wants() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        (
+            "build.lua",
+            "buildl.target(\"fetch\", { run = { \"curl\", \"$out\" } })\n",
+        ),
+    ]);
+
+    let output = run(&root, &["doctor"], &[]);
+
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("  run curl       REFUSED  -\n"),
+        "{}",
+        stdout(&output)
+    );
+    assert_eq!(stderr(&output), "");
+}
+
+#[test]
+fn doctor_exits_five_on_an_output_conflict() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        (
+            "build.lua",
+            "buildl.target(\"a\", { outputs = { \"x\" }, run = { \"cp\" } })\nbuildl.target(\"b\", { outputs = { \"x\" }, run = { \"cp\" } })\n",
+        ),
+    ]);
+
+    assert_eq!(
+        failed(&root, &["doctor"]),
+        (
+            5,
+            "error: out/x: //:a (build.lua) and //:b (build.lua) cannot both write here\n"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn doctor_exits_six_on_a_corrupt_approvals_file() {
+    let (_dir, root, _home_dir, home) = approved_by("interactive");
+    let file = Approvals::new(&data_home(&home), &root)
+        .file()
+        .to_path_buf();
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "not what buildl writes").unwrap();
+
+    let output = run_at_home(&root, &["doctor"], &home);
+
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 6, "{}", stderr(&output));
+    let text = stderr(&output);
+    assert!(text.contains(&file.display().to_string()), "{text}");
+}
+
+#[test]
+fn doctor_exits_five_on_a_build_file_error() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        ("build.lua", "buildl.target(\"a\", {\n"),
+    ]);
+    assert_eq!(
+        failed(&root, &["doctor"]),
+        (
+            5,
+            concat!(
+                "error: build.lua: syntax error: lua error in build.lua: ",
+                "syntax error: build.lua:2: unexpected symbol near <eof>\n",
+            )
+            .to_owned()
+        )
+    );
+}

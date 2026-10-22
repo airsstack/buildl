@@ -67,6 +67,8 @@ pub(crate) enum Command {
     Test(TestArgs),
     /// Re-run cached actions and name those whose outputs differ
     Verify(VerifyArgs),
+    /// Print the workspace's ceiling, approver, run settings and what its build wants
+    Doctor,
     /// Show what a target printed when it last ran
     Log(LogArgs),
     /// Remove the output directory
