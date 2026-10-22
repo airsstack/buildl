@@ -35,6 +35,7 @@
 //! - [`Ceiling`], [`WantedSet`] and [`Want`] — what a workspace allows, and what a build wants.
 //! - [`Approval`] and [`DenialReason`] — an approver's answer about what a build wants;
 //!   [`ApproverMode`] — which approver a workspace names.
+//! - [`Checkup`] — what a workspace allows and wants, as `doctor` reports it.
 //! - [`Workspace`] — what a workspace's manifest tells the pipeline.
 //! - [`Execution`], with [`Workers`], [`Timeout`] and [`Isolation`] — how a workspace wants its
 //!   actions run.
@@ -87,6 +88,7 @@ pub mod cache_row;
 pub mod captured;
 pub mod channel;
 pub mod check;
+pub mod checkup;
 pub mod declaration;
 pub mod description;
 pub mod diagnostic;
@@ -154,6 +156,7 @@ pub use cache_row::CacheRow;
 pub use captured::Captured;
 pub use channel::Channel;
 pub use check::{Check, EntryChange, FileChange, OutputDifference};
+pub use checkup::Checkup;
 pub use declaration::{
     Action, Alias, Declaration, Declared, Freshness, NetworkAccess, Rule, Setting, Target,
     TargetRole,

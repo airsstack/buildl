@@ -20,6 +20,7 @@ pipeline -> execute
 pipeline -> grants
 pipeline -> history
 pipeline -> load
+pipeline -> placement
 pipeline -> plan
 pipeline -> ports
 pipeline -> resolve

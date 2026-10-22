@@ -31,7 +31,7 @@
 //! | [`execute`](mod@execute) | Execute and Record, the last phase: a plan to one outcome per target, each result recorded as the last step of its action and reported once it is logged |
 //! | `placement` | where every output lives and what a command's placeholders stand for once they are placed; used by Plan, Execute and verify, and not a phase |
 //! | [`grants`] | the build's authority: which programs a build made, everything a build wants, and the approver's answer; not a phase |
-//! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command, and the commands that need only some of the ports as functions over those ports alone: the three that reach only build files, and `log` |
+//! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command, and the commands that need only some of the ports as functions over those ports alone: the three that reach only build files, `doctor`, and `log` |
 //! | [`history`] | the read side of the build log: the newest run of a target that left output |
 //! | [`verify`](mod@verify) | verify, which serves one command and is not a phase: cached targets put back in place, a sample of them re-run, and each re-run compared with what was cached |
 //! | `suggest` | the nearest declared name to one that names nothing, for any module that refuses a name |
@@ -103,7 +103,9 @@
 //! and [`pipeline::query`] run the three commands that reach only build files for a caller that
 //! holds only a [`DeclarationSource`]. A [`LoggedRun`] reads back from the build log through
 //! [`RunHistory`], and [`pipeline::log`](fn@pipeline::log) returns a target's last run with what it
-//! printed.
+//! printed. [`pipeline::doctor`](fn@pipeline::doctor) reports what a workspace's build wants
+//! against its ceiling as a [`Checkup`], every want outside the ceiling listed and none refused,
+//! for a caller that holds only a [`DeclarationSource`] and a [`Manifest`].
 //!
 //! A verify compares what cached targets produce when re-run with what was cached.
 //! [`Pipeline::verify`] plans as a build does, asks the [`Approver`] as a build does, then
@@ -141,7 +143,7 @@ pub use execute::execute;
 pub use grants::negotiate;
 pub use history::LastRun;
 pub use load::load;
-pub use pipeline::{Collected, Pipeline, Shown, gc, log};
+pub use pipeline::{Collected, Pipeline, Shown, doctor, gc, log};
 pub use plan::plan;
 pub use ports::{
     ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
@@ -151,7 +153,7 @@ pub use ports::{
 pub use resolve::{narrow, reach, resolve};
 pub use types::{
     Action, ActionKey, ActionOutcome, Alias, Approval, ApproverMode, Argument, BuildFile, CacheRow,
-    Captured, Ceiling, Channel, Check, Command, Declaration, DeclarationOrder, Declared,
+    Captured, Ceiling, Channel, Check, Checkup, Command, Declaration, DeclarationOrder, Declared,
     DenialReason, DepProducts, Description, Diagnostic, Difference, Digest, Direction, Directory,
     DirtyReason, EntryChange, EntryName, EnvName, EnvValue, Evaluated, Execution, Exit,
     ExpandedDescription, FieldName, FileChange, FileMode, FileStat, Found, FoundEntry, FoundKind,

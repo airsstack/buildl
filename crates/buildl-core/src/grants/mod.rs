@@ -4,8 +4,9 @@
 //! Its own directory because it is shared, not a phase: Plan and Execute each need to know
 //! whether a program is one the build made, and may not name each other.
 //!
-//! Responsibilities: the "built" rule, in `built`; what a graph's targets want, in `wanted`; and
-//! putting those wants to an approver, in `negotiate`.
+//! Responsibilities: the "built" rule, in `built`; what a graph's targets want, in `wanted`; the
+//! wants a ceiling does not allow, in `outside`; and putting those wants to an approver, in
+//! `negotiate`.
 //!
 //! Non-responsibilities: expanding a command, which is Placement's; and what a ceiling allows,
 //! which is the manifest's to say.
@@ -14,6 +15,7 @@
 
 pub(crate) mod built;
 mod negotiate;
+pub(crate) mod outside;
 pub(crate) mod wanted;
 
 pub use negotiate::negotiate;

@@ -9,13 +9,9 @@
 //! Non-responsibilities: what a ceiling is, which is the manifest's to say; collecting what the
 //! targets want, which is Grants'; and finding the programs a build may run.
 
-use std::collections::BTreeSet;
-
 use crate::error::{DeclarationSite, Error, Result};
-use crate::grants::wanted::Sites;
-use crate::types::{
-    Directory, NetworkAccess, Node, SourcePath, TargetGraph, Want, WantedSet, Workspace,
-};
+use crate::grants::wanted::{Sites, wanted};
+use crate::types::{Directory, Node, SourcePath, TargetGraph, Want, WantedSet, Workspace};
 
 /// Checks every want against `workspace`'s ceiling and returns what the build wants.
 ///
@@ -65,8 +61,8 @@ pub(crate) fn check(
         return Err(refused(Want::Read((*path).clone()), Some(node)));
     }
 
-    let write = BTreeSet::from([workspace.out.clone(), workspace.state.clone()]);
-    let outside = write.iter().find(|directory| {
+    let wanted = wanted(graph, sites, workspace);
+    let outside = wanted.write.iter().find(|directory| {
         !ceiling
             .write
             .iter()
@@ -76,17 +72,7 @@ pub(crate) fn check(
         return Err(refused(Want::Write(directory.clone()), None));
     }
 
-    Ok(WantedSet {
-        programs: sites.programs.keys().cloned().collect(),
-        env: sites.env.keys().map(|name| (*name).clone()).collect(),
-        write,
-        network: graph
-            .nodes()
-            .iter()
-            .filter(|node| node.network == NetworkAccess::Declared)
-            .map(|node| node.label.clone())
-            .collect(),
-    })
+    Ok(wanted)
 }
 
 /// Whether the file `path` lies in `directory` or below it.

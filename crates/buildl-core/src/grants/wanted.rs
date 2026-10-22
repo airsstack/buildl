@@ -4,19 +4,20 @@
 //! Its own file because it is the one account of the wanted set's sites: the plan holds every
 //! one of them to the ceiling before anything is asked of the machine.
 //!
-//! Responsibilities: [`Sites`] and [`sites`].
+//! Responsibilities: [`Sites`] and [`sites`]; and [`wanted`], the wanted set the sites make.
 //!
 //! Non-responsibilities: holding a want to the ceiling, which the plan's check does; finding a
 //! program on the machine; and deciding what a program is, which is Placement's expansion and
 //! the "built" rule.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::grants::built::built;
 use crate::placement::expand::{Lists, expand};
 use crate::placement::layout::Layout;
 use crate::types::{
-    Argument, EnvName, Node, NodeId, Program, SettingName, SettingValue, SourcePath, TargetGraph,
+    Argument, EnvName, NetworkAccess, Node, NodeId, Program, SettingName, SettingValue, SourcePath,
+    TargetGraph, WantedSet, Workspace,
 };
 
 /// Everything a graph's targets want, each with the lowest-labelled target wanting it.
@@ -75,6 +76,24 @@ pub(crate) fn sites<'g>(
         programs,
         env,
         inputs,
+    }
+}
+
+/// The wanted set of `graph`, whose wants are `sites`, built in `workspace`.
+///
+/// The directories a build writes into are the workspace's own two, `out` and `state`. The
+/// network is wanted by each target declared to reach it.
+pub(crate) fn wanted(graph: &TargetGraph, sites: &Sites<'_>, workspace: &Workspace) -> WantedSet {
+    WantedSet {
+        programs: sites.programs.keys().cloned().collect(),
+        env: sites.env.keys().map(|name| (*name).clone()).collect(),
+        write: BTreeSet::from([workspace.out.clone(), workspace.state.clone()]),
+        network: graph
+            .nodes()
+            .iter()
+            .filter(|node| node.network == NetworkAccess::Declared)
+            .map(|node| node.label.clone())
+            .collect(),
     }
 }
 
