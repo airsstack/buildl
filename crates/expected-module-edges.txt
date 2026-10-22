@@ -1,5 +1,6 @@
 error -> types
 execute -> error
+execute -> placement
 execute -> ports
 execute -> types
 history -> error
@@ -18,6 +19,8 @@ pipeline -> ports
 pipeline -> resolve
 pipeline -> types
 pipeline -> verify
+placement -> error
+placement -> types
 plan -> error
 plan -> ports
 plan -> types
@@ -30,5 +33,6 @@ types -> error
 types -> json
 verify -> error
 verify -> execute
+verify -> placement
 verify -> ports
 verify -> types

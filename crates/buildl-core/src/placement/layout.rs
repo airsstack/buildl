@@ -1,8 +1,8 @@
 //! Layout: where every output of every target lives, and that no two of them collide.
 //!
-//! Its own file because an output's place is decided once, before anything runs, from the
-//! workspace's output directory and the target's label, and a build whose targets would write
-//! over one another is refused here rather than found out halfway through.
+//! An output's place is decided once, before anything runs, from the workspace's output
+//! directory and the target's label, and a build whose targets would write over one another is
+//! refused here rather than found out halfway through.
 //!
 //! Responsibilities: [`Layout`].
 //!
@@ -114,7 +114,7 @@ mod tests {
 
     use super::Layout;
     use crate::error::Error;
-    use crate::execute::fixtures::{dir, graph, node, outputs};
+    use crate::placement::fixtures::{dir, graph, node, outputs};
     use crate::types::{Directory, NodeId, OutputPath, TargetGraph};
 
     fn texts(paths: &[OutputPath]) -> Vec<&str> {

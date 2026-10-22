@@ -20,14 +20,14 @@ use std::collections::{BTreeMap, VecDeque};
 
 use crate::error::{Error, Result};
 use crate::execute::admission::admit;
-use crate::execute::expand::{Lists, expand, expand_description};
-use crate::execute::layout::Layout;
 use crate::execute::perform::{Ended, Performed, Shared, Task, Told, Worked, perform};
 use crate::execute::record::{
     Progress, append, failed, forget_contradicted, restore, shown, skipped, store,
 };
 use crate::execute::schedule::{Finish, Schedule};
 use crate::execute::settle::{Settled, settle};
+use crate::placement::expand::{Lists, expand, expand_description};
+use crate::placement::layout::Layout;
 use crate::ports::{Dispatcher, Manifest, PortSet, Ports, Reporter};
 use crate::types::{
     ActionOutcome, Captured, Ceiling, Command, EnvName, EnvValue, ExpandedDescription, Forcing,

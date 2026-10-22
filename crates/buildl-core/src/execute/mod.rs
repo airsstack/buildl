@@ -12,8 +12,6 @@
 
 mod admission;
 pub mod assembly;
-mod expand;
-pub(crate) mod layout;
 pub(crate) mod perform;
 pub(crate) mod record;
 mod schedule;

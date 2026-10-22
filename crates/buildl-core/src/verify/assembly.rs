@@ -20,10 +20,10 @@ use std::collections::BTreeSet;
 use super::{Chosen, chosen, first_difference};
 use crate::error::{Error, Result};
 use crate::execute::assembly::{Prepared, made_from, prepared};
-use crate::execute::layout::Layout;
 use crate::execute::perform::{Ended, Kept, Performed, Shared, Task, Told, Worked, perform};
 use crate::execute::record::{restore, shown};
 use crate::execute::settle::restorable;
+use crate::placement::layout::Layout;
 use crate::ports::{
     ActionCache, Clock, ContentStore, Dispatcher, ExecStrategy, Manifest, PortSet, Ports,
 };

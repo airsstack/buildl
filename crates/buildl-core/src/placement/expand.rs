@@ -1,10 +1,10 @@
 //! Expansion: a declared command's, and a rule's description's, placeholders replaced by what
 //! they stand for.
 //!
-//! Its own file because a build file never holds a real path: a command is written with `$in`,
-//! `$out`, `$deps` and `$opt:name`, and what an action is handed is the command with each of
-//! them replaced. The replacement is workspace-relative text, the same wherever the action
-//! runs, so it is known before anything does. A description is expanded by the same rules, so
+//! A build file never holds a real path: a command is written with `$in`, `$out`, `$deps` and
+//! `$opt:name`, and what an action is handed is the command with each of them replaced. The
+//! replacement is workspace-relative text, the same wherever the action runs, so it is known
+//! before anything does. A description is expanded by the same rules, so
 //! that the line shown for an action names what the action was handed.
 //!
 //! Responsibilities: [`Lists`], [`expand`] and [`expand_description`].
@@ -150,7 +150,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{Lists, expand, expand_description};
-    use crate::execute::fixtures::{command, output_path, path, settings};
+    use crate::placement::fixtures::{command, output_path, path, settings};
     use crate::types::{Description, OutputPath, SettingName, SettingValue, SourcePath};
 
     /// `declared`, expanded with no setting and these three lists.
