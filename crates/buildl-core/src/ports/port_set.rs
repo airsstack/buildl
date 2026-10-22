@@ -131,6 +131,7 @@ mod tests {
                     write: BTreeSet::new(),
                 },
                 execution: crate::types::Execution::default(),
+                approver: crate::types::ApproverMode::Manifest,
             })
         }
     }

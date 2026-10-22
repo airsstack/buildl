@@ -64,6 +64,7 @@ use crate::ports::{
 ///                 write: BTreeSet::new(),
 ///             },
 ///             execution: buildl_core::Execution::default(),
+///             approver: buildl_core::ApproverMode::Manifest,
 ///         })
 ///     }
 /// }

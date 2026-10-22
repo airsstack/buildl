@@ -50,7 +50,7 @@ mod tests {
     use crate::grants::fixtures::{dir, env_name, graph, node};
     use crate::grants::wanted::sites;
     use crate::placement::layout::Layout;
-    use crate::types::{Ceiling, Execution, Isolation, TargetGraph, Workspace};
+    use crate::types::{ApproverMode, Ceiling, Execution, Isolation, TargetGraph, Workspace};
 
     fn workspace(strategy: Isolation) -> Workspace {
         Workspace {
@@ -66,6 +66,7 @@ mod tests {
                 strategy,
                 ..Execution::default()
             },
+            approver: ApproverMode::Manifest,
         }
     }
 

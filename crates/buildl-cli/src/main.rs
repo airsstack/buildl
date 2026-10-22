@@ -48,7 +48,7 @@
 //! | 1 | an action failed: fix the code being built |
 //! | 2 | the command line is wrong |
 //! | 3 | the builder or the machine failed: fix it, or run again |
-//! | 4 | the build wants more than `buildl.toml`'s ceiling allows |
+//! | 4 | the build wants more than `buildl.toml`'s ceiling allows or than was approved |
 //! | 5 | a build file or `buildl.toml` is wrong |
 //! | 6 | a file in `.buildl/` is not what buildl writes |
 //! | 7 | buildl itself is at fault |

@@ -1061,6 +1061,7 @@ pub fn open_workspace() -> Workspace {
             write: BTreeSet::from([dir("out"), dir(".buildl")]),
         },
         execution: buildl_core::Execution::default(),
+        approver: buildl_core::ApproverMode::Manifest,
     }
 }
 

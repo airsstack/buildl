@@ -17,8 +17,8 @@ use core::ops::Range;
 use std::collections::BTreeSet;
 
 use buildl_core::{
-    Ceiling, Diagnostic, Directory, EntryName, EnvName, Error, Execution, Isolation, PortName,
-    Program, Result, Timeout, Workers, Workspace,
+    ApproverMode, Ceiling, Diagnostic, Directory, EntryName, EnvName, Error, Execution, Isolation,
+    PortName, Program, Result, Timeout, Workers, Workspace,
 };
 use toml::Spanned;
 
@@ -65,6 +65,7 @@ pub(crate) fn workspace(text: &str, raw: &Raw) -> Result<Workspace> {
         state,
         ceiling: ceiling(text, &raw.ceiling)?,
         execution: execution(text, &raw.execution)?,
+        approver: ApproverMode::Manifest,
     })
 }
 

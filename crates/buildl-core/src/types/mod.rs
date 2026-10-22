@@ -33,6 +33,8 @@
 //!   digest that stands for it.
 //! - [`CacheRow`] — what the last successful build of one target recorded.
 //! - [`Ceiling`], [`WantedSet`] and [`Want`] — what a workspace allows, and what a build wants.
+//! - [`Approval`] and [`DenialReason`] — an approver's answer about what a build wants;
+//!   [`ApproverMode`] — which approver a workspace names.
 //! - [`Workspace`] — what a workspace's manifest tells the pipeline.
 //! - [`Execution`], with [`Workers`], [`Timeout`] and [`Isolation`] — how a workspace wants its
 //!   actions run.
@@ -76,6 +78,8 @@ mod grammar;
 pub(crate) mod setting_reference;
 
 pub mod action_key;
+pub mod approval;
+pub mod approver_mode;
 pub mod argument;
 pub mod authority;
 pub mod build_file;
@@ -138,6 +142,8 @@ pub mod written;
 pub use action_key::{
     ActionKey, DepProducts, InputDigest, KeyComponents, OwnComponents, Produced, ToolIdentity,
 };
+pub use approval::{Approval, DenialReason};
+pub use approver_mode::ApproverMode;
 pub use argument::{Argument, Command};
 pub use authority::{Ceiling, Want, WantedSet};
 pub use build_file::{

@@ -28,9 +28,9 @@ use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
 use crate::types::{
-    Ceiling, Declaration, DeclarationOrder, Diagnostic, Directory, EnvName, EnvValue, FieldName,
-    InputKind, Label, Node, OutputPath, Program, Provenance, SettingName, SourcePath, TreePath,
-    Want, Written,
+    Ceiling, Declaration, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
+    FieldName, InputKind, Label, Node, OutputPath, Program, Provenance, SettingName, SourcePath,
+    TreePath, Want, WantedSet, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -239,6 +239,14 @@ pub enum Error {
         site: Option<Box<DeclarationSite>>,
         /// What the workspace allows.
         ceiling: Box<Ceiling>,
+    },
+    /// The approver did not approve what a build wants.
+    #[error("{}", denial(.reason, .unapproved))]
+    NotApproved {
+        /// What was not approved.
+        unapproved: Box<WantedSet>,
+        /// Why, in words for the user.
+        reason: DenialReason,
     },
     /// A command names a program that cannot be found.
     #[error(
@@ -481,6 +489,16 @@ fn cycle_path(path: &[DeclarationSite]) -> String {
     rendered.join(" -> ")
 }
 
+/// A denial as its reason, then the wants it covers on lines of their own; the reason alone when
+/// the set is empty.
+fn denial(reason: &DenialReason, unapproved: &WantedSet) -> String {
+    if unapproved.is_empty() {
+        reason.to_string()
+    } else {
+        format!("{reason}\n{unapproved}")
+    }
+}
+
 /// A refusal as one sentence: who wanted what, and what the ceiling allows of that kind.
 fn refusal(want: &Want, site: Option<&DeclarationSite>, ceiling: &Ceiling) -> String {
     let (wanted, list, allowed) = match want {
@@ -617,6 +635,8 @@ pub enum PortName {
     GraphRecord,
     /// What lists and removes what the content store holds.
     Sweep,
+    /// What settles whether a build may run.
+    Approver,
 }
 
 impl fmt::Display for PortName {
@@ -635,6 +655,7 @@ impl fmt::Display for PortName {
             Self::Dispatcher => "dispatcher",
             Self::GraphRecord => "graph record",
             Self::Sweep => "sweep",
+            Self::Approver => "approver",
         })
     }
 }
@@ -824,6 +845,8 @@ pub enum NameKind {
     Timeout,
     /// The execution strategy a workspace runs its actions under.
     Isolation,
+    /// How a workspace settles whether a build may run.
+    Approver,
     /// The path of a file inside a directory an action left as an output.
     TreePath,
 }
@@ -851,6 +874,7 @@ impl fmt::Display for NameKind {
             Self::Workers => "worker count",
             Self::Timeout => "timeout",
             Self::Isolation => "execution strategy",
+            Self::Approver => "approver mode",
             Self::TreePath => "tree path",
         })
     }
@@ -896,10 +920,10 @@ mod tests {
         EvaluationLimit, NameKind, PortName, TreeFault,
     };
     use crate::types::{
-        Argument, Ceiling, Command, DeclarationOrder, Diagnostic, Directory, EnvName, EnvValue,
-        FieldName, Freshness, InputKind, Label, NetworkAccess, Node, OutputName, OutputPath,
-        Program, Provenance, SettingName, SourcePath, TargetName, TargetRole, TreePath, Want,
-        Written,
+        Argument, Ceiling, Command, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName,
+        EnvValue, FieldName, Freshness, InputKind, Label, NetworkAccess, Node, OutputName,
+        OutputPath, Program, Provenance, SettingName, SourcePath, TargetName, TargetRole, TreePath,
+        Want, WantedSet, Written,
     };
 
     fn lib_file() -> Provenance {
@@ -1175,6 +1199,37 @@ mod tests {
             read: BTreeSet::from([Directory::parse("src").unwrap()]),
             write: BTreeSet::new(),
         }
+    }
+
+    #[test]
+    fn not_approved_shows_its_reason_then_the_wants() {
+        let err = Error::NotApproved {
+            unapproved: Box::new(WantedSet {
+                programs: BTreeSet::from([Program::parse("protoc").unwrap()]),
+                env: BTreeSet::new(),
+                write: BTreeSet::from([Directory::parse("out").unwrap()]),
+                network: BTreeSet::new(),
+            }),
+            reason: DenialReason::new("not approved"),
+        };
+        assert_eq!(
+            err.to_string(),
+            "not approved\n  run programs: protoc\n  write into:   out"
+        );
+    }
+
+    #[test]
+    fn not_approved_with_nothing_unapproved_shows_only_its_reason() {
+        let err = Error::NotApproved {
+            unapproved: Box::new(WantedSet {
+                programs: BTreeSet::new(),
+                env: BTreeSet::new(),
+                write: BTreeSet::new(),
+                network: BTreeSet::new(),
+            }),
+            reason: DenialReason::new("not approved"),
+        };
+        assert_eq!(err.to_string(), "not approved");
     }
 
     #[test]
@@ -1498,6 +1553,7 @@ mod tests {
             (PortName::Dispatcher, "dispatcher"),
             (PortName::GraphRecord, "graph record"),
             (PortName::Sweep, "sweep"),
+            (PortName::Approver, "approver"),
         ];
         for (port, rendered) in cases {
             assert_eq!(port.to_string(), rendered);
@@ -1526,6 +1582,7 @@ mod tests {
         assert_eq!(NameKind::Workers.to_string(), "worker count");
         assert_eq!(NameKind::Timeout.to_string(), "timeout");
         assert_eq!(NameKind::Isolation.to_string(), "execution strategy");
+        assert_eq!(NameKind::Approver.to_string(), "approver mode");
         assert_eq!(NameKind::TreePath.to_string(), "tree path");
     }
 

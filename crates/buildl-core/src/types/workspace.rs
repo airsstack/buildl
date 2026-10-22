@@ -11,7 +11,7 @@
 //!
 //! This file holds only type definitions, so it carries no logic to unit-test.
 
-use crate::types::{Ceiling, Directory, Isolation, Timeout, Workers};
+use crate::types::{ApproverMode, Ceiling, Directory, Isolation, Timeout, Workers};
 
 /// A workspace as its manifest describes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +24,9 @@ pub struct Workspace {
     pub ceiling: Ceiling,
     /// How the workspace wants its actions run.
     pub execution: Execution,
+    /// How the workspace settles whether a build may run. No phase reads it: whoever assembles
+    /// the adapters picks the approver from it.
+    pub approver: ApproverMode,
 }
 
 /// How a workspace wants its actions run: the manifest's `[execution]` table.

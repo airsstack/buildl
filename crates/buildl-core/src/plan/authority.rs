@@ -114,6 +114,7 @@ mod tests {
     };
     use crate::grants::wanted::sites;
     use crate::placement::layout::Layout;
+    use crate::types::ApproverMode;
     use crate::types::{
         Ceiling, Directory, Execution, NetworkAccess, Node, SettingName, SettingValue, TargetGraph,
         Want, WantedSet, Workspace,
@@ -132,6 +133,7 @@ mod tests {
                 write: BTreeSet::from([dir("out"), dir(".buildl")]),
             },
             execution: Execution::default(),
+            approver: ApproverMode::Manifest,
         }
     }
 
