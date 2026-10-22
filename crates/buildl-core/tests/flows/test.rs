@@ -8,13 +8,13 @@
 use std::collections::BTreeMap;
 
 use buildl_core::{
-    ActionOutcome, Digest, EntryName, LiveOutput, OnFailure, OutcomeClass, Pipeline, Rerun, Scope,
-    TargetRole, Written,
+    ActionOutcome, Digest, EntryName, Error, LiveOutput, OnFailure, OutcomeClass, Pipeline, Rerun,
+    Scope, TargetRole, Written,
 };
 
 use crate::common::{
-    Ends, FakePorts, classes, ending, expected, label, root_only, script, skipped, target,
-    target_with,
+    Answer, Ends, FakeApprover, FakePorts, classes, ending, expected, label, root_only, script,
+    skipped, target, target_with,
 };
 
 /// Two build targets, `//:app` and `//:docs`, and two tests: `//:app_test`, which needs
@@ -269,4 +269,42 @@ fn a_failed_rerun_forgets_the_row_so_the_next_run_runs_it() {
     let next = tested(&mut pipeline, &scope, OnFailure::KeepGoing, Rerun::Off);
 
     assert_eq!(classes(&next)["//:unit"], OutcomeClass::Built);
+}
+
+#[test]
+fn a_test_run_asks_the_approver_once() {
+    let mut pipeline = suite();
+
+    tested(
+        &mut pipeline,
+        &Scope::Workspace,
+        OnFailure::KeepGoing,
+        Rerun::Off,
+    );
+
+    assert_eq!(pipeline.ports().approver.asked.len(), 1);
+}
+
+#[test]
+fn a_denied_test_run_runs_nothing() {
+    let mut pipeline = suite();
+    pipeline.ports_mut().approver = FakeApprover::answering(Answer::Deny("no".to_owned()));
+
+    let error = pipeline
+        .test(
+            &EntryName::parse("build.lua").unwrap(),
+            &Scope::Workspace,
+            &BTreeMap::new(),
+            OnFailure::KeepGoing,
+            LiveOutput::Off,
+            Rerun::Off,
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, Error::NotApproved { .. }), "{error:?}");
+    assert_eq!(pipeline.ports().approver.asked.len(), 1);
+    let ports = pipeline.ports();
+    assert_eq!(ports.strategy.handed(), []);
+    assert_eq!(ports.cache.recorded(), []);
+    assert_eq!(ports.log.events, []);
 }

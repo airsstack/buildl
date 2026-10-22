@@ -82,7 +82,10 @@
 //! Recording is the last step of each action — its outputs into the content store, then its
 //! [`CacheRow`], then one [`OutcomeEvent`] in the [`EventLog`] — so a failure leaves no row.
 //! [`Pipeline::build`] runs all four phases and returns one [`ActionOutcome`] per target; what
-//! a failure does to the rest of the build is the caller's [`OnFailure`].
+//! a failure does to the rest of the build is the caller's [`OnFailure`]. [`Pipeline::build`]
+//! and [`Pipeline::test`] put the plan's wanted set to the [`Approver`] port after planning,
+//! and [`negotiate`](fn@negotiate) turns a denial into [`Error::NotApproved`]: a refusal runs
+//! nothing, even when every target is cached. [`Pipeline::plan`] never asks.
 //!
 //! A run works on the whole workspace or on the targets a [`Scope`] names, with everything they
 //! depend on: [`narrow`](fn@narrow) cuts the graph down before Plan, so [`Pipeline::plan`] and
@@ -103,14 +106,14 @@
 //! printed.
 //!
 //! A verify compares what cached targets produce when re-run with what was cached.
-//! [`Pipeline::verify`] plans as a build does, then [`verify`](fn@verify) puts the outputs of
-//! every target whose last build still stands back in place and re-runs a [`Sample`] of those
-//! targets through the [`ExecStrategy`] port. A [`Verification`] holds a [`Check`] per target it
-//! looked at: the re-run reproduced the outputs, differed at the first output and file an
-//! [`OutputDifference`] names, failed, or was never begun because a target it needs was not put
-//! back. It counts the targets with nothing cached and the ones the sample left out. A verify
-//! records no row, forgets none, logs no event and reports nothing, and no output of a re-run is
-//! put in place.
+//! [`Pipeline::verify`] plans as a build does, asks the [`Approver`] as a build does, then
+//! [`verify`](fn@verify) puts the outputs of every target whose last build still stands back in
+//! place and re-runs a [`Sample`] of those targets through the [`ExecStrategy`] port. A
+//! [`Verification`] holds a [`Check`] per target it looked at: the re-run reproduced the outputs,
+//! differed at the first output and file an [`OutputDifference`] names, failed, or was never begun
+//! because a target it needs was not put back. It counts the targets with nothing cached and the
+//! ones the sample left out. A verify records no row, forgets none, logs no event and reports
+//! nothing, and no output of a re-run is put in place.
 //!
 //! This file holds only module declarations and re-exports, so it carries no logic to
 //! unit-test.

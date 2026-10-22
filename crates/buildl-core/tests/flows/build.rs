@@ -12,15 +12,15 @@ use buildl_core::{
     ActionOutcome, Digest, EntryName, Error, EvaluationFailure, FileMode, FileStat, Freshness,
     InfraKind, OnFailure, OutcomeClass, OutcomeEvent, OutputManifest, OutputName, OutputPath,
     OutputRefusal, Pipeline, PortName, SettingName, SettingValue, SourcePath, StagedItem,
-    StagedSetting, StoredFile, Summary, Tally, TargetRole, Timestamp, TreePath, Want, Written,
-    json,
+    StagedSetting, StoredFile, Summary, Tally, TargetRole, Timestamp, TreePath, Want, WantedSet,
+    Written, json,
 };
 use buildl_core::{LiveOutput, Scope};
 
 use crate::common::{
-    Content, Ends, FakeContent, FakeFile, FakePorts, FakeSource, Leaf, Loss, Order, Script,
-    classes, dir, ending, expected, file, label, ports, program, root_only, rule, script, setting,
-    skipped, target, target_with, tree, workspace,
+    Answer, Content, Ends, FakeApprover, FakeContent, FakeFile, FakePorts, FakeSource, Leaf, Loss,
+    Order, Script, classes, dir, ending, expected, file, label, ports, program, root_only, rule,
+    script, setting, skipped, target, target_with, tree, workspace,
 };
 
 /// The events of [`two_directories`] built once, one canonical JSON object per line, pinned.
@@ -2252,4 +2252,76 @@ fn an_output_that_cannot_be_put_back_exactly_is_refused_and_never_recorded() {
     let ports = pipeline.ports();
     assert_eq!(ports.cache.rows.len(), 0, "a refusal is never recorded");
     assert_eq!(ports.cas.placements(), [], "and nothing is put in place");
+}
+
+/// The set a build of `pipeline` is planned to want.
+fn planned_wants(pipeline: &mut Pipeline<FakePorts>) -> WantedSet {
+    pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap()
+        .wanted()
+        .clone()
+}
+
+#[test]
+fn a_build_asks_the_approver_once_with_the_planned_wanted_set() {
+    let mut pipeline = chain();
+    let wanted = planned_wants(&mut pipeline);
+    assert!(!wanted.is_empty(), "the fixture runs a program");
+
+    build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(pipeline.ports().approver.asked, [wanted]);
+}
+
+#[test]
+fn a_denied_build_runs_nothing_records_nothing_and_logs_nothing() {
+    let mut pipeline = chain();
+    pipeline.ports_mut().approver = FakeApprover::answering(Answer::Deny("not today".to_owned()));
+
+    let error = refused(&mut pipeline);
+
+    let Error::NotApproved { unapproved, reason } = error else {
+        unreachable!("expected a refusal by the approver, got {error:?}");
+    };
+    assert_eq!(reason.to_string(), "not today");
+    assert_eq!(*unapproved, pipeline.ports().approver.asked[0]);
+    assert_nothing_ran(&pipeline);
+}
+
+#[test]
+fn a_denied_build_of_cached_targets_is_still_refused() {
+    let mut pipeline = chain();
+    build(&mut pipeline, OnFailure::Stop);
+    let runs = pipeline.ports().strategy.ran().len();
+    let events = pipeline.ports().log.events.len();
+    let rows = pipeline.ports().cache.recorded().len();
+    pipeline.ports_mut().approver = FakeApprover::answering(Answer::Deny("no".to_owned()));
+
+    let error = refused(&mut pipeline);
+
+    assert!(matches!(error, Error::NotApproved { .. }), "{error:?}");
+    assert_eq!(pipeline.ports().strategy.ran().len(), runs);
+    assert_eq!(pipeline.ports().log.events.len(), events);
+    assert_eq!(pipeline.ports().cache.recorded().len(), rows);
+}
+
+#[test]
+fn an_approver_error_stops_the_build() {
+    let mut pipeline = chain();
+    pipeline.ports_mut().approver = FakeApprover::answering(Answer::Fail("no terminal".to_owned()));
+
+    let error = refused(&mut pipeline);
+
+    assert!(
+        matches!(
+            error,
+            Error::Adapter {
+                port: PortName::Approver,
+                ..
+            }
+        ),
+        "{error:?}"
+    );
+    assert_nothing_ran(&pipeline);
 }

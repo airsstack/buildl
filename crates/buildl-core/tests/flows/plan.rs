@@ -18,8 +18,8 @@ use buildl_core::{
 use buildl_core::{Execution, Isolation, Manifest, Scope, Timeout, Workers};
 
 use crate::common::{
-    FakeContent, FakeFile, FakePorts, FakeSource, dir, file, ports, program, setting, target,
-    target_with, workspace,
+    Answer, FakeApprover, FakeContent, FakeFile, FakePorts, FakeSource, dir, file, ports, program,
+    setting, target, target_with, workspace,
 };
 
 /// The serialized plan of [`crate::graph::fixture`] after a build and one edit, pinned.
@@ -1279,4 +1279,22 @@ fn plan_json_lists_in_programs_and_not_built_ones() {
         json.contains(r#""programs":["cc","scripts/run.sh"]"#),
         "{json}"
     );
+}
+
+#[test]
+fn plan_never_asks_the_approver() {
+    let mut pipeline = Pipeline::new(ports(FakeSource::new(workspace(vec![(
+        "",
+        file(vec![target("app", &[])], &[]),
+    )]))));
+    pipeline.ports_mut().approver = FakeApprover::answering(Answer::Fail("asked".to_owned()));
+    pipeline
+        .ports_mut()
+        .tools
+        .fingerprints
+        .insert(program("cc"), Digest::of(b"cc 14.2"));
+
+    planned(&mut pipeline);
+
+    assert_eq!(pipeline.ports().approver.asked, []);
 }

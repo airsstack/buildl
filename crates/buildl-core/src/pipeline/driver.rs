@@ -18,6 +18,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::{Error, Result};
 use crate::execute::execute;
+use crate::grants::negotiate;
 use crate::load::{declaration_order, load};
 use crate::plan::plan;
 use crate::ports::{DeclarationSource, Dispatcher, GraphRecord, PortSet, Ports};
@@ -108,7 +109,8 @@ impl<P: Ports> Pipeline<P> {
     /// `overrides` gives values to build settings for this run. A whole workspace means every
     /// target but tests, and a test is planned when it is named or a planned target depends on it.
     /// A target outside `scope` is not planned, so nothing it reads has to exist. Takes `&mut self`
-    /// because a plan records the digest of every file it had to hash.
+    /// because a plan records the digest of every file it had to hash. The approver is not asked:
+    /// a plan runs nothing.
     ///
     /// # Errors
     ///
@@ -143,15 +145,20 @@ impl<P: Ports> Pipeline<P> {
     /// the whole workspace's whatever `scope` asks for, so the record never depends on which
     /// targets one build was asked for.
     ///
+    /// Once planned, the plan's wanted set is put to the [`Approver`](crate::Approver), and
+    /// nothing runs if it does not approve, even when every target is cached.
+    ///
     /// # Errors
     ///
     /// Returns the first of: whatever the load returns; whatever [`resolve`] returns; the
     /// graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope` that names
     /// neither a target nor an alias; whatever [`plan`](fn@plan) returns, two outputs of the
-    /// planned targets that would be written to one place included; and whatever
-    /// [`execute`](fn@execute) returns: two outputs of the workspace that would be written to one
-    /// place, whether or not both targets were asked for, a command that names no program or one
-    /// outside the workspace's ceiling once it is expanded, or a port's own failure.
+    /// planned targets that would be written to one place included; [`Error::NotApproved`] when
+    /// the approver does not approve what the plan wants, or the approver's own failure; and
+    /// whatever [`execute`](fn@execute) returns: two outputs of the workspace that would be
+    /// written to one place, whether or not both targets were asked for, a command that names no
+    /// program or one outside the workspace's ceiling once it is expanded, or a port's own
+    /// failure.
     pub fn build(
         &mut self,
         entry: &EntryName,
@@ -164,6 +171,7 @@ impl<P: Ports> Pipeline<P> {
         self.ports.graph.record(&whole)?;
         let graph = narrow(&whole, scope, Purpose::Build)?;
         let plan = plan(&graph, overrides, Rerun::Off, &mut self.ports)?;
+        negotiate(plan.wanted(), &mut self.ports.approver)?;
         execute(
             &whole,
             &graph,
@@ -192,16 +200,21 @@ impl<P: Ports> Pipeline<P> {
     /// the whole workspace's whatever `scope` asks for, so the record never depends on which
     /// tests one run was asked for.
     ///
+    /// Once planned, the plan's wanted set is put to the [`Approver`](crate::Approver), and
+    /// nothing runs if it does not approve, even when every target is cached.
+    ///
     /// # Errors
     ///
     /// Returns the first of: whatever the load returns; whatever [`resolve`] returns; the
     /// graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope` that names
     /// neither a target nor an alias; [`Error::NotATest`] for a label of `scope` that names a
     /// target that is not a test; whatever [`plan`](fn@plan) returns, two outputs of the
-    /// planned targets that would be written to one place included; and whatever
-    /// [`execute`](fn@execute) returns: two outputs of the workspace that would be written to one
-    /// place, whether or not both targets were asked for, a command that names no program or one
-    /// outside the workspace's ceiling once it is expanded, or a port's own failure.
+    /// planned targets that would be written to one place included; [`Error::NotApproved`] when
+    /// the approver does not approve what the plan wants, or the approver's own failure; and
+    /// whatever [`execute`](fn@execute) returns: two outputs of the workspace that would be
+    /// written to one place, whether or not both targets were asked for, a command that names no
+    /// program or one outside the workspace's ceiling once it is expanded, or a port's own
+    /// failure.
     pub fn test(
         &mut self,
         entry: &EntryName,
@@ -215,6 +228,7 @@ impl<P: Ports> Pipeline<P> {
         self.ports.graph.record(&whole)?;
         let graph = narrow(&whole, scope, Purpose::Test)?;
         let plan = plan(&graph, overrides, rerun, &mut self.ports)?;
+        negotiate(plan.wanted(), &mut self.ports.approver)?;
         execute(
             &whole,
             &graph,
@@ -237,13 +251,16 @@ impl<P: Ports> Pipeline<P> {
     /// re-run differs from the cache, or fails, is a result and not an error.
     ///
     /// Nothing a build keeps is changed: the graph is not recorded, no row is recorded or
-    /// forgotten, no event is logged, and nothing is reported.
+    /// forgotten, no event is logged, and nothing is reported. Once planned, the plan's wanted set
+    /// is put to the [`Approver`](crate::Approver), and nothing is re-run if it does not approve.
     ///
     /// # Errors
     ///
     /// Returns the first of: whatever the load returns; whatever [`resolve`] returns;
     /// [`Error::UnknownTarget`] for a label of `scope` that names neither a target nor an alias;
-    /// whatever [`plan`](fn@plan) returns; and whatever [`verify`](fn@verify) returns.
+    /// whatever [`plan`](fn@plan) returns; [`Error::NotApproved`] when the approver does not
+    /// approve what the plan wants, or the approver's own failure; and whatever
+    /// [`verify`](fn@verify) returns.
     pub fn verify(
         &mut self,
         entry: &EntryName,
@@ -254,6 +271,7 @@ impl<P: Ports> Pipeline<P> {
         let whole = resolve(load(&self.ports.source, &mut self.ports.dispatcher, entry)?)?;
         let graph = narrow(&whole, scope, Purpose::Build)?;
         let plan = plan(&graph, overrides, Rerun::Off, &mut self.ports)?;
+        negotiate(plan.wanted(), &mut self.ports.approver)?;
         verify(&whole, &graph, &plan, sample, &mut self.ports)
     }
 }

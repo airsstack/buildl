@@ -17,6 +17,7 @@ load -> ports
 load -> types
 pipeline -> error
 pipeline -> execute
+pipeline -> grants
 pipeline -> history
 pipeline -> load
 pipeline -> plan
