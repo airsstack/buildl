@@ -16,6 +16,7 @@ use std::fs;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 
+use buildl::approver::NoTerminal;
 use buildl::buildl_core::{
     Check, Error, FileChange, Label, OutputDifference, OutputManifest, OutputName, PortName,
     Sample, Scope, Verification,
@@ -34,7 +35,7 @@ fn built() -> Fixture {
 fn verify(fixture: &Fixture, sample: Sample) -> Verification {
     fixture
         .open()
-        .verify(&Scope::Workspace, &BTreeMap::new(), sample)
+        .verify(&Scope::Workspace, &BTreeMap::new(), sample, &mut NoTerminal)
         .unwrap()
 }
 
@@ -218,7 +219,12 @@ fn verify_is_refused_under_bare_and_os_sandbox() {
 
         let error = verified
             .open()
-            .verify(&Scope::Workspace, &BTreeMap::new(), Sample::All)
+            .verify(
+                &Scope::Workspace,
+                &BTreeMap::new(),
+                Sample::All,
+                &mut NoTerminal,
+            )
             .unwrap_err();
 
         assert!(

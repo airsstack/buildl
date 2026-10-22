@@ -12,15 +12,17 @@
 //! once it is made.
 
 use core::marker::PhantomData;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use buildl_core::{
-    Diagnostic, Directory, EntryName, Error, Isolation, Manifest, Pipeline, PortName, PortSet,
-    Ports, Reporter, Result, Want,
+    ApproverMode, Diagnostic, Directory, EntryName, Error, Isolation, Manifest, Pipeline, PortName,
+    PortSet, Ports, Reporter, Result, Want,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
-use crate::approver::ManifestApprover;
+use crate::approver::{
+    Console, DataDir, DenyApprover, InteractiveApprover, LocalApprover, ManifestApprover,
+};
 use crate::cache::LocalCache;
 use crate::cas::LocalCas;
 use crate::clock::SystemClock;
@@ -36,14 +38,15 @@ use crate::statcache::LocalStatCache;
 use crate::state::{LockError, Scratch, StateLayout, StateLock};
 use crate::tools::PathTools;
 
-/// The bundle of real adapters. `R` is the reporter a build is lent.
+/// The bundle of real adapters. `R` is the reporter a build is lent, and `C` the console the
+/// approver may ask on.
 ///
 /// A bundle is a choice of types and is never made as a value: it is named as the parameter of
 /// a [`PortSet`] or of a [`Pipeline`].
 #[derive(Debug)]
-pub struct LocalPorts<R>(PhantomData<fn() -> R>);
+pub struct LocalPorts<R, C>(PhantomData<fn() -> (R, C)>);
 
-impl<R: Reporter> Ports for LocalPorts<R> {
+impl<R: Reporter, C: Console> Ports for LocalPorts<R, C> {
     type Source = LuaSource;
     type Manifest = TomlManifest;
     type Host = LocalHost;
@@ -58,11 +61,11 @@ impl<R: Reporter> Ports for LocalPorts<R> {
     type Clock = SystemClock;
     type Graph = GraphFile;
     type Reporter = R;
-    type Approver = ManifestApprover;
+    type Approver = LocalApprover<C>;
 }
 
 /// The pipeline over the real adapters.
-pub type LocalPipeline<R> = Pipeline<LocalPorts<R>>;
+pub type LocalPipeline<R, C> = Pipeline<LocalPorts<R, C>>;
 
 /// A workspace whose manifest has been read: everything a port is made from. It holds no lock
 /// and has written nothing.
@@ -73,6 +76,7 @@ pub struct Wiring {
     workspace: buildl_core::Workspace,
     search: SearchPath,
     scratch: Scratch,
+    data: DataDir,
 }
 
 impl Wiring {
@@ -97,7 +101,15 @@ impl Wiring {
             workspace,
             search: SearchPath::from_process(),
             scratch,
+            data: DataDir::User,
         })
+    }
+
+    /// Keeps approvals in `dir` instead of the user's data directory.
+    #[must_use]
+    pub fn with_data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.data = DataDir::At(dir.into());
+        self
     }
 
     /// The scratch directory of this workspace, outside it. Naming it makes nothing.
@@ -295,18 +307,20 @@ impl Wiring {
     /// is the one the manifest names, and a strategy this version cannot run is made too, as one
     /// that refuses to run anything, so that `plan` works under every strategy. The program
     /// lookup and the strategy are handed one search path, so the file that is run is the file that
-    /// was fingerprinted.
+    /// was fingerprinted. The approver is the one the manifest's `[approver]` table names; `console`
+    /// is the one it asks on, and the other two never use it.
     ///
     /// # Errors
     ///
     /// Returns whatever an adapter returns when it is made: the host's, the stat cache's and the
     /// action cache's own errors, unchanged.
-    pub fn ports<R: Reporter>(
+    pub fn ports<R: Reporter, C: Console>(
         &self,
         lock: &StateLock,
         reporter: R,
-    ) -> Result<PortSet<LocalPorts<R>>> {
-        self.assemble(lock, reporter, self.strategy(lock))
+        console: C,
+    ) -> Result<PortSet<LocalPorts<R, C>>> {
+        self.assemble(lock, reporter, console, self.strategy(lock))
     }
 
     /// Every port, for one verify: the ports of [`Wiring::ports`], with the input sandbox as
@@ -320,26 +334,43 @@ impl Wiring {
     /// # Errors
     ///
     /// Returns whatever an adapter returns when it is made, as [`Wiring::ports`] does.
-    pub fn verify_ports<R: Reporter>(
+    pub fn verify_ports<R: Reporter, C: Console>(
         &self,
         lock: &StateLock,
         reporter: R,
-    ) -> Result<PortSet<LocalPorts<R>>> {
+        console: C,
+    ) -> Result<PortSet<LocalPorts<R, C>>> {
         self.assemble(
             lock,
             reporter,
+            console,
             Local::Sandbox(self.sandbox(lock, OutPaths::Untouched)),
         )
     }
 
+    /// The approver the manifest's `[approver]` table names. Only the interactive one is given
+    /// the console, the root and where approvals are kept.
+    fn approver<C: Console>(&self, console: C) -> LocalApprover<C> {
+        match self.workspace.approver {
+            ApproverMode::Manifest => LocalApprover::Manifest(ManifestApprover),
+            ApproverMode::Deny => LocalApprover::Deny(DenyApprover),
+            ApproverMode::Interactive => LocalApprover::Interactive(InteractiveApprover::new(
+                console,
+                self.data.clone(),
+                self.root.as_path().to_path_buf(),
+            )),
+        }
+    }
+
     /// The adapters of [`Wiring::ports`] and [`Wiring::verify_ports`], which differ only in the
     /// strategy they are given.
-    fn assemble<R: Reporter>(
+    fn assemble<R: Reporter, C: Console>(
         &self,
         lock: &StateLock,
         reporter: R,
+        console: C,
         strategy: Local,
-    ) -> Result<PortSet<LocalPorts<R>>> {
+    ) -> Result<PortSet<LocalPorts<R, C>>> {
         let layout = lock.layout();
         let root = self.root.as_path();
         Ok(PortSet {
@@ -357,7 +388,7 @@ impl Wiring {
             clock: SystemClock,
             graph: GraphFile::new(layout),
             reporter,
-            approver: ManifestApprover,
+            approver: self.approver(console),
         })
     }
 }
@@ -379,6 +410,7 @@ mod tests {
     };
     use buildl_lua::{DeclarationLimits, LuaSource};
 
+    use crate::approver::{DataDir, LocalApprover, NoTerminal};
     use crate::cas::LocalCas;
     use crate::digest::FileDigester;
     use crate::dispatch::ThreadPool;
@@ -750,6 +782,32 @@ mod tests {
     }
 
     #[test]
+    fn the_approver_is_the_one_the_manifest_names() {
+        for (table, expected) in [
+            ("", "Manifest"),
+            ("[approver]\ndefault = \"manifest\"\n", "Manifest"),
+            ("[approver]\ndefault = \"deny\"\n", "Deny"),
+            ("[approver]\ndefault = \"interactive\"\n", "Interactive"),
+        ] {
+            let (_dir, root) = workspace(&format!("{}{table}", bare()));
+            let wiring = Wiring::read(&root)
+                .unwrap()
+                .with_data_dir(root.join("data"));
+            let lock = wiring.lock().unwrap();
+
+            let ports = wiring.ports(&lock, Silent, NoTerminal).unwrap();
+
+            let named = match ports.approver {
+                LocalApprover::Manifest(_) => "Manifest",
+                LocalApprover::Deny(_) => "Deny",
+                LocalApprover::Interactive(_) => "Interactive",
+            };
+            assert_eq!(named, expected, "{table:?}");
+            assert_eq!(wiring.data, DataDir::At(root.join("data")));
+        }
+    }
+
+    #[test]
     fn every_port_is_made_from_the_manifest_the_root_and_the_lock() {
         let (_dir, root) = workspace(&format!("{}workers = 3\ntimeout = \"7s\"\n", bare()));
         let wiring = Wiring::read(&root).unwrap();
@@ -757,7 +815,7 @@ mod tests {
         let layout = lock.layout();
         let search = wiring.search.clone();
 
-        let ports = wiring.ports(&lock, Silent).unwrap();
+        let ports = wiring.ports(&lock, Silent, NoTerminal).unwrap();
 
         assert_eq!(ports.source, wiring.source());
         assert_eq!(ports.manifest, TomlManifest::read(wiring.root()).unwrap());
@@ -796,7 +854,7 @@ mod tests {
         let (_dir, root) = workspace(&format!("{CEILING}[execution]\ntimeout = \"7s\"\n"));
         let wiring = Wiring::read(&root).unwrap();
         let lock = wiring.lock().unwrap();
-        let ports = wiring.ports(&lock, Silent).unwrap();
+        let ports = wiring.ports(&lock, Silent, NoTerminal).unwrap();
         assert_eq!(
             format!("{:?}", ports.strategy),
             format!(
@@ -818,7 +876,7 @@ mod tests {
         ));
         let wiring = Wiring::read(&root).unwrap();
         let lock = wiring.lock().unwrap();
-        let ports = wiring.ports(&lock, Silent).unwrap();
+        let ports = wiring.ports(&lock, Silent, NoTerminal).unwrap();
         assert_eq!(
             format!("{:?}", ports.strategy),
             format!("{:?}", Local::Refused(Isolation::OsSandbox))
@@ -832,7 +890,7 @@ mod tests {
         let wiring = Wiring::read(&root).unwrap();
         let lock = wiring.lock().unwrap();
 
-        let ports = wiring.verify_ports(&lock, Silent).unwrap();
+        let ports = wiring.verify_ports(&lock, Silent, NoTerminal).unwrap();
 
         assert_eq!(
             format!("{:?}", ports.strategy),
@@ -857,7 +915,7 @@ mod tests {
         let lock = wiring.lock().unwrap();
         fs::write(lock.layout().cache(), "{} ").unwrap();
 
-        let error = wiring.ports(&lock, Silent).unwrap_err();
+        let error = wiring.ports(&lock, Silent, NoTerminal).unwrap_err();
 
         assert!(
             matches!(&error, Error::CorruptState { file, .. } if *file == root.join(".buildl/cache.json")),
@@ -877,8 +935,8 @@ mod tests {
         let wiring = Wiring::read(&root).unwrap();
         let lock = wiring.lock().unwrap();
 
-        let mut pipeline: LocalPipeline<Silent> =
-            Pipeline::new(wiring.ports(&lock, Silent).unwrap());
+        let mut pipeline: LocalPipeline<Silent, NoTerminal> =
+            Pipeline::new(wiring.ports(&lock, Silent, NoTerminal).unwrap());
         let plan = pipeline
             .plan(wiring.entry(), &Scope::Workspace, &BTreeMap::new())
             .unwrap();

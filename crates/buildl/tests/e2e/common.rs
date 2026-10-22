@@ -1,14 +1,15 @@
 //! Workspaces to build: a temporary copy of a checked-in fixture, and what two builds of it
 //! must agree on.
 
+use std::collections::VecDeque;
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
-use buildl::Workspace;
+use buildl::approver::{Approvals, Console, NoTerminal};
 use buildl::buildl_core::json::canonical;
 use buildl::buildl_core::{
     ActionOutcome, CacheRow, Directory, Label, LiveOutput, OnFailure, OutcomeClass, Plan, Rerun,
@@ -16,6 +17,7 @@ use buildl::buildl_core::{
 };
 use buildl::report::{Mode, Paint, Report, Silent, TerminalReporter};
 use buildl::state::{Scratch, StateLayout};
+use buildl::{RunOptions, Workspace};
 
 /// The graph of the fixture `chain` as canonical JSON, followed by one newline.
 pub(crate) const CHAIN_GRAPH: &str = include_str!("golden/chain.graph.json");
@@ -46,6 +48,9 @@ pub(crate) const CHAIN_OUTPUTS: [&str; 8] = [
 pub(crate) struct Fixture {
     _dir: tempfile::TempDir,
     root: PathBuf,
+    /// Where the workspace keeps what is the user's: outside the root, so no build touches the
+    /// real home.
+    data: tempfile::TempDir,
 }
 
 impl Fixture {
@@ -69,7 +74,11 @@ impl Fixture {
         for relative in executables {
             fs::set_permissions(root.join(relative), fs::Permissions::from_mode(0o755)).unwrap();
         }
-        Self { _dir: dir, root }
+        Self {
+            _dir: dir,
+            root,
+            data: tempfile::tempdir().unwrap(),
+        }
     }
 
     /// The workspace root: canonical and absolute.
@@ -181,9 +190,29 @@ impl Fixture {
         }
     }
 
-    /// Opens the workspace from its root.
+    /// The directory approvals are kept in, outside the workspace.
+    pub(crate) fn data(&self) -> &Path {
+        self.data.path()
+    }
+
+    /// The file this workspace's approvals are remembered in.
+    pub(crate) fn approvals_file(&self) -> PathBuf {
+        Approvals::new(self.data(), &self.root).file().to_path_buf()
+    }
+
+    /// Makes `mode` the workspace's approver, in its manifest.
+    pub(crate) fn approver(&self, mode: &str) {
+        self.append(
+            "buildl.toml",
+            format!("\n[approver]\ndefault = \"{mode}\"\n").as_bytes(),
+        );
+    }
+
+    /// Opens the workspace from its root, keeping approvals in [`Fixture::data`].
     pub(crate) fn open(&self) -> Workspace {
-        Workspace::open(&self.root).unwrap()
+        Workspace::open(&self.root)
+            .unwrap()
+            .with_data_dir(self.data())
     }
 
     /// Builds every target, stopping at the first failure and showing nothing.
@@ -193,12 +222,32 @@ impl Fixture {
 
     /// As [`Fixture::build`], for a build that may be refused.
     pub(crate) fn try_build(&self) -> Result<Vec<ActionOutcome>> {
+        self.try_build_asking(&mut NoTerminal)
+    }
+
+    /// As [`Fixture::try_build`], with `console` for the approver to ask on.
+    pub(crate) fn try_build_asking(
+        &self,
+        console: &mut impl Console,
+    ) -> Result<Vec<ActionOutcome>> {
         self.open().build(
             &Scope::Workspace,
             &BTreeMap::new(),
-            OnFailure::Stop,
-            LiveOutput::Off,
+            RunOptions::new(OnFailure::Stop, LiveOutput::Off),
             &mut Silent,
+            console,
+        )
+    }
+
+    /// Runs every test, with `console` for the approver to ask on.
+    pub(crate) fn try_test_asking(&self, console: &mut impl Console) -> Result<Vec<ActionOutcome>> {
+        self.open().test(
+            &Scope::Workspace,
+            &BTreeMap::new(),
+            RunOptions::new(OnFailure::KeepGoing, LiveOutput::Off),
+            Rerun::Off,
+            &mut Silent,
+            console,
         )
     }
 
@@ -218,9 +267,9 @@ impl Fixture {
             .build(
                 &Scope::Targets(named),
                 &BTreeMap::new(),
-                OnFailure::Stop,
-                LiveOutput::Off,
+                RunOptions::new(OnFailure::Stop, LiveOutput::Off),
                 &mut Silent,
+                &mut NoTerminal,
             )
             .unwrap()
     }
@@ -243,10 +292,10 @@ impl Fixture {
             .test(
                 &scope,
                 &BTreeMap::new(),
-                OnFailure::KeepGoing,
-                LiveOutput::Off,
+                RunOptions::new(OnFailure::KeepGoing, LiveOutput::Off),
                 rerun,
                 &mut Silent,
+                &mut NoTerminal,
             )
             .unwrap()
     }
@@ -262,13 +311,53 @@ impl Fixture {
                 .build(
                     &Scope::Workspace,
                     &BTreeMap::new(),
-                    on_failure,
-                    LiveOutput::Off,
+                    RunOptions::new(on_failure, LiveOutput::Off),
                     &mut reporter,
+                    &mut NoTerminal,
                 )
                 .unwrap()
         };
         (outcomes, String::from_utf8(shown).unwrap())
+    }
+}
+
+/// A console that answers from a script and keeps what it was asked.
+pub(crate) struct Fake {
+    terminal: bool,
+    answers: VecDeque<String>,
+    /// Every prompt asked, in order.
+    pub(crate) prompts: Vec<String>,
+}
+
+impl Fake {
+    /// A terminal that gives `answers` one by one.
+    pub(crate) fn answering(answers: &[&str]) -> Self {
+        Self {
+            terminal: true,
+            answers: answers.iter().map(|&answer| answer.to_owned()).collect(),
+            prompts: Vec::new(),
+        }
+    }
+
+    /// A console with nobody at it.
+    pub(crate) fn nobody() -> Self {
+        Self {
+            terminal: false,
+            ..Self::answering(&[])
+        }
+    }
+}
+
+impl Console for Fake {
+    fn is_terminal(&self) -> bool {
+        self.terminal
+    }
+
+    fn ask(&mut self, prompt: &str) -> io::Result<String> {
+        self.prompts.push(prompt.to_owned());
+        self.answers
+            .pop_front()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "no more answers"))
     }
 }
 

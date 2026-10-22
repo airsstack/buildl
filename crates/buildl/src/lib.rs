@@ -23,7 +23,8 @@
 //! use std::collections::BTreeMap;
 //! use std::fs;
 //!
-//! use buildl::Workspace;
+//! use buildl::{RunOptions, Workspace};
+//! use buildl::approver::NoTerminal;
 //! use buildl::buildl_core::{LiveOutput, OnFailure, OutcomeClass, Scope};
 //! use buildl::report::Silent;
 //!
@@ -50,9 +51,9 @@
 //! let built = workspace.build(
 //!     &everything,
 //!     &settings,
-//!     OnFailure::Stop,
-//!     LiveOutput::Off,
+//!     RunOptions::new(OnFailure::Stop, LiveOutput::Off),
 //!     &mut Silent,
+//!     &mut NoTerminal,
 //! )?;
 //! assert_eq!(built[0].class, OutcomeClass::Built);
 //! assert_eq!(fs::read(workspace.root().join("out/copy"))?, b"a\n");
@@ -60,13 +61,23 @@
 //! let again = workspace.build(
 //!     &everything,
 //!     &settings,
-//!     OnFailure::Stop,
-//!     LiveOutput::Off,
+//!     RunOptions::new(OnFailure::Stop, LiveOutput::Off),
 //!     &mut Silent,
+//!     &mut NoTerminal,
 //! )?;
 //! assert_eq!(again[0].class, OutcomeClass::Cached);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! A build and a test run are lent the reporter and an [`approver::Console`] as two `&mut`
+//! parameters, and a verify is lent the console alone: the console is where the approver may ask
+//! the person about what the run wants. Which approver answers is chosen by `[approver]` in
+//! `buildl.toml`: `manifest`, the default, approves whatever the ceiling allows and never asks;
+//! `interactive` asks about what is new and remembers a yes outside the workspace, so a caller
+//! with nobody to ask passes [`approver::NoTerminal`]; and `deny` refuses a build, a test run and
+//! a verify.
+//! [`Workspace::with_data_dir`] says where a yes is remembered, in place of the user's data
+//! directory.
 //!
 //! Actions run as plain processes, under the strategy the manifest names: `sandbox`, the default,
 //! runs each in a directory of its own holding only the files it declared, and `bare` runs it in
@@ -169,4 +180,4 @@ mod workspace;
 pub use buildl_core;
 pub use local_ports::{LocalPipeline, LocalPorts, Wiring};
 pub use state::Cleaned;
-pub use workspace::Workspace;
+pub use workspace::{RunOptions, Workspace};

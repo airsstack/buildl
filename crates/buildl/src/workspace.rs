@@ -11,7 +11,7 @@
 //! which is the wiring's; and showing anything, which is the caller's.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use buildl_core::{
     ActionOutcome, Collected, Declaration, Diagnostic, Directory, Error, Label, LiveOutput,
@@ -19,12 +19,32 @@ use buildl_core::{
     SettingName, SettingValue, Shown, TargetGraph, Verification, pipeline,
 };
 
+use crate::approver::{Console, NoTerminal};
 use crate::cache::LocalCache;
 use crate::cas::LocalCas;
 use crate::local_ports::Wiring;
 use crate::log::LocalLog;
 use crate::report::Silent;
 use crate::state::{Cleaned, clear_out};
+
+/// The choices a caller makes about one build or test run that are neither in the workspace nor
+/// part of any key.
+///
+/// Both are values the run reads and nothing else does, so they travel as one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunOptions {
+    on_failure: OnFailure,
+    live: LiveOutput,
+}
+
+impl RunOptions {
+    /// What to do with the rest of the targets once one has failed, and when to show what an
+    /// action prints.
+    #[must_use]
+    pub const fn new(on_failure: OnFailure, live: LiveOutput) -> Self {
+        Self { on_failure, live }
+    }
+}
 
 /// A workspace wired with the real adapters.
 ///
@@ -51,6 +71,14 @@ impl Workspace {
         Ok(Self {
             wiring: Wiring::read(start.as_ref())?,
         })
+    }
+
+    /// Keeps the approvals this workspace remembers in `dir`, instead of in the user's data
+    /// directory. Only the `interactive` approver reads or writes them.
+    #[must_use]
+    pub fn with_data_dir(mut self, dir: impl Into<PathBuf>) -> Self {
+        self.wiring = self.wiring.with_data_dir(dir);
+        self
     }
 
     /// The workspace root: canonical and absolute.
@@ -177,14 +205,19 @@ impl Workspace {
     /// holds the workspace, and naming
     /// [`PortName::ExecStrategy`](buildl_core::PortName::ExecStrategy) when the scratch
     /// directory cannot be removed. Otherwise returns whatever making the adapters returns, then
-    /// whatever [`Pipeline::plan`] returns.
+    /// whatever [`Pipeline::plan`] returns. A plan runs nothing, so it never asks the approver
+    /// anything, whatever `[approver]` names.
     pub fn plan(
         &self,
         scope: &Scope,
         overrides: &BTreeMap<SettingName, SettingValue>,
     ) -> Result<Plan> {
         let lock = self.wiring.lock()?;
-        Pipeline::new(self.wiring.ports(&lock, Silent)?).plan(self.wiring.entry(), scope, overrides)
+        Pipeline::new(self.wiring.ports(&lock, Silent, NoTerminal)?).plan(
+            self.wiring.entry(),
+            scope,
+            overrides,
+        )
     }
 
     /// Builds `scope`, telling `reporter` how it goes.
@@ -202,18 +235,33 @@ impl Workspace {
     /// then, and nothing was run. After that, as [`Workspace::plan`], then whatever
     /// [`Pipeline::build`] returns. A build that succeeded and whose rows could not be folded
     /// returns the fold's error.
-    pub fn build<R: Reporter>(
+    ///
+    /// The approver is the one `[approver]` in `buildl.toml` names, and it is asked before any
+    /// action runs: [`Error::NotApproved`](buildl_core::Error::NotApproved) when it does not
+    /// approve what the build wants, [`Error::CorruptState`](buildl_core::Error::CorruptState)
+    /// when the file of remembered approvals is not what buildl writes, and
+    /// [`Error::Adapter`](buildl_core::Error::Adapter), naming
+    /// [`PortName::Approver`](buildl_core::PortName::Approver), when that file cannot be read or
+    /// written, the user's data directory cannot be found, or the console cannot be asked on.
+    /// `console` is where an `interactive` approver asks; under the other two it is not used.
+    pub fn build<R: Reporter, C: Console>(
         &self,
         scope: &Scope,
         overrides: &BTreeMap<SettingName, SettingValue>,
-        on_failure: OnFailure,
-        live: LiveOutput,
+        options: RunOptions,
         reporter: &mut R,
+        console: &mut C,
     ) -> Result<Vec<ActionOutcome>> {
         self.wiring.runs()?;
         let lock = self.wiring.lock()?;
-        let mut pipeline = Pipeline::new(self.wiring.ports(&lock, reporter)?);
-        let built = pipeline.build(self.wiring.entry(), scope, overrides, on_failure, live);
+        let mut pipeline = Pipeline::new(self.wiring.ports(&lock, reporter, console)?);
+        let built = pipeline.build(
+            self.wiring.entry(),
+            scope,
+            overrides,
+            options.on_failure,
+            options.live,
+        );
         let folded = pipeline.ports_mut().cache.fold();
         // The adapters are let go before the lock that kept the directory theirs.
         drop(pipeline);
@@ -235,15 +283,25 @@ impl Workspace {
     /// not `sandbox` (`bare`, `os-sandbox` or `container`): nothing has been made then, and
     /// nothing was run. After that, as [`Workspace::plan`], then whatever [`Pipeline::verify`]
     /// returns.
-    pub fn verify(
+    ///
+    /// The approver is the one `[approver]` in `buildl.toml` names, and it is asked before any
+    /// action runs: [`Error::NotApproved`](buildl_core::Error::NotApproved) when it does not
+    /// approve what the re-runs want, [`Error::CorruptState`](buildl_core::Error::CorruptState)
+    /// when the file of remembered approvals is not what buildl writes, and
+    /// [`Error::Adapter`](buildl_core::Error::Adapter), naming
+    /// [`PortName::Approver`](buildl_core::PortName::Approver), when that file cannot be read or
+    /// written, the user's data directory cannot be found, or the console cannot be asked on.
+    /// `console` is where an `interactive` approver asks; under the other two it is not used.
+    pub fn verify<C: Console>(
         &self,
         scope: &Scope,
         overrides: &BTreeMap<SettingName, SettingValue>,
         sample: Sample,
+        console: &mut C,
     ) -> Result<Verification> {
         self.wiring.verifies()?;
         let lock = self.wiring.lock()?;
-        let mut pipeline = Pipeline::new(self.wiring.verify_ports(&lock, Silent)?);
+        let mut pipeline = Pipeline::new(self.wiring.verify_ports(&lock, Silent, console)?);
         let verified = pipeline.verify(self.wiring.entry(), scope, overrides, sample);
         // The adapters are let go before the lock that kept the directory theirs.
         drop(pipeline);
@@ -338,24 +396,33 @@ impl Workspace {
     /// then, and nothing was run. After that, as [`Workspace::plan`], then whatever
     /// [`Pipeline::test`] returns. A run that succeeded and whose rows could not be folded
     /// returns the fold's error.
-    pub fn test<R: Reporter>(
+    ///
+    /// The approver is the one `[approver]` in `buildl.toml` names, and it is asked before any
+    /// action runs: [`Error::NotApproved`](buildl_core::Error::NotApproved) when it does not
+    /// approve what the tests want, [`Error::CorruptState`](buildl_core::Error::CorruptState)
+    /// when the file of remembered approvals is not what buildl writes, and
+    /// [`Error::Adapter`](buildl_core::Error::Adapter), naming
+    /// [`PortName::Approver`](buildl_core::PortName::Approver), when that file cannot be read or
+    /// written, the user's data directory cannot be found, or the console cannot be asked on.
+    /// `console` is where an `interactive` approver asks; under the other two it is not used.
+    pub fn test<R: Reporter, C: Console>(
         &self,
         scope: &Scope,
         overrides: &BTreeMap<SettingName, SettingValue>,
-        on_failure: OnFailure,
-        live: LiveOutput,
+        options: RunOptions,
         rerun: Rerun,
         reporter: &mut R,
+        console: &mut C,
     ) -> Result<Vec<ActionOutcome>> {
         self.wiring.runs()?;
         let lock = self.wiring.lock()?;
-        let mut pipeline = Pipeline::new(self.wiring.ports(&lock, reporter)?);
+        let mut pipeline = Pipeline::new(self.wiring.ports(&lock, reporter, console)?);
         let tested = pipeline.test(
             self.wiring.entry(),
             scope,
             overrides,
-            on_failure,
-            live,
+            options.on_failure,
+            options.live,
             rerun,
         );
         let folded = pipeline.ports_mut().cache.fold();
@@ -391,8 +458,9 @@ mod tests {
         Tally, Verdict, Want,
     };
 
+    use crate::approver::NoTerminal;
     use crate::report::Silent;
-    use crate::workspace::{Workspace, concluded};
+    use crate::workspace::{RunOptions, Workspace, concluded};
 
     /// A temporary workspace holding each of `files`, and its canonical root.
     fn workspace(files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf) {
@@ -453,9 +521,9 @@ mod tests {
         let outcomes = workspace.build(
             &Scope::Workspace,
             &BTreeMap::new(),
-            OnFailure::Stop,
-            LiveOutput::Off,
+            RunOptions::new(OnFailure::Stop, LiveOutput::Off),
             &mut Silent,
+            &mut NoTerminal,
         )?;
         Ok(outcomes
             .into_iter()
@@ -743,9 +811,9 @@ mod tests {
             .build(
                 &scope,
                 &BTreeMap::new(),
-                OnFailure::Stop,
-                LiveOutput::Off,
+                RunOptions::new(OnFailure::Stop, LiveOutput::Off),
                 &mut Silent,
+                &mut NoTerminal,
             )
             .unwrap();
 
@@ -768,9 +836,9 @@ mod tests {
                 .build(
                     &Scope::Workspace,
                     &BTreeMap::new(),
-                    OnFailure::Stop,
-                    LiveOutput::Off,
+                    RunOptions::new(OnFailure::Stop, LiveOutput::Off),
                     &mut told,
+                    &mut NoTerminal,
                 )
                 .unwrap();
         }
@@ -958,10 +1026,10 @@ mod tests {
             .test(
                 &Scope::Workspace,
                 &BTreeMap::new(),
-                OnFailure::Stop,
-                LiveOutput::Off,
+                RunOptions::new(OnFailure::Stop, LiveOutput::Off),
                 Rerun::Off,
                 &mut Silent,
+                &mut NoTerminal,
             )
             .unwrap();
 
@@ -1098,10 +1166,10 @@ mod tests {
             .test(
                 &Scope::Workspace,
                 &BTreeMap::new(),
-                OnFailure::Stop,
-                LiveOutput::Off,
+                RunOptions::new(OnFailure::Stop, LiveOutput::Off),
                 Rerun::Off,
                 &mut Silent,
+                &mut NoTerminal,
             )
             .unwrap_err();
 
@@ -1126,7 +1194,12 @@ mod tests {
         let workspace = Workspace::open(&root).unwrap();
 
         let error = workspace
-            .verify(&Scope::Workspace, &BTreeMap::new(), Sample::All)
+            .verify(
+                &Scope::Workspace,
+                &BTreeMap::new(),
+                Sample::All,
+                &mut NoTerminal,
+            )
             .unwrap_err();
 
         assert!(

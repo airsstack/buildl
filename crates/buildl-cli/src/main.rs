@@ -71,6 +71,7 @@ use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
 mod cli;
+mod console;
 mod exit;
 mod run;
 mod terminal;
@@ -87,6 +88,7 @@ fn main() -> ExitCode {
         &terminal,
         &mut io::stdout(),
         &mut io::stderr(),
+        &mut console::StdConsole,
     );
     ExitCode::from(exit as u8)
 }
