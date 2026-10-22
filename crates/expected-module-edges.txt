@@ -4,7 +4,9 @@ execute -> grants
 execute -> placement
 execute -> ports
 execute -> types
+grants -> error
 grants -> placement
+grants -> ports
 grants -> types
 history -> error
 history -> suggest

@@ -20,6 +20,7 @@ use buildl_core::{
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
+use crate::approver::ManifestApprover;
 use crate::cache::LocalCache;
 use crate::cas::LocalCas;
 use crate::clock::SystemClock;
@@ -57,6 +58,7 @@ impl<R: Reporter> Ports for LocalPorts<R> {
     type Clock = SystemClock;
     type Graph = GraphFile;
     type Reporter = R;
+    type Approver = ManifestApprover;
 }
 
 /// The pipeline over the real adapters.
@@ -355,6 +357,7 @@ impl Wiring {
             clock: SystemClock,
             graph: GraphFile::new(layout),
             reporter,
+            approver: ManifestApprover,
         })
     }
 }

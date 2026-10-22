@@ -116,16 +116,16 @@ mod tests {
     use std::path::PathBuf;
 
     use buildl_core::{
-        Action, ActionCache, ActionKey, ApproverMode, Argument, BuildFile, CacheRow, Ceiling,
-        Clock, Command, ContentStore, Declaration, DeclarationSource, Declared, DepProducts,
-        Diagnostic, Digest, Digester, Directory, DirtyReason, Dispatcher, EnvName, EnvValue, Error,
-        Evaluated, EventLog, ExecStrategy, Execution, FileMode, FileStat, Found, Freshness,
-        GraphRecord, Host, InputDigest, InputStat, KeyComponents, Label, LiveSink, Manifest,
-        NetworkAccess, OutcomeEvent, OutputName, OutputPath, OwnComponents, Plan, PlannedKey,
-        Platform, PortName, PortSet, Ports, Produced, Program, Provenance, RawOutcome, ReadyAction,
-        Rerun, Result, Setting, SettingName, SettingValue, SourcePath, StatCache, StatEntry,
-        Target, TargetGraph, TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn, Verdict,
-        Workspace, plan, resolve,
+        Action, ActionCache, ActionKey, Approval, Approver, ApproverMode, Argument, BuildFile,
+        CacheRow, Ceiling, Clock, Command, ContentStore, Declaration, DeclarationSource, Declared,
+        DepProducts, Diagnostic, Digest, Digester, Directory, DirtyReason, Dispatcher, EnvName,
+        EnvValue, Error, Evaluated, EventLog, ExecStrategy, Execution, FileMode, FileStat, Found,
+        Freshness, GraphRecord, Host, InputDigest, InputStat, KeyComponents, Label, LiveSink,
+        Manifest, NetworkAccess, OutcomeEvent, OutputName, OutputPath, OwnComponents, Plan,
+        PlannedKey, Platform, PortName, PortSet, Ports, Produced, Program, Provenance, RawOutcome,
+        ReadyAction, Rerun, Result, Setting, SettingName, SettingValue, SourcePath, StatCache,
+        StatEntry, Target, TargetGraph, TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn,
+        Verdict, WantedSet, Workspace, plan, resolve,
     };
 
     use super::{plan_text, reason_text};
@@ -318,6 +318,12 @@ mod tests {
         }
     }
 
+    impl Approver for Unused {
+        fn approve(&mut self, _wanted: &WantedSet) -> Result<Approval> {
+            Err(unused(PortName::Approver))
+        }
+    }
+
     /// The bundle a plan is made over here.
     struct Planning;
 
@@ -336,6 +342,7 @@ mod tests {
         type Clock = Unused;
         type Graph = Unused;
         type Reporter = Silent;
+        type Approver = Unused;
     }
 
     /// The plan of `graph` on the machine, against what `rows` recorded.
@@ -355,6 +362,7 @@ mod tests {
             clock: Unused,
             graph: Unused,
             reporter: Silent,
+            approver: Unused,
         };
         plan(graph, &BTreeMap::new(), Rerun::Off, &mut ports).unwrap()
     }

@@ -4,8 +4,8 @@
 //! implementation of each port, and this struct holds one instance of each, so a pipeline is
 //! built from one argument and a phase that needs several ports borrows one value.
 //!
-//! Responsibilities: [`PortSet`], and its `Debug` rendering, which asks only that the fourteen
-//! port types be `Debug`.
+//! Responsibilities: [`PortSet`], and its `Debug` rendering, which asks only that every
+//! port type the bundle names be `Debug`.
 //!
 //! Non-responsibilities: building the instances. A composition root does that.
 
@@ -46,10 +46,12 @@ pub struct PortSet<P: Ports> {
     pub graph: P::Graph,
     /// Shows what a build is doing.
     pub reporter: P::Reporter,
+    /// Says whether a build may do what it wants.
+    pub approver: P::Approver,
 }
 
 /// Written by hand because a derive would require the bundle type itself to be `Debug`, and a
-/// bundle is only a choice of port types. This asks only that the fourteen port types be `Debug`.
+/// bundle is only a choice of port types. This asks only that each port type the bundle names be `Debug`.
 impl<P: Ports> fmt::Debug for PortSet<P>
 where
     P::Source: fmt::Debug,
@@ -66,6 +68,7 @@ where
     P::Clock: fmt::Debug,
     P::Graph: fmt::Debug,
     P::Reporter: fmt::Debug,
+    P::Approver: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PortSet")
@@ -83,6 +86,7 @@ where
             .field("clock", &self.clock)
             .field("graph", &self.graph)
             .field("reporter", &self.reporter)
+            .field("approver", &self.approver)
             .finish()
     }
 }
@@ -99,14 +103,15 @@ mod tests {
     use super::PortSet;
     use crate::error::Result;
     use crate::ports::{
-        ActionCache, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
-        ExecStrategy, GraphRecord, Host, Manifest, Ports, Reporter, StatCache, ToolResolver,
+        ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher,
+        EventLog, ExecStrategy, GraphRecord, Host, Manifest, Ports, Reporter, StatCache,
+        ToolResolver,
     };
     use crate::types::{
-        BuildFile, CacheRow, Captured, Ceiling, Channel, Digest, Directory, EnvName, EnvValue,
-        Evaluated, Exit, FileMode, Found, InputStat, Label, LiveSink, OutcomeEvent, OutputPath,
-        Platform, Program, RawOutcome, ReadyAction, SourcePath, StatEntry, Summary, TargetGraph,
-        Timestamp, Turn, Workspace,
+        Approval, BuildFile, CacheRow, Captured, Ceiling, Channel, Digest, Directory, EnvName,
+        EnvValue, Evaluated, Exit, FileMode, Found, InputStat, Label, LiveSink, OutcomeEvent,
+        OutputPath, Platform, Program, RawOutcome, ReadyAction, SourcePath, StatEntry, Summary,
+        TargetGraph, Timestamp, Turn, WantedSet, Workspace,
     };
 
     /// One port type answering that there is nothing, standing in for every port.
@@ -281,6 +286,12 @@ mod tests {
         fn summary(&mut self, _summary: Summary) {}
     }
 
+    impl Approver for Stub {
+        fn approve(&mut self, _wanted: &WantedSet) -> Result<Approval> {
+            Ok(Approval::Granted)
+        }
+    }
+
     impl Clock for Stub {
         fn now(&self) -> Timestamp {
             Timestamp::UNIX_EPOCH
@@ -306,6 +317,7 @@ mod tests {
         type Clock = Stub;
         type Graph = Stub;
         type Reporter = Stub;
+        type Approver = Stub;
     }
 
     #[test]
@@ -325,6 +337,7 @@ mod tests {
             clock: Stub,
             graph: Stub,
             reporter: Stub,
+            approver: Stub,
         };
 
         let text = format!("{set:?}");
@@ -345,6 +358,7 @@ mod tests {
             "clock",
             "graph",
             "reporter",
+            "approver",
         ] {
             assert!(
                 text.contains(&format!("{field}: Stub")),

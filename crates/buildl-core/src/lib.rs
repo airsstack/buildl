@@ -135,12 +135,13 @@ pub use error::{
     EvaluationLimit, NameKind, PortName, Result, TreeFault,
 };
 pub use execute::execute;
+pub use grants::negotiate;
 pub use history::LastRun;
 pub use load::load;
 pub use pipeline::{Collected, Pipeline, Shown, gc, log};
 pub use plan::plan;
 pub use ports::{
-    ActionCache, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
+    ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
     ExecStrategy, GraphRecord, Host, Manifest, PortSet, Ports, Reporter, RunHistory, StatCache,
     Sweep, ToolResolver,
 };

@@ -95,6 +95,7 @@
 //! | [`dispatch`] | the threads actions run on | [`Dispatcher`] |
 //! | [`clock`] | the wall clock | [`Clock`] |
 //! | [`report`] | what a build shows while it runs, and every rendering of a value as text | [`Reporter`] |
+//! | [`approver`] | whether a build may do what it wants | [`Approver`] |
 //!
 //! [`DeclarationSource`] has no module here: its adapter is the `buildl-lua` crate.
 //!
@@ -130,6 +131,7 @@
 //! unit-test.
 //!
 //! [`ActionCache`]: buildl_core::ActionCache
+//! [`Approver`]: buildl_core::Approver
 //! [`Clock`]: buildl_core::Clock
 //! [`ContentStore`]: buildl_core::ContentStore
 //! [`DeclarationSource`]: buildl_core::DeclarationSource
@@ -144,6 +146,7 @@
 //! [`StatCache`]: buildl_core::StatCache
 //! [`ToolResolver`]: buildl_core::ToolResolver
 
+pub mod approver;
 pub mod cache;
 pub mod cas;
 pub mod clock;

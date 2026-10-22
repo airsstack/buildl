@@ -8,19 +8,19 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use buildl_core::{
-    ActionCache, BuildFile, CacheRow, Ceiling, Clock, ContentStore, DeclarationOrder,
-    DeclarationSource, Diagnostic, Digest, Digester, Directory, Dispatcher, EnvName, EnvValue,
-    Error, Evaluated, EvaluationFailure, EventLog, ExecStrategy, Exit, FileStat, Freshness, Host,
-    InputKind, InputStat, Label, LogLine, Manifest, NetworkAccess, OutcomeEvent, OutputPath,
-    Platform, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory,
-    SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
-    StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver,
-    Workspace, Written,
+    ActionCache, Approval, Approver, BuildFile, CacheRow, Ceiling, Clock, ContentStore,
+    DeclarationOrder, DeclarationSource, Diagnostic, Digest, Digester, Directory, Dispatcher,
+    EnvName, EnvValue, Error, Evaluated, EvaluationFailure, EventLog, ExecStrategy, Exit, FileStat,
+    Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest, NetworkAccess, OutcomeEvent,
+    OutputPath, Platform, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result,
+    RunHistory, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
+    StagedSetting, StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp,
+    ToolResolver, WantedSet, Workspace, Written,
 };
 use buildl_core::{ActionOutcome, Pipeline};
 use buildl_core::{
-    Captured, Channel, GraphRecord, LiveSink, OutcomeClass, Reporter, Summary, TargetGraph, Turn,
-    json,
+    Captured, Channel, DenialReason, GraphRecord, LiveSink, OutcomeClass, Reporter, Summary,
+    TargetGraph, Turn, json,
 };
 use buildl_core::{FileMode, Found, FoundEntry, FoundKind, StoredFile};
 
@@ -1026,6 +1026,62 @@ impl Reporter for FakeReporter {
     }
 }
 
+/// What a [`FakeApprover`] answers each time it is asked.
+#[derive(Debug, Clone)]
+pub enum Answer {
+    /// The build may run.
+    Grant,
+    /// The build may not run: the whole set it was asked about is unapproved, for this reason.
+    Deny(String),
+    /// The approver fails with this text, as an adapter error of the approver port.
+    Fail(String),
+}
+
+/// An approver that gives the same [`Answer`] every time and keeps each set it was asked about,
+/// in order.
+#[derive(Debug)]
+pub struct FakeApprover {
+    /// What it answers.
+    pub answer: Answer,
+    /// The sets it was asked about.
+    pub asked: Vec<WantedSet>,
+}
+
+impl FakeApprover {
+    /// An approver giving `answer`, asked nothing yet.
+    #[must_use]
+    pub const fn answering(answer: Answer) -> Self {
+        Self {
+            answer,
+            asked: Vec::new(),
+        }
+    }
+}
+
+impl Default for FakeApprover {
+    /// Grants every set.
+    fn default() -> Self {
+        Self::answering(Answer::Grant)
+    }
+}
+
+impl Approver for FakeApprover {
+    fn approve(&mut self, wanted: &WantedSet) -> Result<Approval> {
+        self.asked.push(wanted.clone());
+        match &self.answer {
+            Answer::Grant => Ok(Approval::Granted),
+            Answer::Deny(reason) => Ok(Approval::Denied {
+                unapproved: wanted.clone(),
+                reason: DenialReason::new(reason.clone()),
+            }),
+            Answer::Fail(text) => Err(Error::Adapter {
+                port: PortName::Approver,
+                diagnostic: Diagnostic::new(text.clone()),
+            }),
+        }
+    }
+}
+
 /// The bundle choosing the fakes of this file.
 #[derive(Debug)]
 pub struct FakePorts;
@@ -1045,6 +1101,7 @@ impl Ports for FakePorts {
     type Clock = FakeClock;
     type Graph = FakeGraphRecord;
     type Reporter = FakeReporter;
+    type Approver = FakeApprover;
 }
 
 /// A workspace that writes to `out` and `.buildl`, under a ceiling allowing `cc` to run, any
@@ -1070,7 +1127,8 @@ pub fn open_workspace() -> Workspace {
 /// An [`open_workspace`]; a `linux/x86_64` machine with no variable set; no workspace file,
 /// nothing recorded, no program and no row; an empty content store and an empty log; a strategy
 /// with no script; a dispatcher taking the oldest task first, one at a time; a clock that has
-/// not been read; no graph recorded; and a reporter that has received no call.
+/// not been read; no graph recorded; a reporter that has received no call; and an approver that
+/// grants every set and has been asked nothing.
 #[must_use]
 pub fn ports(source: FakeSource) -> PortSet<FakePorts> {
     PortSet {
@@ -1095,6 +1153,7 @@ pub fn ports(source: FakeSource) -> PortSet<FakePorts> {
         clock: FakeClock::default(),
         graph: FakeGraphRecord::default(),
         reporter: FakeReporter::default(),
+        approver: FakeApprover::default(),
     }
 }
 

@@ -12,7 +12,7 @@
 //! This file holds only a trait definition, so it carries no logic to unit-test.
 
 use crate::ports::{
-    ActionCache, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
+    ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
     ExecStrategy, GraphRecord, Host, Manifest, Reporter, StatCache, ToolResolver,
 };
 
@@ -27,12 +27,12 @@ use crate::ports::{
 /// use std::sync::{Mutex, PoisonError};
 ///
 /// use buildl_core::{
-///     ActionCache, BuildFile, CacheRow, Captured, Ceiling, Channel, Clock, ContentStore,
-///     DeclarationSource, Diagnostic, Digest, Digester, Directory, Dispatcher, EnvName, EnvValue,
-///     Error, Evaluated, EventLog, ExecStrategy, FileMode, Found, GraphRecord, Host, InputStat,
-///     Label, LiveSink, Manifest, OutcomeEvent, OutputPath, Platform, PortName, Ports, Program,
-///     RawOutcome, ReadyAction, Reporter, Result, SourcePath, StatCache, StatEntry, Summary,
-///     TargetGraph, Timestamp, ToolResolver, Turn, Workspace,
+///     ActionCache, Approval, Approver, BuildFile, CacheRow, Captured, Ceiling, Channel, Clock,
+///     ContentStore, DeclarationSource, Diagnostic, Digest, Digester, Directory, Dispatcher,
+///     EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy, FileMode, Found, GraphRecord,
+///     Host, InputStat, Label, LiveSink, Manifest, OutcomeEvent, OutputPath, Platform, PortName,
+///     Ports, Program, RawOutcome, ReadyAction, Reporter, Result, SourcePath, StatCache,
+///     StatEntry, Summary, TargetGraph, Timestamp, ToolResolver, Turn, WantedSet, Workspace,
 /// };
 ///
 /// /// Every port at once, each answering that there is nothing.
@@ -223,6 +223,12 @@ use crate::ports::{
 ///     fn summary(&mut self, _summary: Summary) {}
 /// }
 ///
+/// impl Approver for Nothing {
+///     fn approve(&mut self, _wanted: &WantedSet) -> Result<Approval> {
+///         Ok(Approval::Granted)
+///     }
+/// }
+///
 /// impl Clock for Nothing {
 ///     fn now(&self) -> Timestamp {
 ///         Timestamp::UNIX_EPOCH
@@ -247,6 +253,7 @@ use crate::ports::{
 ///     type Clock = Nothing;
 ///     type Graph = Nothing;
 ///     type Reporter = Nothing;
+///     type Approver = Nothing;
 /// }
 /// ```
 pub trait Ports {
@@ -279,4 +286,7 @@ pub trait Ports {
     type Graph: GraphRecord;
     /// How a build shows what it is doing. Called only from the thread that called the build.
     type Reporter: Reporter;
+    /// How a build is asked whether it may do what it wants. Called only from the thread that
+    /// called the build.
+    type Approver: Approver;
 }
