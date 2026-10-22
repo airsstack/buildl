@@ -176,7 +176,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use super::{Dependency, all, decide};
-    use crate::plan::fixtures::{command, components, graph, label, node, produced};
+    use crate::grants::fixtures::{command, graph, label, node};
+    use crate::plan::fixtures::{components, produced};
     use crate::plan::order::topological;
     use crate::types::{
         ActionKey, CacheRow, DepProducts, Difference, Digest, DirtyReason, Forcing, Freshness,

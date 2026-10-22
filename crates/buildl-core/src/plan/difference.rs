@@ -153,9 +153,8 @@ mod tests {
     )]
 
     use super::{Known, between, changed, reordered};
-    use crate::plan::fixtures::{
-        command, components, env_name, label, path, produced, program, settings,
-    };
+    use crate::grants::fixtures::{command, env_name, label, path, program, settings};
+    use crate::plan::fixtures::{components, produced};
     use crate::types::{
         DepProducts, Difference, Digest, EnvValue, InputDigest, KeyComponents, Label,
         NetworkAccess, OutputName, OwnComponents, Platform, Produced, SettingName, ToolIdentity,

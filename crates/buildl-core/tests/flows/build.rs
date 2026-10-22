@@ -18,7 +18,7 @@ use buildl_core::{
 use buildl_core::{LiveOutput, Scope};
 
 use crate::common::{
-    Content, Ends, FakeContent, FakeFile, FakePorts, FakeSource, Leaf, Loss, Order, Script, alias,
+    Content, Ends, FakeContent, FakeFile, FakePorts, FakeSource, Leaf, Loss, Order, Script,
     classes, dir, ending, expected, file, label, ports, program, root_only, rule, script, setting,
     skipped, target, target_with, tree, workspace,
 };
@@ -883,6 +883,72 @@ fn a_test_that_runs_what_its_dependency_built_is_built_with_no_ceiling_entry() {
     assert_eq!(test.deps, [out("//:app", "app")]);
 }
 
+/// `//:gen`, built from `gen.go` by `go`, and `//:banner`, which depends on it and runs
+/// `command`. The ceiling allows `go` and nothing else, and `go` can be found.
+fn generated(command: &[&str]) -> Pipeline<FakePorts> {
+    let mut pipeline = root_only(vec![
+        target_with("gen", |target| {
+            target.run = Some(["go", "build"].map(Written::new).to_vec());
+            target.inputs = vec![Written::new("gen.go")];
+        }),
+        target_with("banner", |target| {
+            target.run = Some(
+                command
+                    .iter()
+                    .map(|argument| Written::new(*argument))
+                    .collect(),
+            );
+            target.deps = vec![Written::new("gen")];
+        }),
+    ]);
+    put(&mut pipeline, "gen.go", "package main", 100);
+    let ports = pipeline.ports_mut();
+    ports.manifest.workspace.ceiling.run = BTreeSet::from([program("go")]);
+    ports
+        .tools
+        .fingerprints
+        .insert(program("go"), Digest::of(b"go 1.23"));
+    pipeline
+}
+
+#[test]
+fn a_tool_a_dependency_built_runs_without_a_ceiling_entry() {
+    let mut pipeline = generated(&["$deps", "$out"]);
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[
+            ("//:banner", OutcomeClass::Built),
+            ("//:gen", OutcomeClass::Built),
+        ])
+    );
+    assert_eq!(
+        handed(&pipeline, "//:banner")[0],
+        texts(&["out/gen", "out/banner"])
+    );
+}
+
+#[test]
+fn a_written_out_tool_a_dependency_built_runs_on_a_clean_build() {
+    let mut pipeline = generated(&["out/gen", "$out"]);
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[
+            ("//:banner", OutcomeClass::Built),
+            ("//:gen", OutcomeClass::Built),
+        ])
+    );
+    assert_eq!(
+        handed(&pipeline, "//:banner")[0],
+        texts(&["out/gen", "out/banner"])
+    );
+}
+
 #[test]
 fn a_test_with_no_outputs_that_exits_zero_is_built() {
     let mut pipeline = root_only(vec![target_with("check", |target| {
@@ -1155,46 +1221,11 @@ fn a_load_error_and_a_refusal_of_the_plan_reach_the_caller_unchanged() {
     assert_nothing_ran(&disallowed);
 }
 
-/// The workspace of the graph flows, with one change: its test target runs what it depends on,
-/// `$deps`, where the graph flows' runs `$out/app`. The root holds a rule, a target using it, a
-/// target with dependencies in two directories, an alias, the test target and a setting; `lib`
-/// holds one target. `cc` can be found, and the workspace allows `out/app` to run.
+/// The workspace of the graph flows, [`crate::graph::fixture`]: a rule, a target using it, a target
+/// with dependencies in two directories, an alias, the test target and a setting. `cc` can be
+/// found, and the workspace allows `out/app` to run.
 fn two_directories(order: Order) -> Pipeline<FakePorts> {
-    let root = vec![
-        rule(
-            "cc",
-            &["cc", "-c", "$in", "-o", "$out"],
-            Some("compile $in"),
-        ),
-        target_with("main.o", |target| {
-            target.run = None;
-            target.rule = Some(Written::new("cc"));
-            target.inputs = vec![Written::new("main.c")];
-        }),
-        target_with("app", |target| {
-            target.run = Some(["cc", "$deps", "-o", "$out"].map(Written::new).to_vec());
-            target.deps = vec![Written::new("main.o"), Written::new("//lib:text")];
-        }),
-        alias("default", "app"),
-        target_with("app_test", |target| {
-            target.role = TargetRole::Test;
-            target.run = Some(
-                ["$deps", "--filter=$opt:test_filter"]
-                    .map(Written::new)
-                    .to_vec(),
-            );
-            target.deps = vec![Written::new("default")];
-        }),
-        setting("test_filter"),
-    ];
-    let lib = vec![target_with("text", |target| {
-        target.inputs = vec![Written::new("text.c")];
-    })];
-    let source = FakeSource::new(workspace(vec![
-        ("", file(root, &["lib"])),
-        ("lib", file(lib, &[])),
-    ]));
-    let mut pipeline = Pipeline::new(ports(source));
+    let mut pipeline = Pipeline::new(ports(crate::graph::fixture()));
     put(&mut pipeline, "main.c", "main.c", 100);
     put(&mut pipeline, "lib/text.c", "lib/text.c", 100);
     let ports = pipeline.ports_mut();

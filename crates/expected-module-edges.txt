@@ -4,6 +4,7 @@ execute -> grants
 execute -> placement
 execute -> ports
 execute -> types
+grants -> placement
 grants -> types
 history -> error
 history -> suggest
@@ -24,6 +25,8 @@ pipeline -> verify
 placement -> error
 placement -> types
 plan -> error
+plan -> grants
+plan -> placement
 plan -> ports
 plan -> types
 ports -> error

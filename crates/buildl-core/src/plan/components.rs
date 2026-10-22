@@ -9,15 +9,15 @@
 //! Non-responsibilities: fetching the other values, and a target's dependencies, which join its
 //! key only once it is known what they produced.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::error::Result;
 use crate::plan::settings::referenced;
 use crate::plan::tools::program_of;
 use crate::ports::Host;
 use crate::types::{
-    Digest, EnvName, EnvValue, InputDigest, Node, OwnComponents, Platform, Program, SettingName,
-    SettingValue, SourcePath, ToolIdentity,
+    Digest, EnvName, EnvValue, InputDigest, Label, Node, OwnComponents, Platform, Program,
+    SettingName, SettingValue, SourcePath, ToolIdentity,
 };
 
 /// The value of every variable in `names`, asked for in the order given.
@@ -40,8 +40,10 @@ pub(crate) fn environment<'g, H: Host>(
 pub(crate) struct Gathered<'g> {
     /// The value every declared setting has for this run.
     pub(crate) settings: BTreeMap<SettingName, SettingValue>,
-    /// The fingerprint of every program a command names.
+    /// The fingerprint of every program a command names that is not built.
     pub(crate) fingerprints: BTreeMap<Program, Digest>,
+    /// The targets whose program a dependency builds, which run no tool of the machine.
+    pub(crate) built: BTreeSet<&'g Label>,
     /// The content digest of every input.
     pub(crate) digests: BTreeMap<&'g SourcePath, Digest>,
     /// The value of every environment variable a target reads; `None` for one that is unset.
@@ -55,9 +57,10 @@ pub(crate) struct Gathered<'g> {
 /// Inputs and outputs keep the order they were written in. The environment is keyed by name, so
 /// the order `node` lists its variables in does not reach the key. Only the settings the command
 /// names are kept. The tool is the program the command names under the gathered settings, so
-/// one named through a setting is keyed like one written out. An input or a program `gathered`
-/// holds nothing for is left out, and a variable it holds nothing for is taken as unset; neither
-/// happens when `gathered` was built for the graph `node` belongs to.
+/// one named through a setting is keyed like one written out, and a program a dependency builds
+/// is no tool: its target's key holds the dependency's output instead. An input or a program
+/// `gathered` holds nothing for is left out, and a variable it holds nothing for is taken as
+/// unset; neither happens when `gathered` was built for the graph `node` belongs to.
 pub(crate) fn own(node: &Node, gathered: &Gathered<'_>) -> OwnComponents {
     let inputs = node
         .inputs
@@ -74,13 +77,15 @@ pub(crate) fn own(node: &Node, gathered: &Gathered<'_>) -> OwnComponents {
         .iter()
         .map(|name| (name.clone(), gathered.env.get(name).cloned().flatten()))
         .collect();
-    let tool = program_of(&node.run, &gathered.settings).and_then(|program| {
-        let fingerprint = *gathered.fingerprints.get(&program)?;
-        Some(ToolIdentity {
-            program,
-            fingerprint,
-        })
-    });
+    let tool = program_of(&node.run, &gathered.settings)
+        .filter(|_| !gathered.built.contains(&node.label))
+        .and_then(|program| {
+            let fingerprint = *gathered.fingerprints.get(&program)?;
+            Some(ToolIdentity {
+                program,
+                fingerprint,
+            })
+        });
     OwnComponents {
         command: node.run.clone(),
         inputs,
@@ -100,10 +105,10 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use super::{Gathered, own};
-    use crate::plan::fixtures::{command, env_name, node, path, program, settings};
+    use crate::grants::fixtures::{command, env_name, node, path, program, settings};
     use crate::types::{
         Digest, EnvName, EnvValue, InputDigest, NetworkAccess, OutputName, Platform, SourcePath,
         ToolIdentity,
@@ -119,6 +124,7 @@ mod tests {
         Gathered {
             settings: settings(&[("mode", "debug"), ("test_filter", "TestLogin")]),
             fingerprints: BTreeMap::from([(program("cc"), Digest::of(b"cc 14.2"))]),
+            built: BTreeSet::new(),
             digests: paths
                 .iter()
                 .map(|path| (path, Digest::of(path.as_str().as_bytes())))
@@ -240,5 +246,21 @@ mod tests {
             node.env = vec![env_name("PATH"), env_name("HOME")];
         });
         assert_eq!(own(&forward, &gathered), own(&backward, &gathered));
+    }
+
+    #[test]
+    fn a_target_whose_program_a_dependency_builds_has_no_tool_though_another_runs_it() {
+        let mut gathered = gathered(&[], &[], &[]);
+        let runs = node("//:runs", |node| node.run = command(&["cc", "$in"]));
+        let tool = node("//:tool", |node| node.run = command(&["cc", "$in"]));
+        gathered.built = BTreeSet::from([&runs.label]);
+        assert_eq!(own(&runs, &gathered).tool, None);
+        assert_eq!(
+            own(&tool, &gathered).tool,
+            Some(ToolIdentity {
+                program: program("cc"),
+                fingerprint: Digest::of(b"cc 14.2"),
+            })
+        );
     }
 }

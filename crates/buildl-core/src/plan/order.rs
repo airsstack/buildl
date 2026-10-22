@@ -44,7 +44,7 @@ pub(crate) fn topological(graph: &TargetGraph) -> Vec<NodeId> {
 #[cfg(test)]
 mod tests {
     use super::topological;
-    use crate::plan::fixtures::{graph, node};
+    use crate::grants::fixtures::{graph, node};
     use crate::types::NodeId;
 
     fn ids(raw: &[u32]) -> Vec<NodeId> {

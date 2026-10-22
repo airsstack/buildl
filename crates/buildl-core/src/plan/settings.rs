@@ -64,7 +64,7 @@ mod tests {
 
     use super::{effective, referenced};
     use crate::error::Error;
-    use crate::plan::fixtures::{command, settings};
+    use crate::grants::fixtures::{command, settings};
 
     #[test]
     fn with_no_override_every_setting_keeps_its_default() {

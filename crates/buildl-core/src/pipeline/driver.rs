@@ -114,9 +114,10 @@ impl<P: Ports> Pipeline<P> {
     ///
     /// Returns whatever the load returns, then whatever [`resolve`] returns, then
     /// [`Error::UnknownTarget`] for a label of `scope` that names neither a target nor an alias,
-    /// and otherwise whatever [`plan`](fn@plan) returns: an override naming no setting, a want
-    /// outside the workspace's ceiling, a program that cannot be found, an input that is missing
-    /// or is not a regular file, or a port's own failure.
+    /// and otherwise whatever [`plan`](fn@plan) returns: an override naming no setting, two
+    /// outputs of the planned targets that would be written to one place, a want outside the
+    /// workspace's ceiling, a program that cannot be found, an input that is missing or is not a
+    /// regular file, or a port's own failure.
     pub fn plan(
         &mut self,
         entry: &EntryName,
@@ -146,7 +147,8 @@ impl<P: Ports> Pipeline<P> {
     ///
     /// Returns the first of: whatever the load returns; whatever [`resolve`] returns; the
     /// graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope` that names
-    /// neither a target nor an alias; whatever [`plan`](fn@plan) returns; and whatever
+    /// neither a target nor an alias; whatever [`plan`](fn@plan) returns, two outputs of the
+    /// planned targets that would be written to one place included; and whatever
     /// [`execute`](fn@execute) returns: two outputs of the workspace that would be written to one
     /// place, whether or not both targets were asked for, a command that names no program or one
     /// outside the workspace's ceiling once it is expanded, or a port's own failure.
@@ -195,7 +197,8 @@ impl<P: Ports> Pipeline<P> {
     /// Returns the first of: whatever the load returns; whatever [`resolve`] returns; the
     /// graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope` that names
     /// neither a target nor an alias; [`Error::NotATest`] for a label of `scope` that names a
-    /// target that is not a test; whatever [`plan`](fn@plan) returns; and whatever
+    /// target that is not a test; whatever [`plan`](fn@plan) returns, two outputs of the
+    /// planned targets that would be written to one place included; and whatever
     /// [`execute`](fn@execute) returns: two outputs of the workspace that would be written to one
     /// place, whether or not both targets were asked for, a command that names no program or one
     /// outside the workspace's ceiling once it is expanded, or a port's own failure.

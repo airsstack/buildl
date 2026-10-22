@@ -4,56 +4,18 @@
 //! machine: a build that wants more than its workspace allows is refused here, with nothing
 //! hashed, looked up or read.
 //!
-//! Responsibilities: [`Sites`], [`sites`] and [`check`].
+//! Responsibilities: [`check`].
 //!
-//! Non-responsibilities: what a ceiling is, which is the manifest's to say, and finding the
-//! programs a build may run.
+//! Non-responsibilities: what a ceiling is, which is the manifest's to say; collecting what the
+//! targets want, which is Grants'; and finding the programs a build may run.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use crate::error::{DeclarationSite, Error, Result};
-use crate::plan::tools::programs;
+use crate::grants::wanted::Sites;
 use crate::types::{
-    Directory, EnvName, NetworkAccess, Node, Program, SettingName, SettingValue, SourcePath,
-    TargetGraph, Want, WantedSet, Workspace,
+    Directory, NetworkAccess, Node, SourcePath, TargetGraph, Want, WantedSet, Workspace,
 };
-
-/// Everything a graph's targets want, each with the lowest-labelled target wanting it.
-///
-/// Each map is in the order of its keys, which is the order its wants are checked and later
-/// asked for in.
-#[derive(Debug)]
-pub(crate) struct Sites<'g> {
-    /// The programs commands name, whether written out or through a build setting.
-    pub(crate) programs: BTreeMap<Program, &'g Node>,
-    /// The environment variables targets read.
-    pub(crate) env: BTreeMap<&'g EnvName, &'g Node>,
-    /// The workspace files targets read.
-    pub(crate) inputs: BTreeMap<&'g SourcePath, &'g Node>,
-}
-
-/// Collects what `graph`'s targets want when its build settings have the values `settings`
-/// gives them.
-pub(crate) fn sites<'g>(
-    graph: &'g TargetGraph,
-    settings: &BTreeMap<SettingName, SettingValue>,
-) -> Sites<'g> {
-    let mut env = BTreeMap::new();
-    let mut inputs = BTreeMap::new();
-    for node in graph.nodes() {
-        for name in &node.env {
-            env.entry(name).or_insert(node);
-        }
-        for path in &node.inputs {
-            inputs.entry(path).or_insert(node);
-        }
-    }
-    Sites {
-        programs: programs(graph, settings),
-        env,
-        inputs,
-    }
-}
 
 /// Checks every want against `workspace`'s ceiling and returns what the build wants.
 ///
@@ -144,13 +106,14 @@ mod tests {
     )]
 
     use std::collections::{BTreeMap, BTreeSet};
-    use std::path::Path;
 
-    use super::{check, holds, sites};
+    use super::{check, holds};
     use crate::error::{DeclarationSite, Error};
-    use crate::plan::fixtures::{
+    use crate::grants::fixtures::{
         command, dir, env_name, graph, label, node, path, program, settings,
     };
+    use crate::grants::wanted::sites;
+    use crate::placement::layout::Layout;
     use crate::types::{
         Ceiling, Directory, Execution, NetworkAccess, Node, SettingName, SettingValue, TargetGraph,
         Want, WantedSet, Workspace,
@@ -199,7 +162,8 @@ mod tests {
         settings: &BTreeMap<SettingName, SettingValue>,
         workspace: &Workspace,
     ) -> crate::error::Result<WantedSet> {
-        check(graph, &sites(graph, settings), workspace)
+        let layout = Layout::of(graph, &workspace.out).unwrap();
+        check(graph, &sites(graph, settings, &layout), workspace)
     }
 
     /// What `graph` is refused under `workspace`: the want, and the label and build file named.
@@ -231,45 +195,6 @@ mod tests {
 
     fn named(label: &str, file: &str) -> (String, String) {
         (label.to_owned(), file.to_owned())
-    }
-
-    #[test]
-    fn sites_name_the_lowest_labelled_target_for_each_want() {
-        let graph = graph(vec![app(), text()], &[&[], &[]]);
-        let sites = sites(&graph, &BTreeMap::new());
-        let programs: Vec<(&str, String)> = sites
-            .programs
-            .iter()
-            .map(|(program, node)| (program.as_str(), node.label.to_string()))
-            .collect();
-        let env: Vec<(&str, String)> = sites
-            .env
-            .iter()
-            .map(|(name, node)| (name.as_str(), node.label.to_string()))
-            .collect();
-        let inputs: Vec<(&str, &Path)> = sites
-            .inputs
-            .iter()
-            .map(|(path, node)| (path.as_str(), node.provenance.file()))
-            .collect();
-        assert_eq!(
-            programs,
-            [("cc", "//lib:text".to_owned()), ("ld", "//:app".to_owned())]
-        );
-        assert_eq!(
-            env,
-            [
-                ("HOME", "//lib:text".to_owned()),
-                ("PATH", "//:app".to_owned())
-            ]
-        );
-        assert_eq!(
-            inputs,
-            [
-                ("lib/text.c", Path::new("lib/build.lua")),
-                ("src/main.c", Path::new("build.lua")),
-            ]
-        );
     }
 
     #[test]
@@ -417,7 +342,7 @@ mod tests {
             write: BTreeSet::new(),
         };
         let graph = graph(
-            vec![node("//:gen", |node| node.run = command(&["$out/gen"]))],
+            vec![node("//:gen", |node| node.run = command(&["$deps"]))],
             &[&[]],
         );
         assert_eq!(

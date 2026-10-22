@@ -1065,7 +1065,8 @@ fn a_first_argument_that_runs_what_the_build_produced_names_no_tool() {
             target.deps = vec![Written::new("app")];
         }),
         target_with("suite_test", |target| {
-            target.run = Some(["$out/$opt:suite"].map(Written::new).to_vec());
+            target.run = Some(["$deps/$opt:suite"].map(Written::new).to_vec());
+            target.deps = vec![Written::new("app")];
         }),
     ]);
 
@@ -1151,4 +1152,131 @@ fn a_plan_of_the_workspace_leaves_tests_out() {
         .map(|id| plan.label(id).unwrap().to_string())
         .collect();
     assert_eq!(planned_labels, ["//:app", "//:main.o", "//lib:text"]);
+}
+
+/// `//:gen`, and `//:use`, which depends on it and runs `command`.
+fn generating(command: &[&str]) -> Pipeline<FakePorts> {
+    root_only(vec![
+        target("gen", &[]),
+        target_with("use", |target| {
+            target.run = Some(
+                command
+                    .iter()
+                    .map(|argument| Written::new(*argument))
+                    .collect(),
+            );
+            target.deps = vec![Written::new("gen")];
+        }),
+    ])
+}
+
+#[test]
+fn a_program_named_through_in_outside_the_ceiling_is_refused_at_plan() {
+    let mut pipeline = root_only(vec![target_with("gen", |target| {
+        target.run = Some(vec![Written::new("$in")]);
+        target.inputs = vec![Written::new("scripts/gen.sh")];
+    })]);
+
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "build.lua: //:gen: program scripts/gen.sh is outside the ceiling (proc.run allows: cc)"
+    );
+    assert!(
+        matches!(&error, Error::Refused { want, .. } if want == &Want::Program(program("scripts/gen.sh"))),
+        "{error}"
+    );
+    let ports = pipeline.ports();
+    assert_eq!(ports.digester.digest_calls(), 0);
+    assert_eq!(ports.tools.lookups(), []);
+}
+
+#[test]
+fn an_output_conflict_is_refused_at_plan() {
+    let writing_x = |name: &str| {
+        target_with(name, |target| {
+            target.outputs = Some(vec![Written::new("x")]);
+        })
+    };
+    let mut pipeline = root_only(vec![writing_x("a"), writing_x("b")]);
+
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "out/x: //:a (build.lua) and //:b (build.lua) cannot both write here"
+    );
+    assert!(matches!(error, Error::OutputConflict { .. }));
+    assert_eq!(pipeline.ports().tools.lookups(), []);
+}
+
+#[test]
+fn an_output_conflict_comes_before_a_refusal() {
+    let writing_x = |name: &str, run: &str| {
+        target_with(name, |target| {
+            target.run = Some(vec![Written::new(run)]);
+            target.outputs = Some(vec![Written::new("x")]);
+        })
+    };
+    let mut pipeline = root_only(vec![writing_x("a", "cc"), writing_x("b", "docker")]);
+
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
+
+    assert!(matches!(error, Error::OutputConflict { .. }), "{error}");
+}
+
+#[test]
+fn a_built_program_is_never_looked_up() {
+    let mut pipeline = generating(&["out/gen", "$out"]);
+
+    let plan = planned(&mut pipeline);
+
+    assert_eq!(pipeline.ports().tools.lookups(), [program("cc")]);
+    assert_eq!(plan.wanted().programs, BTreeSet::from([program("cc")]));
+    assert_eq!(tool_of(&plan, "//:use"), None);
+    assert_eq!(
+        tool_of(&plan, "//:gen"),
+        Some(ToolIdentity {
+            program: program("cc"),
+            fingerprint: Digest::of(b"cc 14.2"),
+        })
+    );
+}
+
+#[test]
+fn plan_json_lists_in_programs_and_not_built_ones() {
+    let mut pipeline = root_only(vec![
+        target("gen", &[]),
+        target_with("script", |target| {
+            target.run = Some(vec![Written::new("$in")]);
+            target.inputs = vec![Written::new("scripts/run.sh")];
+        }),
+        target_with("use", |target| {
+            target.run = Some(["out/gen", "$out"].map(Written::new).to_vec());
+            target.deps = vec![Written::new("gen")];
+        }),
+    ]);
+    let ceiling = &mut pipeline.ports_mut().manifest.workspace.ceiling;
+    ceiling.run.insert(program("scripts/run.sh"));
+    ceiling.read.insert(dir("scripts"));
+    put(&mut pipeline, "scripts/run.sh", "echo run", 100);
+
+    let plan = planned(&mut pipeline);
+
+    assert_eq!(
+        plan.wanted().programs,
+        BTreeSet::from([program("cc"), program("scripts/run.sh")])
+    );
+    let json = json::canonical::to_string(&plan).unwrap();
+    assert!(
+        json.contains(r#""programs":["cc","scripts/run.sh"]"#),
+        "{json}"
+    );
 }

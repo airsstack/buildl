@@ -50,7 +50,7 @@ fn root_items() -> Vec<StagedItem> {
         target_with("app_test", |target| {
             target.role = TargetRole::Test;
             target.run = Some(
-                ["$out/app", "--filter=$opt:test_filter"]
+                ["$deps", "--filter=$opt:test_filter"]
                     .map(Written::new)
                     .to_vec(),
             );
