@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-22
 depends-on: [01]
 built-on: 5d10ef9b2f2e
@@ -91,8 +91,10 @@ crates/buildl-cli/src/exit.rs                   — [modify] NotApproved → Ref
   (seven: `plan/pinned.rs:55`, `plan/authority.rs:162`, `ports/bundle.rs:57`,
   `ports/port_set.rs:124`, `tests/flows/common.rs:1054`, `buildl/src/manifest/interpret.rs:63`,
   `buildl/src/report/plan_text.rs:140`) sets `ApproverMode::Manifest`.
-- `Error::NotApproved { unapproved: WantedSet, reason: DenialReason }`; Display: the reason,
-  a newline, then the unapproved wants as `WantedSet`'s `Display` gives them (spec §5).
+- `Error::NotApproved { unapproved: Box<WantedSet>, reason: DenialReason }` (amended
+  2026-10-22, execution: boxed, as `Refused` boxes its ceiling — inline, `Error` passes clippy's
+  `result_large_err` threshold); Display: the reason, a newline, then the unapproved wants as
+  `WantedSet`'s `Display` gives them (spec §5), the reason alone when that set is empty.
   `PortName::Approver` (`error.rs:593`).
 - `buildl-cli/src/exit.rs`: `Error::NotApproved { .. }` maps to `Exit::Refused` (beside `:110`);
   `Refused = 4`'s doc (`:32`) becomes "The build wants more than the workspace allows or than
@@ -134,13 +136,15 @@ crates/buildl-cli/src/exit.rs                   — [modify] NotApproved → Ref
   `verify/assembly.rs:92`) add `..` or the field as needed.
 - `grants/negotiate.rs`: `pub fn negotiate<A: Approver>(wanted: &WantedSet, approver: &mut A)
   -> Result<()>`: `Granted` → `Ok(())`; `Denied { unapproved, reason }` →
-  `Err(Error::NotApproved { unapproved, reason })`; an approver error → that error, unchanged.
+  `Err(Error::NotApproved { unapproved: Box::new(unapproved), reason })` (amended 2026-10-22,
+  see Task 1); an approver error → that error, unchanged.
 - `buildl/src/approver/manifest.rs`: `ManifestApprover` — unit struct, `approve` returns
   `Granted`. `buildl/src/lib.rs`: `pub mod approver;` with a module doc naming the
   responsibilities plan 03 completes. `LocalPorts`: `type Approver = ManifestApprover;`
   `assemble` sets `approver: ManifestApprover`.
-- `tests/flows/common.rs`: `FakeApprover` — answers from a script (`Granted`, `Denied`, or an
-  `Error::Adapter { port: PortName::Approver, .. }`) and records each `WantedSet` it was asked
+- `tests/flows/common.rs`: `FakeApprover` — gives one set answer (`Granted`, `Denied` of the
+  whole asked set, or an `Error::Adapter { port: PortName::Approver, .. }`; amended 2026-10-22,
+  execution: each flow asks once, so one answer covers them) and records each `WantedSet` it was asked
   about; built from the public API only (`lib.rs` rule 5).
 - Edges: `grants -> ports`, `grants -> error`.
 - `approver` is an adapter module: `guard-adapter-isolation` (`Makefile.toml:209-287`) finds
@@ -206,3 +210,51 @@ verify run anything`.
 - `cargo make guard-module-edges` and `cargo make guard-adapter-isolation` OK.
 - Every existing flow, e2e and CLI test passes unchanged: under `manifest` nothing a user sees
   changes.
+
+## Review findings
+
+Commits: `1731364` (task 1), `83a501f` (task 2), `3f4c950` (task 3).
+
+- correctness — `NotApproved`'s Display printed the reason and a trailing newline for an empty
+  set — task 1 — fixed and verified: test
+  `not_approved_with_nothing_unapproved_shows_only_its_reason`;
+  `cargo test -p buildl-core --lib not_approved` → `test result: ok. 2 passed; 0 failed`.
+- doc-comment — a stray empty `//!` line in `types/authority.rs` — task 1 — fixed.
+- consistency — `WantedSet` lacked `#[serde(deny_unknown_fields)]` — task 1 — fixed.
+- test — `every_error_variant_has_its_code` in `buildl-cli/src/exit.rs` left out `PinnedEnv`
+  (it already did before this plan) — task 1 — fixed: counts 17 and 37.
+- reversion guard — no test pinned `Adapter { port: Approver }` to exit 3 — task 1 — fixed in
+  `only_the_manifests_adapter_is_a_definition_error`.
+- plan — the `Box<WantedSet>` field was not in the plan — task 1 — amended (Task 1, Task 2).
+- spec — spec §4's prompt example pads three of the four labels — task 1 — declined: Task 1
+  sets the padding rule the code follows, and amending the spec would stale plans 02–05 for a
+  layout example.
+- reversion guard — the denial test denied the whole asked set, so a `negotiate` reporting the
+  asked set would pass — task 2 — fixed and verified: test
+  `a_partial_denial_names_only_what_the_approver_left_unapproved`; with the asked set put in the
+  error it failed (`left {cc, ld}`, `right {ld}`); `cargo test -p buildl-core --lib
+  grants::negotiate` → `test result: ok. 4 passed; 0 failed`.
+- style — a 110-column `use` line in `ports/bundle.rs`'s doc example — task 2 — fixed.
+- doc-comment — a hard count of fifteen ports in `ports/port_set.rs` and the core README —
+  task 2 — fixed: states the rule.
+- doc-comment — `approver/mod.rs` described approvers still to come — task 2 — fixed.
+- plan — `FakeApprover` "answers from a script"; it gives one set answer — task 2 — amended.
+- doc-comment — a 139-column line in `lib.rs` — task 3 — fixed.
+- style — `planned_wants` spelled `buildl_core::WantedSet` in full — task 3 — fixed.
+- test — "asked once" was checked for a granted `build` only — task 3 — fixed and verified:
+  `a_test_run_asks_the_approver_once`, `a_verify_asks_the_approver_once`; with `negotiate`
+  called twice they failed (2 vs 1, 4 vs 3); `cargo test -p buildl-core --test flows
+  asks_the_approver` → `test result: ok. 4 passed; 0 failed`.
+
+## Probe results
+
+- Claim: seven `Workspace` struct literals, five `impl Ports`, two `PortSet` literals and two
+  destructurings exist at the plan's sites — `grep -rn "Workspace {$"` / `"Ports for\|PortSet
+  {$"` over `crates` — held (line numbers shifted by plan 01); both destructurings already
+  used `..`.
+
+## Deviations
+
+- 2026-10-22 — `Error::NotApproved.unapproved` is `Box<WantedSet>`: inline, `Error` passed
+  clippy's `result_large_err` threshold. `Refused` already boxes its ceiling.
+- 2026-10-22 — `FakeApprover` gives one set answer rather than a script; every flow asks once.
