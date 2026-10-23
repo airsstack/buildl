@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-22
 depends-on: [01]
 built-on: 5fa60e343706
@@ -131,3 +131,26 @@ Task 4, the first point at which Lua can declare one.
 
 `cargo make dod` and `cargo deny check` green; a plan of a workspace with a plugin target prints
 the attribution line; `doctor` lists a plugin violation and exits 0.
+
+## Review findings
+
+- spec-drift — `plan` printed bare attribution lines with no wants (spec §5: each want, then its attribution) — `buildl/src/report/plan_text.rs` — fixed: `plan_text` prints `plan.wanted()` with its existing `Display`, then the attribution, before the counts line; verified `cargo make dod` → `Build Done in 17.12 seconds`, exit 0
+- test-coverage — `FakeApprover` dropped the attribution, so build/test/verify passing it was unguarded — `tests/flows/common.rs` — fixed: recorded and asserted by `a_build_hands_the_approver_the_attribution_of_the_plan` (seen failing with `Attribution::default()` in `build`); verified same run
+- strong-types — `Attribution::record` kept the first label, not the lowest, and accepted Read/Write — `types/attribution.rs` — fixed: lowest label kept whatever the order, Read/Write ignored; two tests; verified same run
+- doc — `AttributionView` doc claimed wanted-set field order — fixed: alphabetical, as canonical JSON writes
+- modularity — `Attribution::iter` had no caller — removed
+- format — doctest line over 100 columns in `ports/bundle.rs` — re-wrapped
+- simplification — `doctor_text` built an `Error::PluginRefused` to print it — fixed: `PluginViolation: Display` holds the one wording, used by the error and by `doctor_text`; texts byte-identical (existing pinned tests pass)
+- question — plan JSON carries the whole `PluginRef` per chain member — no change: same shape as `graph --json`'s `origin`
+- process — some red steps were not seen failing in isolation — noted; every named proof test exists and passes
+
+## Probe results
+
+- Structural: `git grep -n -e "pub trait Approver" -e "fn approve" -e "pub fn negotiate" -e "pub struct Checkup" -- crates` → found (`ports/approver.rs:28`, `grants/negotiate.rs:22`, `types/checkup.rs:16`, nine `fn approve` impls); one impl the plan did not list, the doctest at `ports/bundle.rs:228`, updated too.
+
+## Deviations
+
+- 2026-10-23 — `plan` text prints the wanted set (it printed none before), so every plan shows its wants, plugins or not; attribution lines sit under it, before the counts line. CLI tests pinning plan text updated.
+- 2026-10-23 — `Attribution` gained `within(&WantedSet)` (prompt shows only new wants' lines) and `lines(&Want)` (one wording for plan, prompt and doctor); `record` is public so `buildl` tests can build one.
+- 2026-10-23 — `origin_does_not_change_the_key` compares verdicts (which hold the keys), since plan JSON now differs by attribution.
+- 2026-10-23 — a network want is shown by its label: `  //:fetch: declared by plugin go@1.2.0 for //:fetch`, under the wanted set's network line.

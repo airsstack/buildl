@@ -47,13 +47,22 @@ pub struct Attribution(BTreeMap<Want, BTreeMap<PluginChain, Label>>);
 impl Attribution {
     /// Records that the target `label`, declared through `chain`, wants `want`.
     ///
-    /// A chain already recorded for `want` keeps the label it has: the first one recorded stays,
-    /// so a caller that records in label order keeps the lowest.
+    /// A chain already recorded for `want` keeps the lowest of its label and `label`, whatever
+    /// the order they are recorded in. A read or a write is never attributed, so recording one
+    /// changes nothing.
     pub fn record(&mut self, want: Want, chain: &PluginChain, label: &Label) {
+        if matches!(want, Want::Read(_) | Want::Write(_)) {
+            return;
+        }
         self.0
             .entry(want)
             .or_default()
             .entry(chain.clone())
+            .and_modify(|recorded| {
+                if label < recorded {
+                    recorded.clone_from(label);
+                }
+            })
             .or_insert_with(|| label.clone());
     }
 
@@ -69,9 +78,8 @@ impl Attribution {
                 .filter(|(want, _)| match want {
                     Want::Program(program) => wanted.programs.contains(program),
                     Want::Env(name) => wanted.env.contains(name),
-                    Want::Write(directory) => wanted.write.contains(directory),
                     Want::Network(label) => wanted.network.contains(label),
-                    Want::Read(_) => false,
+                    Want::Read(_) | Want::Write(_) => false,
                 })
                 .map(|(want, chains)| (want.clone(), chains.clone()))
                 .collect(),
@@ -98,11 +106,6 @@ impl Attribution {
                 .map(|(chain, label)| declared_by(chain, label))
                 .collect()
         })
-    }
-
-    /// Every attributed want with its chains, in the order they are shown.
-    pub fn iter(&self) -> impl Iterator<Item = (&Want, &BTreeMap<PluginChain, Label>)> {
-        self.0.iter()
     }
 
     /// Whether no want is attributed.
@@ -143,7 +146,8 @@ struct Site<'a> {
 }
 
 /// Attribution as it is written to JSON: the chains behind each program, variable and network
-/// target, each under its name, in the field order of the wanted set.
+/// target, each under its name. The fields are in alphabetical order, which is the order the
+/// canonical JSON writes them in.
 #[derive(Serialize)]
 struct AttributionView<'a> {
     env: BTreeMap<&'a EnvName, Vec<Site<'a>>>,
@@ -194,7 +198,8 @@ mod tests {
     use super::Attribution;
     use crate::json::canonical;
     use crate::types::{
-        EnvName, Label, PluginChain, PluginName, PluginRef, PluginVersion, Program, Want, WantedSet,
+        Directory, EnvName, Label, PluginChain, PluginName, PluginRef, PluginVersion, Program,
+        SourcePath, Want, WantedSet,
     };
 
     fn chain(plugins: &[(&str, &str)]) -> PluginChain {
@@ -275,15 +280,39 @@ mod tests {
     }
 
     #[test]
-    fn the_first_target_recorded_for_a_chain_stays() {
+    fn the_lowest_label_recorded_for_a_chain_stays_whatever_the_order() {
         let go = chain(&[("go", "1.2.0")]);
+        for order in [["//:a", "//:b"], ["//:b", "//:a"]] {
+            let mut attribution = Attribution::default();
+            for raw in order {
+                attribution.record(program("go"), &go, &label(raw));
+            }
+            let chains = attribution.get(&program("go")).unwrap();
+            assert_eq!(chains.get(&go), Some(&label("//:a")), "{order:?}");
+        }
         let mut attribution = Attribution::default();
         attribution.record(program("go"), &go, &label("//:a"));
-        attribution.record(program("go"), &go, &label("//:b"));
-        let chains = attribution.get(&program("go")).unwrap();
-        assert_eq!(chains.get(&go), Some(&label("//:a")));
         assert!(attribution.get(&program("cc")).is_none());
         assert!(!attribution.is_empty());
+    }
+
+    #[test]
+    fn a_read_or_a_write_is_never_attributed() {
+        let go = chain(&[("go", "1.2.0")]);
+        let mut attribution = Attribution::default();
+        attribution.record(
+            Want::Read(SourcePath::parse("main.c").unwrap()),
+            &go,
+            &label("//:a"),
+        );
+        attribution.record(
+            Want::Write(Directory::parse("out").unwrap()),
+            &go,
+            &label("//:a"),
+        );
+        assert!(attribution.is_empty());
+        assert_eq!(attribution.to_string(), "");
+        assert_eq!(attribution, Attribution::default());
     }
 
     #[test]

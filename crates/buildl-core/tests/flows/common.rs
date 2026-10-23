@@ -1039,13 +1039,15 @@ pub enum Answer {
 }
 
 /// An approver that gives the same [`Answer`] every time and keeps each set it was asked about,
-/// in order.
+/// and the attribution given with it, in order.
 #[derive(Debug)]
 pub struct FakeApprover {
     /// What it answers.
     pub answer: Answer,
     /// The sets it was asked about.
     pub asked: Vec<WantedSet>,
+    /// The attribution given with each of them.
+    pub attributions: Vec<Attribution>,
 }
 
 impl FakeApprover {
@@ -1055,6 +1057,7 @@ impl FakeApprover {
         Self {
             answer,
             asked: Vec::new(),
+            attributions: Vec::new(),
         }
     }
 }
@@ -1067,8 +1070,9 @@ impl Default for FakeApprover {
 }
 
 impl Approver for FakeApprover {
-    fn approve(&mut self, wanted: &WantedSet, _attribution: &Attribution) -> Result<Approval> {
+    fn approve(&mut self, wanted: &WantedSet, attribution: &Attribution) -> Result<Approval> {
         self.asked.push(wanted.clone());
+        self.attributions.push(attribution.clone());
         match &self.answer {
             Answer::Grant => Ok(Approval::Granted),
             Answer::Deny(reason) => Ok(Approval::Denied {

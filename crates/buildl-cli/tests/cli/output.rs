@@ -199,6 +199,8 @@ fn plan_says_why_each_target_would_run() {
             "run    //:docs: never built\n",
             "run    //:main.o: never built\n",
             "run    //lib:text: never built\n",
+            "  run programs: cc, mkdoc\n",
+            "  write into:   .buildl, out\n",
             "4 to run, 0 conditional, 0 clean\n",
         )
     );
@@ -214,6 +216,8 @@ fn plan_says_why_each_target_would_run() {
             "clean  //:docs\n",
             "run    //:main.o: input main.c changed\n",
             "clean  //lib:text\n",
+            "  run programs: cc, mkdoc\n",
+            "  write into:   .buildl, out\n",
             "1 to run, 1 conditional, 2 clean\n",
         )
     );
@@ -235,6 +239,8 @@ fn plan_names_every_difference_of_a_target() {
             "clean  //:docs\n",
             "run    //:main.o: input main.c changed; tool cc changed; setting mode changed\n",
             "run    //lib:text: tool cc changed\n",
+            "  run programs: cc, mkdoc\n",
+            "  write into:   .buildl, out\n",
             "3 to run, 0 conditional, 1 clean\n",
         )
     );

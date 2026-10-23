@@ -250,7 +250,7 @@ pub enum Error {
         ceiling: Box<Ceiling>,
     },
     /// A plugin's target wants something its plugin does not allow.
-    #[error("{}", plugin_refusal(.violation))]
+    #[error("{}: {}", .violation.site, .violation)]
     PluginRefused {
         /// The want, the target that made it, and the plugin that does not allow it.
         violation: Box<PluginViolation>,
@@ -561,33 +561,8 @@ fn refusal(want: &Want, site: Option<&DeclarationSite>, ceiling: &Ceiling) -> St
     format!("{holder}{wanted} is outside the ceiling ({list} allows: {allowed})")
 }
 
-/// A plugin's refusal as one sentence: who wanted what, which plugin does not allow it, and what
-/// that plugin allows of that kind.
-fn plugin_refusal(violation: &PluginViolation) -> String {
-    let PluginViolation {
-        want,
-        site,
-        plugin,
-        allowed,
-    } = violation;
-    let (wanted, list) = match want {
-        Want::Program(program) => (format!("program {program}"), "proc.run"),
-        Want::Env(name) => (format!("environment variable {name}"), "env.read"),
-        Want::Read(path) => (format!("input {path}"), "fs.read"),
-        Want::Write(directory) => (
-            format!("directory {}", directory_text(directory)),
-            "fs.write",
-        ),
-        Want::Network(_) => {
-            return format!("{site}: network is outside plugin {plugin} (network not allowed)");
-        }
-    };
-    let allowed = allowed_list(allowed);
-    format!("{site}: {wanted} is outside plugin {plugin} ({list} allows: {allowed})")
-}
-
 /// The entries of one ceiling list, separated by commas; `nothing` for an empty list.
-fn allowed_list<T: fmt::Display>(entries: impl IntoIterator<Item = T>) -> String {
+pub(crate) fn allowed_list<T: fmt::Display>(entries: impl IntoIterator<Item = T>) -> String {
     let rendered: Vec<String> = entries.into_iter().map(|entry| entry.to_string()).collect();
     if rendered.is_empty() {
         "nothing".to_owned()
@@ -597,7 +572,7 @@ fn allowed_list<T: fmt::Display>(entries: impl IntoIterator<Item = T>) -> String
 }
 
 /// A directory as a refusal shows it: the workspace root, whose text is empty, as `.`.
-fn directory_text(directory: &Directory) -> &str {
+pub(crate) fn directory_text(directory: &Directory) -> &str {
     if directory.is_root() {
         "."
     } else {

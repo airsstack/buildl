@@ -14,7 +14,7 @@ use core::fmt::Display;
 use std::collections::BTreeSet;
 
 use buildl::Doctor;
-use buildl::buildl_core::{Attribution, Directory, Error, Execution, Want, WantedSet, Workers};
+use buildl::buildl_core::{Attribution, Directory, Execution, Want, WantedSet, Workers};
 
 /// The spaces after the longest cell of a column.
 const GAP: usize = 2;
@@ -75,12 +75,12 @@ pub(crate) fn doctor_text(doctor: &Doctor) -> String {
     }
     if !checkup.plugin_violations().is_empty() {
         lines.push("plugin violations".to_owned());
-        lines.extend(checkup.plugin_violations().iter().map(|violation| {
-            let refusal = Error::PluginRefused {
-                violation: Box::new(violation.clone()),
-            };
-            format!("  {refusal}")
-        }));
+        lines.extend(
+            checkup
+                .plugin_violations()
+                .iter()
+                .map(|violation| format!("  {}: {violation}", violation.site)),
+        );
     }
     let mut text = lines.join("\n");
     text.push('\n');

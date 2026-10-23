@@ -4,8 +4,9 @@
 //! both keys of every target, for a program to compare; this holds one line a target, saying in
 //! words what the comparison found.
 //!
-//! Responsibilities: [`plan_text`], and the words for each verdict, each reason, each
-//! difference between two keys, and the plugins behind the plan's wants.
+//! Responsibilities: [`plan_text`], and the words for each verdict, each reason, and each
+//! difference between two keys; the wants and the plugins behind them are shown as their own
+//! types render them.
 //!
 //! Non-responsibilities: reaching a verdict, which the phase that plans does; and writing the
 //! text anywhere.
@@ -74,8 +75,9 @@ fn labels(plan: &Plan, ids: &[NodeId]) -> String {
 /// `maybe  <label>: runs only if <those dependencies> produces something else`. The last line
 /// counts the three: `1 to run, 1 conditional, 2 clean`.
 ///
-/// When the plan's wants are attributed to plugins, one line for each chain of each want comes
-/// between the targets and the counts, as in
+/// Between the targets and the counts come the plan's wants, worded as the approval prompt words
+/// them, as in `  run programs: go, protoc`. When plugins' targets are behind them, one line for
+/// each chain of each want follows, as in
 /// `  go: declared by plugin go@1.2.0 for //services/api:server`.
 #[must_use]
 pub fn plan_text(plan: &Plan) -> String {
@@ -102,6 +104,9 @@ pub fn plan_text(plan: &Plan) -> String {
                 ));
             }
         }
+    }
+    if !plan.wanted().is_empty() {
+        lines.push(format!("{}\n", plan.wanted()));
     }
     if !plan.attribution().is_empty() {
         lines.push(format!("{}\n", plan.attribution()));
@@ -599,6 +604,9 @@ mod tests {
                 "run    //:new: never built\n",
                 "run    //:reordered: inputs reordered; dependencies reordered\n",
                 "run    //:script: tool changed\n",
+                "  run programs:   cc\n",
+                "  read variables: CC_FLAGS\n",
+                "  write into:     .buildl, out\n",
                 "6 to run, 1 conditional, 2 clean\n",
             )
         );
@@ -638,6 +646,8 @@ mod tests {
             concat!(
                 "run    //:app: never built\n",
                 "run    //:docs: never built\n",
+                "  run programs: cc\n",
+                "  write into:   .buildl, out\n",
                 "  cc: declared by plugin go@1.2.0 for //:app\n",
                 "2 to run, 0 conditional, 0 clean\n",
             )
@@ -645,11 +655,11 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_of_nothing_is_only_the_counts() {
+    fn a_plan_of_nothing_is_the_wants_of_every_build_and_the_counts() {
         let graph = resolve(Vec::new()).unwrap();
         assert_eq!(
             plan_text(&planned(&graph, Rows::default())),
-            "0 to run, 0 conditional, 0 clean\n"
+            "  write into: .buildl, out\n0 to run, 0 conditional, 0 clean\n"
         );
     }
 }

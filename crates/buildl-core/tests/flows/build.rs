@@ -10,17 +10,17 @@ use std::path::Path;
 
 use buildl_core::{
     ActionOutcome, Digest, EntryName, Error, EvaluationFailure, FileMode, FileStat, Freshness,
-    InfraKind, OnFailure, OutcomeClass, OutcomeEvent, OutputManifest, OutputName, OutputPath,
-    OutputRefusal, Pipeline, PortName, SettingName, SettingValue, SourcePath, StagedItem,
-    StagedSetting, StoredFile, Summary, Tally, TargetRole, Timestamp, TreePath, Want, WantedSet,
-    Written, json,
+    InfraKind, OnFailure, Origin, OutcomeClass, OutcomeEvent, OutputManifest, OutputName,
+    OutputPath, OutputRefusal, Pipeline, PluginCap, PluginName, PortName, SettingName,
+    SettingValue, SourcePath, StagedItem, StagedSetting, StoredFile, Summary, Tally, TargetRole,
+    Timestamp, TreePath, Want, WantedSet, Written, json,
 };
 use buildl_core::{LiveOutput, Scope};
 
 use crate::common::{
     Answer, Content, Ends, FakeApprover, FakeContent, FakeFile, FakePorts, FakeSource, Leaf, Loss,
-    Order, Script, classes, dir, ending, expected, file, label, ports, program, root_only, rule,
-    script, setting, skipped, target, target_with, tree, workspace,
+    Order, Script, classes, dir, ending, expected, file, file_by, label, plugin, ports, program,
+    root_only, rule, script, setting, skipped, target, target_with, tree, workspace,
 };
 
 /// The events of [`two_directories`] built once, one canonical JSON object per line, pinned.
@@ -2272,6 +2272,43 @@ fn a_build_asks_the_approver_once_with_the_planned_wanted_set() {
     build(&mut pipeline, OnFailure::Stop);
 
     assert_eq!(pipeline.ports().approver.asked, [wanted]);
+}
+
+#[test]
+fn a_build_hands_the_approver_the_attribution_of_the_plan() {
+    let mut go = plugin("go", "1.2.0");
+    go.run = BTreeSet::from([program("cc")]);
+    let origin = Origin::plugins(vec![go]).unwrap();
+    let source = FakeSource::new(workspace(vec![(
+        "",
+        file_by(&origin, vec![target("app", &[])], &[]),
+    )]));
+    let mut pipeline = Pipeline::<FakePorts>::new(ports(source));
+    let ports = pipeline.ports_mut();
+    ports.manifest.workspace.plugins.insert(
+        PluginName::parse("go").unwrap(),
+        PluginCap {
+            run: BTreeSet::from([program("cc")]),
+            ..PluginCap::default()
+        },
+    );
+    ports
+        .tools
+        .fingerprints
+        .insert(program("cc"), Digest::of(b"cc 14.2"));
+    let planned = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap()
+        .attribution()
+        .clone();
+    assert_eq!(
+        planned.to_string(),
+        "  cc: declared by plugin go@1.2.0 for //:app"
+    );
+
+    build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(pipeline.ports().approver.attributions, [planned]);
 }
 
 #[test]

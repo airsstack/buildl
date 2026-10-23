@@ -796,7 +796,8 @@ mod tests {
         assert_eq!(ran.exit, Exit::Success);
         assert_eq!(
             ran.stdout,
-            "run    //:copy: never built\n1 to run, 0 conditional, 0 clean\n"
+            "run    //:copy: never built\n  run programs: cp\n  \
+             write into:   .buildl, out\n1 to run, 0 conditional, 0 clean\n"
         );
         assert_eq!(ran.stderr, "");
     }

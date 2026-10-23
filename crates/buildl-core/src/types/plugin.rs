@@ -18,7 +18,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{DeclarationSite, Error, NameKind, Result};
+use crate::error::{DeclarationSite, Error, NameKind, Result, allowed_list, directory_text};
 use crate::types::grammar;
 use crate::types::{EnvName, Program, Want};
 
@@ -288,6 +288,39 @@ pub struct PluginViolation {
     pub allowed: BTreeSet<String>,
 }
 
+/// What the violation is, without where it was made: the want, the plugin that does not allow
+/// it, and what that plugin allows of that kind.
+///
+/// Reads as `program curl is outside plugin go@1.3.0 (proc.run allows: go)`; the list is
+/// `nothing` when empty. A network want reads as
+/// `network is outside plugin go@1.3.0 (network not allowed)`.
+impl fmt::Display for PluginViolation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (wanted, list) = match &self.want {
+            Want::Program(program) => (format!("program {program}"), "proc.run"),
+            Want::Env(name) => (format!("environment variable {name}"), "env.read"),
+            Want::Read(path) => (format!("input {path}"), "fs.read"),
+            Want::Write(directory) => (
+                format!("directory {}", directory_text(directory)),
+                "fs.write",
+            ),
+            Want::Network(_) => {
+                return write!(
+                    f,
+                    "network is outside plugin {} (network not allowed)",
+                    self.plugin
+                );
+            }
+        };
+        write!(
+            f,
+            "{wanted} is outside plugin {} ({list} allows: {})",
+            self.plugin,
+            allowed_list(&self.allowed)
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -296,8 +329,13 @@ mod tests {
     )]
 
     use std::collections::BTreeSet;
+    use std::path::PathBuf;
 
-    use super::{Origin, PluginChain, PluginName, PluginNetwork, PluginRef, PluginVersion};
+    use super::{
+        Origin, PluginChain, PluginName, PluginNetwork, PluginRef, PluginVersion, PluginViolation,
+    };
+    use crate::error::DeclarationSite;
+    use crate::types::{Directory, EnvName, Label, Program, Provenance, SourcePath, Want};
 
     fn plugin(name: &str, version: &str) -> PluginRef {
         PluginRef {
@@ -362,6 +400,49 @@ mod tests {
         let chain = Origin::plugins(vec![plugin("ourgo", "0.1.0"), plugin("go", "1.2.0")]).unwrap();
         assert_eq!(chain.to_string(), "ourgo@0.1.0 > go@1.2.0");
         assert_eq!(Origin::BuildFile.to_string(), "build file");
+    }
+
+    /// A violation of `go@1.3.0` by `//:app` of `want`, with `allowed` listed.
+    fn violation(want: Want, allowed: &[&str]) -> PluginViolation {
+        let go = plugin("go", "1.3.0");
+        PluginViolation {
+            want,
+            site: DeclarationSite {
+                label: Label::parse("//:app").unwrap(),
+                provenance: Provenance::new(PathBuf::from("build.lua"), Directory::root()),
+                origin: Origin::plugins(vec![go.clone()]).unwrap(),
+            },
+            plugin: go,
+            allowed: allowed.iter().map(|text| (*text).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_violation_reads_as_the_want_the_plugin_and_what_it_allows() {
+        let said = |want, allowed: &[&str]| violation(want, allowed).to_string();
+        assert_eq!(
+            said(Want::Program(Program::parse("curl").unwrap()), &["go"]),
+            "program curl is outside plugin go@1.3.0 (proc.run allows: go)"
+        );
+        assert_eq!(
+            said(Want::Env(EnvName::parse("HOME").unwrap()), &[]),
+            "environment variable HOME is outside plugin go@1.3.0 (env.read allows: nothing)"
+        );
+        assert_eq!(
+            said(
+                Want::Read(SourcePath::parse("main.c").unwrap()),
+                &["src", "inc"]
+            ),
+            "input main.c is outside plugin go@1.3.0 (fs.read allows: inc, src)"
+        );
+        assert_eq!(
+            said(Want::Write(Directory::root()), &[]),
+            "directory . is outside plugin go@1.3.0 (fs.write allows: nothing)"
+        );
+        assert_eq!(
+            said(Want::Network(Label::parse("//:app").unwrap()), &[]),
+            "network is outside plugin go@1.3.0 (network not allowed)"
+        );
     }
 
     #[test]

@@ -494,7 +494,8 @@ fn set_reaches_the_plan() {
     assert_eq!(code(&output), 0);
     assert_eq!(
         stdout(&output),
-        "run    //:copy: setting from changed\n1 to run, 0 conditional, 0 clean\n"
+        "run    //:copy: setting from changed\n  run programs: cp\n  \
+         write into:   .buildl, out\n1 to run, 0 conditional, 0 clean\n"
     );
     let built = run(&root, &[&["build"][..], &settings].concat(), &[]);
     assert_eq!(code(&built), 0);
@@ -589,7 +590,8 @@ fn a_changed_tool_is_the_reason_its_targets_run() {
     assert_eq!(code(&output), 0);
     assert_eq!(
         stdout(&output),
-        "run    //:made: tool mytool changed\n1 to run, 0 conditional, 0 clean\n"
+        "run    //:made: tool mytool changed\n  run programs: mytool\n  \
+         write into:   .buildl, out\n1 to run, 0 conditional, 0 clean\n"
     );
 }
 
