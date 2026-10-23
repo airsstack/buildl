@@ -15,6 +15,7 @@
 
 use core::fmt;
 use core::marker::PhantomData;
+use std::collections::BTreeMap;
 
 use serde::Deserialize;
 use serde::de::value::MapAccessDeserializer;
@@ -45,6 +46,17 @@ impl<'de, T: Deserialize<'de>> Visitor<'de> for TableOnly<T> {
     }
 }
 
+/// A table kept in a map or a list: read from a table and from nothing else, as [`table`] does
+/// for a field.
+#[derive(Debug, Default)]
+pub(crate) struct Tabular<T>(pub(crate) T);
+
+impl<'de, T: Deserialize<'de>> Deserialize<'de> for Tabular<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> core::result::Result<Self, D::Error> {
+        table(deserializer).map(Self)
+    }
+}
+
 /// The whole document.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,6 +76,9 @@ pub(crate) struct Raw {
     /// `[approver]`.
     #[serde(default, deserialize_with = "table")]
     pub(crate) approver: ApproverTable,
+    /// `[plugins.<name>]`, one table per plugin, each name with the place it was written at.
+    #[serde(default, deserialize_with = "table")]
+    pub(crate) plugins: BTreeMap<Spanned<String>, Tabular<PluginTable>>,
 }
 
 /// `[workspace]`: what the workspace is called and where its files go.
@@ -95,7 +110,7 @@ pub(crate) struct CeilingTable {
     pub(crate) fs: FsTable,
 }
 
-/// `[ceiling.proc]`.
+/// `[ceiling.proc]`, and `proc` of a plugin.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ProcTable {
@@ -104,7 +119,7 @@ pub(crate) struct ProcTable {
     pub(crate) run: Vec<Spanned<String>>,
 }
 
-/// `[ceiling.env]`.
+/// `[ceiling.env]`, and `env` of a plugin.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct EnvTable {
@@ -157,6 +172,28 @@ pub(crate) struct ApproverTable {
     pub(crate) default: Option<Spanned<String>>,
 }
 
+/// `[plugins.<name>]`: where one plugin comes from, and what the workspace lets it have.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PluginTable {
+    /// A workspace-relative directory holding the plugin.
+    pub(crate) path: Option<Spanned<String>>,
+    /// The URL of a git repository holding the plugin.
+    pub(crate) git: Option<Spanned<String>>,
+    /// A GitHub repository, written `owner/repo`.
+    pub(crate) github: Option<Spanned<String>>,
+    /// The tag or full commit of the repository the plugin is pinned to.
+    pub(crate) rev: Option<Spanned<String>>,
+    /// `proc`: the programs the plugin's targets may run.
+    #[serde(default, deserialize_with = "table")]
+    pub(crate) proc: ProcTable,
+    /// `env`: the environment variables the plugin's targets may read.
+    #[serde(default, deserialize_with = "table")]
+    pub(crate) env: EnvTable,
+    /// Whether the plugin's targets may reach the network.
+    pub(crate) network: Option<Spanned<bool>>,
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -185,6 +222,7 @@ mod tests {
             assert!(raw.execution.timeout.is_none(), "{text:?}");
             assert!(raw.execution.strategy.is_none(), "{text:?}");
             assert!(raw.approver.default.is_none(), "{text:?}");
+            assert!(raw.plugins.is_empty(), "{text:?}");
         }
     }
 
@@ -235,6 +273,18 @@ mod tests {
                 "invalid type: string \"deny\", expected a table",
             ),
             (
+                "plugins = \"go\"\n",
+                "invalid type: string \"go\", expected a table",
+            ),
+            (
+                "[plugins]\ngo = \"x\"\n",
+                "invalid type: string \"x\", expected a table",
+            ),
+            (
+                "[[plugins.go]]\ngit = \"x\"\n",
+                "invalid type: sequence, expected a table",
+            ),
+            (
                 "[ceiling]\nproc = [[\"cc\"], [\"ld\"]]\n",
                 "invalid type: sequence, expected a table",
             ),
@@ -265,6 +315,9 @@ mod tests {
             ("[ceiling.fs]\nwirte = []\n", "wirte"),
             ("[declaration]\ntime = \"1s\"\n", "time"),
             ("[execution]\nworker = 4\n", "worker"),
+            ("[plugins.go]\nbranch = \"main\"\n", "branch"),
+            ("[plugins.go.proc]\nexec = []\n", "exec"),
+            ("[plugins.go.env]\nwrite = []\n", "write"),
         ];
         for (text, key) in cases {
             let error = toml::from_str::<Raw>(text).unwrap_err();

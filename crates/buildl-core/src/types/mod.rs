@@ -42,6 +42,8 @@
 //!   plugin, what its manifest asks for, and what the workspace lets it have; [`PluginChain`]
 //!   — the plugins that made a declaration; [`Origin`] — whose
 //!   code declared a target; [`PluginViolation`] — a want outside a plugin's caps.
+//! - [`PluginSource`] — where a plugin comes from, with [`GitUrl`], [`Rev`], [`TagName`] and
+//!   [`CommitId`] — the parts of a git source.
 //! - [`Execution`], with [`Workers`], [`Timeout`] and [`Isolation`] — how a workspace wants its
 //!   actions run.
 //! - [`Plan`], [`Verdict`] and their parts — what a build would do with each target, and why.
@@ -124,6 +126,7 @@ pub mod output_path;
 pub mod plan;
 pub mod platform;
 pub mod plugin;
+pub mod plugin_source;
 pub mod program;
 pub mod provenance;
 pub mod purpose;
@@ -200,6 +203,7 @@ pub use plugin::{
     Origin, PluginCap, PluginChain, PluginName, PluginNetwork, PluginRef, PluginVersion,
     PluginViolation,
 };
+pub use plugin_source::{CommitId, GitUrl, PluginSource, Rev, TagName};
 pub use program::Program;
 pub use provenance::Provenance;
 pub use purpose::Purpose;

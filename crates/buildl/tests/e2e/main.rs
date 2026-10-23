@@ -25,6 +25,7 @@ mod incremental;
 mod log;
 mod named;
 mod parallel_load;
+mod plugins;
 mod recovery;
 mod sandbox;
 mod test;

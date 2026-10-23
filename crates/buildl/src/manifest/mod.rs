@@ -9,7 +9,8 @@
 //! - [`WorkspaceRoot`] — the directory that holds the manifest, found from where a command was
 //!   started.
 //! - [`TomlManifest`] — the manifest, read and checked once: the workspace it describes, the
-//!   file name of a build file, and the ceilings a build file is evaluated under.
+//!   file name of a build file, the ceilings a build file is evaluated under, and where each
+//!   plugin it names comes from.
 //! - [`DeclarationSettings`] — those ceilings, each absent when the manifest sets none.
 //!
 //! Non-responsibilities: deciding what a build wants, and holding a build to the ceiling. Both

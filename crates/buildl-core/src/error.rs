@@ -30,8 +30,8 @@ use std::path::PathBuf;
 
 use crate::types::{
     Ceiling, Declaration, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
-    FieldName, InputKind, Label, Node, Origin, OutputPath, PluginViolation, Program, Provenance,
-    SettingName, SourcePath, TreePath, Want, WantedSet, Written,
+    FieldName, InputKind, Label, Node, Origin, OutputPath, PluginName, PluginViolation, Program,
+    Provenance, SettingName, SourcePath, TreePath, Want, WantedSet, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -431,6 +431,36 @@ pub enum Error {
         /// What is wrong with the list.
         fault: TreeFault,
     },
+    /// A plugin's directory holds something other than regular files with Unicode names.
+    #[error(
+        "plugin {plugin}: {} is not a regular file with a Unicode name; a plugin holds regular files only",
+        .path.display()
+    )]
+    PluginTree {
+        /// The plugin.
+        plugin: PluginName,
+        /// The first such path found.
+        path: PathBuf,
+    },
+    /// A plugin `buildl.toml` names is not there to use: it is a directory that does not
+    /// exist, or a git plugin that `buildl.lock` does not pin as `buildl.toml` names it or whose
+    /// store is missing.
+    #[error("plugin {plugin} is not fetched: {reason}")]
+    PluginNotFetched {
+        /// The plugin.
+        plugin: PluginName,
+        /// What is missing, and what to do about it.
+        reason: String,
+    },
+    /// A plugin's files are not the ones `buildl.lock` pinned: the store was changed after the
+    /// plugin was fetched.
+    #[error("plugin {plugin} was changed after it was fetched: {reason}")]
+    PluginChanged {
+        /// The plugin.
+        plugin: PluginName,
+        /// How the files differ from the lock.
+        reason: String,
+    },
 }
 
 /// A lost load as one sentence naming the port at fault and the directories whose build file it
@@ -697,6 +727,8 @@ pub enum PortName {
     Sweep,
     /// What settles whether a build may run.
     Approver,
+    /// Where plugins are fetched to and the lock that pins them.
+    PluginStore,
 }
 
 impl fmt::Display for PortName {
@@ -716,6 +748,7 @@ impl fmt::Display for PortName {
             Self::GraphRecord => "graph record",
             Self::Sweep => "sweep",
             Self::Approver => "approver",
+            Self::PluginStore => "plugin store",
         })
     }
 }
@@ -915,6 +948,12 @@ pub enum NameKind {
     PluginVersion,
     /// The chain of plugins that declared a target.
     PluginChain,
+    /// A full git commit id.
+    CommitId,
+    /// A git tag name.
+    TagName,
+    /// The URL of a git repository.
+    GitUrl,
 }
 
 impl fmt::Display for NameKind {
@@ -945,6 +984,9 @@ impl fmt::Display for NameKind {
             Self::PluginName => "plugin name",
             Self::PluginVersion => "plugin version",
             Self::PluginChain => "plugin chain",
+            Self::CommitId => "commit id",
+            Self::TagName => "tag name",
+            Self::GitUrl => "git URL",
         })
     }
 }
@@ -1413,6 +1455,43 @@ mod tests {
     }
 
     #[test]
+    fn a_plugin_tree_names_the_plugin_and_the_path() {
+        let err = Error::PluginTree {
+            plugin: PluginName::parse("go").unwrap(),
+            path: PathBuf::from(".buildl/plugins/go/c0ffee/bin/link"),
+        };
+        assert_eq!(
+            err.to_string(),
+            "plugin go: .buildl/plugins/go/c0ffee/bin/link is not a regular file with a Unicode \
+             name; a plugin holds regular files only"
+        );
+    }
+
+    #[test]
+    fn a_plugin_not_fetched_names_the_plugin_and_the_reason() {
+        let err = Error::PluginNotFetched {
+            plugin: PluginName::parse("go").unwrap(),
+            reason: "run `buildl plugins fetch`".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "plugin go is not fetched: run `buildl plugins fetch`"
+        );
+    }
+
+    #[test]
+    fn a_plugin_changed_names_the_plugin_and_the_reason() {
+        let err = Error::PluginChanged {
+            plugin: PluginName::parse("go").unwrap(),
+            reason: "its files differ from buildl.lock".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "plugin go was changed after it was fetched: its files differ from buildl.lock"
+        );
+    }
+
+    #[test]
     fn a_plugin_refused_program_names_the_site_the_plugin_and_what_it_allows() {
         let err = violation(Want::Program(Program::parse("curl").unwrap()), &["go"]);
         assert_eq!(
@@ -1802,6 +1881,7 @@ mod tests {
             (PortName::GraphRecord, "graph record"),
             (PortName::Sweep, "sweep"),
             (PortName::Approver, "approver"),
+            (PortName::PluginStore, "plugin store"),
         ];
         for (port, rendered) in cases {
             assert_eq!(port.to_string(), rendered);

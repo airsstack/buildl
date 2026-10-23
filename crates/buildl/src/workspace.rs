@@ -172,10 +172,11 @@ impl Workspace {
     ///
     /// # Errors
     ///
-    /// Returns whatever [`pipeline::check`] returns.
+    /// Returns what [`Wiring::source`] returns when a plugin the manifest names is not there to
+    /// use, then whatever [`pipeline::check`] returns.
     pub fn check(&self) -> Result<Vec<Declaration>> {
         pipeline::check(
-            &self.wiring.source(),
+            &self.wiring.source()?,
             &mut self.wiring.dispatcher(),
             self.wiring.entry(),
         )
@@ -187,10 +188,11 @@ impl Workspace {
     ///
     /// # Errors
     ///
-    /// Returns whatever [`pipeline::graph`] returns.
+    /// Returns what [`Wiring::source`] returns when a plugin the manifest names is not there to
+    /// use, then whatever [`pipeline::graph`] returns.
     pub fn graph(&self) -> Result<TargetGraph> {
         pipeline::graph(
-            &self.wiring.source(),
+            &self.wiring.source()?,
             &mut self.wiring.dispatcher(),
             self.wiring.entry(),
         )
@@ -203,10 +205,11 @@ impl Workspace {
     ///
     /// # Errors
     ///
-    /// Returns whatever [`pipeline::query`] returns.
+    /// Returns what [`Wiring::source`] returns when a plugin the manifest names is not there to
+    /// use, then whatever [`pipeline::query`] returns.
     pub fn query(&self, query: &Query) -> Result<BTreeSet<Label>> {
         pipeline::query(
-            &self.wiring.source(),
+            &self.wiring.source()?,
             &mut self.wiring.dispatcher(),
             self.wiring.entry(),
             query,
@@ -221,11 +224,12 @@ impl Workspace {
     ///
     /// # Errors
     ///
-    /// Returns whatever [`pipeline::doctor`](fn@pipeline::doctor) returns, and under
+    /// Returns what [`Wiring::source`] returns when a plugin the manifest names is not there to
+    /// use, then whatever [`pipeline::doctor`](fn@pipeline::doctor) returns, and under
     /// `interactive` whatever reading the remembered approvals returns.
     pub fn doctor(&self) -> Result<Doctor> {
         let checkup = pipeline::doctor(
-            &self.wiring.source(),
+            &self.wiring.source()?,
             &mut self.wiring.dispatcher(),
             self.wiring.manifest(),
             self.wiring.entry(),
@@ -415,7 +419,9 @@ impl Workspace {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Adapter`](buildl_core::Error::Adapter), naming
+    /// Returns what [`Wiring::source`] returns when a plugin the manifest names is not there to
+    /// use, before the state directory is taken. Then returns
+    /// [`Error::Adapter`](buildl_core::Error::Adapter), naming
     /// [`PortName::ActionCache`](buildl_core::PortName::ActionCache), when another process
     /// holds the workspace, and naming
     /// [`PortName::ExecStrategy`](buildl_core::PortName::ExecStrategy) when the scratch
@@ -426,13 +432,14 @@ impl Workspace {
     /// fail to load. A `gc` that succeeded and whose rows could not be folded returns the
     /// fold's error.
     pub fn gc(&self) -> Result<Collected> {
+        let source = self.wiring.source()?;
         let lock = self.wiring.lock()?;
         let layout = lock.layout();
         let mut cache = LocalCache::open(layout)?;
         let cas = LocalCas::new(self.wiring.root().as_path(), layout);
         let log = LocalLog::new(layout);
         let collected = pipeline::gc(
-            &self.wiring.source(),
+            &source,
             &mut self.wiring.dispatcher(),
             self.wiring.entry(),
             &mut cache,

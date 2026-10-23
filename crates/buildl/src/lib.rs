@@ -119,6 +119,9 @@
 //! | [`state`] | where each file of the state directory is, the lock on it, and writing a file whole |
 //! | [`search_path`] | the rule that leads from a program's name to a file |
 //!
+//! [`plugins`] serves no port and is in neither table: it holds `buildl.lock` and the digest of
+//! a plugin's files, and names only [`state`] and `buildl-core`.
+//!
 //! The adapters meet in two modules and nowhere else. Neither is public: what they hold is
 //! exported from the crate root.
 //!
@@ -168,6 +171,7 @@ pub mod graph;
 pub mod host;
 pub mod log;
 pub mod manifest;
+pub mod plugins;
 pub mod report;
 pub mod search_path;
 pub mod statcache;
