@@ -12,7 +12,6 @@
 //! once it is made.
 
 use core::marker::PhantomData;
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
@@ -157,7 +156,8 @@ impl Wiring {
     /// directory.
     ///
     /// Every plugin `buildl.toml` names is checked first, once, against `buildl.lock` and the
-    /// plugin store: a command that makes a source refuses before any build file is opened.
+    /// plugin store: a command that makes a source refuses before any build file is opened. The
+    /// directories of the plugins that pass are what a build file's `buildl.use` loads from.
     ///
     /// # Errors
     ///
@@ -165,12 +165,16 @@ impl Wiring {
     /// cannot be read, and what [`check`] returns for a plugin that is not there to use.
     pub fn source(&self) -> Result<LuaSource> {
         let lock = Lock::read(self.root.as_path())?;
-        check(
+        let checked = check(
             self.root.as_path(),
             &self.layout(),
             self.manifest.plugins(),
             &lock,
         )?;
+        let plugins = checked
+            .iter()
+            .map(|(name, directory)| (name.clone(), directory.to_path_buf()))
+            .collect();
         let defaults = DeclarationLimits::default();
         let settings = self.manifest.declaration();
         let limits = DeclarationLimits::new(
@@ -190,7 +194,7 @@ impl Wiring {
             self.root.as_path(),
             limits,
             [self.workspace.out.clone(), self.workspace.state.clone()],
-            BTreeMap::new(),
+            plugins,
         ))
     }
 

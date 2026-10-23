@@ -691,3 +691,82 @@ fn doctor_prints_the_workspace_authority() {
         )
     );
 }
+
+/// A workspace whose one target, `//:greet`, is declared by the path plugin `hello`.
+fn plugin_workspace() -> (tempfile::TempDir, PathBuf) {
+    let manifest = format!(
+        "{}\n[plugins.hello]\npath = \"plugins/hello\"\nproc.run = [\"cp\"]\n",
+        manifest(&["cp"])
+    );
+    workspace(&[
+        ("buildl.toml", &manifest),
+        (
+            "build.lua",
+            "local hello = buildl.use(\"hello\")\nhello.greet(\"greet\")\n",
+        ),
+        ("hello.txt", "hello\n"),
+        (
+            "plugins/hello/extension.toml",
+            "[extension]\nname = \"hello\"\nversion = \"0.1.0\"\nentry = \"main.lua\"\napi = 1\n\n[capabilities]\nproc.run = [\"cp\"]\n",
+        ),
+        (
+            "plugins/hello/main.lua",
+            concat!(
+                "local module = {}\n",
+                "function module.greet(name)\n",
+                "  buildl.target(name, { inputs = { \"hello.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+                "end\n",
+                "return module\n",
+            ),
+        ),
+    ])
+}
+
+#[test]
+fn plan_names_the_plugin_behind_a_want() {
+    let (_dir, root) = plugin_workspace();
+
+    let output = run(&root, &["plan"], &[]);
+
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("declared by plugin hello@0.1.0 for //:greet\n"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn doctor_shows_plugin_attribution_and_exits_0() {
+    let (_dir, root) = plugin_workspace();
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = fs::canonicalize(home_dir.path()).unwrap();
+
+    let output = run_at_home(&root, &["doctor"], &home);
+
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("declared by plugin hello@0.1.0 for //:greet\n"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn graph_json_shows_the_plugin_chain() {
+    let (_dir, root) = plugin_workspace();
+
+    let output = run(&root, &["graph", "--json"], &[]);
+
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains(r#""origin":{"Plugins":"#),
+        "{}",
+        stdout(&output)
+    );
+    assert!(
+        stdout(&output).contains(r#""name":"hello""#),
+        "{}",
+        stdout(&output)
+    );
+}

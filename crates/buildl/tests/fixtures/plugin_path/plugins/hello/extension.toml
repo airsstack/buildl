@@ -1,0 +1,8 @@
+[extension]
+name    = "hello"
+version = "0.1.0"
+entry   = "main.lua"
+api     = 1
+
+[capabilities]
+proc.run = ["cp"]

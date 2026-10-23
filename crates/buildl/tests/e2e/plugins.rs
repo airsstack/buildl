@@ -1,8 +1,8 @@
 //! The plugins a workspace names, checked before any build file runs: a path plugin's
 //! directory, and a git plugin's lock entry and stored files.
 //!
-//! The fixture `chain` is built throughout; the plugins named here hold no build-file code, so
-//! what these tests see is the check alone.
+//! The fixture `chain` is used for the check alone: the plugins it is given hold no build-file
+//! code. The fixture `plugin_path` has a plugin that declares a target, built and refused.
 
 use std::fs;
 use std::os::unix::fs::symlink;
@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use buildl::buildl_core::{CommitId, Error, GitUrl, Label, OutcomeClass, PluginName, Rev};
 use buildl::plugins::{Lock, LockEntry, tree_digest};
 
-use crate::common::{CHAIN_LABELS, Fixture};
+use crate::common::{CHAIN_LABELS, Fixture, ended};
 
 const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 const URL: &str = "https://example.com/acme/go.git";
@@ -229,4 +229,40 @@ fn log_and_clean_do_not_check_plugins() {
 
     assert_eq!(shown.stdout, b"said hello.txt\n");
     assert_eq!(cleaned, buildl::Cleaned::Removed);
+}
+
+#[test]
+fn a_path_plugin_builds_and_caches() {
+    let hello = Fixture::copy_of("plugin_path", &[]);
+
+    let first = hello.build();
+
+    assert_eq!(ended(&first, &OutcomeClass::Built), ["//:greet"]);
+    assert_eq!(
+        fs::read(hello.root().join("out/greet")).unwrap(),
+        b"hello from a plugin\n"
+    );
+
+    let second = hello.build();
+
+    assert_eq!(ended(&second, &OutcomeClass::Cached), ["//:greet"]);
+}
+
+#[test]
+fn a_plugin_target_outside_its_cap_is_refused_before_anything_runs() {
+    let hello = Fixture::copy_of("plugin_path", &[]);
+    hello.replace_line(
+        "buildl.toml",
+        "proc.run = [\"cp\"]",
+        "proc.run = [\"sort\"]",
+    );
+
+    let error = hello.try_build().unwrap_err();
+
+    let Error::PluginRefused { violation } = &error else {
+        unreachable!("a want outside the plugin's cap is refused, got {error:?}");
+    };
+    assert_eq!(violation.site.label.to_string(), "//:greet");
+    assert_eq!(violation.plugin.name, PluginName::parse("hello").unwrap());
+    assert_eq!(hello.files("out"), Vec::<String>::new());
 }
