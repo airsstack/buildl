@@ -151,7 +151,7 @@ None of the three is an action-key component (§8.3): they decide how an action 
 
 |Key|Written as|When absent|
 |---|---|---|
-|`path`|a workspace-relative directory holding the plugin, like a ceiling directory; it may not be, hold or lie inside `out` or `.buildl`|—|
+|`path`|a workspace-relative directory holding the plugin, like a ceiling directory; it may not be, hold or lie inside the configured output or state directory (`out` and `.buildl` by default)|—|
 |`git`|the URL of a git repository, anything the engineer's own `git` can reach; empty, starting with `-`, whitespace, a control character and a transport helper (`ext::…`) are refused|—|
 |`github`|`owner/repo`, which is `git = "https://github.com/owner/repo"`|—|
 |`rev`|a tag, or a full 40-digit lowercase commit; required with `git` and `github`, refused with `path`|—|
@@ -299,7 +299,7 @@ flowchart TD
 |---|---|
 |`build`, `test`|the flow above. Two approvals: `interactive` asks the second time only about wants the first yes did not cover. A discovery target that does not succeed ends the command with that failure, and nothing is declared from it. A result that cannot be read back right after its target succeeded is an infrastructure failure (exit 3) naming the target. Their default scope leaves discovery targets out; `buildl build //svc:pkgs` builds one. `buildl test //svc:pkgs` is a usage error, after discovery has run, since a label may exist only once the second load has declared it|
 |`plan`, `verify`, `gc`|load, read the last results, load again, then as before; nothing is run to get them. `plan` also lists each discovery target that is not up to date, as `//svc:pkgs is not up to date; targets declared from it may change`, since what it declares may differ once it has run. `gc` therefore keeps the rows of targets declared from a result|
-|`check`, `graph`, `query`, `doctor`|the same, without the state lock and without writing anything. `check` evaluates the build files once without results and twice with them, and compares those two as it compares any two evaluations. A discovery target with no result prints `//svc:pkgs has not run; run buildl build` on stderr, never stdout|
+|`check`, `graph`, `query`, `doctor`|the same, without the state lock and without writing anything, but for the cas's own removal of a blob whose bytes fail their digest when a result is read. `check` evaluates the build files once without results and twice with them, and compares those two as it compares any two evaluations. A discovery target with no result prints `//svc:pkgs has not run; run buildl build` on stderr, never stdout|
 
 A result is the one output of the newest logged run of that discovery target that succeeded, built or cached, read from the cas; the log and the cas are what `log` reads (§8.7). One that cannot be read counts as none, so a damaged log never stops `check`. The second evaluation must declare the discovery targets the first did, field for field: one added, removed or changed is refused, naming the target and its build file (exit 5), since discovery may not depend on discovery. The graph is then a function of the sources, the plugins, the settings and the results; a fresh clone has no results until its first `build`, and the commands that run nothing show the graph without the targets discovery adds, and say so.
 
@@ -625,7 +625,7 @@ The library and module tables are copies made when the file's engine was built, 
 A plugin the workspace gives no cap allows its targets nothing. Inputs and write directories are not narrowed per plugin, and a program a dependency built is no want (§6). A wrapper is held as well as what it wraps: `ourgo` calling `go.binary` needs both `ourgo` and `go` to allow what the target runs. The first want refused is an error of the whole build, before anything runs, in the class of a want outside the ceiling (exit 4, §8.7), and it names the target, the chain, and what the plugin allows:
 
 ```text
-build.lua: //services/api:server (plugin go@1.3.0): program curl is outside plugin go@1.3.0 (proc.run allows: go)
+services/api/build.lua: //services/api:server (plugin go@1.3.0): program curl is outside plugin go@1.3.0 (proc.run allows: go)
 ```
 
 A want that passes its plugins is then held to the ceiling as before: request ∩ plugin manifest ∩ the workspace's cap for the plugin ∩ workspace ceiling — the extension host's intersection applied twice, so a compromised plugin update wanting `curl` is caught. Plugins need the manifest/ceiling/approver side of the airsl extension work but not the `ext.on` dispatcher.

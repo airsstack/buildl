@@ -29,8 +29,8 @@ A target is `//dir:name`, or `:name` and `name`, read against the current direct
 | 2 | the command line is wrong |
 | 3 | fix your builder, or run again: a missing tool, a timeout, a file that cannot be read or written, a workspace another buildl is using, a `git` that is missing or fails |
 | 4 | the build wants more than the ceiling, or than a plugin's manifest or cap allows, or its approver did not approve it |
-| 5 | a build file or `buildl.toml` is wrong, a plugin is not fetched or its files hold a link, or discovery targets declared differently on the second pass |
-| 6 | a state file, or the remembered approvals file, is not what buildl writes, or a plugin changed since it was fetched |
+| 5 | a build file or `buildl.toml` is wrong, a plugin is not fetched or its files hold a link when fetched, or discovery targets declared differently on the second pass |
+| 6 | a state file, or the remembered approvals file, is not what buildl writes, or a plugin changed since it was fetched, a link in its files included |
 | 7 | buildl is at fault |
 
 The binary builds on Unix targets only; the supported platforms are Linux and macOS.

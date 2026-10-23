@@ -348,7 +348,7 @@ One rule holds the passes together: pass two may not declare different discovery
 
 `check`, `graph`, `query`, `doctor` and `log` read the log and the cas without the state lock, so a build in progress does not stop them. A command that reads only build files was lockless already (decision record §6); what it reads now includes `log.jsonl` and the cas, and it writes neither, but for the store's own removal of a blob whose bytes fail their digest (§3.5). `LocalLog` and `LocalCas` touch the disk only when read, so these commands still create no `.buildl/` and are stopped by no damaged state file. The `pipeline` functions `check`, `graph` and `query` take a `DeclarationSource`, a `Dispatcher`, a `RunHistory` and a `ContentStore` and nothing else, and `doctor` takes a `Manifest` as well.
 
-`Pipeline::plan`, `Pipeline::verify` and `gc` read the same results through ports they already hold, which is why `Ports::Log` is bound by `EventLog + RunHistory` (building blocks §5.3). Only `build` and `test` run a discovery target:
+`Pipeline::plan`, `Pipeline::verify` and `gc` read the same results through ports they already hold, which is why `Ports::Log` is bound by `EventLog + RunHistory` (building blocks §5.3); `gc` is a free function that takes its own `RunHistory`. Only `build` and `test` run a discovery target:
 
 ```mermaid
 %% build and test — the two passes, with the discovery run between them

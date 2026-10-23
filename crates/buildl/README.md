@@ -21,7 +21,7 @@ It assembles them as `LocalPorts`, exposes the result as the `Workspace` facade,
 | State on disk | `cas` — `.buildl/cas`, read-only blobs with an executable twin where one is needed, and the files placed under `out/`; `cache` — `cache.json` and its journal; `log` — `log.jsonl`; `statcache` — `statcache.json`; `graph` — `graph.json`, written by every build |
 | Running actions | `exec` — `Bare`, isolation tier 1: a plain process in the workspace root, started without a shell, with exactly its declared environment, an empty standard input and a timeout; `dispatch` — worker threads, started as tasks need them; `clock` — the system clock |
 | Reporting | `report` — `TerminalReporter`, with a live status line or plain blocks; `Silent`; and the text of a plan, a graph as DOT, and an error |
-| Shared | `state` — where each state file is, the lock that keeps a second buildl out, writing a file whole, clearing a path — and `search_path`, the one lookup of a program name. Neither implements a port, and adapter modules name no other module of the crate; `plugins` names only `state` |
+| Shared | `state` — where each state file is, the lock that keeps a second buildl out, writing a file whole, clearing a path — and `search_path`, the one lookup of a program name. Neither implements a port, and adapter modules name no other module of the crate; `plugins` names only `state` and `search_path` |
 
 The crate builds on Unix targets only; the supported platforms are Linux and macOS.
 

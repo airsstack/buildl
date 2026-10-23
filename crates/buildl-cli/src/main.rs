@@ -10,13 +10,13 @@
 //! | Command | Writes to standard output | Writes to standard error |
 //! |---|---|---|
 //! | `buildl check` | nothing | `ok: 7 declarations in 2 build files` |
-//! | `buildl graph [--json \| --dot]` | the target graph: canonical JSON (the default) or Graphviz DOT | nothing |
-//! | `buildl query <EXPR> [--json]` | the targets the expression reaches, one per line, or as canonical JSON | nothing |
+//! | `buildl graph [--json \| --dot]` | the target graph: canonical JSON (the default) or Graphviz DOT | nothing, or `//svc:pkgs has not run; run buildl build` for each discovery target that has not run |
+//! | `buildl query <EXPR> [--json]` | the targets the expression reaches, one per line, or as canonical JSON | nothing, or the same line for each discovery target that has not run |
 //! | `buildl plan [TARGET]... [--set NAME=VALUE]... [--json]` | what a build would run and why, or the plan as canonical JSON | nothing |
 //! | `buildl build [TARGET]... [--set NAME=VALUE]... [-k \| --keep-going] [--stream]` | nothing | a block for each action that printed or failed, and a summary |
 //! | `buildl test [TARGET]... [--set NAME=VALUE]... [--stop] [--stream] [--rerun] [--verbose]` | nothing | a block for each failing test (and each test that printed, with `--verbose`) and for each other target that printed or failed, and a line counting the tests |
 //! | `buildl verify [TARGET]... [--set NAME=VALUE]... [--sample N]` | nothing | a line for each checked target that was verified, mismatched, failed, skipped or not put back, and a line counting them and the targets left out |
-//! | `buildl doctor` | the workspace root, its approver, its run settings, its ceiling, and one row per want saying whether the ceiling allows it and whether it is approved | nothing |
+//! | `buildl doctor` | the workspace root, its approver, its run settings, its ceiling, and one row per want saying whether the ceiling allows it and whether it is approved, with the plugins whose targets want it under each row, and the wants a plugin does not allow under `plugin violations` | nothing, or the same line for each discovery target that has not run |
 //! | `buildl log <TARGET> [--stdout \| --stderr]` | the stored stdout, or the one stream asked for | the header, a warning of damaged lines, and the stored stderr when no flag is given |
 //! | `buildl clean` | nothing | `clean: removed out` (naming the manifest's `out` directory), or `clean: out holds nothing` |
 //! | `buildl gc` | nothing | `gc: dropped 1 row, removed 5 blobs (2048 bytes)` |
@@ -39,12 +39,12 @@
 //! target that depends on TARGET. Either reaches any number of steps away, and TARGET itself is
 //! not in the answer. `query`, like `check` and `graph`, takes no lock and writes nothing.
 //!
-//! `doctor` evaluates every build file once, takes no lock, writes nothing and asks nothing. It
-//! reports the wants of every target at the settings' defaults, and ends with 0 even when a want
-//! is outside the ceiling or not approved; what stops it from making the report ends with the
-//! status that mistake has everywhere: 5 for a build file or an output two targets claim, 6 for
-//! a remembered approvals file that is not what buildl writes, and 3 when that file cannot be
-//! read or there is no data directory to find it in.
+//! `doctor` evaluates every build file once (twice when a discovery target is declared), takes no
+//! lock, writes nothing and asks nothing. It reports the wants of every target at the settings'
+//! defaults, and ends with 0 even when a want is outside the ceiling or not approved; what stops
+//! it from making the report ends with the status that mistake has everywhere: 5 for a build
+//! file or an output two targets claim, 6 for a remembered approvals file that is not what buildl
+//! writes, and 3 when that file cannot be read or there is no data directory to find it in.
 //!
 //! `plugins fetch` pins every git plugin `buildl.toml` names in `buildl.lock` and stores its files
 //! under the state directory, so that a build afterwards needs no network. It holds the state
