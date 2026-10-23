@@ -2377,11 +2377,23 @@ fn a_workspace_build_skips_discovery_targets() {
 
     let outcomes = build(&mut pipeline, OnFailure::Stop);
 
+    // The discovery target runs first, in a run of its own; the workspace build proper is `//:app`.
+    let ran: Vec<String> = outcomes
+        .iter()
+        .map(|outcome| outcome.label.to_string())
+        .collect();
+    assert_eq!(ran, ["//:pkgs", "//:app"]);
     assert_eq!(
         classes(&outcomes),
-        expected(&[("//:app", OutcomeClass::Built)])
+        expected(&[
+            ("//:app", OutcomeClass::Built),
+            ("//:pkgs", OutcomeClass::Built)
+        ])
     );
-    assert_eq!(pipeline.ports().strategy.ran(), [label("//:app")]);
+    assert_eq!(
+        pipeline.ports().strategy.ran(),
+        [label("//:pkgs"), label("//:app")]
+    );
 }
 
 #[test]
@@ -2390,10 +2402,13 @@ fn a_named_discovery_target_builds() {
 
     let outcomes = build_named(&mut pipeline, &["//:pkgs"], OnFailure::Stop).unwrap();
 
-    assert_eq!(
-        classes(&outcomes),
-        expected(&[("//:pkgs", OutcomeClass::Built)])
-    );
+    // Built by the discovery run, then found cached by the run the command asked for.
+    let ended: Vec<OutcomeClass> = outcomes
+        .iter()
+        .map(|outcome| outcome.class.clone())
+        .collect();
+    assert_eq!(ended, [OutcomeClass::Built, OutcomeClass::Cached]);
+    assert_eq!(pipeline.ports().strategy.runs(&label("//:pkgs")), 1);
     let done = outcome(&outcomes, "//:pkgs");
     assert_eq!(done.role, TargetRole::Discovery);
     let names: Vec<&str> = done

@@ -6,7 +6,7 @@
 //!
 //! Responsibilities: [`Pipeline`], its ports, [`Pipeline::check`], [`Pipeline::graph`],
 //! [`Pipeline::query`], [`Pipeline::plan`], [`Pipeline::build`], [`Pipeline::test`] and
-//! [`Pipeline::verify`]; and
+//! [`Pipeline::verify`], with the run of discovery targets that `build` and `test` begin with; and
 //! [`check`], [`graph`] and [`query`], the three commands that reach only build files and the
 //! state that holds discovery results, for a caller that holds only those ports.
 //!
@@ -14,6 +14,7 @@
 
 use core::cmp::min_by;
 use core::fmt;
+use core::ops::ControlFlow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::discovery::{discovery_labels, load_twice, results, second_pass};
@@ -32,6 +33,14 @@ use crate::types::{
     TargetRole, Verdict, Verification,
 };
 use crate::verify::verify;
+
+/// What a command that runs targets holds once its discovery targets have run.
+struct Prepared {
+    /// The graph of the workspace as declared from the discovery results.
+    whole: TargetGraph,
+    /// The outcomes of the discovery run, in id order; empty when no discovery target is declared.
+    outcomes: Vec<ActionOutcome>,
+}
 
 /// The pipeline over one chosen implementation of each port.
 pub struct Pipeline<P: Ports> {
@@ -209,8 +218,89 @@ impl<P: Ports> Pipeline<P> {
             .collect())
     }
 
-    /// Loads the workspace once, resolves it, records the graph of the whole workspace, plans a
-    /// build of the part of the graph `scope` asks for, and builds that part.
+    /// Loads the workspace for a command that runs targets, and runs its discovery targets first.
+    ///
+    /// A workspace that declares no discovery target is loaded once. One that does has the
+    /// discovery targets built through the same path as any build, narrowed to them, and is then
+    /// loaded again with the result each left; the build files are evaluated twice, never three
+    /// times. The graph is recorded for each load that goes on to be run against.
+    ///
+    /// Breaks with the outcomes of the discovery run when any target of it did not succeed:
+    /// nothing is declared from a failed discovery. Otherwise continues with the graph of the
+    /// final load and the outcomes of the discovery run, empty when there was none.
+    fn prepare(
+        &mut self,
+        entry: &EntryName,
+        overrides: &BTreeMap<SettingName, SettingValue>,
+        on_failure: OnFailure,
+        live: LiveOutput,
+    ) -> Result<ControlFlow<Vec<ActionOutcome>, Prepared>> {
+        let pass_one = load(
+            &self.ports.source,
+            &mut self.ports.dispatcher,
+            entry,
+            &Discovered::empty(),
+        )?;
+        let labels = discovery_labels(&pass_one);
+        if labels.is_empty() {
+            let whole = resolve(pass_one)?;
+            self.ports.graph.record(&whole)?;
+            return Ok(ControlFlow::Continue(Prepared {
+                whole,
+                outcomes: Vec::new(),
+            }));
+        }
+        let first = resolve(pass_one.clone())?;
+        self.ports.graph.record(&first)?;
+        let discovery = narrow(
+            &first,
+            &Scope::Targets(labels.iter().cloned().collect()),
+            Purpose::Build,
+        )?;
+        let outcomes = self.run(&first, &discovery, overrides, Rerun::Off, on_failure, live)?;
+        if outcomes.iter().any(|outcome| !outcome.class.succeeded()) {
+            return Ok(ControlFlow::Break(outcomes));
+        }
+        let (discovered, _) = results(&self.ports.log, &self.ports.cas, &labels);
+        let declarations = second_pass(
+            &self.ports.source,
+            &mut self.ports.dispatcher,
+            entry,
+            &pass_one,
+            &discovered,
+        )?;
+        let whole = resolve(declarations)?;
+        self.ports.graph.record(&whole)?;
+        Ok(ControlFlow::Continue(Prepared { whole, outcomes }))
+    }
+
+    /// Plans `graph`, puts what the plan wants to the approver, and executes it, as the part of
+    /// `whole` that one run of a command covers.
+    fn run(
+        &mut self,
+        whole: &TargetGraph,
+        graph: &TargetGraph,
+        overrides: &BTreeMap<SettingName, SettingValue>,
+        rerun: Rerun,
+        on_failure: OnFailure,
+        live: LiveOutput,
+    ) -> Result<Vec<ActionOutcome>> {
+        let plan = plan(graph, overrides, rerun, &mut self.ports)?;
+        negotiate(plan.wanted(), plan.attribution(), &mut self.ports.approver)?;
+        execute(
+            whole,
+            graph,
+            &plan,
+            on_failure,
+            live,
+            rerun,
+            &mut self.ports,
+        )
+    }
+
+    /// Loads the workspace, builds its discovery targets first when it declares any, resolves it,
+    /// records the graph of the whole workspace, plans a build of the part of the graph `scope`
+    /// asks for, and builds that part.
     ///
     /// `overrides` gives values to build settings for this run, `on_failure` says what a failed
     /// action does to the rest of the build, and `live` whether one running action at a time is
@@ -219,20 +309,29 @@ impl<P: Ports> Pipeline<P> {
     /// part, in id order; a target that failed or was skipped is an outcome, not an error. A
     /// target outside `scope` is left alone: it has no outcome, and its row and outputs stay.
     ///
-    /// The graph is recorded through the graph-record port before anything is planned, and it is
+    /// The graph is recorded through the graph-record port before each run is planned, and it is
     /// the whole workspace's whatever `scope` asks for, so the record never depends on which
     /// targets one build was asked for.
     ///
     /// Once planned, the plan's wanted set is put to the [`Approver`](crate::Approver), and
     /// nothing runs if it does not approve, even when every target is cached.
     ///
+    /// A workspace that declares a discovery target is loaded without discovery results, its
+    /// discovery targets are built as a build of just them is, then it is loaded again with their
+    /// results and built as above: two plans, two approvals, and two reports, the discovery run's
+    /// first. The outcomes are those of the discovery run followed by those of the build; a
+    /// discovery target `scope` names too is in both, cached the second time. When a discovery
+    /// target did not succeed the outcomes are those of the discovery run alone, and nothing
+    /// else is loaded, planned or built. The build files are evaluated twice, never three times.
+    ///
     /// # Errors
     ///
-    /// Returns the first of: whatever the load returns; whatever [`resolve`] returns; the
-    /// graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope` that names
-    /// neither a target nor an alias; whatever [`plan`](fn@plan) returns, two outputs of the
-    /// planned targets that would be written to one place included; [`Error::NotApproved`] when
-    /// the approver does not approve what the plan wants, or the approver's own failure; and
+    /// Returns the first of: whatever the load returns; [`Error::DiscoveryChanged`] when the
+    /// results of the discovery targets change which of them are declared; whatever [`resolve`]
+    /// returns; the graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope`
+    /// that names neither a target nor an alias; whatever [`plan`](fn@plan) returns, two outputs
+    /// of the planned targets that would be written to one place included; [`Error::NotApproved`]
+    /// when the approver does not approve what a plan wants, or the approver's own failure; and
     /// whatever [`execute`](fn@execute) returns: two outputs of the workspace that would be
     /// written to one place, whether or not both targets were asked for, a command that names no
     /// program or one outside the workspace's ceiling once it is expanded, or a port's own
@@ -245,29 +344,21 @@ impl<P: Ports> Pipeline<P> {
         on_failure: OnFailure,
         live: LiveOutput,
     ) -> Result<Vec<ActionOutcome>> {
-        let whole = resolve(load(
-            &self.ports.source,
-            &mut self.ports.dispatcher,
-            entry,
-            &Discovered::empty(),
-        )?)?;
-        self.ports.graph.record(&whole)?;
+        let Prepared {
+            whole,
+            mut outcomes,
+        } = match self.prepare(entry, overrides, on_failure, live)? {
+            ControlFlow::Break(stopped) => return Ok(stopped),
+            ControlFlow::Continue(prepared) => prepared,
+        };
         let graph = narrow(&whole, scope, Purpose::Build)?;
-        let plan = plan(&graph, overrides, Rerun::Off, &mut self.ports)?;
-        negotiate(plan.wanted(), plan.attribution(), &mut self.ports.approver)?;
-        execute(
-            &whole,
-            &graph,
-            &plan,
-            on_failure,
-            live,
-            Rerun::Off,
-            &mut self.ports,
-        )
+        outcomes.extend(self.run(&whole, &graph, overrides, Rerun::Off, on_failure, live)?);
+        Ok(outcomes)
     }
 
-    /// Loads the workspace once, resolves it, records the graph of the whole workspace, plans a
-    /// run of the tests `scope` asks for, and runs them.
+    /// Loads the workspace, builds its discovery targets first when it declares any, resolves it,
+    /// records the graph of the whole workspace, plans a run of the tests `scope` asks for, and
+    /// runs them.
     ///
     /// `overrides` gives values to build settings for this run, `on_failure` says what a failed
     /// action does to the rest of the run, and `live` whether one running action at a time is
@@ -279,18 +370,26 @@ impl<P: Ports> Pipeline<P> {
     /// With [`Rerun::Tests`] the selected tests run whatever their keys say and their new results
     /// are recorded; what they depend on does not run again unless its own key says so.
     ///
-    /// The graph is recorded through the graph-record port before anything is planned, and it is
+    /// The graph is recorded through the graph-record port before each run is planned, and it is
     /// the whole workspace's whatever `scope` asks for, so the record never depends on which
     /// tests one run was asked for.
     ///
     /// Once planned, the plan's wanted set is put to the [`Approver`](crate::Approver), and
     /// nothing runs if it does not approve, even when every target is cached.
     ///
+    /// A workspace that declares a discovery target is run as [`Pipeline::build`] runs it: its
+    /// discovery targets are built first, as a build of just them is, then the workspace is
+    /// loaded again with their results and the tests run. The outcomes are those of the discovery
+    /// run followed by those of the test run, and a discovery target that did not succeed ends
+    /// the command with the outcomes of the discovery run alone. The discovery run's summary
+    /// counts the discovery targets in [`Summary::all`](crate::Summary::all) and no test in [`Summary::tests`](crate::Summary::tests).
+    ///
     /// # Errors
     ///
-    /// Returns the first of: whatever the load returns; whatever [`resolve`] returns; the
-    /// graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope` that names
-    /// neither a target nor an alias; [`Error::NotATest`] for a label of `scope` that names a
+    /// Returns the first of: whatever the load returns; [`Error::DiscoveryChanged`] when the
+    /// results of the discovery targets change which of them are declared; whatever [`resolve`]
+    /// returns; the graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope`
+    /// that names neither a target nor an alias; [`Error::NotATest`] for a label of `scope` that names a
     /// target that is not a test; whatever [`plan`](fn@plan) returns, two outputs of the
     /// planned targets that would be written to one place included; [`Error::NotApproved`] when
     /// the approver does not approve what the plan wants, or the approver's own failure; and
@@ -307,25 +406,16 @@ impl<P: Ports> Pipeline<P> {
         live: LiveOutput,
         rerun: Rerun,
     ) -> Result<Vec<ActionOutcome>> {
-        let whole = resolve(load(
-            &self.ports.source,
-            &mut self.ports.dispatcher,
-            entry,
-            &Discovered::empty(),
-        )?)?;
-        self.ports.graph.record(&whole)?;
+        let Prepared {
+            whole,
+            mut outcomes,
+        } = match self.prepare(entry, overrides, on_failure, live)? {
+            ControlFlow::Break(stopped) => return Ok(stopped),
+            ControlFlow::Continue(prepared) => prepared,
+        };
         let graph = narrow(&whole, scope, Purpose::Test)?;
-        let plan = plan(&graph, overrides, rerun, &mut self.ports)?;
-        negotiate(plan.wanted(), plan.attribution(), &mut self.ports.approver)?;
-        execute(
-            &whole,
-            &graph,
-            &plan,
-            on_failure,
-            live,
-            rerun,
-            &mut self.ports,
-        )
+        outcomes.extend(self.run(&whole, &graph, overrides, rerun, on_failure, live)?);
+        Ok(outcomes)
     }
 
     /// Loads the workspace, with the last discovery results, resolves it, plans a build of the

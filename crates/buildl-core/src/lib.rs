@@ -107,6 +107,8 @@
 //! ports, and the second load may not declare different discovery targets than the first
 //! ([`Error::DiscoveryChanged`]); [`Pipeline::plan`], [`Pipeline::verify`] and [`gc`](fn@gc) do
 //! the same, and [`Plan::stale_discovery`] names the discovery targets a plan finds not clean.
+//! [`Pipeline::build`] and [`Pipeline::test`] build the discovery targets first, as a build of
+//! just them, and load the second time with the results that leaves.
 //! A [`LoggedRun`] reads back from the build log through
 //! [`RunHistory`], and [`pipeline::log`](fn@pipeline::log) returns a target's last run with what it
 //! printed. [`pipeline::doctor`](fn@pipeline::doctor) reports what a workspace's build wants

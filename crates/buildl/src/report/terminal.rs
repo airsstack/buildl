@@ -19,7 +19,7 @@ use std::io::Write;
 
 use buildl_core::{
     Captured, Channel, Label, OutcomeClass, OutcomeEvent, ReadyAction, Reporter, Rerun, Summary,
-    TargetRole,
+    Tally, TargetRole,
 };
 
 use crate::report::block::{block, header, summary_line, test_line, trailer};
@@ -49,7 +49,8 @@ pub enum Report {
     /// A build: every target is shown as it is, and the summary counts targets.
     Build,
     /// A test run: a dependency is shown as in a build, a test that passed is shown as
-    /// `blocks` says, and the summary counts tests.
+    /// `blocks` says, and the summary counts tests; a run of discovery targets before it is
+    /// counted as a build is.
     Test {
         /// Which tests get a block.
         blocks: TestBlocks,
@@ -264,13 +265,18 @@ impl<W: Write> Reporter for TerminalReporter<W> {
     }
 
     /// Erases the status line and writes the summary line: the count of targets for a build, the
-    /// count of tests for a test run.
+    /// count of tests for a test run. A run of a test command that held targets and no test is the
+    /// run of discovery targets that comes first, and is counted as a build is.
     fn summary(&mut self, summary: Summary) {
         let mut frame = Vec::new();
         self.erase(&mut frame);
         let line = match self.report {
-            Report::Build => summary_line(summary.all),
-            Report::Test { rerun, .. } => test_line(summary.tests, rerun),
+            Report::Test { rerun, .. }
+                if summary.tests != Tally::default() || summary.all == Tally::default() =>
+            {
+                test_line(summary.tests, rerun)
+            }
+            Report::Build | Report::Test { .. } => summary_line(summary.all),
         };
         frame.extend_from_slice(line.as_bytes());
         self.emit(&frame);
@@ -588,6 +594,14 @@ mod tests {
         };
         reporter.summary(summary);
         assert_eq!(written(&mut reporter), b"tests: 1 passed, 1 failed\n");
+    }
+
+    #[test]
+    fn the_discovery_run_of_a_test_command_ends_with_the_target_line() {
+        let mut reporter = test_reporter(TestBlocks::Failed, Rerun::Off);
+        reporter.begun(1);
+        reporter.summary(counts(0, 0, 1, 0));
+        assert_eq!(written(&mut reporter), b"1 built\n");
     }
 
     #[test]

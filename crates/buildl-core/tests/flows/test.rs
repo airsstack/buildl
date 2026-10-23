@@ -331,7 +331,8 @@ fn a_test_run_naming_a_discovery_target_is_not_a_test() {
         error.to_string(),
         "target //:pkgs was asked for as a test, but //:pkgs is declared with b.discover in build.lua"
     );
-    assert_eq!(pipeline.ports().strategy.ran(), []);
+    // Only the discovery run before the refusal ran anything.
+    assert_eq!(pipeline.ports().strategy.ran(), [label("//:pkgs")]);
 }
 
 #[test]
@@ -348,8 +349,16 @@ fn a_workspace_test_run_leaves_discovery_targets_out() {
         Rerun::Off,
     );
 
+    // The discovery target runs in the run before the tests; the test run proper is `//:unit`.
     assert_eq!(
         classes(&outcomes),
-        expected(&[("//:unit", OutcomeClass::Built)])
+        expected(&[
+            ("//:pkgs", OutcomeClass::Built),
+            ("//:unit", OutcomeClass::Built)
+        ])
+    );
+    assert_eq!(
+        pipeline.ports().strategy.ran(),
+        [label("//:pkgs"), label("//:unit")]
     );
 }

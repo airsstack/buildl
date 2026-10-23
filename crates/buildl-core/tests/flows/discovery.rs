@@ -9,15 +9,16 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
-    Argument, Command, ContentStore, Digest, Discovered, EntryName, Error, FileMode, Label,
-    LiveOutput, LogLine, LoggedRun, OnFailure, OutcomeClass, OutputManifest, OutputName, Pipeline,
-    Produced, Sample, Scope, StagedItem, StoredFile, TargetGraph, TargetRole, Timestamp, Written,
-    pipeline,
+    ActionOutcome, Argument, Command, ContentStore, Digest, Discovered, EntryName, Error, FileMode,
+    Label, LiveOutput, LogLine, LoggedRun, OnFailure, OutcomeClass, OutputManifest, OutputName,
+    Pipeline, Produced, Rerun, Sample, Scope, StagedItem, StoredFile, Summary, Tally, TargetGraph,
+    TargetRole, Timestamp, Written, pipeline,
 };
 
 use crate::common::{
-    FakeCas, FakeDispatcher, FakeFile, FakeHistory, FakeManifest, FakePorts, FakeSource, file,
-    label, open_workspace, ports, program, target, target_with, workspace,
+    Answer, Ends, FakeApprover, FakeCas, FakeDispatcher, FakeFile, FakeHistory, FakeManifest,
+    FakePorts, FakeSource, Reported, classes, ending, expected, file, label, open_workspace, ports,
+    program, script, target, target_with, workspace,
 };
 
 fn entry() -> EntryName {
@@ -362,4 +363,195 @@ fn verify_checks_targets_declared_from_last_results() {
         .map(|(label, _)| label.to_string())
         .collect();
     assert_eq!(checked, ["//:a", "//:b"]);
+}
+
+/// A source that declares `//:pkgs` alone, and `//:pkgs` and the test `//:t` once it is handed a
+/// result.
+fn declaring_a_test() -> FakeSource {
+    let test = target_with("t", |target| target.role = TargetRole::Test);
+    FakeSource::declaring_from_results(before(), root(vec![discovery(), test]))
+}
+
+/// A build of `scope` with nothing overridden.
+fn built(pipeline: &mut Pipeline<FakePorts>, scope: &Scope) -> Result<Vec<ActionOutcome>, Error> {
+    pipeline.build(
+        &entry(),
+        scope,
+        &BTreeMap::new(),
+        OnFailure::Stop,
+        LiveOutput::Off,
+    )
+}
+
+/// The labels of `outcomes`, in order.
+fn order(outcomes: &[ActionOutcome]) -> Vec<String> {
+    outcomes
+        .iter()
+        .map(|outcome| outcome.label.to_string())
+        .collect()
+}
+
+/// Every summary a pipeline's reporter was handed, in order.
+fn summaries(pipeline: &Pipeline<FakePorts>) -> Vec<Summary> {
+    pipeline
+        .ports()
+        .reporter
+        .calls
+        .iter()
+        .filter_map(|call| match call {
+            Reported::Summary(summary) => Some(*summary),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn build_runs_discovery_then_builds_discovered_targets() {
+    let mut pipeline = pipeline_over(declaring());
+
+    let outcomes = built(&mut pipeline, &Scope::Workspace).unwrap();
+
+    assert_eq!(order(&outcomes), ["//:pkgs", "//:a", "//:b"]);
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[
+            ("//:pkgs", OutcomeClass::Built),
+            ("//:a", OutcomeClass::Built),
+            ("//:b", OutcomeClass::Built),
+        ])
+    );
+    let loads = pipeline.ports().source.root_loads();
+    assert_eq!(loads[0], Discovered::empty());
+    assert!(loads[1].get(&label("//:pkgs")).is_some());
+    assert_eq!(pipeline.ports().strategy.ran()[0], label("//:pkgs"));
+}
+
+#[test]
+fn a_second_build_is_all_cached_including_discovery() {
+    let mut pipeline = pipeline_over(declaring());
+    built(&mut pipeline, &Scope::Workspace).unwrap();
+
+    let again = built(&mut pipeline, &Scope::Workspace).unwrap();
+
+    assert_eq!(order(&again), ["//:pkgs", "//:a", "//:b"]);
+    assert!(
+        again
+            .iter()
+            .all(|outcome| outcome.class == OutcomeClass::Cached),
+        "{again:?}"
+    );
+    assert_eq!(pipeline.ports().strategy.runs(&label("//:pkgs")), 1);
+}
+
+#[test]
+fn a_discovery_target_named_in_scope_runs_once() {
+    let mut pipeline = pipeline_over(declaring());
+
+    let outcomes = built(
+        &mut pipeline,
+        &Scope::Targets(BTreeSet::from([label("//:pkgs")])),
+    )
+    .unwrap();
+
+    let ended: Vec<OutcomeClass> = outcomes
+        .iter()
+        .map(|outcome| outcome.class.clone())
+        .collect();
+    assert_eq!(ended, [OutcomeClass::Built, OutcomeClass::Cached]);
+    assert_eq!(pipeline.ports().strategy.runs(&label("//:pkgs")), 1);
+}
+
+#[test]
+fn a_failed_discovery_stops_the_build_with_its_failure() {
+    let mut pipeline = pipeline_over(declaring());
+    script(&mut pipeline, "//:pkgs", ending(Ends::Exits(1)));
+
+    let outcomes = built(&mut pipeline, &Scope::Workspace).unwrap();
+
+    assert_eq!(order(&outcomes), ["//:pkgs"]);
+    assert_eq!(outcomes[0].class, OutcomeClass::ActionFailure { status: 1 });
+    assert_eq!(pipeline.ports().source.root_loads(), [Discovered::empty()]);
+    assert_eq!(pipeline.ports().approver.asked.len(), 1);
+    assert_eq!(pipeline.ports().strategy.ran(), [label("//:pkgs")]);
+}
+
+#[test]
+fn the_approver_is_asked_for_discovery_then_for_the_build() {
+    let mut pipeline = pipeline_over(declaring());
+
+    built(&mut pipeline, &Scope::Workspace).unwrap();
+
+    assert_eq!(pipeline.ports().approver.asked.len(), 2);
+    assert_eq!(pipeline.ports().approver.attributions.len(), 2);
+
+    let mut refused = pipeline_over(declaring());
+    refused.ports_mut().approver = FakeApprover::answering(Answer::Deny("no".to_owned()));
+    let error = built(&mut refused, &Scope::Workspace).unwrap_err();
+    assert!(matches!(error, Error::NotApproved { .. }), "{error:?}");
+    assert_eq!(refused.ports().approver.asked.len(), 1);
+    assert_eq!(refused.ports().source.root_loads().len(), 1);
+    assert_eq!(refused.ports().strategy.ran(), []);
+}
+
+#[test]
+fn test_runs_discovery_then_the_discovered_tests() {
+    let mut pipeline = pipeline_over(declaring_a_test());
+
+    let outcomes = pipeline
+        .test(
+            &entry(),
+            &Scope::Workspace,
+            &BTreeMap::new(),
+            OnFailure::Stop,
+            LiveOutput::Off,
+            Rerun::Off,
+        )
+        .unwrap();
+
+    assert_eq!(order(&outcomes), ["//:pkgs", "//:t"]);
+    let one = Tally {
+        built: 1,
+        ..Tally::default()
+    };
+    let two = Tally {
+        built: 2,
+        ..Tally::default()
+    };
+    assert_eq!(
+        Summary::of(&outcomes),
+        Summary {
+            all: two,
+            tests: one,
+        }
+    );
+    let discovery_run = Summary {
+        all: one,
+        tests: Tally::default(),
+    };
+    let test_run = Summary {
+        all: one,
+        tests: one,
+    };
+    assert_eq!(summaries(&pipeline), [discovery_run, test_run]);
+    assert_eq!(pipeline.ports().approver.asked.len(), 2);
+}
+
+#[test]
+fn build_evaluates_each_build_file_twice_not_three_times() {
+    let mut pipeline = pipeline_over(declaring());
+
+    built(&mut pipeline, &Scope::Workspace).unwrap();
+
+    assert_eq!(pipeline.ports().source.root_loads().len(), 2);
+}
+
+#[test]
+fn without_a_discovery_target_build_loads_once_and_asks_once() {
+    let mut pipeline = pipeline_over(FakeSource::new(root(vec![target("app", &[])])));
+
+    let outcomes = built(&mut pipeline, &Scope::Workspace).unwrap();
+
+    assert_eq!(order(&outcomes), ["//:app"]);
+    assert_eq!(pipeline.ports().source.root_loads(), [Discovered::empty()]);
+    assert_eq!(pipeline.ports().approver.asked.len(), 1);
 }
