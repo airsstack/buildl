@@ -442,6 +442,25 @@ pub enum Error {
         /// The first such path found.
         path: PathBuf,
     },
+    /// A plugin `buildl.toml` names is not there to use: it is a directory that does not
+    /// exist, or a git plugin that `buildl.lock` does not pin as `buildl.toml` names it or whose
+    /// store is missing.
+    #[error("plugin {plugin} is not fetched: {reason}")]
+    PluginNotFetched {
+        /// The plugin.
+        plugin: PluginName,
+        /// What is missing, and what to do about it.
+        reason: String,
+    },
+    /// A plugin's files are not the ones `buildl.lock` pinned: the store was changed after the
+    /// plugin was fetched.
+    #[error("plugin {plugin} was changed after it was fetched: {reason}")]
+    PluginChanged {
+        /// The plugin.
+        plugin: PluginName,
+        /// How the files differ from the lock.
+        reason: String,
+    },
 }
 
 /// A lost load as one sentence naming the port at fault and the directories whose build file it
@@ -1467,6 +1486,30 @@ mod tests {
             err.to_string(),
             "plugin go: .buildl/plugins/go/c0ffee/bin/link is not a regular file with a Unicode \
              name; a plugin holds regular files only"
+        );
+    }
+
+    #[test]
+    fn a_plugin_not_fetched_names_the_plugin_and_the_reason() {
+        let err = Error::PluginNotFetched {
+            plugin: PluginName::parse("go").unwrap(),
+            reason: "run `buildl plugins fetch`".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "plugin go is not fetched: run `buildl plugins fetch`"
+        );
+    }
+
+    #[test]
+    fn a_plugin_changed_names_the_plugin_and_the_reason() {
+        let err = Error::PluginChanged {
+            plugin: PluginName::parse("go").unwrap(),
+            reason: "its files differ from buildl.lock".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "plugin go was changed after it was fetched: its files differ from buildl.lock"
         );
     }
 

@@ -127,10 +127,12 @@ impl Exit {
             | Error::PinnedEnv { .. }
             | Error::OutputConflict { .. }
             | Error::NoProgram { .. }
-            | Error::PluginTree { .. } => Self::Definition,
+            | Error::PluginTree { .. }
+            | Error::PluginNotFetched { .. } => Self::Definition,
             Error::CorruptState { .. }
             | Error::UnreadableJson { .. }
-            | Error::NonCanonicalJson { .. } => Self::CorruptState,
+            | Error::NonCanonicalJson { .. }
+            | Error::PluginChanged { .. } => Self::CorruptState,
             Error::InvalidName { .. }
             | Error::CanonicalJson { .. }
             | Error::FloatRejected { .. }
@@ -372,7 +374,23 @@ mod tests {
 
     /// A value of each variant that is a mistake in what a workspace's plugins hold.
     fn plugin_errors() -> Vec<Error> {
-        vec![plugin_tree()]
+        vec![plugin_tree(), plugin_not_fetched()]
+    }
+
+    /// A plugin the lock does not pin.
+    fn plugin_not_fetched() -> Error {
+        Error::PluginNotFetched {
+            plugin: PluginName::parse("go").unwrap(),
+            reason: "run `buildl plugins fetch`".to_owned(),
+        }
+    }
+
+    /// A plugin whose store was edited after it was fetched.
+    fn plugin_changed() -> Error {
+        Error::PluginChanged {
+            plugin: PluginName::parse("go").unwrap(),
+            reason: "its files are not the ones that were locked".to_owned(),
+        }
     }
 
     /// A plugin whose directory holds a link.
@@ -580,6 +598,14 @@ mod tests {
     }
 
     #[test]
+    fn plugin_not_fetched_exits_5_and_changed_exits_6() {
+        assert_eq!(Exit::of_error(&plugin_not_fetched()), Exit::Definition);
+        assert_eq!(Exit::of_error(&plugin_changed()), Exit::CorruptState);
+        assert_eq!(Exit::Definition as u8, 5);
+        assert_eq!(Exit::CorruptState as u8, 6);
+    }
+
+    #[test]
     fn missing_output_is_an_infrastructure_failure() {
         let error = Error::MissingOutput {
             label: label("//:app"),
@@ -605,16 +631,22 @@ mod tests {
                 .flatten()
                 .collect(),
             ),
-            (Exit::CorruptState, state_errors()),
+            (
+                Exit::CorruptState,
+                [state_errors(), vec![plugin_changed()]]
+                    .into_iter()
+                    .flatten()
+                    .collect(),
+            ),
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [5, 3, 3, 18, 3, 7]);
+        assert_eq!(counts, [5, 3, 3, 19, 4, 7]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 39, "a variant is listed twice");
+        assert_eq!(variants.len(), 41, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");

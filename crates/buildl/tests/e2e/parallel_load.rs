@@ -120,7 +120,7 @@ fn one_worker_never_overlaps() {
 fn loaded_by(fixture: &Fixture, workers: usize) -> Result<Vec<Declaration>> {
     let wiring = Wiring::read(fixture.root())?;
     load(
-        &wiring.source(),
+        &wiring.source()?,
         &mut ThreadPool::new(Workers::of(workers)),
         wiring.entry(),
     )
