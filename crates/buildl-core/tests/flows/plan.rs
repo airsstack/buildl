@@ -852,9 +852,7 @@ fn a_plan_holds_every_declared_setting_with_its_override_or_else_its_default() {
     );
     let json = json::canonical::to_string(&plan).unwrap();
     assert!(
-        json.starts_with(
-            r#"{"settings":{"level":"1","mode":"release","unused":"busy"},"targets":{"#
-        ),
+        json.contains(r#""settings":{"level":"1","mode":"release","unused":"busy"},"targets":{"#),
         "{json}"
     );
 }
@@ -1323,7 +1321,7 @@ fn origin_does_not_change_the_key() {
             .tools
             .fingerprints
             .insert(program("cc"), Digest::of(b"cc 14.2"));
-        json::canonical::to_string(&planned(&mut pipeline)).unwrap()
+        planned(&mut pipeline).verdicts().to_vec()
     };
     assert_eq!(plan_by(&Origin::BuildFile), plan_by(&chain));
 }
@@ -1425,4 +1423,41 @@ fn a_ceiling_refusal_of_a_plugin_target_names_its_chain() {
         "build.lua: //:app (plugin ourgo@0.1.0 > go@1.2.0): program cc is outside the ceiling \
          (proc.run allows: nothing)"
     );
+}
+
+#[test]
+fn plan_carries_the_attribution() {
+    let mut pipeline = made_by(vec![running_cc("go", "1.2.0")]);
+    pipeline
+        .ports_mut()
+        .manifest
+        .workspace
+        .plugins
+        .insert(PluginName::parse("go").unwrap(), cap_running_cc());
+    pipeline
+        .ports_mut()
+        .tools
+        .fingerprints
+        .insert(program("cc"), Digest::of(b"cc 14.2"));
+
+    let plan = planned(&mut pipeline);
+
+    assert_eq!(
+        plan.attribution().to_string(),
+        "  cc: declared by plugin go@1.2.0 for //:app"
+    );
+    let json = json::canonical::to_string(&plan).unwrap();
+    assert!(
+        json.contains(r#""attribution":{"env":{},"network":{},"programs":{"cc":[{"#),
+        "{json}"
+    );
+}
+
+#[test]
+fn a_plan_of_build_file_targets_attributes_nothing() {
+    let mut pipeline = root_only(vec![target("app", &[])]);
+
+    let plan = planned(&mut pipeline);
+
+    assert!(plan.attribution().is_empty());
 }

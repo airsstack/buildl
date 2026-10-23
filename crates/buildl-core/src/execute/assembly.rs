@@ -637,8 +637,8 @@ mod tests {
         command, graph, key, label, node, output_path, own, path, settings,
     };
     use crate::types::{
-        DirtyReason, EnvName, EnvValue, ExpandedDescription, NetworkAccess, NodeId, Plan,
-        PlannedKey, TargetGraph, Unfinished, Verdict, WantedSet,
+        Attribution, DirtyReason, EnvName, EnvValue, ExpandedDescription, NetworkAccess, NodeId,
+        Plan, PlannedKey, TargetGraph, Unfinished, Verdict, WantedSet,
     };
 
     /// A plan holding one clean verdict per label, in the order given, and the settings
@@ -658,6 +658,7 @@ mod tests {
             labels.iter().map(|raw| label(raw)).collect(),
             verdicts,
             wanted,
+            Attribution::default(),
             settings(values),
         )
     }

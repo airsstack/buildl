@@ -144,7 +144,9 @@ impl fmt::Display for WantedSet {
 }
 
 /// One thing a build wants that a ceiling is asked about.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Ordered by kind — program, variable, input, directory, network — and then by value.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Want {
     /// To run a program.
     Program(Program),

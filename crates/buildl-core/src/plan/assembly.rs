@@ -5,7 +5,8 @@
 //! targets against its plugins, check every want against the ceiling, refuse a variable the
 //! strategy pins, and only then ask the machine anything — find the tools, digest the inputs,
 //! read the environment — before keying every target and comparing each key with the one its
-//! last build recorded.
+//! last build recorded. The plugins behind the wants are named from the same graph once the
+//! ceiling has passed.
 //!
 //! Responsibilities: [`plan`].
 //!
@@ -17,6 +18,7 @@
 use std::collections::BTreeMap;
 
 use crate::error::Result;
+use crate::grants::attribution::attribution;
 use crate::grants::wanted::sites;
 use crate::placement::layout::Layout;
 use crate::plan::authority::{check, plugin_check};
@@ -91,6 +93,7 @@ pub fn plan<P: Ports>(
     plugin_check(graph, &settings, &layout, &workspace)?;
     let sites = sites(graph, &settings, &layout);
     let wanted = check(graph, &sites, &workspace)?;
+    let attribution = attribution(graph, &settings, &layout);
     pinned(&sites, &workspace)?;
 
     let Named {
@@ -124,5 +127,11 @@ pub fn plan<P: Ports>(
         .iter()
         .map(|node| node.label.clone())
         .collect();
-    Ok(Plan::new(labels, verdicts, wanted, gathered.settings))
+    Ok(Plan::new(
+        labels,
+        verdicts,
+        wanted,
+        attribution,
+        gathered.settings,
+    ))
 }

@@ -247,7 +247,10 @@ fn plan_json_is_one_canonical_line() {
     assert_eq!(code(&first), 0);
     let text = stdout(&first);
     assert!(
-        text.starts_with("{\"settings\":{\"mode\":\"debug\"},\"targets\":{\"//:app\":{"),
+        text.starts_with(concat!(
+            "{\"attribution\":{\"env\":{},\"network\":{},\"programs\":{}},",
+            "\"settings\":{\"mode\":\"debug\"},\"targets\":{\"//:app\":{"
+        )),
         "{text}"
     );
     assert!(text.ends_with("}\n"), "{text}");

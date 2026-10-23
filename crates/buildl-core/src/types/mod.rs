@@ -33,6 +33,7 @@
 //!   digest that stands for it.
 //! - [`CacheRow`] — what the last successful build of one target recorded.
 //! - [`Ceiling`], [`WantedSet`] and [`Want`] — what a workspace allows, and what a build wants.
+//! - [`Attribution`] — the plugins whose targets are behind each want.
 //! - [`Approval`] and [`DenialReason`] — an approver's answer about what a build wants;
 //!   [`ApproverMode`] — which approver a workspace names.
 //! - [`Checkup`] — what a workspace allows and wants, as `doctor` reports it.
@@ -86,6 +87,7 @@ pub mod action_key;
 pub mod approval;
 pub mod approver_mode;
 pub mod argument;
+pub mod attribution;
 pub mod authority;
 pub mod build_file;
 pub mod cache_row;
@@ -152,6 +154,7 @@ pub use action_key::{
 pub use approval::{Approval, DenialReason};
 pub use approver_mode::ApproverMode;
 pub use argument::{Argument, Command};
+pub use attribution::Attribution;
 pub use authority::{Ceiling, Want, WantedSet};
 pub use build_file::{
     BuildFile, DeclarationOrder, Evaluated, StagedAlias, StagedDeclaration, StagedFile, StagedItem,
