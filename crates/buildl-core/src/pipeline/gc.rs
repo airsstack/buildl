@@ -145,7 +145,7 @@ mod tests {
     use crate::types::{
         ActionKey, Argument, BuildFile, CacheRow, Command, DeclarationOrder, Diagnostic, Digest,
         EntryName, Evaluated, FileMode, Freshness, KeyComponents, Label, LogLine, LoggedRun,
-        NetworkAccess, OutcomeClass, OutputManifest, OutputName, OutputPath, OwnComponents,
+        NetworkAccess, Origin, OutcomeClass, OutputManifest, OutputName, OutputPath, OwnComponents,
         Platform, Provenance, StagedDeclaration, StagedFile, StagedItem, StagedTarget, StoredFile,
         TargetName, TargetRole, Timestamp, Tree, TreeEntry, TreePath, Turn, Written,
     };
@@ -197,6 +197,7 @@ mod tests {
                 .zip(0..)
                 .map(|(name, order)| StagedDeclaration {
                     order: DeclarationOrder::new(order),
+                    origin: Origin::BuildFile,
                     item: StagedItem::Target(StagedTarget {
                         name: Written::<TargetName>::new(*name),
                         role: TargetRole::Build,

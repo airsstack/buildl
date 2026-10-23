@@ -931,7 +931,7 @@ mod tests {
     };
     use crate::types::{
         Argument, Ceiling, Command, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName,
-        EnvValue, FieldName, Freshness, InputKind, Label, NetworkAccess, Node, OutputName,
+        EnvValue, FieldName, Freshness, InputKind, Label, NetworkAccess, Node, Origin, OutputName,
         OutputPath, Program, Provenance, SettingName, SourcePath, TargetName, TargetRole, TreePath,
         Want, WantedSet, Written,
     };
@@ -1115,6 +1115,8 @@ mod tests {
         let node = Node {
             label: label("//lib:text"),
             provenance: lib_file(),
+            origin: Origin::BuildFile,
+            narrowing: Vec::new(),
             role: TargetRole::Build,
             run: Command::new(vec![Argument::parse("cc").unwrap()]).unwrap(),
             description: None,

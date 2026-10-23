@@ -13,7 +13,7 @@
 use crate::error::{DeclarationField, DeclarationSite, DeclaredKind, Error, Result};
 use crate::resolve::index::{Entry, Index, Item};
 use crate::suggest::nearest;
-use crate::types::{Argument, Command, Description, Label, Provenance, Rule, SettingName};
+use crate::types::{Argument, Command, Description, Label, Origin, Provenance, Rule, SettingName};
 
 /// The declaration holding a reference: the one an error about that reference names.
 ///
@@ -78,7 +78,7 @@ pub(crate) fn dependency<'a>(
     }
 }
 
-/// The rule a target's `rule` reference names.
+/// The rule a target's `rule` reference names, and whose code declared it.
 ///
 /// # Errors
 ///
@@ -88,13 +88,14 @@ pub(crate) fn rule<'a>(
     index: &'a Index,
     holder: Holder<'_>,
     reference: &Label,
-) -> Result<&'a Rule> {
+) -> Result<(&'a Rule, &'a Origin)> {
     const FIELD: DeclarationField = DeclarationField::Rule;
     match index.labels.get(reference) {
         Some(Entry {
             item: Item::Rule(rule),
+            origin,
             ..
-        }) => Ok(rule),
+        }) => Ok((rule, origin)),
         Some(entry) => Err(wrong_kind(holder, FIELD, reference, entry)),
         None => Err(unknown(
             index,
@@ -234,7 +235,7 @@ mod tests {
     use crate::error::{DeclarationField, DeclaredKind, Error};
     use crate::resolve::fixtures::{alias, command, file, label, rule as a_rule, setting, target};
     use crate::resolve::index::{Index, index};
-    use crate::types::{Description, Label, Provenance};
+    use crate::types::{Description, Label, Origin, Provenance};
 
     /// `//:app` and `//lib:text` are targets, `//:default` an alias for `//:app`,
     /// `//tools:cc` a rule, and `test_filter` a setting.
@@ -342,8 +343,9 @@ mod tests {
     fn a_rule_reference_names_a_rule() {
         let index = workspace();
         let (holder, root) = (label("//:holder"), file(""));
-        let found = rule(&index, held_by(&holder, &root), &label("//tools:cc")).unwrap();
+        let (found, origin) = rule(&index, held_by(&holder, &root), &label("//tools:cc")).unwrap();
         assert_eq!(found.run, command(&["cc"]));
+        assert_eq!(origin, &Origin::BuildFile);
     }
 
     #[test]

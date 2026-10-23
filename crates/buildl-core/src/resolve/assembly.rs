@@ -15,15 +15,18 @@ use crate::error::{DeclarationSite, Error, Result};
 use crate::resolve::cycle;
 use crate::resolve::index::{Index, Item, index};
 use crate::resolve::references::{self, Holder};
-use crate::types::{Action, Declaration, Label, Node, NodeId, Target, TargetGraph};
+use crate::types::{
+    Action, Declaration, Label, Node, NodeId, Origin, PluginRef, Target, TargetGraph,
+};
 
 /// Builds the target graph of a workspace from the declarations of its build files.
 ///
 /// Every build or test target becomes a node, numbered in label order, holding the command it
 /// runs: its own, or a copy of the rule it names. Every dependency becomes an edge, in the order
 /// it was written; a dependency on an alias becomes an edge to the target the alias names.
-/// Aliases and build settings are kept beside the nodes. The result does not depend on the order
-/// of `declarations`.
+/// Aliases and build settings are kept beside the nodes. Each node keeps the origin of its
+/// declaration and the plugins that hold it: its own chain, then the chain of the rule it names.
+/// The result does not depend on the order of `declarations`.
 ///
 /// # Errors
 ///
@@ -63,7 +66,7 @@ pub fn resolve(declarations: Vec<Declaration>) -> Result<TargetGraph> {
         };
         match &entry.item {
             Item::Target(target) => {
-                let (node, deps) = node(&index, &ids, holder, target)?;
+                let (node, deps) = node(&index, &ids, holder, &entry.origin, target)?;
                 nodes.push(node);
                 edges.push(deps);
             }
@@ -122,14 +125,20 @@ fn node(
     index: &Index,
     ids: &BTreeMap<&Label, NodeId>,
     holder: Holder<'_>,
+    origin: &Origin,
     target: &Target,
 ) -> Result<(Node, Vec<NodeId>)> {
-    let (run, description, own_command) = match &target.action {
+    let (run, description, own_command, rule_origin) = match &target.action {
         Action::UseRule(reference) => {
-            let rule = references::rule(index, holder, reference)?;
-            (&rule.run, rule.description.as_ref(), None)
+            let (rule, rule_origin) = references::rule(index, holder, reference)?;
+            (
+                &rule.run,
+                rule.description.as_ref(),
+                None,
+                Some(rule_origin),
+            )
         }
-        Action::Run(command) => (command, None, Some(command)),
+        Action::Run(command) => (command, None, Some(command), None),
     };
 
     let mut deps = Vec::new();
@@ -150,6 +159,8 @@ fn node(
     let node = Node {
         label: target.label.clone(),
         provenance: holder.provenance.clone(),
+        origin: origin.clone(),
+        narrowing: narrowing(origin, rule_origin),
         role: target.role,
         run: run.clone(),
         description: description.cloned(),
@@ -160,6 +171,22 @@ fn node(
         freshness: target.freshness,
     };
     Ok((node, deps))
+}
+
+/// The plugins whose caps hold a target: the chain of its `origin`, then each plugin of the chain
+/// of the rule it names, when it names one, that the first chain does not already hold.
+fn narrowing(origin: &Origin, rule_origin: Option<&Origin>) -> Vec<PluginRef> {
+    let chain = |origin: &Origin| match origin {
+        Origin::BuildFile => Vec::new(),
+        Origin::Plugins(chain) => chain.clone(),
+    };
+    let mut joined = chain(origin);
+    for plugin in rule_origin.map(chain).unwrap_or_default() {
+        if !joined.contains(&plugin) {
+            joined.push(plugin);
+        }
+    }
+    joined
 }
 
 /// `items` in the order given, keeping the first occurrence of each.
@@ -184,12 +211,12 @@ mod tests {
     use super::{node_id, resolve, without_repeats};
     use crate::error::{DeclarationField, Error};
     use crate::resolve::fixtures::{
-        alias, command, declared_in, label, rule, setting, setting_item, target, target_item,
-        target_with,
+        alias, command, declared_in, label, made_by, plugin, rule, setting, setting_item, target,
+        target_item, target_with,
     };
     use crate::types::{
-        Action, Declaration, Declared, Description, EnvName, NodeId, OutputName, Rule, SourcePath,
-        TargetGraph,
+        Action, Declaration, Declared, Description, EnvName, NodeId, Origin, OutputName, Rule,
+        SourcePath, TargetGraph,
     };
 
     fn id(index: u32) -> NodeId {
@@ -278,6 +305,43 @@ mod tests {
             .unwrap();
         assert_eq!(plain.run, command(&["cc"]));
         assert!(plain.description.is_none());
+    }
+
+    fn using_rule(raw: &str, rule: &str) -> Declaration {
+        target_with(raw, |target| target.action = Action::UseRule(label(rule)))
+    }
+
+    #[test]
+    fn a_hand_written_target_naming_a_plugin_rule_has_build_file_origin_and_that_plugin_in_narrowing()
+     {
+        let graph = resolve(vec![
+            made_by(vec![plugin("go")], rule("//tools:go", &["go"])),
+            using_rule("//:app", "//tools:go"),
+        ])
+        .unwrap();
+        let node = graph.node(graph.id_of(&label("//:app")).unwrap()).unwrap();
+        assert_eq!(node.origin, Origin::BuildFile);
+        assert_eq!(node.narrowing, [plugin("go")]);
+    }
+
+    #[test]
+    fn narrowing_joins_target_and_rule_chains_without_repeats() {
+        let chain = vec![plugin("ourgo"), plugin("go")];
+        let graph = resolve(vec![
+            made_by(vec![plugin("go")], rule("//tools:go", &["go"])),
+            made_by(chain.clone(), using_rule("//:app", "//tools:go")),
+        ])
+        .unwrap();
+        let node = graph.node(graph.id_of(&label("//:app")).unwrap()).unwrap();
+        assert_eq!(node.origin, Origin::plugins(chain.clone()).unwrap());
+        assert_eq!(node.narrowing, chain);
+    }
+
+    #[test]
+    fn a_target_with_its_own_command_and_a_build_file_origin_narrows_to_nothing() {
+        let graph = resolve(vec![target("//:app", &[])]).unwrap();
+        assert_eq!(graph.nodes()[0].origin, Origin::BuildFile);
+        assert_eq!(graph.nodes()[0].narrowing, []);
     }
 
     #[test]

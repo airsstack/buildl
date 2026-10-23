@@ -150,7 +150,7 @@ pub(super) fn convert(staged: StagedDeclaration, provenance: &Provenance) -> Res
         StagedItem::Alias(alias) => Declared::Alias(convert_alias(&alias, &site)?),
         StagedItem::Setting(setting) => Declared::Setting(convert_setting(&setting, &site)?),
     };
-    Ok(Declaration::new(provenance.clone(), item))
+    Ok(Declaration::new(provenance.clone(), staged.origin, item))
 }
 
 /// The label a declared name gets: always in the declaring directory.
@@ -309,7 +309,7 @@ mod tests {
     use crate::error::{ActionFound, DeclarationField, Error};
     use crate::types::{
         Action, Declaration, DeclarationOrder, Declared, Directory, EntryName, Freshness, Label,
-        NetworkAccess, OutputName, Provenance, StagedAlias, StagedDeclaration, StagedItem,
+        NetworkAccess, Origin, OutputName, Provenance, StagedAlias, StagedDeclaration, StagedItem,
         StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target, TargetRole, Written,
     };
 
@@ -341,6 +341,7 @@ mod tests {
     fn declare(item: StagedItem) -> StagedDeclaration {
         StagedDeclaration {
             order: DeclarationOrder::new(4),
+            origin: Origin::BuildFile,
             item,
         }
     }

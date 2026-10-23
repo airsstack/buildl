@@ -13,8 +13,8 @@ use core::fmt;
 use core::mem::size_of;
 
 use buildl_core::{
-    DeclarationOrder, Diagnostic, Directory, EvaluationFailure, StagedDeclaration, StagedFile,
-    StagedItem, StagedSubdir, Written,
+    DeclarationOrder, Diagnostic, Directory, EvaluationFailure, Origin, StagedDeclaration,
+    StagedFile, StagedItem, StagedSubdir, Written,
 };
 
 /// Why the buffer refused a record.
@@ -59,11 +59,16 @@ impl Staging {
         }
     }
 
-    /// Stages a declaration, charging its record size plus the bytes of its text.
+    /// Stages a declaration as made by the workspace's own build file, charging its record size
+    /// plus the bytes of its text.
     pub(crate) fn stage(&mut self, item: StagedItem) -> Result<(), Exceeded> {
         let charge = record_size::<StagedDeclaration>().saturating_add(item_bytes(&item));
         let order = self.admit(charge)?;
-        self.declarations.push(StagedDeclaration { order, item });
+        self.declarations.push(StagedDeclaration {
+            order,
+            origin: Origin::BuildFile,
+            item,
+        });
         Ok(())
     }
 

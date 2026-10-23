@@ -14,7 +14,8 @@ use std::collections::BTreeMap;
 
 use crate::error::{DeclaredKind, Error, Result};
 use crate::types::{
-    Alias, Declaration, Declared, Label, Provenance, Rule, SettingName, SettingValue, Target,
+    Alias, Declaration, Declared, Label, Origin, Provenance, Rule, SettingName, SettingValue,
+    Target,
 };
 
 /// What a label was declared as, holding the declaration itself.
@@ -43,13 +44,15 @@ impl Item {
     }
 }
 
-/// One labelled declaration and the build file that made it.
+/// One labelled declaration, the build file that made it, and whose code it came from.
 ///
 /// A `Declaration` narrowed to what a label can name, with its parts open to this phase.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Entry {
     /// The build file.
     pub(crate) provenance: Provenance,
+    /// Whose code made it.
+    pub(crate) origin: Origin,
     /// What was declared.
     pub(crate) item: Item,
 }
@@ -80,7 +83,7 @@ pub(crate) fn index(mut declarations: Vec<Declaration>) -> Result<Index> {
     let mut labels: BTreeMap<Label, Vec<Entry>> = BTreeMap::new();
     let mut settings: BTreeMap<SettingName, Vec<(Provenance, SettingValue)>> = BTreeMap::new();
     for declaration in declarations {
-        let (provenance, declared) = declaration.into_parts();
+        let (provenance, origin, declared) = declaration.into_parts();
         let (label, item) = match declared {
             Declared::Target(target) => (target.label.clone(), Item::Target(target)),
             Declared::Rule(rule) => (rule.label.clone(), Item::Rule(rule)),
@@ -93,10 +96,11 @@ pub(crate) fn index(mut declarations: Vec<Declaration>) -> Result<Index> {
                 continue;
             }
         };
-        labels
-            .entry(label)
-            .or_default()
-            .push(Entry { provenance, item });
+        labels.entry(label).or_default().push(Entry {
+            provenance,
+            origin,
+            item,
+        });
     }
 
     Ok(Index {

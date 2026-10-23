@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use buildl_core::{
     Action, Argument, Command, Declaration, Declared, Directory, EntryName, Freshness, Label,
-    NetworkAccess, OutputName, Provenance, SourcePath, Target, TargetRole, load,
+    NetworkAccess, Origin, OutputName, Provenance, SourcePath, Target, TargetRole, load,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -36,6 +36,7 @@ fn target(
     };
     Declaration::new(
         Provenance::new(PathBuf::from(file), directory),
+        Origin::BuildFile,
         Declared::Target(Target {
             label: Label::parse(label).unwrap(),
             role: TargetRole::Build,

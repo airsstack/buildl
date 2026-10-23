@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::types::{
-    Argument, Command, Directory, EnvName, Freshness, Label, NetworkAccess, Node, NodeId,
+    Argument, Command, Directory, EnvName, Freshness, Label, NetworkAccess, Node, NodeId, Origin,
     OutputName, OutputPath, Program, Provenance, SettingName, SettingValue, SourcePath,
     TargetGraph, TargetRole,
 };
@@ -92,6 +92,8 @@ pub(crate) fn node(raw: &str, change: impl FnOnce(&mut Node)) -> Node {
     };
     let mut node = Node {
         provenance: Provenance::new(file, directory),
+        origin: Origin::BuildFile,
+        narrowing: Vec::new(),
         role: TargetRole::Build,
         run: command(&["cc"]),
         description: None,

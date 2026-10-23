@@ -59,8 +59,8 @@ mod tests {
 
     use buildl_core::{
         Action, Alias, Argument, Command, Declaration, Declared, Directory, Error, Freshness,
-        GraphRecord, Label, NetworkAccess, OutputName, PortName, Provenance, Target, TargetGraph,
-        TargetRole, resolve,
+        GraphRecord, Label, NetworkAccess, Origin, OutputName, PortName, Provenance, Target,
+        TargetGraph, TargetRole, resolve,
     };
 
     use super::GraphFile;
@@ -87,6 +87,7 @@ mod tests {
         let target = |name: &str, deps: &[&str]| {
             Declaration::new(
                 file.clone(),
+                Origin::BuildFile,
                 Declared::Target(Target {
                     label: label(name),
                     role: TargetRole::Build,
@@ -104,6 +105,7 @@ mod tests {
         };
         let alias = Declaration::new(
             file.clone(),
+            Origin::BuildFile,
             Declared::Alias(Alias {
                 label: label("default"),
                 target: label("app"),
@@ -135,11 +137,11 @@ mod tests {
             concat!(
                 r#"{"aliases":{"//:default":"//:app"},"settings":{},"targets":{"#,
                 r#""//:app":{"deps":["//:lib"],"description":null,"env":[],"#,
-                r#""freshness":"Cached","inputs":[],"network":"Sealed","outputs":["app"],"#,
+                r#""freshness":"Cached","inputs":[],"network":"Sealed","origin":"BuildFile","outputs":["app"],"#,
                 r#""provenance":{"directory":"","file":"build.lua"},"role":"Build","#,
                 r#""run":["cc"]},"#,
                 r#""//:lib":{"deps":[],"description":null,"env":[],"#,
-                r#""freshness":"Cached","inputs":[],"network":"Sealed","outputs":["lib"],"#,
+                r#""freshness":"Cached","inputs":[],"network":"Sealed","origin":"BuildFile","outputs":["lib"],"#,
                 r#""provenance":{"directory":"","file":"build.lua"},"role":"Build","#,
                 r#""run":["cc"]}}}"#
             )

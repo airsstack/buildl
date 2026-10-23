@@ -11,11 +11,12 @@ use buildl_core::{
     ActionCache, Approval, Approver, BuildFile, CacheRow, Ceiling, Clock, ContentStore,
     DeclarationOrder, DeclarationSource, Diagnostic, Digest, Digester, Directory, Dispatcher,
     EnvName, EnvValue, Error, Evaluated, EvaluationFailure, EventLog, ExecStrategy, Exit, FileStat,
-    Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest, NetworkAccess, OutcomeEvent,
-    OutputPath, Platform, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result,
-    RunHistory, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
-    StagedSetting, StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp,
-    ToolResolver, WantedSet, Workspace, Written,
+    Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest, NetworkAccess, Origin,
+    OutcomeEvent, OutputPath, Platform, PluginName, PluginRef, PluginVersion, PortName, PortSet,
+    Ports, Program, RawOutcome, ReadyAction, Result, RunHistory, SourcePath, StagedAlias,
+    StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir,
+    StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver, WantedSet,
+    Workspace, Written,
 };
 use buildl_core::{ActionOutcome, Pipeline};
 use buildl_core::{
@@ -1168,6 +1169,22 @@ pub fn program(raw: &str) -> Program {
     Program::parse(raw).unwrap_or_else(|error| unreachable!("fixture program: {error}"))
 }
 
+/// A plugin named `name` at `version`, whose manifest asks for nothing.
+///
+/// # Panics
+///
+/// Panics when `name` or `version` is not valid; a test fixture is wrong then.
+#[must_use]
+pub fn plugin(name: &str, version: &str) -> PluginRef {
+    PluginRef {
+        name: PluginName::parse(name).unwrap_or_else(|error| unreachable!("fixture name: {error}")),
+        version: PluginVersion::parse(version)
+            .unwrap_or_else(|error| unreachable!("fixture version: {error}")),
+        run: BTreeSet::new(),
+        env: BTreeSet::new(),
+    }
+}
+
 /// A directory from known-valid text.
 ///
 /// # Panics
@@ -1183,11 +1200,18 @@ pub fn dir(raw: &str) -> Directory {
 /// Call order counts declarations first, then subdirs.
 #[must_use]
 pub fn file(items: Vec<StagedItem>, subdirs: &[&str]) -> FakeFile {
+    file_by(&Origin::BuildFile, items, subdirs)
+}
+
+/// A build file as [`file`] builds one, every declaration in it made by `origin`.
+#[must_use]
+pub fn file_by(origin: &Origin, items: Vec<StagedItem>, subdirs: &[&str]) -> FakeFile {
     let declarations: Vec<StagedDeclaration> = items
         .into_iter()
         .zip(0_u32..)
         .map(|(item, index)| StagedDeclaration {
             order: DeclarationOrder::new(index),
+            origin: origin.clone(),
             item,
         })
         .collect();

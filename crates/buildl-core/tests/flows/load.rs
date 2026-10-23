@@ -10,13 +10,13 @@ use std::path::Path;
 
 use buildl_core::{
     Declaration, DeclarationField, Declared, Diagnostic, Direction, Directory, Dispatcher,
-    EntryName, Error, EvaluationFailure, EvaluationLimit, Label, LiveOutput, OnFailure, Pipeline,
-    PortName, Query, Scope, Turn, json, load, pipeline,
+    EntryName, Error, EvaluationFailure, EvaluationLimit, Label, LiveOutput, OnFailure, Origin,
+    Pipeline, PortName, Query, Scope, Turn, json, load, pipeline,
 };
 
 use crate::common::{
     FakeDispatcher, FakeFile, FakeHistory, FakePorts, FakeSource, Loss, Order, Pace, dir, file,
-    root_only, setting, target, workspace,
+    file_by, plugin, root_only, setting, target, workspace,
 };
 
 fn entry() -> EntryName {
@@ -45,6 +45,27 @@ fn every_reached_file_yields_one_sorted_list_of_declarations() {
         ("lib", file(vec![target("text", &[])], &[])),
     ]));
     assert_eq!(names(&source), ["//:app", "//lib:text"]);
+}
+
+#[test]
+fn origin_is_carried_to_the_declaration() {
+    let chain = Origin::plugins(vec![plugin("ourgo", "0.1.0"), plugin("go", "1.2.0")]).unwrap();
+    let source = FakeSource::new(workspace(vec![
+        ("", file_by(&chain, vec![target("built", &[])], &["lib"])),
+        ("lib", file(vec![target("text", &[])], &[])),
+    ]));
+    let declarations = load(&source, &mut FakeDispatcher::default(), &entry()).unwrap();
+    let origins: Vec<(String, &Origin)> = declarations
+        .iter()
+        .map(|declaration| (declaration.item().name().to_owned(), declaration.origin()))
+        .collect();
+    assert_eq!(
+        origins,
+        [
+            ("built".to_owned(), &chain),
+            ("text".to_owned(), &Origin::BuildFile),
+        ]
+    );
 }
 
 #[test]

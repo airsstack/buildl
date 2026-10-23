@@ -225,7 +225,7 @@ mod tests {
     use airsl::{Engine, LanguageSurface, ModuleSet, Policy, Script};
     use buildl_core::{
         DeclarationOrder, Diagnostic, Directory, EvaluationFailure, EvaluationLimit, Freshness,
-        NetworkAccess, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
+        NetworkAccess, Origin, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
         StagedSetting, StagedSubdir, StagedTarget, TargetRole, Written,
     };
 
@@ -338,6 +338,7 @@ mod tests {
         };
         let declared = |order, item| StagedDeclaration {
             order: DeclarationOrder::new(order),
+            origin: Origin::BuildFile,
             item,
         };
         assert_eq!(

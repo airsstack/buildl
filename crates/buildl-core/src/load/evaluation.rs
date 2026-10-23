@@ -91,8 +91,8 @@ mod tests {
     use crate::ports::DeclarationSource;
     use crate::types::{
         BuildFile, DeclarationOrder, Diagnostic, Directory, EntryName, Evaluated, Freshness,
-        NetworkAccess, StagedDeclaration, StagedFile, StagedItem, StagedSubdir, StagedTarget,
-        TargetRole, Written,
+        NetworkAccess, Origin, StagedDeclaration, StagedFile, StagedItem, StagedSubdir,
+        StagedTarget, TargetRole, Written,
     };
 
     /// A source that answers every call with one canned reply and counts the calls.
@@ -148,6 +148,7 @@ mod tests {
     fn target(name: &str, order: u32) -> StagedDeclaration {
         StagedDeclaration {
             order: DeclarationOrder::new(order),
+            origin: Origin::BuildFile,
             item: StagedItem::Target(StagedTarget {
                 name: Written::new(name),
                 role: TargetRole::Build,

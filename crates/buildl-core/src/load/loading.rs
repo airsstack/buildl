@@ -216,7 +216,7 @@ mod tests {
     use crate::load::evaluation::FileResult;
     use crate::load::traversal::{build_file, convert};
     use crate::types::{
-        Declaration, DeclarationOrder, Diagnostic, Directory, EntryName, StagedDeclaration,
+        Declaration, DeclarationOrder, Diagnostic, Directory, EntryName, Origin, StagedDeclaration,
         StagedItem, StagedSetting, Written,
     };
 
@@ -250,6 +250,7 @@ mod tests {
         let name = format!("in_{}", directory.as_str().replace('/', "_"));
         let staged = StagedDeclaration {
             order: DeclarationOrder::new(0),
+            origin: Origin::BuildFile,
             item: StagedItem::Setting(StagedSetting {
                 name: Written::new(name),
                 default: Written::new(""),

@@ -8,13 +8,13 @@
 use std::path::Path;
 
 use buildl_core::{
-    DeclarationField, DeclaredKind, EntryName, Error, EvaluationFailure, Pipeline, Provenance,
-    StagedItem, TargetGraph, TargetRole, Written, json,
+    DeclarationField, DeclaredKind, EntryName, Error, EvaluationFailure, Origin, Pipeline,
+    Provenance, StagedItem, TargetGraph, TargetRole, Written, json,
 };
 
 use crate::common::{
-    FakeFile, FakePorts, FakeSource, alias, file, ports, rule, setting, target, target_with,
-    workspace,
+    FakeFile, FakePorts, FakeSource, alias, file, file_by, plugin, ports, rule, setting, target,
+    target_with, workspace,
 };
 
 /// The serialized graph of [`fixture`], pinned.
@@ -230,4 +230,20 @@ fn a_build_file_that_fails_to_evaluate_is_the_load_error_unchanged() {
         }
         other => unreachable!("expected Evaluation, got {other:?}"),
     }
+}
+
+#[test]
+fn graph_json_shows_each_node_s_origin() {
+    let chain = Origin::plugins(vec![plugin("ourgo", "0.1.0"), plugin("go", "1.2.0")]).unwrap();
+    let source = FakeSource::new(workspace(vec![
+        ("", file(vec![target("app", &["//lib:text"])], &["lib"])),
+        ("lib", file_by(&chain, vec![target("text", &[])], &[])),
+    ]));
+    let json = json::canonical::to_string(&graph(source).unwrap()).unwrap();
+    assert!(json.contains(r#""origin":"BuildFile""#), "{json}");
+    let plugins = concat!(
+        r#""origin":{"Plugins":[{"env":[],"name":"ourgo","run":[],"version":"0.1.0"},"#,
+        r#"{"env":[],"name":"go","run":[],"version":"1.2.0"}]}"#
+    );
+    assert!(json.contains(plugins), "{json}");
 }

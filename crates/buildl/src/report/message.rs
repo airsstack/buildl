@@ -133,7 +133,7 @@ mod tests {
 
     use buildl_core::{
         Action, Argument, Command, Declaration, Declared, Directory, Error, Freshness, Label,
-        NetworkAccess, Provenance, Setting, SettingName, SettingValue, Target, TargetRole,
+        NetworkAccess, Origin, Provenance, Setting, SettingName, SettingValue, Target, TargetRole,
     };
 
     use buildl_core::Collected;
@@ -219,6 +219,7 @@ mod tests {
     fn setting(directory: &str, name: &str) -> Declaration {
         Declaration::new(
             build_file(directory),
+            Origin::BuildFile,
             Declared::Setting(Setting {
                 name: SettingName::parse(name).unwrap(),
                 default: SettingValue::parse("debug").unwrap(),
@@ -261,6 +262,7 @@ mod tests {
         let label = Label::parse(raw).unwrap();
         Declaration::new(
             build_file(label.directory().as_str()),
+            Origin::BuildFile,
             Declared::Target(Target {
                 label,
                 role: TargetRole::Build,
@@ -328,12 +330,12 @@ mod tests {
                 "    first evaluation:  {\"item\":{\"Target\":{\"action\":{\"Run\":[\"cc\"]},",
                 "\"deps\":[],\"env\":[],\"freshness\":\"Cached\",\"inputs\":[],",
                 "\"label\":\"//lib:text\",\"network\":\"Sealed\",\"outputs\":[],",
-                "\"role\":\"Build\"}},",
+                "\"role\":\"Build\"}},\"origin\":\"BuildFile\",",
                 "\"provenance\":{\"directory\":\"lib\",\"file\":\"lib/build.lua\"}}\n",
                 "    second evaluation: {\"item\":{\"Target\":{\"action\":{\"Run\":[\"cc\"]},",
                 "\"deps\":[\"//:main.o\"],\"env\":[],\"freshness\":\"Cached\",\"inputs\":[],",
                 "\"label\":\"//lib:text\",\"network\":\"Sealed\",\"outputs\":[],",
-                "\"role\":\"Build\"}},",
+                "\"role\":\"Build\"}},\"origin\":\"BuildFile\",",
                 "\"provenance\":{\"directory\":\"lib\",\"file\":\"lib/build.lua\"}}\n",
             )
         );
@@ -351,7 +353,7 @@ mod tests {
             concat!(
                 "error: build.lua: declarations differ between two evaluations\n",
                 "    first evaluation:  {\"item\":{\"Setting\":{\"default\":\"debug\",",
-                "\"name\":\"mode\"}},\"provenance\":{\"directory\":\"\",\"file\":\"build.lua\"}}\n",
+                "\"name\":\"mode\"}},\"origin\":\"BuildFile\",\"provenance\":{\"directory\":\"\",\"file\":\"build.lua\"}}\n",
                 "    second evaluation: nothing\n",
             )
         );

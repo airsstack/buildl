@@ -121,7 +121,7 @@ mod tests {
         DepProducts, Diagnostic, Digest, Digester, Directory, DirtyReason, Dispatcher, EnvName,
         EnvValue, Error, Evaluated, EventLog, ExecStrategy, Execution, FileMode, FileStat, Found,
         Freshness, GraphRecord, Host, InputDigest, InputStat, KeyComponents, Label, LiveSink,
-        Manifest, NetworkAccess, OutcomeEvent, OutputName, OutputPath, OwnComponents, Plan,
+        Manifest, NetworkAccess, Origin, OutcomeEvent, OutputName, OutputPath, OwnComponents, Plan,
         PlannedKey, Platform, PortName, PortSet, Ports, Produced, Program, Provenance, RawOutcome,
         ReadyAction, Rerun, Result, Setting, SettingName, SettingValue, SourcePath, StatCache,
         StatEntry, Target, TargetGraph, TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn,
@@ -402,7 +402,7 @@ mod tests {
     }
 
     fn declared(target: Target) -> Declaration {
-        Declaration::new(root_file(), Declared::Target(target))
+        Declaration::new(root_file(), Origin::BuildFile, Declared::Target(target))
     }
 
     fn paths(raw: &[&str]) -> Vec<SourcePath> {
@@ -420,6 +420,7 @@ mod tests {
         resolve(vec![
             Declaration::new(
                 root_file(),
+                Origin::BuildFile,
                 Declared::Setting(Setting {
                     name: SettingName::parse("mode").unwrap(),
                     default: SettingValue::parse("debug").unwrap(),

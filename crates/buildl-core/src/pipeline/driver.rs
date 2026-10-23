@@ -368,7 +368,7 @@ mod tests {
     use super::first_difference;
     use crate::error::Error;
     use crate::types::{
-        Declaration, Declared, Directory, Provenance, Setting, SettingName, SettingValue,
+        Declaration, Declared, Directory, Origin, Provenance, Setting, SettingName, SettingValue,
     };
 
     fn setting_in(directory: &str, name: &str) -> Declaration {
@@ -380,6 +380,7 @@ mod tests {
         };
         Declaration::new(
             Provenance::new(file, directory),
+            Origin::BuildFile,
             Declared::Setting(Setting {
                 name: SettingName::parse(name).unwrap(),
                 default: SettingValue::parse("").unwrap(),

@@ -11,15 +11,15 @@ use std::path::Path;
 use buildl_core::{
     ActionKey, CacheRow, DepProducts, Difference, Digest, DirtyReason, EntryName, EnvName,
     EnvValue, Error, EvaluationFailure, FileStat, Freshness, InputKind, KeyComponents, Label,
-    NodeId, OwnComponents, Pipeline, Plan, PlannedKey, Platform, PortName, SettingName,
+    NodeId, Origin, OwnComponents, Pipeline, Plan, PlannedKey, Platform, PortName, SettingName,
     SettingValue, SourcePath, StagedItem, StagedSetting, TargetGraph, Timestamp, ToolIdentity,
     Verdict, Want, Written, json,
 };
 use buildl_core::{Execution, Isolation, Manifest, Scope, Timeout, Workers};
 
 use crate::common::{
-    Answer, FakeApprover, FakeContent, FakeFile, FakePorts, FakeSource, dir, file, ports, program,
-    setting, target, target_with, workspace,
+    Answer, FakeApprover, FakeContent, FakeFile, FakePorts, FakeSource, dir, file, file_by, plugin,
+    ports, program, setting, target, target_with, workspace,
 };
 
 /// The serialized plan of [`crate::graph::fixture`] after a build and one edit, pinned.
@@ -1297,4 +1297,21 @@ fn plan_never_asks_the_approver() {
     planned(&mut pipeline);
 
     assert_eq!(pipeline.ports().approver.asked, []);
+}
+
+#[test]
+fn origin_does_not_change_the_key() {
+    let chain = Origin::plugins(vec![plugin("ourgo", "0.1.0"), plugin("go", "1.2.0")]).unwrap();
+    let items = || vec![target("gen", &[]), target("app", &["gen"])];
+    let plan_by = |origin: &Origin| {
+        let source = FakeSource::new(workspace(vec![("", file_by(origin, items(), &[]))]));
+        let mut pipeline = Pipeline::<FakePorts>::new(ports(source));
+        pipeline
+            .ports_mut()
+            .tools
+            .fingerprints
+            .insert(program("cc"), Digest::of(b"cc 14.2"));
+        json::canonical::to_string(&planned(&mut pipeline)).unwrap()
+    };
+    assert_eq!(plan_by(&Origin::BuildFile), plan_by(&chain));
 }
