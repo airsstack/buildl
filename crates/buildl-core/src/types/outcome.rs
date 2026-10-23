@@ -35,10 +35,10 @@ pub enum InfraKind {
 
 /// Why what an action left at an output path cannot be kept.
 ///
-/// An output is a regular file, or a directory of regular files with no empty directory in it.
-/// Anything else could not be put back exactly as it was, so it is refused rather than stored
-/// as something close. Serializes as its name. Non-exhaustive: an output that can be refused
-/// another way gains a variant.
+/// An output is a regular file, or a directory of regular files with no empty directory in it;
+/// the output of a discovery target must be a regular file. Anything else could not be put back
+/// exactly as it was, so it is refused rather than stored as something close. Serializes as its
+/// name. Non-exhaustive: an output that can be refused another way gains a variant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub enum OutputRefusal {
@@ -51,6 +51,9 @@ pub enum OutputRefusal {
     EmptyDirectory,
     /// Something in the output's directory has a name that is not valid Unicode.
     NotText,
+    /// The output is a directory, where only a file is allowed: what a discovery target
+    /// leaves.
+    NotAFile,
 }
 
 /// How the build of one target ended.
@@ -423,6 +426,7 @@ mod tests {
             (OutputRefusal::Special, r#""Special""#),
             (OutputRefusal::EmptyDirectory, r#""EmptyDirectory""#),
             (OutputRefusal::NotText, r#""NotText""#),
+            (OutputRefusal::NotAFile, r#""NotAFile""#),
         ] {
             assert_eq!(canonical::to_string(&refusal).unwrap(), text);
             assert_eq!(

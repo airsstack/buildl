@@ -108,6 +108,7 @@ fn named(graph: &TargetGraph, label: &Label, purpose: Purpose) -> Result<NodeId>
     match (purpose, graph.node(id)) {
         (Purpose::Test, Some(node)) if node.role != TargetRole::Test => Err(Error::NotATest {
             asked: label.clone(),
+            declared_with: node.role,
             site: Box::new(DeclarationSite::from(node)),
         }),
         // `id_of` gave `id`, so the node is there; a build takes any target named.
@@ -290,8 +291,13 @@ mod tests {
         let graph = tested();
         let error = narrow(&graph, &only(&["//:default"]), Purpose::Test).unwrap_err();
         match error {
-            Error::NotATest { asked, site } => {
+            Error::NotATest {
+                asked,
+                declared_with,
+                site,
+            } => {
                 assert_eq!(asked, label("//:default"));
+                assert_eq!(declared_with, TargetRole::Build);
                 assert_eq!(site.label, label("//:app"));
                 assert_eq!(site.provenance, file(""));
                 assert_eq!(site.origin, Origin::BuildFile);

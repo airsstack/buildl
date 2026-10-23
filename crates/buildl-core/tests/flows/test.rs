@@ -327,6 +327,10 @@ fn a_test_run_naming_a_discovery_target_is_not_a_test() {
         .unwrap_err();
 
     assert!(matches!(error, Error::NotATest { .. }), "{error:?}");
+    assert_eq!(
+        error.to_string(),
+        "target //:pkgs was asked for as a test, but //:pkgs is declared with b.discover in build.lua"
+    );
     assert_eq!(pipeline.ports().strategy.ran(), []);
 }
 

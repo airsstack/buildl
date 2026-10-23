@@ -125,6 +125,7 @@ const fn refusal_text(refusal: OutputRefusal) -> &'static str {
         OutputRefusal::Special => "it is or holds a device, a socket or a named pipe",
         OutputRefusal::EmptyDirectory => "it is or holds an empty directory",
         OutputRefusal::NotText => "it holds a name that is not valid Unicode",
+        OutputRefusal::NotAFile => "it is a directory, and a discovery output must be a file",
         _ => "it cannot be put back exactly as it was",
     }
 }
@@ -494,6 +495,10 @@ mod tests {
             (
                 OutputRefusal::NotText,
                 "it holds a name that is not valid Unicode",
+            ),
+            (
+                OutputRefusal::NotAFile,
+                "it is a directory, and a discovery output must be a file",
             ),
         ] {
             assert_eq!(

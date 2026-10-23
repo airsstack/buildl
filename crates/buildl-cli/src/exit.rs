@@ -237,6 +237,7 @@ mod tests {
             },
             Error::NotATest {
                 asked: label("//:app"),
+                declared_with: TargetRole::Build,
                 site: Box::new(site()),
             },
         ]
@@ -562,6 +563,7 @@ mod tests {
     fn not_a_test_is_a_usage_error() {
         let error = Error::NotATest {
             asked: label("//:default"),
+            declared_with: TargetRole::Build,
             site: Box::new(site()),
         };
         assert_eq!(Exit::of_error(&error), Exit::Usage);

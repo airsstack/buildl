@@ -430,6 +430,7 @@ impl<P: Ports> Build<'_, P> {
                 Settled::Runs(key) => {
                     tasks.push(Task {
                         node,
+                        role: target.node.role,
                         key,
                         action: target.action.clone(),
                     });

@@ -31,7 +31,7 @@ use std::path::PathBuf;
 use crate::types::{
     Ceiling, Declaration, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
     FieldName, InputKind, Label, Node, Origin, OutputPath, PluginName, PluginViolation, Program,
-    Provenance, SettingName, SourcePath, TreePath, Want, WantedSet, Written,
+    Provenance, SettingName, SourcePath, TargetRole, TreePath, Want, WantedSet, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -330,13 +330,16 @@ pub enum Error {
     },
     /// A test run was asked for a target that is not a test.
     #[error(
-        "target {asked} was asked for as a test, but {} is declared with b.target in {}",
+        "target {asked} was asked for as a test, but {} is declared with {} in {}",
         .site.label,
+        .declared_with.declaring_function(),
         .site.located()
     )]
     NotATest {
         /// The label that was asked for.
         asked: Label,
+        /// The role the target it names was declared with, which says which function declared it.
+        declared_with: TargetRole,
         /// The target it names, which is the same label unless an alias was followed, and its
         /// build file.
         site: Box<DeclarationSite>,
@@ -1649,6 +1652,7 @@ mod tests {
     fn not_a_test_names_the_target_and_its_file() {
         let err = Error::NotATest {
             asked: label("//:default"),
+            declared_with: TargetRole::Build,
             site: Box::new(root_site("//:app")),
         };
         assert_eq!(
@@ -1658,9 +1662,23 @@ mod tests {
     }
 
     #[test]
+    fn not_a_test_names_the_function_that_declared_a_discovery_target() {
+        let err = Error::NotATest {
+            asked: label("//:pkgs"),
+            declared_with: TargetRole::Discovery,
+            site: Box::new(root_site("//:pkgs")),
+        };
+        assert_eq!(
+            err.to_string(),
+            "target //:pkgs was asked for as a test, but //:pkgs is declared with b.discover in build.lua"
+        );
+    }
+
+    #[test]
     fn not_a_test_names_the_plugin_chain_of_a_target_a_plugin_declared() {
         let err = Error::NotATest {
             asked: label("//:default"),
+            declared_with: TargetRole::Build,
             site: Box::new(DeclarationSite {
                 origin: ourgo_chain(),
                 ..root_site("//:app")

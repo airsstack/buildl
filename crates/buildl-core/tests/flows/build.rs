@@ -2404,3 +2404,58 @@ fn a_named_discovery_target_builds() {
     assert_eq!(names, ["pkgs.json"]);
     assert!(pipeline.ports().cache.rows.contains_key(&label("//:pkgs")));
 }
+
+#[test]
+fn a_discovery_that_leaves_a_directory_fails_and_is_not_cached() {
+    let mut pipeline = discovering();
+    script(
+        &mut pipeline,
+        "//:pkgs",
+        leaving(
+            out("//:pkgs", "pkgs.json"),
+            tree(&[("a.json", "{}"), ("b.json", "{}")]),
+        ),
+    );
+
+    let outcomes = build_named(&mut pipeline, &["//:pkgs"], OnFailure::Stop).unwrap();
+
+    let failed = outcome(&outcomes, "//:pkgs");
+    assert_eq!(
+        failed.class,
+        OutcomeClass::OutputRefused {
+            name: OutputName::parse("pkgs.json").unwrap(),
+            refusal: OutputRefusal::NotAFile,
+        }
+    );
+    assert_eq!(
+        diagnostic(failed).as_deref(),
+        Some("pkgs.json is a directory, and a discovery output must be a file")
+    );
+    assert_eq!(failed.outputs, []);
+    assert!(failed.stdout.is_some(), "what it printed was stored");
+    assert_eq!(&event(&pipeline, "//:pkgs").outcome, failed);
+    let ports = pipeline.ports();
+    assert_eq!(ports.cache.rows.len(), 0, "a refusal is never recorded");
+    assert_eq!(ports.cas.placements(), [], "and nothing is put in place");
+}
+
+#[test]
+fn a_build_target_may_still_leave_a_directory() {
+    let mut pipeline = root_only(vec![target("site", &[])]);
+    script(
+        &mut pipeline,
+        "//:site",
+        leaving(
+            out("//:site", "site"),
+            tree(&[("index.html", "page"), ("app.js", "script")]),
+        ),
+    );
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[("//:site", OutcomeClass::Built)])
+    );
+    assert!(pipeline.ports().cache.rows.contains_key(&label("//:site")));
+}

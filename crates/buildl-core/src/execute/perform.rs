@@ -20,7 +20,7 @@ use crate::ports::{Clock, ContentStore, ExecStrategy};
 use crate::types::{
     ActionKey, Channel, Diagnostic, Digest, Exit, Found, FoundEntry, FoundKind, InfraKind,
     LiveSink, NodeId, OutcomeClass, OutputManifest, OutputName, OutputRefusal, RawOutcome,
-    ReadyAction, Timestamp, Tree, TreeEntry, TreePath,
+    ReadyAction, TargetRole, Timestamp, Tree, TreeEntry, TreePath,
 };
 
 /// What a worker says about an action while it is still running it.
@@ -55,6 +55,8 @@ pub(crate) struct Shared<'a> {
 pub(crate) struct Task {
     /// The target.
     pub(crate) node: NodeId,
+    /// How the target is declared, which decides what its outputs may be.
+    pub(crate) role: TargetRole,
     /// The target's finished key.
     pub(crate) key: ActionKey,
     /// What to run, and where its inputs and outputs are.
@@ -189,7 +191,8 @@ pub(crate) const NOT_STORED: OutcomeClass = OutcomeClass::InfraFailure {
 /// What an action that exited with status zero left, from what was found at each of its
 /// outputs: one manifest per output, in declared order.
 ///
-/// `names` are the outputs the target declares and `found` what a strategy reported for them,
+/// `role` is the role of the target: the output of a [`TargetRole::Discovery`] target must be a
+/// file. `names` are the outputs the target declares and `found` what a strategy reported for them,
 /// in the same order. An answer that does not hold one entry per output is the builder's
 /// failure. Otherwise the outputs are examined in declared order, and the first that cannot be
 /// kept decides how the build ends:
@@ -197,13 +200,15 @@ pub(crate) const NOT_STORED: OutcomeClass = OutcomeClass::InfraFailure {
 /// - nothing there is [`OutcomeClass::OutputMissing`];
 /// - a symbolic link, or something that is neither a file nor a directory, is
 ///   [`OutcomeClass::OutputRefused`];
-/// - a directory is examined entry by entry in path order, and is refused for the first entry
+/// - a directory is [`OutputRefusal::NotAFile`] for a discovery target, whatever it holds;
+/// - otherwise a directory is examined entry by entry in path order, and is refused for the first entry
 ///   that is not a regular file — an empty directory, a symbolic link, something else, or a
 ///   name that is not text — as it is when it holds nothing at all;
 /// - a directory whose files do not make a tree — a path that is not below the directory, one
 ///   listed twice, a file where another needs a directory — was misreported, which is the
 ///   builder's failure.
 pub(crate) fn collected(
+    role: TargetRole,
     names: &[OutputName],
     found: Vec<Found>,
 ) -> core::result::Result<Vec<OutputManifest>, Unkept> {
@@ -220,18 +225,25 @@ pub(crate) fn collected(
     names
         .iter()
         .zip(found)
-        .map(|(name, found)| examined(name, found))
+        .map(|(name, found)| examined(role, name, found))
         .collect()
 }
 
-/// The manifest of the output `name`, from what was found at its path.
-fn examined(name: &OutputName, found: Found) -> core::result::Result<OutputManifest, Unkept> {
+/// The manifest of the output `name` of a target with `role`, from what was found at its path.
+fn examined(
+    role: TargetRole,
+    name: &OutputName,
+    found: Found,
+) -> core::result::Result<OutputManifest, Unkept> {
     match found {
         Found::Nothing => Err(Unkept {
             class: OutcomeClass::OutputMissing { name: name.clone() },
             diagnostic: None,
         }),
         Found::File(file) => Ok(OutputManifest::File(file)),
+        Found::Tree(_) if role == TargetRole::Discovery => {
+            Err(refused(name, None, OutputRefusal::NotAFile))
+        }
         Found::Tree(entries) => tree(name, entries).map(OutputManifest::Tree),
         Found::Symlink => Err(refused(name, None, OutputRefusal::Symlink)),
         Found::Special => Err(refused(name, None, OutputRefusal::Special)),
@@ -280,6 +292,7 @@ fn refused(name: &OutputName, path: Option<&str>, refusal: OutputRefusal) -> Unk
         OutputRefusal::Special => "is neither a file nor a directory",
         OutputRefusal::EmptyDirectory => "is an empty directory",
         OutputRefusal::NotText => "has a name that is not valid Unicode",
+        OutputRefusal::NotAFile => "is a directory, and a discovery output must be a file",
     };
     Unkept {
         class: OutcomeClass::OutputRefused {
@@ -381,7 +394,7 @@ fn run<S: ExecStrategy, C: ContentStore>(
         Ok(found) => found,
         Err(error) => return failed_to(InfraKind::Store, &error, Some(printed)),
     };
-    let manifests = match collected(&task.key.components().own.outputs, found) {
+    let manifests = match collected(task.role, &task.key.components().own.outputs, found) {
         Ok(manifests) => manifests,
         Err(unkept) => {
             return Ended::Failed {
@@ -427,7 +440,8 @@ mod tests {
     use crate::execute::fixtures::{command, file, kept, key, label, output_path, outputs, tree};
     use crate::types::{
         Diagnostic, Digest, Exit, FileMode, Found, FoundEntry, FoundKind, InfraKind, NetworkAccess,
-        NodeId, OutcomeClass, OutputManifest, OutputRefusal, ReadyAction, StoredFile, Timestamp,
+        NodeId, OutcomeClass, OutputManifest, OutputRefusal, ReadyAction, StoredFile, TargetRole,
+        Timestamp,
     };
 
     fn printed() -> Printed {
@@ -566,13 +580,14 @@ mod tests {
         let map = stored("map", FileMode::Plain);
         assert_eq!(
             collected(
+                TargetRole::Build,
                 &outputs(&["app", "app.map"]),
                 vec![Found::File(app), Found::File(map)]
             ),
             Ok(vec![OutputManifest::File(app), OutputManifest::File(map)])
         );
         assert_eq!(
-            collected(&[], Vec::new()),
+            collected(TargetRole::Build, &[], Vec::new()),
             Ok(Vec::new()),
             "a target that declares no output"
         );
@@ -582,7 +597,11 @@ mod tests {
     fn a_directory_is_the_same_tree_whatever_order_it_was_listed_in() {
         let listed = |paths: &[&str]| {
             let entries = paths.iter().map(|path| found_file(path)).collect();
-            collected(&outputs(&["site"]), vec![Found::Tree(entries)])
+            collected(
+                TargetRole::Build,
+                &outputs(&["site"]),
+                vec![Found::Tree(entries)],
+            )
         };
         let one = listed(&["index.html", "assets/app.js", "assets/app.css"]);
         let other = listed(&["assets/app.css", "index.html", "assets/app.js"]);
@@ -602,12 +621,43 @@ mod tests {
         let app = stored("app", FileMode::Executable);
         let share = Found::Tree(vec![found_file("man/app.1")]);
         assert_eq!(
-            collected(&outputs(&["app", "share"]), vec![Found::File(app), share]),
+            collected(
+                TargetRole::Build,
+                &outputs(&["app", "share"]),
+                vec![Found::File(app), share]
+            ),
             Ok(vec![
                 OutputManifest::File(app),
                 tree(&[("man/app.1", "man/app.1")]),
             ])
         );
+    }
+
+    #[test]
+    fn a_discovery_output_may_be_a_file_but_not_a_directory() {
+        let pkgs = stored("{}", FileMode::Plain);
+        assert_eq!(
+            collected(
+                TargetRole::Discovery,
+                &outputs(&["pkgs.json"]),
+                vec![Found::File(pkgs)]
+            ),
+            Ok(vec![OutputManifest::File(pkgs)])
+        );
+        for entries in [vec![found_file("a.json")], Vec::new()] {
+            assert_eq!(
+                collected(
+                    TargetRole::Discovery,
+                    &outputs(&["pkgs.json"]),
+                    vec![Found::Tree(entries)]
+                ),
+                Err(refused(
+                    "pkgs.json",
+                    OutputRefusal::NotAFile,
+                    "pkgs.json is a directory, and a discovery output must be a file"
+                ))
+            );
+        }
     }
 
     #[test]
@@ -625,7 +675,7 @@ mod tests {
             (Vec::new(), "the strategy answered for 0 outputs of 2"),
         ] {
             assert_eq!(
-                collected(&outputs(&["app", "app.map"]), found),
+                collected(TargetRole::Build, &outputs(&["app", "app.map"]), found),
                 Err(not_stored(text))
             );
         }
@@ -644,17 +694,29 @@ mod tests {
             })
         };
         assert_eq!(
-            collected(&names, vec![app.clone(), Found::Nothing, app.clone()]),
+            collected(
+                TargetRole::Build,
+                &names,
+                vec![app.clone(), Found::Nothing, app.clone()]
+            ),
             missing("app.map"),
             "one missing"
         );
         assert_eq!(
-            collected(&names, vec![app, Found::Nothing, Found::Nothing]),
+            collected(
+                TargetRole::Build,
+                &names,
+                vec![app, Found::Nothing, Found::Nothing]
+            ),
             missing("app.map"),
             "two missing: the first, in the order the outputs were written"
         );
         assert_eq!(
-            collected(&names, vec![Found::Nothing, Found::Nothing, Found::Nothing]),
+            collected(
+                TargetRole::Build,
+                &names,
+                vec![Found::Nothing, Found::Nothing, Found::Nothing]
+            ),
             missing("app"),
             "none left"
         );
@@ -680,7 +742,7 @@ mod tests {
             ),
         ] {
             assert_eq!(
-                collected(&outputs(&["dist"]), vec![found]),
+                collected(TargetRole::Build, &outputs(&["dist"]), vec![found]),
                 Err(refused("dist", refusal, text))
             );
         }
@@ -712,7 +774,11 @@ mod tests {
         ] {
             let entries = vec![found_file("index.html"), found("vendor/x", kind)];
             assert_eq!(
-                collected(&outputs(&["dist"]), vec![Found::Tree(entries)]),
+                collected(
+                    TargetRole::Build,
+                    &outputs(&["dist"]),
+                    vec![Found::Tree(entries)]
+                ),
                 Err(refused("dist", refusal, text))
             );
         }
@@ -732,7 +798,11 @@ mod tests {
             vec![pipe(), link(), found_file("a")],
         ] {
             assert_eq!(
-                collected(&outputs(&["dist"]), vec![Found::Tree(entries)]),
+                collected(
+                    TargetRole::Build,
+                    &outputs(&["dist"]),
+                    vec![Found::Tree(entries)]
+                ),
                 expected,
                 "the lowest path that cannot be kept"
             );
@@ -744,7 +814,11 @@ mod tests {
         let names = outputs(&["app", "dist", "docs"]);
         let app = Found::File(stored("app", FileMode::Plain));
         assert_eq!(
-            collected(&names, vec![app.clone(), Found::Symlink, Found::Nothing]),
+            collected(
+                TargetRole::Build,
+                &names,
+                vec![app.clone(), Found::Symlink, Found::Nothing]
+            ),
             Err(refused(
                 "dist",
                 OutputRefusal::Symlink,
@@ -753,7 +827,11 @@ mod tests {
             "refused before a later one is missing"
         );
         assert_eq!(
-            collected(&names, vec![app, Found::Nothing, Found::Symlink]),
+            collected(
+                TargetRole::Build,
+                &names,
+                vec![app, Found::Nothing, Found::Symlink]
+            ),
             Err(Unkept {
                 class: OutcomeClass::OutputMissing {
                     name: outputs(&["dist"]).remove(0),
@@ -788,7 +866,11 @@ mod tests {
         ] {
             let entries = paths.iter().map(|path| found_file(path)).collect();
             assert_eq!(
-                collected(&outputs(&["dist"]), vec![Found::Tree(entries)]),
+                collected(
+                    TargetRole::Build,
+                    &outputs(&["dist"]),
+                    vec![Found::Tree(entries)]
+                ),
                 Err(not_stored(text))
             );
         }
@@ -814,6 +896,7 @@ mod tests {
 
         let task = handed_over(Task {
             node,
+            role: TargetRole::Build,
             key: key(&["app"]),
             action: action.clone(),
         });

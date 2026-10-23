@@ -31,6 +31,18 @@ pub enum TargetRole {
     Discovery,
 }
 
+impl TargetRole {
+    /// The build-file function that declares a target of this role, as it is written there.
+    #[must_use]
+    pub const fn declaring_function(self) -> &'static str {
+        match self {
+            Self::Build => "b.target",
+            Self::Test => "b.test",
+            Self::Discovery => "b.discover",
+        }
+    }
+}
+
 /// Whether a target's action may reach the network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum NetworkAccess {
@@ -218,6 +230,13 @@ mod tests {
             network: NetworkAccess::Sealed,
             freshness: Freshness::Cached,
         }
+    }
+
+    #[test]
+    fn each_role_names_the_function_that_declares_it() {
+        assert_eq!(TargetRole::Build.declaring_function(), "b.target");
+        assert_eq!(TargetRole::Test.declaring_function(), "b.test");
+        assert_eq!(TargetRole::Discovery.declaring_function(), "b.discover");
     }
 
     #[test]
