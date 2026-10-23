@@ -12,6 +12,7 @@
 //! once it is made.
 
 use core::marker::PhantomData;
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
@@ -189,6 +190,7 @@ impl Wiring {
             self.root.as_path(),
             limits,
             [self.workspace.out.clone(), self.workspace.state.clone()],
+            BTreeMap::new(),
         ))
     }
 
@@ -546,6 +548,7 @@ mod tests {
                 )
                 .with_walk_entries(NonZeroU64::new(70).unwrap()),
                 skipped.clone(),
+                BTreeMap::new(),
             )
         );
 
@@ -559,6 +562,7 @@ mod tests {
                 DeclarationLimits::new(defaults.memory_bytes(), NonZeroU64::new(5000).unwrap())
                     .with_walk_entries(defaults.walk_entries()),
                 skipped.clone(),
+                BTreeMap::new(),
             )
         );
 
@@ -566,7 +570,7 @@ mod tests {
         let none = Wiring::read(&root).unwrap();
         assert_eq!(
             none.source().unwrap(),
-            LuaSource::new(&root, defaults, skipped)
+            LuaSource::new(&root, defaults, skipped, BTreeMap::new())
         );
     }
 

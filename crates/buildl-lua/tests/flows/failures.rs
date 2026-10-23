@@ -1,5 +1,6 @@
 //! Every way a build file can fail maps onto one `EvaluationFailure`, with a usable diagnostic.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::num::NonZeroU64;
 
@@ -81,7 +82,7 @@ fn a_source_walk_past_the_walk_ceiling_reaches_the_walk_limit_even_when_caught()
         fs::write(root.join(name), "").unwrap();
     }
     let limits = DeclarationLimits::default().with_walk_entries(NonZeroU64::new(3).unwrap());
-    match LuaSource::new(&root, limits, []).evaluate(&root_file()) {
+    match LuaSource::new(&root, limits, [], BTreeMap::new()).evaluate(&root_file()) {
         Err(Error::Evaluation {
             failure,
             diagnostic,

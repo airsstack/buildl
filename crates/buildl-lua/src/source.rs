@@ -9,6 +9,7 @@
 //! Non-responsibilities: deciding which build files to evaluate, and what their declarations
 //! mean. Both are the caller's.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
 use std::mem;
@@ -18,7 +19,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use airsl::Script;
 use buildl_core::{
     BuildFile, DeclarationSource, Diagnostic, Directory, Error, Evaluated, EvaluationFailure,
-    Result,
+    PluginName, Result,
 };
 
 use crate::classify::classify;
@@ -34,6 +35,10 @@ use crate::staging::Staging;
 /// the `buildl` module table as both `buildl` and `airsstack.buildl`, and the curated modules
 /// `json`, `path`, `regex`, `hash` and `glob` under `airsstack`.
 ///
+/// `buildl.use(name)` loads the plugin the source was built with a directory for under that name,
+/// and refuses any other name. A plugin runs under its own environment, narrowed from the build
+/// file's, and every declaration it makes carries the plugin as its origin.
+///
 /// `buildl.sources` never lists a file under a directory the source was built to skip. A source
 /// built with the workspace's output and state directories therefore keeps a build file at the
 /// workspace root from seeing what the build wrote.
@@ -41,6 +46,7 @@ use crate::staging::Staging;
 /// # Examples
 ///
 /// ```
+/// use std::collections::BTreeMap;
 /// use std::fs;
 /// use std::path::PathBuf;
 ///
@@ -52,7 +58,7 @@ use crate::staging::Staging;
 /// fs::write(root.join("build.lua"), "buildl.alias('default', 'app')")?;
 ///
 /// let skipped = [Directory::parse("out")?, Directory::parse(".buildl")?];
-/// let source = LuaSource::new(&root, DeclarationLimits::default(), skipped);
+/// let source = LuaSource::new(&root, DeclarationLimits::default(), skipped, BTreeMap::new());
 /// let file = BuildFile::new(Provenance::new(PathBuf::from("build.lua"), Directory::root()));
 /// assert!(matches!(
 ///     source.evaluate(&file)?,
@@ -65,11 +71,12 @@ pub struct LuaSource {
     root: PathBuf,
     limits: DeclarationLimits,
     skipped: Vec<Directory>,
+    plugins: BTreeMap<PluginName, PathBuf>,
 }
 
 impl LuaSource {
     /// A source for the workspace at `root`, evaluating under `limits`, whose `buildl.sources`
-    /// stays out of `skipped`.
+    /// stays out of `skipped` and whose `buildl.use` loads the plugins in `plugins`.
     ///
     /// `root` must be the workspace root's canonical, absolute path. `buildl.sources` walks
     /// beneath it and refuses any directory that resolves outside it.
@@ -79,16 +86,23 @@ impl LuaSource {
     /// skips `<root>/out` and not `<root>/lib/out`. A build file whose own directory is a skipped
     /// directory, or lies inside one, gets an empty list from `buildl.sources`. An empty `skipped`
     /// skips nothing: the walk then lists the workspace's own output and state directories too.
+    ///
+    /// `plugins` maps each plugin name a build file may use to the directory holding its
+    /// `extension.toml`. The caller has already checked the directories, so this source reads
+    /// them as given. A plugin's `require` stays inside its own directory, however that directory
+    /// is reached.
     #[must_use]
     pub fn new(
         root: impl Into<PathBuf>,
         limits: DeclarationLimits,
         skipped: impl IntoIterator<Item = Directory>,
+        plugins: BTreeMap<PluginName, PathBuf>,
     ) -> Self {
         Self {
             root: root.into(),
             limits,
             skipped: skipped.into_iter().collect(),
+            plugins,
         }
     }
 }
@@ -101,8 +115,9 @@ impl DeclarationSource for LuaSource {
     /// # Errors
     ///
     /// Returns [`Error::Evaluation`] when the file cannot be read, is not UTF-8, does not parse,
-    /// raises, is refused an operation, reaches a ceiling, or calls a `buildl` primitive with
-    /// arguments it does not accept. A refusal from a primitive is reported even when the build
+    /// raises, is refused an operation, reaches a ceiling, calls a `buildl` primitive with
+    /// arguments it does not accept, or uses a plugin that is unknown, cyclic, malformed or
+    /// raises. A refusal from a primitive is reported even when the build
     /// file caught it with `pcall` and carried on.
     fn evaluate(&self, file: &BuildFile) -> Result<Evaluated> {
         let path = self.root.join(file.file());
@@ -130,6 +145,8 @@ impl DeclarationSource for LuaSource {
                 self.limits.walk_entries(),
                 &self.skipped,
             ),
+            &self.root,
+            self.plugins.clone(),
         )
         .and_then(|module| engine::build(&self.limits, module))
         .and_then(|engine| {
@@ -169,6 +186,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -195,7 +213,9 @@ mod tests {
     }
 
     fn failure(root: &Path) -> EvaluationFailure {
-        match LuaSource::new(root, DeclarationLimits::default(), []).evaluate(&root_file()) {
+        match LuaSource::new(root, DeclarationLimits::default(), [], BTreeMap::new())
+            .evaluate(&root_file())
+        {
             Err(Error::Evaluation { failure, .. }) => failure,
             other => panic!("expected an evaluation failure, got {other:?}"),
         }
@@ -204,7 +224,12 @@ mod tests {
     #[test]
     fn a_missing_file_is_absent() {
         let dir = tempfile::tempdir().unwrap();
-        let source = LuaSource::new(dir.path(), DeclarationLimits::default(), []);
+        let source = LuaSource::new(
+            dir.path(),
+            DeclarationLimits::default(),
+            [],
+            BTreeMap::new(),
+        );
         assert_eq!(source.evaluate(&root_file()).unwrap(), Evaluated::Absent);
     }
 
@@ -259,7 +284,7 @@ mod tests {
     #[test]
     fn evaluation_failures_carry_the_file_s_provenance() {
         let (_dir, root) = workspace(b"return (");
-        let error = LuaSource::new(&root, DeclarationLimits::default(), [])
+        let error = LuaSource::new(&root, DeclarationLimits::default(), [], BTreeMap::new())
             .evaluate(&root_file())
             .unwrap_err();
         assert!(
@@ -274,10 +299,15 @@ mod tests {
             Directory::parse("out").unwrap(),
             Directory::parse(".buildl").unwrap(),
         ];
-        let source = LuaSource::new("/ws", DeclarationLimits::default(), skipped.clone());
+        let source = LuaSource::new(
+            "/ws",
+            DeclarationLimits::default(),
+            skipped.clone(),
+            BTreeMap::new(),
+        );
         assert_eq!(source.skipped, skipped);
         assert_eq!(
-            LuaSource::new("/ws", DeclarationLimits::default(), []).skipped,
+            LuaSource::new("/ws", DeclarationLimits::default(), [], BTreeMap::new()).skipped,
             []
         );
     }
@@ -294,6 +324,7 @@ mod tests {
             &root,
             DeclarationLimits::default(),
             [Directory::parse("out").unwrap()],
+            BTreeMap::new(),
         )
         .evaluate(&root_file())
         .unwrap() else {
@@ -309,9 +340,10 @@ mod tests {
     #[test]
     fn a_staged_file_is_returned_with_its_declarations() {
         let (_dir, root) = workspace(b"buildl.subdir('lib')\nbuildl.alias('default', 'app')");
-        let Evaluated::Staged(staged) = LuaSource::new(&root, DeclarationLimits::default(), [])
-            .evaluate(&root_file())
-            .unwrap()
+        let Evaluated::Staged(staged) =
+            LuaSource::new(&root, DeclarationLimits::default(), [], BTreeMap::new())
+                .evaluate(&root_file())
+                .unwrap()
         else {
             panic!("the build file exists");
         };

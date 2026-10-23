@@ -11,7 +11,8 @@
 //! - Evaluating one build file per call on a fresh airsl engine, and returning what it staged
 //!   exactly as written, or the one failure that stopped it.
 //! - Installing the `buildl` module table, reachable from Lua both as `airsstack.buildl` and as
-//!   the global `buildl`: `target`, `test`, `rule`, `alias`, `option`, `subdir` and `sources`.
+//!   the global `buildl`: `target`, `test`, `rule`, `alias`, `option`, `subdir`, `sources` and
+//!   `use`, which loads a plugin under an environment of its own.
 //! - Keeping the declaration phase sandboxed: airsl's minimal language surface, no grant of any
 //!   kind, only the `json`, `path`, `regex`, `hash` and `glob` modules, and no `math.random`,
 //!   `math.randomseed`, `print` or `airsstack.path.absolute`, and with `tostring` and
@@ -39,7 +40,7 @@
 //! | `engine` | the airsl engine configuration |
 //! | `curated` | airsl's `path` module without `absolute` |
 //! | `module` | the `buildl` host module, which raises refusals |
-//! | `plugin` | a plugin's `extension.toml`, read with airsl |
+//! | `plugin` | `buildl.use`: a plugin's manifest, environment, `require` and instances |
 //! | `primitives` | each primitive's argument shape |
 //! | `values` | the Lua value readers every primitive shares |
 //! | `refusal` | why a primitive call was refused |
@@ -56,13 +57,6 @@ mod curated;
 mod engine;
 mod limits;
 mod module;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no code loads a plugin yet, so only the module's tests read a manifest"
-    )
-)]
 mod plugin;
 mod primitives;
 mod refusal;

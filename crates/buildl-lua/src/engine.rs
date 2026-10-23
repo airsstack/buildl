@@ -46,6 +46,7 @@ mod tests {
     )]
 
     use core::num::NonZeroU64;
+    use std::collections::BTreeMap;
     use std::fs;
     use std::sync::{Arc, Mutex};
 
@@ -68,6 +69,8 @@ mod tests {
         let module = BuildlModule::new(
             Arc::new(Mutex::new(Staging::new(u64::MAX))),
             Sources::new(&root, &Directory::root(), limits.walk_entries(), &[]),
+            &root,
+            BTreeMap::new(),
         )
         .unwrap();
         (dir, build(limits, module).unwrap())

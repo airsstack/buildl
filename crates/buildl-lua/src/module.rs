@@ -11,15 +11,18 @@
 //! into a staged record or a sticky refusal that names the build file's line.
 //!
 //! Non-responsibilities: the argument shapes, which `primitives` owns, the walk behind
-//! `buildl.sources`, which `sources` owns, and the replacement functions, which `stable_text`
-//! owns.
+//! `buildl.sources`, which `sources` owns, the replacement functions, which `stable_text` owns,
+//! and loading the plugins `buildl.use` names, which `plugin` owns.
 
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, TryLockError};
 
 use airsl::mlua::{self, Lua, Table, Value};
 use airsl::{HostModule, InstallContext, ModuleName};
-use buildl_core::{EvaluationFailure, EvaluationLimit, Origin, StagedItem, TargetRole};
+use buildl_core::{EvaluationFailure, EvaluationLimit, Origin, PluginName, StagedItem, TargetRole};
 
+use crate::plugin::Plugins;
 use crate::primitives;
 use crate::refusal::Refusal;
 use crate::sources::Sources;
@@ -32,19 +35,30 @@ pub(crate) struct BuildlModule {
     name: ModuleName,
     staging: Arc<Mutex<Staging>>,
     sources: Sources,
+    plugins: Plugins,
 }
 
 impl BuildlModule {
-    /// A module staging into `staging`, whose `buildl.sources` walks `sources`.
+    /// A module staging into `staging`, whose `buildl.sources` walks `sources` and whose
+    /// `buildl.use` loads the plugins in `plugins`, each from the directory it maps to.
+    ///
+    /// `root` is the workspace root, which names the files a plugin's errors point at.
     ///
     /// # Errors
     ///
     /// Never in practice: the only failure is `buildl` not being a valid module name.
-    pub(crate) fn new(staging: Arc<Mutex<Staging>>, sources: Sources) -> airsl::Result<Self> {
+    pub(crate) fn new(
+        staging: Arc<Mutex<Staging>>,
+        sources: Sources,
+        root: &Path,
+        plugins: BTreeMap<PluginName, PathBuf>,
+    ) -> airsl::Result<Self> {
+        let plugins = Plugins::new(root, plugins, &staging, &sources);
         Ok(Self {
             name: ModuleName::new("buildl")?,
             staging,
             sources,
+            plugins,
         })
     }
 }
@@ -70,6 +84,7 @@ impl HostModule for BuildlModule {
             let (name, function) = pair.map_err(fail)?;
             table.set(name, function).map_err(fail)?;
         }
+        self.plugins.bind_use(lua, table, &[]).map_err(fail)?;
 
         let globals = lua.globals();
         globals.set("buildl", table.clone()).map_err(fail)?;
@@ -84,7 +99,7 @@ impl HostModule for BuildlModule {
 }
 
 /// The Lua registry key holding the snapshot of the language globals [`record_language`] takes.
-const LANGUAGE_REGISTRY_KEY: &str = "buildl.language";
+pub(crate) const LANGUAGE_REGISTRY_KEY: &str = "buildl.language";
 
 /// Globals left out of the language snapshot: the two names a build file reaches buildl through,
 /// the globals table itself, and `require`, which plugin code gets its own version of.
@@ -93,8 +108,9 @@ const NOT_LANGUAGE: [&str; 4] = ["buildl", "airsstack", "_G", "require"];
 /// Builds the table of declaration primitives whose declarations carry `origin`.
 ///
 /// Every table built for one evaluation shares its `staging` and `sources`, so the declarations
-/// of a build file and of the plugins it uses land in one numbered buffer under one byte budget.
-fn primitives_table(
+/// of a build file and of the plugins it uses land in one numbered buffer under one byte budget,
+/// and `sources` walks the build file's directory whichever table asks.
+pub(crate) fn primitives_table(
     lua: &Lua,
     staging: &Arc<Mutex<Staging>>,
     sources: &Sources,
@@ -168,7 +184,7 @@ fn primitives_table(
 ///
 /// A build file that reassigns `string` or `table` after this call changes its own globals and
 /// nothing the snapshot holds.
-fn record_language(lua: &Lua) -> mlua::Result<()> {
+pub(crate) fn record_language(lua: &Lua) -> mlua::Result<()> {
     let snapshot = lua.create_table()?;
     for pair in lua.globals().pairs::<Value, Value>() {
         let (name, value) = pair?;
@@ -205,7 +221,7 @@ fn declare(
 /// The buffer stays locked while `work` runs, and `work` calls into Lua, which can run a
 /// finalizer that calls a primitive again. That re-entrant call finds the lock taken and fails with
 /// a Lua error instead of waiting on itself; it records nothing, because the buffer is unavailable.
-fn guarded<T>(
+pub(crate) fn guarded<T>(
     lua: &Lua,
     staging: &Mutex<Staging>,
     primitive: &'static str,
@@ -266,7 +282,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::sync::{Arc, Mutex};
 
@@ -303,6 +319,8 @@ mod tests {
                         DeclarationLimits::default().walk_entries(),
                         &[],
                     ),
+                    &root,
+                    BTreeMap::new(),
                 )
                 .unwrap(),
             ))

@@ -1,5 +1,6 @@
 //! What a build file can reach: the curated surface, and nothing outside the workspace.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::PathBuf;
@@ -47,7 +48,7 @@ fn sources_refuses_a_declaring_directory_that_resolves_outside_the_workspace() {
         PathBuf::from("lib/build.lua"),
         Directory::parse("lib").unwrap(),
     ));
-    match LuaSource::new(&root, DeclarationLimits::default(), []).evaluate(&lib) {
+    match LuaSource::new(&root, DeclarationLimits::default(), [], BTreeMap::new()).evaluate(&lib) {
         Err(Error::Evaluation {
             failure,
             diagnostic,

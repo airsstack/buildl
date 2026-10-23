@@ -1,5 +1,6 @@
 //! `buildl_core::load` over a real workspace, through this adapter.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use buildl_core::{
@@ -56,7 +57,12 @@ fn target(
 
 #[test]
 fn load_turns_a_real_workspace_into_declarations() {
-    let source = LuaSource::new(fixture("workspace"), DeclarationLimits::default(), []);
+    let source = LuaSource::new(
+        fixture("workspace"),
+        DeclarationLimits::default(),
+        [],
+        BTreeMap::new(),
+    );
     let declarations = load(
         &source,
         &mut InlineDispatcher,
