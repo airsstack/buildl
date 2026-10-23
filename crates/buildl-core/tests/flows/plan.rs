@@ -1315,3 +1315,24 @@ fn origin_does_not_change_the_key() {
     };
     assert_eq!(plan_by(&Origin::BuildFile), plan_by(&chain));
 }
+
+#[test]
+fn a_ceiling_refusal_of_a_plugin_target_names_its_chain() {
+    let chain = Origin::plugins(vec![plugin("ourgo", "0.1.0"), plugin("go", "1.2.0")]).unwrap();
+    let source = FakeSource::new(workspace(vec![(
+        "",
+        file_by(&chain, vec![target("app", &[])], &[]),
+    )]));
+    let mut pipeline = Pipeline::<FakePorts>::new(ports(source));
+    pipeline.ports_mut().manifest.workspace.ceiling.run.clear();
+
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "build.lua: //:app (plugin ourgo@0.1.0 > go@1.2.0): program cc is outside the ceiling \
+         (proc.run allows: nothing)"
+    );
+}

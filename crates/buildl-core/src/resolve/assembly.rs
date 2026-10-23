@@ -63,6 +63,7 @@ pub fn resolve(declarations: Vec<Declaration>) -> Result<TargetGraph> {
         let holder = Holder {
             label,
             provenance: &entry.provenance,
+            origin: &entry.origin,
         };
         match &entry.item {
             Item::Target(target) => {
@@ -89,10 +90,7 @@ pub fn resolve(declarations: Vec<Declaration>) -> Result<TargetGraph> {
         let path = cycle
             .iter()
             .filter_map(|id| nodes.get(id.index()))
-            .map(|node| DeclarationSite {
-                label: node.label.clone(),
-                provenance: node.provenance.clone(),
-            })
+            .map(DeclarationSite::from)
             .collect();
         return Err(Error::DependencyCycle { path });
     }

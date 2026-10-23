@@ -173,7 +173,9 @@ mod tests {
             } => {
                 assert_eq!(*ceiling, workspace.ceiling);
                 let named = site.map(|site| {
-                    let DeclarationSite { label, provenance } = *site;
+                    let DeclarationSite {
+                        label, provenance, ..
+                    } = *site;
                     (label.to_string(), provenance.to_string())
                 });
                 (want, named)

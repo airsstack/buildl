@@ -168,7 +168,7 @@ mod tests {
     use buildl::buildl_core::{
         ActionFound, ActionOutcome, Ceiling, Check, DeclarationField, DeclarationOrder,
         DeclarationSite, DeclaredKind, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
-        Error, EvaluationFailure, FileChange, InfraKind, InputKind, Label, OutcomeClass,
+        Error, EvaluationFailure, FileChange, InfraKind, InputKind, Label, Origin, OutcomeClass,
         OutputDifference, OutputName, OutputPath, OutputRefusal, PortName, Program, Provenance,
         SettingName, SourcePath, TargetRole, TreeFault, Verification, Want, WantedSet,
     };
@@ -189,6 +189,7 @@ mod tests {
         DeclarationSite {
             label: label("//:app"),
             provenance: root_file(),
+            origin: Origin::BuildFile,
         }
     }
 

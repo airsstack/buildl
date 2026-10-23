@@ -25,6 +25,8 @@ pub(crate) struct Holder<'a> {
     pub(crate) label: &'a Label,
     /// The build file that declared it.
     pub(crate) provenance: &'a Provenance,
+    /// Whose code made the declaration.
+    pub(crate) origin: &'a Origin,
 }
 
 impl Holder<'_> {
@@ -33,6 +35,7 @@ impl Holder<'_> {
         DeclarationSite {
             label: self.label.clone(),
             provenance: self.provenance.clone(),
+            origin: self.origin.clone(),
         }
     }
 }
@@ -250,8 +253,14 @@ mod tests {
         .unwrap()
     }
 
+    static BUILD_FILE: Origin = Origin::BuildFile;
+
     fn held_by<'a>(label: &'a Label, provenance: &'a Provenance) -> Holder<'a> {
-        Holder { label, provenance }
+        Holder {
+            label,
+            provenance,
+            origin: &BUILD_FILE,
+        }
     }
 
     /// Asserts `error` is a wrong-kind error for `reference` in `field`, and returns what was
