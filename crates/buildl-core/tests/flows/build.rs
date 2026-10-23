@@ -10,17 +10,17 @@ use std::path::Path;
 
 use buildl_core::{
     ActionOutcome, Digest, EntryName, Error, EvaluationFailure, FileMode, FileStat, Freshness,
-    InfraKind, OnFailure, OutcomeClass, OutcomeEvent, OutputManifest, OutputName, OutputPath,
-    OutputRefusal, Pipeline, PortName, SettingName, SettingValue, SourcePath, StagedItem,
-    StagedSetting, StoredFile, Summary, Tally, TargetRole, Timestamp, TreePath, Want, WantedSet,
-    Written, json,
+    InfraKind, OnFailure, Origin, OutcomeClass, OutcomeEvent, OutputManifest, OutputName,
+    OutputPath, OutputRefusal, Pipeline, PluginCap, PluginName, PortName, SettingName,
+    SettingValue, SourcePath, StagedItem, StagedSetting, StoredFile, Summary, Tally, TargetRole,
+    Timestamp, TreePath, Want, WantedSet, Written, json,
 };
 use buildl_core::{LiveOutput, Scope};
 
 use crate::common::{
     Answer, Content, Ends, FakeApprover, FakeContent, FakeFile, FakePorts, FakeSource, Leaf, Loss,
-    Order, Script, classes, dir, ending, expected, file, label, ports, program, root_only, rule,
-    script, setting, skipped, target, target_with, tree, workspace,
+    Order, Script, classes, dir, ending, expected, file, file_by, label, plugin, ports, program,
+    root_only, rule, script, setting, skipped, target, target_with, tree, workspace,
 };
 
 /// The events of [`two_directories`] built once, one canonical JSON object per line, pinned.
@@ -2275,6 +2275,43 @@ fn a_build_asks_the_approver_once_with_the_planned_wanted_set() {
 }
 
 #[test]
+fn a_build_hands_the_approver_the_attribution_of_the_plan() {
+    let mut go = plugin("go", "1.2.0");
+    go.run = BTreeSet::from([program("cc")]);
+    let origin = Origin::plugins(vec![go]).unwrap();
+    let source = FakeSource::new(workspace(vec![(
+        "",
+        file_by(&origin, vec![target("app", &[])], &[]),
+    )]));
+    let mut pipeline = Pipeline::<FakePorts>::new(ports(source));
+    let ports = pipeline.ports_mut();
+    ports.manifest.workspace.plugins.insert(
+        PluginName::parse("go").unwrap(),
+        PluginCap {
+            run: BTreeSet::from([program("cc")]),
+            ..PluginCap::default()
+        },
+    );
+    ports
+        .tools
+        .fingerprints
+        .insert(program("cc"), Digest::of(b"cc 14.2"));
+    let planned = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap()
+        .attribution()
+        .clone();
+    assert_eq!(
+        planned.to_string(),
+        "  cc: declared by plugin go@1.2.0 for //:app"
+    );
+
+    build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(pipeline.ports().approver.attributions, [planned]);
+}
+
+#[test]
 fn a_denied_build_runs_nothing_records_nothing_and_logs_nothing() {
     let mut pipeline = chain();
     pipeline.ports_mut().approver = FakeApprover::answering(Answer::Deny("not today".to_owned()));
@@ -2324,4 +2361,116 @@ fn an_approver_error_stops_the_build() {
         "{error:?}"
     );
     assert_nothing_ran(&pipeline);
+}
+
+/// `//:app`, and `//:pkgs`, a discovery target.
+fn discovering() -> Pipeline<FakePorts> {
+    root_only(vec![
+        target("app", &[]),
+        target_with("pkgs", |target| target.role = TargetRole::Discovery),
+    ])
+}
+
+#[test]
+fn a_workspace_build_skips_discovery_targets() {
+    let mut pipeline = discovering();
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    // The discovery target runs first, in a run of its own; the workspace build proper is `//:app`.
+    let ran: Vec<String> = outcomes
+        .iter()
+        .map(|outcome| outcome.label.to_string())
+        .collect();
+    assert_eq!(ran, ["//:pkgs", "//:app"]);
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[
+            ("//:app", OutcomeClass::Built),
+            ("//:pkgs", OutcomeClass::Built)
+        ])
+    );
+    assert_eq!(
+        pipeline.ports().strategy.ran(),
+        [label("//:pkgs"), label("//:app")]
+    );
+}
+
+#[test]
+fn a_named_discovery_target_builds() {
+    let mut pipeline = discovering();
+
+    let outcomes = build_named(&mut pipeline, &["//:pkgs"], OnFailure::Stop).unwrap();
+
+    // Built by the discovery run, then found cached by the run the command asked for.
+    let ended: Vec<OutcomeClass> = outcomes
+        .iter()
+        .map(|outcome| outcome.class.clone())
+        .collect();
+    assert_eq!(ended, [OutcomeClass::Built, OutcomeClass::Cached]);
+    assert_eq!(pipeline.ports().strategy.runs(&label("//:pkgs")), 1);
+    let done = outcome(&outcomes, "//:pkgs");
+    assert_eq!(done.role, TargetRole::Discovery);
+    let names: Vec<&str> = done
+        .outputs
+        .iter()
+        .map(|produced| produced.name.as_str())
+        .collect();
+    assert_eq!(names, ["pkgs.json"]);
+    assert!(pipeline.ports().cache.rows.contains_key(&label("//:pkgs")));
+}
+
+#[test]
+fn a_discovery_that_leaves_a_directory_fails_and_is_not_cached() {
+    let mut pipeline = discovering();
+    script(
+        &mut pipeline,
+        "//:pkgs",
+        leaving(
+            out("//:pkgs", "pkgs.json"),
+            tree(&[("a.json", "{}"), ("b.json", "{}")]),
+        ),
+    );
+
+    let outcomes = build_named(&mut pipeline, &["//:pkgs"], OnFailure::Stop).unwrap();
+
+    let failed = outcome(&outcomes, "//:pkgs");
+    assert_eq!(
+        failed.class,
+        OutcomeClass::OutputRefused {
+            name: OutputName::parse("pkgs.json").unwrap(),
+            refusal: OutputRefusal::NotAFile,
+        }
+    );
+    assert_eq!(
+        diagnostic(failed).as_deref(),
+        Some("pkgs.json is a directory, and a discovery output must be a file")
+    );
+    assert_eq!(failed.outputs, []);
+    assert!(failed.stdout.is_some(), "what it printed was stored");
+    assert_eq!(&event(&pipeline, "//:pkgs").outcome, failed);
+    let ports = pipeline.ports();
+    assert_eq!(ports.cache.rows.len(), 0, "a refusal is never recorded");
+    assert_eq!(ports.cas.placements(), [], "and nothing is put in place");
+}
+
+#[test]
+fn a_build_target_may_still_leave_a_directory() {
+    let mut pipeline = root_only(vec![target("site", &[])]);
+    script(
+        &mut pipeline,
+        "//:site",
+        leaving(
+            out("//:site", "site"),
+            tree(&[("index.html", "page"), ("app.js", "script")]),
+        ),
+    );
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[("//:site", OutcomeClass::Built)])
+    );
+    assert!(pipeline.ports().cache.rows.contains_key(&label("//:site")));
 }

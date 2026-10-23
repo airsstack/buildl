@@ -7,10 +7,11 @@
 
 use std::path::Path;
 
-use buildl_core::{EntryName, Error, Pipeline};
+use buildl_core::{EntryName, Error, Label, Pipeline};
 
 use crate::common::{
-    FakeDispatcher, FakePorts, FakeSource, file, ports, setting, target, workspace,
+    FakeCas, FakeDispatcher, FakeHistory, FakePorts, FakeSource, file, ports, setting, target,
+    workspace,
 };
 
 fn entry() -> EntryName {
@@ -110,8 +111,15 @@ fn a_caller_holding_only_a_source_checks_like_a_pipeline() {
             ("lib", file(vec![target("text", &[])], &[])),
         ]))
     };
-    let alone = buildl_core::pipeline::check(&agreeing(), &mut FakeDispatcher::default(), &entry())
-        .unwrap();
+    let alone = buildl_core::pipeline::check(
+        &agreeing(),
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &FakeHistory::default(),
+        &FakeCas::default(),
+    )
+    .unwrap()
+    .declarations;
     let through = Pipeline::<FakePorts>::new(ports(agreeing()))
         .check(&entry())
         .unwrap();
@@ -124,7 +132,13 @@ fn a_caller_holding_only_a_source_checks_like_a_pipeline() {
     )]);
     let differing = FakeSource::with_second_run(first, second);
     assert!(matches!(
-        buildl_core::pipeline::check(&differing, &mut FakeDispatcher::default(), &entry()),
+        buildl_core::pipeline::check(
+            &differing,
+            &mut FakeDispatcher::default(),
+            &entry(),
+            &FakeHistory::default(),
+            &FakeCas::default()
+        ),
         Err(Error::Nondeterministic { .. })
     ));
 }
@@ -137,8 +151,15 @@ fn a_caller_holding_only_a_source_gets_the_graph_a_pipeline_gets() {
             ("lib", file(vec![target("text", &[])], &[])),
         ]))
     };
-    let alone =
-        buildl_core::pipeline::graph(&fixture(), &mut FakeDispatcher::default(), &entry()).unwrap();
+    let (alone, missing) = buildl_core::pipeline::graph(
+        &fixture(),
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &FakeHistory::default(),
+        &FakeCas::default(),
+    )
+    .unwrap();
+    assert_eq!(missing, Vec::<Label>::new());
     let through = Pipeline::<FakePorts>::new(ports(fixture()))
         .graph(&entry())
         .unwrap();

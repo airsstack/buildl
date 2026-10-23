@@ -9,14 +9,15 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use buildl_core::{
-    Declaration, DeclarationField, Declared, Diagnostic, Direction, Directory, Dispatcher,
-    EntryName, Error, EvaluationFailure, EvaluationLimit, Label, LiveOutput, OnFailure, Pipeline,
-    PortName, Query, Scope, Turn, json, load, pipeline,
+    Declaration, DeclarationField, Declared, Diagnostic, Direction, Directory, Discovered,
+    Dispatcher, EntryName, Error, EvaluationFailure, EvaluationLimit, Freshness, Label, LiveOutput,
+    OnFailure, Origin, OutputName, Pipeline, PortName, Query, Scope, TargetRole, Turn, Written,
+    json, load, pipeline,
 };
 
 use crate::common::{
-    FakeDispatcher, FakeFile, FakeHistory, FakePorts, FakeSource, Loss, Order, Pace, dir, file,
-    root_only, setting, target, workspace,
+    FakeCas, FakeDispatcher, FakeFile, FakeHistory, FakePorts, FakeSource, Loss, Order, Pace, dir,
+    file, file_by, plugin, root_only, setting, target, target_with, workspace,
 };
 
 fn entry() -> EntryName {
@@ -24,15 +25,20 @@ fn entry() -> EntryName {
 }
 
 fn names(source: &FakeSource) -> Vec<String> {
-    load(source, &mut FakeDispatcher::default(), &entry())
-        .unwrap()
-        .iter()
-        .map(|declaration| match declaration.item() {
-            Declared::Target(target) => target.label.to_string(),
-            Declared::Setting(setting) => format!("setting {}", setting.name),
-            other => format!("{other:?}"),
-        })
-        .collect()
+    load(
+        source,
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &Discovered::empty(),
+    )
+    .unwrap()
+    .iter()
+    .map(|declaration| match declaration.item() {
+        Declared::Target(target) => target.label.to_string(),
+        Declared::Setting(setting) => format!("setting {}", setting.name),
+        other => format!("{other:?}"),
+    })
+    .collect()
 }
 
 #[test]
@@ -45,6 +51,33 @@ fn every_reached_file_yields_one_sorted_list_of_declarations() {
         ("lib", file(vec![target("text", &[])], &[])),
     ]));
     assert_eq!(names(&source), ["//:app", "//lib:text"]);
+}
+
+#[test]
+fn origin_is_carried_to_the_declaration() {
+    let chain = Origin::plugins(vec![plugin("ourgo", "0.1.0"), plugin("go", "1.2.0")]).unwrap();
+    let source = FakeSource::new(workspace(vec![
+        ("", file_by(&chain, vec![target("built", &[])], &["lib"])),
+        ("lib", file(vec![target("text", &[])], &[])),
+    ]));
+    let declarations = load(
+        &source,
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &Discovered::empty(),
+    )
+    .unwrap();
+    let origins: Vec<(String, &Origin)> = declarations
+        .iter()
+        .map(|declaration| (declaration.item().name().to_owned(), declaration.origin()))
+        .collect();
+    assert_eq!(
+        origins,
+        [
+            ("built".to_owned(), &chain),
+            ("text".to_owned(), &Origin::BuildFile),
+        ]
+    );
 }
 
 #[test]
@@ -87,11 +120,24 @@ fn a_shuffled_file_loads_to_byte_identical_canonical_json() {
         ("x", file(vec![], &[])),
         ("y", file(vec![], &[])),
     ]));
-    let a =
-        json::canonical::to_vec(&load(&ordered, &mut FakeDispatcher::default(), &entry()).unwrap())
-            .unwrap();
+    let a = json::canonical::to_vec(
+        &load(
+            &ordered,
+            &mut FakeDispatcher::default(),
+            &entry(),
+            &Discovered::empty(),
+        )
+        .unwrap(),
+    )
+    .unwrap();
     let b = json::canonical::to_vec(
-        &load(&shuffled, &mut FakeDispatcher::default(), &entry()).unwrap(),
+        &load(
+            &shuffled,
+            &mut FakeDispatcher::default(),
+            &entry(),
+            &Discovered::empty(),
+        )
+        .unwrap(),
     )
     .unwrap();
     assert_eq!(a, b);
@@ -106,7 +152,13 @@ fn a_directory_requested_twice_is_evaluated_once() {
         ("a", file(vec![], &["x"])),
         ("a/x", file(vec![], &[])),
     ]));
-    load(&source, &mut FakeDispatcher::default(), &entry()).unwrap();
+    load(
+        &source,
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &Discovered::empty(),
+    )
+    .unwrap();
     assert_eq!(source.evaluated(), [dir(""), dir("a"), dir("a/x")]);
 }
 
@@ -117,7 +169,14 @@ fn a_subdir_cannot_leave_the_workspace() {
             ("", file(vec![], &["lib"])),
             ("lib", file(vec![], &[escape])),
         ]));
-        match load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err() {
+        match load(
+            &source,
+            &mut FakeDispatcher::default(),
+            &entry(),
+            &Discovered::empty(),
+        )
+        .unwrap_err()
+        {
             Error::InvalidDeclaration {
                 provenance, field, ..
             } => {
@@ -132,7 +191,14 @@ fn a_subdir_cannot_leave_the_workspace() {
 #[test]
 fn a_missing_root_names_no_requester() {
     let source = FakeSource::new(workspace(vec![]));
-    match load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err() {
+    match load(
+        &source,
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &Discovered::empty(),
+    )
+    .unwrap_err()
+    {
         Error::MissingBuildFile {
             directory,
             requested_by,
@@ -147,7 +213,13 @@ fn a_missing_root_names_no_requester() {
 #[test]
 fn a_missing_subdir_names_the_file_that_requested_it() {
     let source = FakeSource::new(workspace(vec![("", file(vec![], &["lib"]))]));
-    let error = load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err();
+    let error = load(
+        &source,
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &Discovered::empty(),
+    )
+    .unwrap_err();
     assert_eq!(
         error.to_string(),
         "no build file in //lib (requested by build.lua)"
@@ -164,7 +236,13 @@ fn the_requester_of_a_shared_missing_directory_does_not_depend_on_call_order() {
             ("a", file(vec![], &["b/c"])),
             ("a/b", file(vec![], &["c"])),
         ]));
-        let error = load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err();
+        let error = load(
+            &source,
+            &mut FakeDispatcher::default(),
+            &entry(),
+            &Discovered::empty(),
+        )
+        .unwrap_err();
         assert_eq!(
             error.to_string(),
             "no build file in //a/b/c (requested by a/build.lua)"
@@ -181,7 +259,14 @@ fn an_evaluation_failure_passes_through_unchanged() {
         ("", file(vec![], &["lib"])),
         ("lib", FakeFile::Fails(failure.clone())),
     ]));
-    match load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err() {
+    match load(
+        &source,
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &Discovered::empty(),
+    )
+    .unwrap_err()
+    {
         Error::Evaluation {
             provenance,
             failure: found,
@@ -238,13 +323,14 @@ fn every_order_and_pace_loads_the_same_declarations() {
         &FakeSource::new(wide()),
         &mut FakeDispatcher::default(),
         &entry(),
+        &Discovered::empty(),
     )
     .unwrap();
     assert_eq!(expected.len(), 7);
     for mut dispatcher in dispatchers() {
         let how = format!("{:?} {:?}", dispatcher.order, dispatcher.pace);
         let source = FakeSource::new(wide());
-        let found = load(&source, &mut dispatcher, &entry()).unwrap();
+        let found = load(&source, &mut dispatcher, &entry(), &Discovered::empty()).unwrap();
         assert_eq!(found, expected, "{how}");
         assert_eq!(source.evaluated().len(), 7, "{how}: every file, once");
     }
@@ -267,7 +353,13 @@ fn every_order_and_pace_reports_the_same_error() {
         ])
     };
     let failure = |dispatcher: &mut FakeDispatcher| {
-        let error = load(&FakeSource::new(files()), dispatcher, &entry()).unwrap_err();
+        let error = load(
+            &FakeSource::new(files()),
+            dispatcher,
+            &entry(),
+            &Discovered::empty(),
+        )
+        .unwrap_err();
         (error.to_string(), format!("{error:?}"))
     };
     let expected = failure(&mut FakeDispatcher::default());
@@ -285,7 +377,14 @@ fn a_task_taken_after_the_error_evaluates_nothing() {
         ("b", file(vec![], &[])),
         ("c", file(vec![], &[])),
     ]));
-    match load(&source, &mut FakeDispatcher::default(), &entry()).unwrap_err() {
+    match load(
+        &source,
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &Discovered::empty(),
+    )
+    .unwrap_err()
+    {
         Error::Evaluation { provenance, .. } => {
             assert_eq!(provenance.file(), Path::new("a/build.lua"));
         }
@@ -306,7 +405,7 @@ fn a_lost_load_task_is_lost_build_files() {
             lose: BTreeMap::from([(1, loss)]),
             ..FakeDispatcher::default()
         };
-        match load(&source, &mut dispatcher, &entry()).unwrap_err() {
+        match load(&source, &mut dispatcher, &entry(), &Discovered::empty()).unwrap_err() {
             Error::LostBuildFiles { directories } => {
                 assert_eq!(directories, [dir("a")], "{loss:?}");
             }
@@ -341,7 +440,14 @@ fn a_dispatcher_that_fails_fails_the_load_with_its_error() {
         ("", file(vec![], &["a"])),
         ("a", file(vec![], &[])),
     ]));
-    match load(&source, &mut FailingDispatcher, &entry()).unwrap_err() {
+    match load(
+        &source,
+        &mut FailingDispatcher,
+        &entry(),
+        &Discovered::empty(),
+    )
+    .unwrap_err()
+    {
         Error::Adapter { port, diagnostic } => {
             assert_eq!(port, PortName::Dispatcher);
             assert_eq!(diagnostic.to_string(), "workers did not start");
@@ -374,31 +480,50 @@ fn check_graph_query_and_gc_load_in_any_order() {
     };
     let source = || FakeSource::new(wide());
 
-    let checked = pipeline::check(&source(), &mut FakeDispatcher::default(), &entry()).unwrap();
-    assert_eq!(
-        checked,
-        pipeline::check(&source(), &mut jumbled, &entry()).unwrap()
-    );
-
-    let canonical = |graph| json::canonical::to_vec(&graph).unwrap();
-    let graphed = pipeline::graph(&source(), &mut FakeDispatcher::default(), &entry()).unwrap();
-    assert_eq!(
-        canonical(graphed),
-        canonical(pipeline::graph(&source(), &mut jumbled, &entry()).unwrap())
-    );
-
-    let question = Query::new(Direction::Rdeps, Label::parse("//lib/core:base").unwrap());
-    let queried = pipeline::query(
+    let (history, cas) = (FakeHistory::default(), FakeCas::default());
+    let checked = pipeline::check(
         &source(),
         &mut FakeDispatcher::default(),
         &entry(),
+        &history,
+        &cas,
+    )
+    .unwrap();
+    assert_eq!(
+        checked,
+        pipeline::check(&source(), &mut jumbled, &entry(), &history, &cas).unwrap()
+    );
+
+    let canonical = |(graph, _)| json::canonical::to_vec(&graph).unwrap();
+    let graphed = pipeline::graph(
+        &source(),
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &history,
+        &cas,
+    )
+    .unwrap();
+    assert_eq!(
+        canonical(graphed),
+        canonical(pipeline::graph(&source(), &mut jumbled, &entry(), &history, &cas).unwrap())
+    );
+
+    let question = Query::new(Direction::Rdeps, Label::parse("//lib/core:base").unwrap());
+    let (queried, _) = pipeline::query(
+        &source(),
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &history,
+        &cas,
         &question,
     )
     .unwrap();
     assert!(!queried.is_empty());
     assert_eq!(
         queried,
-        pipeline::query(&source(), &mut jumbled, &entry(), &question).unwrap()
+        pipeline::query(&source(), &mut jumbled, &entry(), &history, &cas, &question)
+            .unwrap()
+            .0
     );
 
     let collected = |dispatcher: &mut FakeDispatcher| {
@@ -418,4 +543,63 @@ fn check_graph_query_and_gc_load_in_any_order() {
     let swept = collected(&mut FakeDispatcher::default());
     assert!(swept.rows_dropped > 0, "the sweep has something to drop");
     assert_eq!(swept, collected(&mut jumbled));
+}
+
+/// The one target a root build file making `item` declares.
+fn declared_target(item: buildl_core::StagedItem) -> Result<buildl_core::Target, Error> {
+    let source = FakeSource::new(workspace(vec![("", file(vec![item], &[]))]));
+    let declarations = load(
+        &source,
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &Discovered::empty(),
+    )?;
+    match declarations[0].item() {
+        Declared::Target(target) => Ok(target.clone()),
+        other => unreachable!("expected a target, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_discovery_target_outputs_its_name_dot_json() {
+    let target = declared_target(target_with("pkgs", |staged| {
+        staged.role = TargetRole::Discovery;
+    }))
+    .unwrap();
+
+    assert_eq!(target.role, TargetRole::Discovery);
+    let outputs: Vec<&str> = target.outputs.iter().map(OutputName::as_str).collect();
+    assert_eq!(outputs, ["pkgs.json"]);
+    assert_eq!(target.freshness, Freshness::Cached);
+}
+
+#[test]
+fn a_staged_discovery_with_outputs_is_refused() {
+    let error = declared_target(target_with("pkgs", |staged| {
+        staged.role = TargetRole::Discovery;
+        staged.outputs = Some(vec![Written::new("pkgs.json")]);
+    }))
+    .unwrap_err();
+
+    match error {
+        Error::InvalidDeclaration { field, .. } => assert_eq!(field, DeclarationField::Output),
+        other => unreachable!("expected InvalidDeclaration, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_staged_discovery_that_always_runs_is_refused() {
+    let error = declared_target(target_with("pkgs", |staged| {
+        staged.role = TargetRole::Discovery;
+        staged.freshness = Freshness::Always;
+    }))
+    .unwrap_err();
+
+    match error {
+        Error::InvalidDeclaration { field, source, .. } => {
+            assert_eq!(field, DeclarationField::Freshness);
+            assert!(matches!(*source, Error::NotAccepted { .. }), "{source:?}");
+        }
+        other => unreachable!("expected InvalidDeclaration, got {other:?}"),
+    }
 }

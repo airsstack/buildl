@@ -4,8 +4,9 @@
 //! both keys of every target, for a program to compare; this holds one line a target, saying in
 //! words what the comparison found.
 //!
-//! Responsibilities: [`plan_text`], and the words for each verdict, each reason and each
-//! difference between two keys.
+//! Responsibilities: [`plan_text`], and the words for each verdict, each reason, and each
+//! difference between two keys; the wants and the plugins behind them are shown as their own
+//! types render them.
 //!
 //! Non-responsibilities: reaching a verdict, which the phase that plans does; and writing the
 //! text anywhere.
@@ -73,6 +74,15 @@ fn labels(plan: &Plan, ids: &[NodeId]) -> String {
 /// runs only if a dependency it waits on produces something else reads
 /// `maybe  <label>: runs only if <those dependencies> produces something else`. The last line
 /// counts the three: `1 to run, 1 conditional, 2 clean`.
+///
+/// Between the targets and the counts come the plan's wants, worded as the approval prompt words
+/// them, as in `  run programs: go, protoc`. When plugins' targets are behind them, one line for
+/// each chain of each want follows, as in
+/// `  go: declared by plugin go@1.2.0 for //services/api:server`.
+///
+/// Each discovery target that is not up to date follows, as `<label> is not up to date; targets
+/// declared from it may change`: the targets declared from its last result may differ once it
+/// has run.
 #[must_use]
 pub fn plan_text(plan: &Plan) -> String {
     let mut lines = Vec::new();
@@ -99,6 +109,17 @@ pub fn plan_text(plan: &Plan) -> String {
             }
         }
     }
+    if !plan.wanted().is_empty() {
+        lines.push(format!("{}\n", plan.wanted()));
+    }
+    if !plan.attribution().is_empty() {
+        lines.push(format!("{}\n", plan.attribution()));
+    }
+    for label in plan.stale_discovery() {
+        lines.push(format!(
+            "{label} is not up to date; targets declared from it may change\n"
+        ));
+    }
     lines.push(format!(
         "{run} to run, {maybe} conditional, {clean} clean\n"
     ));
@@ -116,16 +137,17 @@ mod tests {
     use std::path::PathBuf;
 
     use buildl_core::{
-        Action, ActionCache, ActionKey, Approval, Approver, ApproverMode, Argument, BuildFile,
-        CacheRow, Ceiling, Clock, Command, ContentStore, Declaration, DeclarationSource, Declared,
-        DepProducts, Diagnostic, Digest, Digester, Directory, DirtyReason, Dispatcher, EnvName,
-        EnvValue, Error, Evaluated, EventLog, ExecStrategy, Execution, FileMode, FileStat, Found,
-        Freshness, GraphRecord, Host, InputDigest, InputStat, KeyComponents, Label, LiveSink,
-        Manifest, NetworkAccess, OutcomeEvent, OutputName, OutputPath, OwnComponents, Plan,
-        PlannedKey, Platform, PortName, PortSet, Ports, Produced, Program, Provenance, RawOutcome,
-        ReadyAction, Rerun, Result, Setting, SettingName, SettingValue, SourcePath, StatCache,
-        StatEntry, Target, TargetGraph, TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn,
-        Verdict, WantedSet, Workspace, plan, resolve,
+        Action, ActionCache, ActionKey, Approval, Approver, ApproverMode, Argument, Attribution,
+        BuildFile, CacheRow, Ceiling, Clock, Command, ContentStore, Declaration, DeclarationSource,
+        Declared, DepProducts, Diagnostic, Digest, Digester, Directory, DirtyReason, Discovered,
+        Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy, Execution,
+        FileMode, FileStat, Found, Freshness, GraphRecord, Host, InputDigest, InputStat,
+        KeyComponents, Label, LiveSink, LogLine, Manifest, NetworkAccess, Origin, OutcomeEvent,
+        OutputName, OutputPath, OwnComponents, Plan, PlannedKey, Platform, PluginCap, PluginName,
+        PluginRef, PluginVersion, PortName, PortSet, Ports, Produced, Program, Provenance,
+        RawOutcome, ReadyAction, Rerun, Result, RunHistory, Setting, SettingName, SettingValue,
+        SourcePath, StatCache, StatEntry, Target, TargetGraph, TargetRole, Timestamp, ToolIdentity,
+        ToolResolver, Turn, Verdict, WantedSet, Workspace, plan, resolve,
     };
 
     use super::{plan_text, reason_text};
@@ -149,6 +171,13 @@ mod tests {
                 },
                 execution: Execution::default(),
                 approver: ApproverMode::Manifest,
+                plugins: BTreeMap::from([(
+                    PluginName::parse("go")?,
+                    PluginCap {
+                        run: BTreeSet::from([Program::parse("cc")?]),
+                        ..PluginCap::default()
+                    },
+                )]),
             })
         }
     }
@@ -234,7 +263,7 @@ mod tests {
     }
 
     impl DeclarationSource for Unused {
-        fn evaluate(&self, _file: &BuildFile) -> Result<Evaluated> {
+        fn evaluate(&self, _file: &BuildFile, _discovered: &Discovered) -> Result<Evaluated> {
             Ok(Evaluated::Absent)
         }
     }
@@ -264,6 +293,12 @@ mod tests {
     impl EventLog for Unused {
         fn append(&mut self, _event: &OutcomeEvent) -> Result<()> {
             Err(unused(PortName::EventLog))
+        }
+    }
+
+    impl RunHistory for Unused {
+        fn lines(&self) -> Result<Vec<LogLine>> {
+            Err(unused(PortName::RunHistory))
         }
     }
 
@@ -319,7 +354,7 @@ mod tests {
     }
 
     impl Approver for Unused {
-        fn approve(&mut self, _wanted: &WantedSet) -> Result<Approval> {
+        fn approve(&mut self, _wanted: &WantedSet, _attribution: &Attribution) -> Result<Approval> {
             Err(unused(PortName::Approver))
         }
     }
@@ -401,7 +436,7 @@ mod tests {
     }
 
     fn declared(target: Target) -> Declaration {
-        Declaration::new(root_file(), Declared::Target(target))
+        Declaration::new(root_file(), Origin::BuildFile, Declared::Target(target))
     }
 
     fn paths(raw: &[&str]) -> Vec<SourcePath> {
@@ -419,6 +454,7 @@ mod tests {
         resolve(vec![
             Declaration::new(
                 root_file(),
+                Origin::BuildFile,
                 Declared::Setting(Setting {
                     name: SettingName::parse("mode").unwrap(),
                     default: SettingValue::parse("debug").unwrap(),
@@ -583,6 +619,9 @@ mod tests {
                 "run    //:new: never built\n",
                 "run    //:reordered: inputs reordered; dependencies reordered\n",
                 "run    //:script: tool changed\n",
+                "  run programs:   cc\n",
+                "  read variables: CC_FLAGS\n",
+                "  write into:     .buildl, out\n",
                 "6 to run, 1 conditional, 2 clean\n",
             )
         );
@@ -600,11 +639,42 @@ mod tests {
     }
 
     #[test]
-    fn a_plan_of_nothing_is_only_the_counts() {
+    fn plan_text_lists_attribution_under_the_wanted_set() {
+        let go = PluginRef {
+            name: PluginName::parse("go").unwrap(),
+            version: PluginVersion::parse("1.2.0").unwrap(),
+            run: BTreeSet::from([Program::parse("cc").unwrap()]),
+            env: BTreeSet::new(),
+        };
+        let graph = resolve(vec![
+            declared(target("//:docs", &["cc", "--doc"])),
+            Declaration::new(
+                root_file(),
+                Origin::plugins(vec![go]).unwrap(),
+                Declared::Target(target("//:app", &["cc", "-c"])),
+            ),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            plan_text(&planned(&graph, Rows::default())),
+            concat!(
+                "run    //:app: never built\n",
+                "run    //:docs: never built\n",
+                "  run programs: cc\n",
+                "  write into:   .buildl, out\n",
+                "  cc: declared by plugin go@1.2.0 for //:app\n",
+                "2 to run, 0 conditional, 0 clean\n",
+            )
+        );
+    }
+
+    #[test]
+    fn a_plan_of_nothing_is_the_wants_of_every_build_and_the_counts() {
         let graph = resolve(Vec::new()).unwrap();
         assert_eq!(
             plan_text(&planned(&graph, Rows::default())),
-            "0 to run, 0 conditional, 0 clean\n"
+            "  write into: .buildl, out\n0 to run, 0 conditional, 0 clean\n"
         );
     }
 }

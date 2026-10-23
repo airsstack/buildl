@@ -11,7 +11,11 @@
 //!
 //! This file holds only type definitions, so it carries no logic to unit-test.
 
-use crate::types::{ApproverMode, Ceiling, Directory, Isolation, Timeout, Workers};
+use std::collections::BTreeMap;
+
+use crate::types::{
+    ApproverMode, Ceiling, Directory, Isolation, PluginCap, PluginName, Timeout, Workers,
+};
 
 /// A workspace as its manifest describes it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +31,9 @@ pub struct Workspace {
     /// How the workspace settles whether a build may run. No phase reads it: whoever assembles
     /// the adapters picks the approver from it.
     pub approver: ApproverMode,
+    /// What the workspace lets each plugin have, by plugin name. A plugin with no entry has the
+    /// empty cap.
+    pub plugins: BTreeMap<PluginName, PluginCap>,
 }
 
 /// How a workspace wants its actions run: the manifest's `[execution]` table.

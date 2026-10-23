@@ -25,6 +25,19 @@ pub enum FileMode {
     Executable,
 }
 
+impl FileMode {
+    /// The mode of a file whose Unix permission bits are `bits`: executable when any of the
+    /// three execute bits is set.
+    #[must_use]
+    pub const fn of_unix_bits(bits: u32) -> Self {
+        if bits & 0o111 == 0 {
+            Self::Plain
+        } else {
+            Self::Executable
+        }
+    }
+}
+
 /// One regular file: the digest of its bytes, and whether it may be run.
 ///
 /// Two files with the same bytes and different modes are different files.
@@ -47,6 +60,20 @@ mod tests {
     use super::{FileMode, StoredFile};
     use crate::json::canonical;
     use crate::types::Digest;
+
+    #[test]
+    fn any_execute_bit_makes_a_file_executable() {
+        for bits in [0o000, 0o644, 0o600, 0o4_644] {
+            assert_eq!(FileMode::of_unix_bits(bits), FileMode::Plain, "{bits:o}");
+        }
+        for bits in [0o755, 0o100, 0o010, 0o001, 0o610] {
+            assert_eq!(
+                FileMode::of_unix_bits(bits),
+                FileMode::Executable,
+                "{bits:o}"
+            );
+        }
+    }
 
     #[test]
     fn a_mode_serializes_as_its_lowercase_name_and_reads_back() {

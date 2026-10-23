@@ -8,12 +8,13 @@
     reason = "fixtures unwrap known-valid text; a panic is the intended failure signal"
 )]
 
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 
 use crate::types::{
     Action, Alias, Argument, Command, Declaration, Declared, Directory, Freshness, Label,
-    NetworkAccess, OutputName, Provenance, Rule, Setting, SettingName, SettingValue, Target,
-    TargetRole,
+    NetworkAccess, Origin, OutputName, PluginName, PluginRef, PluginVersion, Provenance, Rule,
+    Setting, SettingName, SettingValue, Target, TargetRole,
 };
 
 /// A label from known-valid text.
@@ -45,12 +46,12 @@ pub(crate) fn command(arguments: &[&str]) -> Command {
 
 /// `item`, declared by the build file of `directory`.
 pub(crate) fn declared_in(directory: &str, item: Declared) -> Declaration {
-    Declaration::new(file(directory), item)
+    Declaration::new(file(directory), Origin::BuildFile, item)
 }
 
 /// `item`, declared by the build file of its label's own directory.
 fn declared(label: &Label, item: Declared) -> Declaration {
-    Declaration::new(file(label.directory().as_str()), item)
+    Declaration::new(file(label.directory().as_str()), Origin::BuildFile, item)
 }
 
 /// A build target running `cc`, with one output named after it, before `change` is applied.
@@ -119,4 +120,20 @@ pub(crate) fn setting_item(name: &str) -> Declared {
         name: SettingName::parse(name).unwrap(),
         default: SettingValue::parse("").unwrap(),
     })
+}
+
+/// A plugin named `name` at version `1.0.0`, whose manifest asks for nothing.
+pub(crate) fn plugin(name: &str) -> PluginRef {
+    PluginRef {
+        name: PluginName::parse(name).unwrap(),
+        version: PluginVersion::parse("1.0.0").unwrap(),
+        run: BTreeSet::new(),
+        env: BTreeSet::new(),
+    }
+}
+
+/// `declaration`, made by the plugins of `chain`, outermost first.
+pub(crate) fn made_by(chain: Vec<PluginRef>, declaration: Declaration) -> Declaration {
+    let (provenance, _, item) = declaration.into_parts();
+    Declaration::new(provenance, Origin::plugins(chain).unwrap(), item)
 }

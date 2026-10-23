@@ -5,27 +5,29 @@
 //! its type refuses is reported with the line and the column it was written at, which only the
 //! step that still holds the manifest's text can say.
 //!
-//! Responsibilities: the three values a manifest is read into — [`entry`], [`workspace`] and
-//! [`declaration`] — with every default; [`position`]; and the error for a document the parser
-//! refused, [`unparsed`].
+//! Responsibilities: the four values a manifest is read into — [`entry`], [`workspace`],
+//! [`declaration`] and [`plugins`] — with every default; [`position`]; and the error for a
+//! document the parser refused, [`unparsed`].
 //!
 //! Non-responsibilities: the shape of the tables, and reading the file they come from.
 
 use core::fmt;
 use core::num::NonZeroU64;
 use core::ops::Range;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
-    ApproverMode, Ceiling, Diagnostic, Directory, EntryName, EnvName, Error, Execution, Isolation,
-    PortName, Program, Result, Timeout, Workers, Workspace,
+    ApproverMode, Ceiling, Diagnostic, Directory, EntryName, EnvName, Error, Execution, GitUrl,
+    Isolation, PluginCap, PluginName, PluginNetwork, PluginSource, PortName, Program, Result, Rev,
+    Timeout, Workers, Workspace,
 };
 use toml::Spanned;
 
 use crate::manifest::memory::memory_bytes;
 use crate::manifest::root::MANIFEST_FILE;
 use crate::manifest::schema::{
-    ApproverTable, CeilingTable, DeclarationTable, ExecutionTable, Raw, WorkspaceTable,
+    ApproverTable, CeilingTable, DeclarationTable, ExecutionTable, PluginTable, Raw, Tabular,
+    WorkspaceTable,
 };
 use crate::manifest::toml_manifest::DeclarationSettings;
 
@@ -56,7 +58,8 @@ pub(crate) fn entry(text: &str, table: &WorkspaceTable) -> Result<EntryName> {
 /// ceiling, how it wants its actions run, and which approver answers for what a build wants.
 ///
 /// Nothing is granted that the manifest does not write: neither the output directory nor the
-/// state directory is added to the ceiling.
+/// state directory is added to the ceiling. Every plugin the manifest names has an entry in
+/// `plugins`, empty when the manifest gives it no cap.
 pub(crate) fn workspace(text: &str, raw: &Raw) -> Result<Workspace> {
     unused(text, &raw.workspace)?;
     let state = Directory::parse(STATE)?;
@@ -66,7 +69,175 @@ pub(crate) fn workspace(text: &str, raw: &Raw) -> Result<Workspace> {
         ceiling: ceiling(text, &raw.ceiling)?,
         execution: execution(text, &raw.execution)?,
         approver: approver(text, &raw.approver)?,
+        plugins: caps(text, &raw.plugins)?,
     })
+}
+
+/// Where each plugin comes from: exactly one of `path`, `git` and `github`, and a `rev` with
+/// the last two.
+///
+/// A path plugin's directory may not be `workspace`'s output or state directory, hold either, or
+/// lie inside either: buildl writes there.
+pub(crate) fn plugins(
+    text: &str,
+    table: &BTreeMap<Spanned<String>, Tabular<PluginTable>>,
+    workspace: &Workspace,
+) -> Result<BTreeMap<PluginName, PluginSource>> {
+    table
+        .iter()
+        .map(|(name, Tabular(plugin))| {
+            Ok((
+                plugin_name(text, name)?,
+                source(text, name, plugin, workspace)?,
+            ))
+        })
+        .collect()
+}
+
+/// What the workspace lets each plugin have. A list or flag left out allows nothing.
+fn caps(
+    text: &str,
+    table: &BTreeMap<Spanned<String>, Tabular<PluginTable>>,
+) -> Result<BTreeMap<PluginName, PluginCap>> {
+    table
+        .iter()
+        .map(|(name, Tabular(plugin))| {
+            let name = plugin_name(text, name)?;
+            let key = |field: &str| format!("plugins.{name}.{field}");
+            let cap = PluginCap {
+                run: set(text, &key("proc.run"), &plugin.proc.run, |raw| {
+                    Program::parse(raw)
+                })?,
+                env: set(text, &key("env.read"), &plugin.env.read, |raw| {
+                    EnvName::parse(raw)
+                })?,
+                network: match plugin.network.as_ref().map(|written| *written.get_ref()) {
+                    Some(true) => PluginNetwork::Allowed,
+                    Some(false) | None => PluginNetwork::Sealed,
+                },
+            };
+            Ok((name, cap))
+        })
+        .collect()
+}
+
+/// The name a `[plugins.<name>]` header gives.
+fn plugin_name(text: &str, written: &Spanned<String>) -> Result<PluginName> {
+    PluginName::parse(written.get_ref().as_str())
+        .map_err(|reason| refused(text, "plugins", written, &reason))
+}
+
+/// The source `plugin` names, whose table is written under `name`.
+fn source(
+    text: &str,
+    name: &Spanned<String>,
+    plugin: &PluginTable,
+    workspace: &Workspace,
+) -> Result<PluginSource> {
+    let table = format!("plugins.{}", name.get_ref());
+    let field = |field: &str| format!("{table}.{field}");
+    match (&plugin.path, &plugin.git, &plugin.github) {
+        (Some(path), None, None) => {
+            if let Some(rev) = &plugin.rev {
+                return Err(refused(
+                    text,
+                    &field("rev"),
+                    rev,
+                    &"a path plugin has no rev",
+                ));
+            }
+            plugin_directory(path.get_ref(), workspace)
+                .map(PluginSource::Path)
+                .map_err(|reason| refused(text, &field("path"), path, &reason))
+        }
+        (None, Some(git), None) => {
+            let url = GitUrl::parse(git.get_ref().as_str())
+                .map_err(|reason| refused(text, &field("git"), git, &reason))?;
+            pinned(text, name, &table, plugin, url)
+        }
+        (None, None, Some(github)) => {
+            let url = GitUrl::github(github.get_ref())
+                .map_err(|reason| refused(text, &field("github"), github, &reason))?;
+            pinned(text, name, &table, plugin, url)
+        }
+        _ => Err(refused(
+            text,
+            &table,
+            name,
+            &"must name exactly one of path, git and github",
+        )),
+    }
+}
+
+/// The git source at `url` and the `rev` `plugin` pins it to.
+fn pinned(
+    text: &str,
+    name: &Spanned<String>,
+    table: &str,
+    plugin: &PluginTable,
+    url: GitUrl,
+) -> Result<PluginSource> {
+    let rev = plugin.rev.as_ref().ok_or_else(|| {
+        refused(
+            text,
+            table,
+            name,
+            &"a git plugin needs a rev, a tag or a full commit",
+        )
+    })?;
+    let rev = Rev::parse(rev.get_ref())
+        .map_err(|reason| refused(text, &format!("{table}.rev"), rev, &reason))?;
+    Ok(PluginSource::Git { url, rev })
+}
+
+/// Why a path plugin's directory is refused.
+enum PathFault {
+    /// It is not a directory name.
+    Name(Error),
+    /// It is, holds or lies inside `directory`, which is the workspace's `what`.
+    Overlaps {
+        raw: String,
+        what: &'static str,
+        directory: Directory,
+    },
+}
+
+impl fmt::Display for PathFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Name(error) => error.fmt(f),
+            Self::Overlaps {
+                raw,
+                what,
+                directory,
+            } => f.write_str(&invalid(
+                "plugin directory",
+                raw,
+                &format!("must not be, hold or lie inside the {what} {directory}"),
+            )),
+        }
+    }
+}
+
+/// The directory a path plugin names, or why it cannot be one.
+fn plugin_directory(
+    raw: &str,
+    workspace: &Workspace,
+) -> core::result::Result<Directory, PathFault> {
+    let path = Directory::parse(raw).map_err(PathFault::Name)?;
+    for (what, directory) in [
+        ("output directory", &workspace.out),
+        ("state directory", &workspace.state),
+    ] {
+        if path.contains(directory) || directory.contains(&path) {
+            return Err(PathFault::Overlaps {
+                raw: raw.to_owned(),
+                what,
+                directory: directory.clone(),
+            });
+        }
+    }
+    Ok(path)
 }
 
 /// The ceilings the manifest sets for evaluating a build file, each `None` when it sets none.

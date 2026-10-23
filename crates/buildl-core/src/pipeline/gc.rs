@@ -4,7 +4,8 @@
 //! Its own file because it is a function over six ports, the build file source, the dispatcher
 //! that runs its evaluations, the action cache, the content store, the store's sweep and the
 //! build log's history, that sits beside the [`Pipeline`](super::Pipeline) driver and builds
-//! nothing: it loads once, as `build` does, and changes only what the cache and the store hold.
+//! nothing: it loads the build files as `plan` does, and changes only what the cache and the
+//! store hold.
 //!
 //! Responsibilities: [`Collected`] and [`gc`](fn@gc).
 //!
@@ -14,9 +15,9 @@
 
 use std::collections::BTreeSet;
 
+use crate::discovery::{load_twice, results};
 use crate::error::Result;
 use crate::history::logged_outputs;
-use crate::load::load;
 use crate::ports::{ActionCache, ContentStore, DeclarationSource, Dispatcher, RunHistory, Sweep};
 use crate::resolve::resolve;
 use crate::types::{CacheRow, Digest, EntryName, Label, OutputManifest};
@@ -37,8 +38,9 @@ pub struct Collected {
 ///
 /// In order:
 ///
-/// 1. Loads the workspace once through `source`, run by `dispatcher`, and resolves it into the
-///    target graph.
+/// 1. Loads the workspace through `source`, run by `dispatcher`, with the last result of each
+///    discovery target as `history` and `store` hold it, and resolves it into the target graph:
+///    a target declared from a discovery result is declared, so its row is kept.
 /// 2. Forgets each row of `cache` whose label is not a target of that graph.
 /// 3. Marks what is still read: for each remaining row, its output manifests, the files each
 ///    manifest names, and its stdout and stderr; and what the build log names, through `history`.
@@ -51,7 +53,9 @@ pub struct Collected {
 ///
 /// # Errors
 ///
-/// Returns whatever the load returns, then whatever [`resolve`](fn@crate::resolve) returns, then
+/// Returns whatever the load returns, [`Error::DiscoveryChanged`](crate::Error::DiscoveryChanged)
+/// when reading discovery results changes which discovery targets are declared, then whatever
+/// [`resolve`](fn@crate::resolve) returns, then
 /// the first port failure of steps 2 and 3, then a failure of `sweep.held()` in step 4, all
 /// before any blob is removed. A failure while removing returns at once; what was already removed stays removed.
 pub fn gc<S, D, A, C, W, H>(
@@ -71,7 +75,10 @@ where
     W: Sweep,
     H: RunHistory,
 {
-    let graph = resolve(load(source, dispatcher, entry)?)?;
+    let loaded = load_twice(source, dispatcher, entry, |labels| {
+        results(history, store, labels)
+    })?;
+    let graph = resolve(loaded.declarations)?;
     let declared: BTreeSet<&Label> = graph.nodes().iter().map(|node| &node.label).collect();
     let mut rows_dropped = 0;
     for label in cache.labels() {
@@ -144,10 +151,11 @@ mod tests {
     };
     use crate::types::{
         ActionKey, Argument, BuildFile, CacheRow, Command, DeclarationOrder, Diagnostic, Digest,
-        EntryName, Evaluated, FileMode, Freshness, KeyComponents, Label, LogLine, LoggedRun,
-        NetworkAccess, OutcomeClass, OutputManifest, OutputName, OutputPath, OwnComponents,
-        Platform, Provenance, StagedDeclaration, StagedFile, StagedItem, StagedTarget, StoredFile,
-        TargetName, TargetRole, Timestamp, Tree, TreeEntry, TreePath, Turn, Written,
+        Discovered, EntryName, Evaluated, FileMode, Freshness, KeyComponents, Label, LogLine,
+        LoggedRun, NetworkAccess, Origin, OutcomeClass, OutputManifest, OutputName, OutputPath,
+        OwnComponents, Platform, Provenance, StagedDeclaration, StagedFile, StagedItem,
+        StagedTarget, StoredFile, TargetName, TargetRole, Timestamp, Tree, TreeEntry, TreePath,
+        Turn, Written,
     };
 
     /// The calls the cache and the sweep received, in order, shared by both.
@@ -186,7 +194,7 @@ mod tests {
     struct Source(Option<Vec<&'static str>>);
 
     impl DeclarationSource for Source {
-        fn evaluate(&self, file: &BuildFile) -> Result<Evaluated> {
+        fn evaluate(&self, file: &BuildFile, _discovered: &Discovered) -> Result<Evaluated> {
             let names = self.0.as_ref().ok_or_else(|| Error::Evaluation {
                 provenance: Provenance::new(file.file().to_path_buf(), file.directory().clone()),
                 failure: EvaluationFailure::Runtime,
@@ -197,6 +205,7 @@ mod tests {
                 .zip(0..)
                 .map(|(name, order)| StagedDeclaration {
                     order: DeclarationOrder::new(order),
+                    origin: Origin::BuildFile,
                     item: StagedItem::Target(StagedTarget {
                         name: Written::<TargetName>::new(*name),
                         role: TargetRole::Build,

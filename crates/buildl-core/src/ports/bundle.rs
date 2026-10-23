@@ -13,7 +13,7 @@
 
 use crate::ports::{
     ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
-    ExecStrategy, GraphRecord, Host, Manifest, Reporter, StatCache, ToolResolver,
+    ExecStrategy, GraphRecord, Host, Manifest, Reporter, RunHistory, StatCache, ToolResolver,
 };
 
 /// One implementation of each port, chosen together.
@@ -27,12 +27,13 @@ use crate::ports::{
 /// use std::sync::{Mutex, PoisonError};
 ///
 /// use buildl_core::{
-///     ActionCache, Approval, Approver, BuildFile, CacheRow, Captured, Ceiling, Channel, Clock,
-///     ContentStore, DeclarationSource, Diagnostic, Digest, Digester, Directory, Dispatcher,
-///     EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy, FileMode, Found, GraphRecord,
-///     Host, InputStat, Label, LiveSink, Manifest, OutcomeEvent, OutputPath, Platform, PortName,
-///     Ports, Program, RawOutcome, ReadyAction, Reporter, Result, SourcePath, StatCache,
-///     StatEntry, Summary, TargetGraph, Timestamp, ToolResolver, Turn, WantedSet, Workspace,
+///     ActionCache, Approval, Approver, Attribution, BuildFile, CacheRow, Captured, Ceiling,
+///     Channel, Clock, ContentStore, DeclarationSource, Diagnostic, Digest, Digester, Directory,
+///     Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy,
+///     FileMode, Found, GraphRecord, Host, InputStat, Label, LiveSink, LogLine, Manifest,
+///     OutcomeEvent, OutputPath, Platform, PortName, Ports, Program, RawOutcome, ReadyAction,
+///     Reporter, Result, RunHistory, SourcePath, StatCache, StatEntry, Summary, TargetGraph,
+///     Timestamp, ToolResolver, Turn, WantedSet, Workspace,
 /// };
 ///
 /// /// Every port at once, each answering that there is nothing.
@@ -47,7 +48,7 @@ use crate::ports::{
 /// }
 ///
 /// impl DeclarationSource for Nothing {
-///     fn evaluate(&self, _file: &BuildFile) -> Result<Evaluated> {
+///     fn evaluate(&self, _file: &BuildFile, _discovered: &Discovered) -> Result<Evaluated> {
 ///         Ok(Evaluated::Absent)
 ///     }
 /// }
@@ -65,6 +66,7 @@ use crate::ports::{
 ///             },
 ///             execution: buildl_core::Execution::default(),
 ///             approver: buildl_core::ApproverMode::Manifest,
+///             plugins: std::collections::BTreeMap::new(),
 ///         })
 ///     }
 /// }
@@ -153,6 +155,12 @@ use crate::ports::{
 ///     }
 /// }
 ///
+/// impl RunHistory for Nothing {
+///     fn lines(&self) -> Result<Vec<LogLine>> {
+///         Err(nothing(PortName::RunHistory))
+///     }
+/// }
+///
 /// impl ExecStrategy for Nothing {
 ///     type Dir = ();
 ///
@@ -224,7 +232,7 @@ use crate::ports::{
 /// }
 ///
 /// impl Approver for Nothing {
-///     fn approve(&mut self, _wanted: &WantedSet) -> Result<Approval> {
+///     fn approve(&mut self, _wanted: &WantedSet, _attribution: &Attribution) -> Result<Approval> {
 ///         Ok(Approval::Granted)
 ///     }
 /// }
@@ -273,8 +281,8 @@ pub trait Ports {
     type Cache: ActionCache;
     /// Where what actions produce is stored, by content.
     type Cas: ContentStore;
-    /// Where the record of how each target ended is written.
-    type Log: EventLog;
+    /// Where the record of how each target ended is written, and read back from.
+    type Log: EventLog + RunHistory;
     /// How one action is run.
     type Strategy: ExecStrategy;
     /// How several actions are run at once.

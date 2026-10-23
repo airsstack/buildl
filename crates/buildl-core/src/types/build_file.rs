@@ -14,7 +14,7 @@ use core::fmt;
 use std::path::Path;
 
 use crate::types::{
-    Argument, Description, Directory, EnvName, Freshness, Label, NetworkAccess, OutputName,
+    Argument, Description, Directory, EnvName, Freshness, Label, NetworkAccess, Origin, OutputName,
     Provenance, SettingName, SettingValue, SourcePath, TargetName, TargetRole, Written,
 };
 
@@ -107,6 +107,8 @@ pub struct StagedSubdir {
 pub struct StagedDeclaration {
     /// The call's position among the file's calls.
     pub order: DeclarationOrder,
+    /// Whose code made the call: the workspace's own build file, or a chain of plugins.
+    pub origin: Origin,
     /// What the call declared.
     pub item: StagedItem,
 }
@@ -129,7 +131,7 @@ pub enum StagedItem {
 pub struct StagedTarget {
     /// The target's name, never a label: a declaration stays in its own directory.
     pub name: Written<TargetName>,
-    /// Whether it was declared with `b.target` or `b.test`.
+    /// Whether it was declared with `b.target`, `b.test` or `b.discover`.
     pub role: TargetRole,
     /// The `rule` field, if given.
     pub rule: Option<Written<Label>>,

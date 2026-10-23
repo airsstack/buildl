@@ -17,14 +17,17 @@
 mod approver;
 mod clean_gc;
 mod common;
+mod discovery;
 mod doctor;
 mod facade;
 mod failure;
+mod fetch;
 mod identical;
 mod incremental;
 mod log;
 mod named;
 mod parallel_load;
+mod plugins;
 mod recovery;
 mod sandbox;
 mod test;

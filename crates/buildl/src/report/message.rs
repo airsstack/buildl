@@ -7,6 +7,7 @@
 //! Responsibilities:
 //!
 //! - [`check_line`] — that the build files are sound.
+//! - [`not_run_lines`] — which discovery targets a command had no result for.
 //! - [`clean_line`] — that the output directory was cleaned.
 //! - [`gc_line`] — what a collection of the store dropped and removed.
 //! - [`error_text`] — why the command failed.
@@ -15,12 +16,12 @@
 //! error's own `Display`; and choosing an exit status, which reads the error's variant, never
 //! this text.
 
-use core::fmt::Display;
+use core::fmt::{Display, Write as _};
 use std::collections::BTreeSet;
 use std::path::Path;
 
 use buildl_core::json::canonical;
-use buildl_core::{Collected, Declaration, Directory, Error};
+use buildl_core::{Collected, Declaration, Directory, Error, Label};
 
 use crate::report::paint::Paint;
 use crate::state::Cleaned;
@@ -51,6 +52,18 @@ pub fn check_line(declarations: &[Declaration]) -> String {
         counted(declarations.len(), "declaration", "declarations"),
         counted(files.len(), "build file", "build files")
     )
+}
+
+/// What a command says of the discovery targets it found no result for: one line each, in the
+/// order given, as `//svc:pkgs has not run; run buildl build`, each ending with a newline. No
+/// label is no text.
+#[must_use]
+pub fn not_run_lines(missing: &[Label]) -> String {
+    let mut text = String::new();
+    for label in missing {
+        let _ = writeln!(text, "{label} has not run; run buildl build");
+    }
+    text
 }
 
 /// What `clean` says: that the output directory `out` was removed, or that it held nothing, as
@@ -133,14 +146,28 @@ mod tests {
 
     use buildl_core::{
         Action, Argument, Command, Declaration, Declared, Directory, Error, Freshness, Label,
-        NetworkAccess, Provenance, Setting, SettingName, SettingValue, Target, TargetRole,
+        NetworkAccess, Origin, Provenance, Setting, SettingName, SettingValue, Target, TargetRole,
     };
 
     use buildl_core::Collected;
 
-    use super::{check_line, clean_line, counted, error_text, gc_line};
+    use super::{check_line, clean_line, counted, error_text, gc_line, not_run_lines};
     use crate::report::paint::Paint;
     use crate::state::Cleaned;
+
+    #[test]
+    fn not_run_lines_name_each_label_on_a_line_of_its_own() {
+        let labels = [
+            Label::parse("//svc:pkgs").unwrap(),
+            Label::parse("//svc:more").unwrap(),
+        ];
+
+        assert_eq!(
+            not_run_lines(&labels),
+            "//svc:pkgs has not run; run buildl build\n//svc:more has not run; run buildl build\n"
+        );
+        assert_eq!(not_run_lines(&[]), "");
+    }
 
     #[test]
     fn clean_line_names_the_removed_directory() {
@@ -219,6 +246,7 @@ mod tests {
     fn setting(directory: &str, name: &str) -> Declaration {
         Declaration::new(
             build_file(directory),
+            Origin::BuildFile,
             Declared::Setting(Setting {
                 name: SettingName::parse(name).unwrap(),
                 default: SettingValue::parse("debug").unwrap(),
@@ -261,6 +289,7 @@ mod tests {
         let label = Label::parse(raw).unwrap();
         Declaration::new(
             build_file(label.directory().as_str()),
+            Origin::BuildFile,
             Declared::Target(Target {
                 label,
                 role: TargetRole::Build,
@@ -328,12 +357,12 @@ mod tests {
                 "    first evaluation:  {\"item\":{\"Target\":{\"action\":{\"Run\":[\"cc\"]},",
                 "\"deps\":[],\"env\":[],\"freshness\":\"Cached\",\"inputs\":[],",
                 "\"label\":\"//lib:text\",\"network\":\"Sealed\",\"outputs\":[],",
-                "\"role\":\"Build\"}},",
+                "\"role\":\"Build\"}},\"origin\":\"BuildFile\",",
                 "\"provenance\":{\"directory\":\"lib\",\"file\":\"lib/build.lua\"}}\n",
                 "    second evaluation: {\"item\":{\"Target\":{\"action\":{\"Run\":[\"cc\"]},",
                 "\"deps\":[\"//:main.o\"],\"env\":[],\"freshness\":\"Cached\",\"inputs\":[],",
                 "\"label\":\"//lib:text\",\"network\":\"Sealed\",\"outputs\":[],",
-                "\"role\":\"Build\"}},",
+                "\"role\":\"Build\"}},\"origin\":\"BuildFile\",",
                 "\"provenance\":{\"directory\":\"lib\",\"file\":\"lib/build.lua\"}}\n",
             )
         );
@@ -351,7 +380,7 @@ mod tests {
             concat!(
                 "error: build.lua: declarations differ between two evaluations\n",
                 "    first evaluation:  {\"item\":{\"Setting\":{\"default\":\"debug\",",
-                "\"name\":\"mode\"}},\"provenance\":{\"directory\":\"\",\"file\":\"build.lua\"}}\n",
+                "\"name\":\"mode\"}},\"origin\":\"BuildFile\",\"provenance\":{\"directory\":\"\",\"file\":\"build.lua\"}}\n",
                 "    second evaluation: nothing\n",
             )
         );

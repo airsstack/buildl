@@ -20,13 +20,13 @@ use std::sync::atomic::AtomicBool;
 
 use super::evaluation::{FileResult, evaluate_file};
 use super::loading::Loading;
-use crate::error::{ActionFound, DeclarationField, Error, Result};
+use crate::error::{ActionFound, DeclarationField, Error, NameKind, Result};
 use crate::ports::{DeclarationSource, Dispatcher};
 use crate::types::{
     Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
-    Directory, EntryName, Label, OutputName, Provenance, Rule, Setting, SourcePath, StagedAlias,
-    StagedDeclaration, StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target,
-    TargetName, TargetRole, Turn, Written,
+    Directory, Discovered, EntryName, Freshness, Label, Origin, OutputName, Provenance, Rule,
+    Setting, SourcePath, StagedAlias, StagedDeclaration, StagedItem, StagedRule, StagedSetting,
+    StagedSubdir, StagedTarget, Target, TargetName, TargetRole, Turn, Written,
 };
 
 /// Evaluates the workspace's build files and returns their declarations, validated and sorted.
@@ -34,9 +34,10 @@ use crate::types::{
 /// The walk starts at the workspace root and follows `subdir` requests, evaluating each directory
 /// once, with `dispatcher` deciding how many files are evaluated at a time. Nothing is discovered
 /// from the filesystem: the evaluated build files are exactly the root's and those a `subdir`
-/// call reaches. The result is sorted by declaring directory, then declared name, then the whole
-/// declaration, and the error is the one a walk in breadth-first order would meet first, so
-/// neither depends on the order anything was evaluated or declared in.
+/// call reaches. `discovered` is handed to every evaluation. The result is sorted by declaring
+/// directory, then declared name, then the whole declaration, and the error is the one a walk in
+/// breadth-first order would meet first, so neither depends on the order anything was evaluated or
+/// declared in.
 ///
 /// # Errors
 ///
@@ -45,7 +46,7 @@ use crate::types::{
 /// - whatever `source` returns for a build file it cannot evaluate;
 /// - [`Error::MissingBuildFile`] when the root or a requested directory holds no build file;
 /// - [`Error::InvalidDeclaration`] when a staged value fails its grammar, including a `subdir`
-///   that would leave the workspace;
+///   that would leave the workspace, and a discovery target that names `outputs` or always runs;
 /// - [`Error::ActionConflict`] when a target names both or neither of `rule` and `run`;
 /// - [`Error::LostBuildFiles`] when `dispatcher` returned without evaluating a build file it was
 ///   given;
@@ -55,12 +56,13 @@ pub fn load<S: DeclarationSource, D: Dispatcher>(
     source: &S,
     dispatcher: &mut D,
     entry: &EntryName,
+    discovered: &Discovered,
 ) -> Result<Vec<Declaration>> {
     let stop = AtomicBool::new(false);
     let mut loading = Loading::new(entry, &stop);
     dispatcher.dispatch(
         |directory: Directory, _tell: &(dyn Fn(()) + Sync)| {
-            let result = evaluate_file(source, entry, &directory, &stop);
+            let result = evaluate_file(source, entry, &directory, discovered, &stop);
             (directory, result)
         },
         |turn: Turn<(), (Directory, FileResult)>| match turn {
@@ -82,9 +84,11 @@ pub(super) fn build_file(directory: &Directory, entry: &EntryName) -> BuildFile 
     BuildFile::new(Provenance::new(path, directory.clone()))
 }
 
-/// Where a staged value was written: the build file, and the call's position in it.
+/// Where a staged value was written: the build file, whose code made the call, and the call's
+/// position in the file.
 struct Site<'a> {
     provenance: &'a Provenance,
+    origin: &'a Origin,
     order: DeclarationOrder,
 }
 
@@ -98,6 +102,7 @@ impl Site<'_> {
     fn invalid(&self, field: DeclarationField) -> impl FnOnce(Error) -> Error + '_ {
         move |source| Error::InvalidDeclaration {
             provenance: self.provenance.clone(),
+            origin: self.origin.clone(),
             order: self.order,
             field,
             source: Box::new(source),
@@ -108,6 +113,7 @@ impl Site<'_> {
     fn conflict(&self, found: ActionFound) -> Error {
         Error::ActionConflict {
             provenance: self.provenance.clone(),
+            origin: self.origin.clone(),
             order: self.order,
             found,
         }
@@ -125,6 +131,7 @@ pub(super) fn resolve_subdirs(
     for subdir in subdirs {
         let site = Site {
             provenance,
+            origin: &Origin::BuildFile,
             order: subdir.order,
         };
         let directory = subdir
@@ -142,6 +149,7 @@ pub(super) fn resolve_subdirs(
 pub(super) fn convert(staged: StagedDeclaration, provenance: &Provenance) -> Result<Declaration> {
     let site = Site {
         provenance,
+        origin: &staged.origin,
         order: staged.order,
     };
     let item = match staged.item {
@@ -150,7 +158,7 @@ pub(super) fn convert(staged: StagedDeclaration, provenance: &Provenance) -> Res
         StagedItem::Alias(alias) => Declared::Alias(convert_alias(&alias, &site)?),
         StagedItem::Setting(setting) => Declared::Setting(convert_setting(&setting, &site)?),
     };
-    Ok(Declaration::new(provenance.clone(), item))
+    Ok(Declaration::new(provenance.clone(), staged.origin, item))
 }
 
 /// The label a declared name gets: always in the declaring directory.
@@ -183,8 +191,33 @@ fn convert_input(input: &Written<SourcePath>, site: &Site<'_>) -> Result<SourceP
     SourcePath::parse(joined).map_err(site.invalid(DeclarationField::Input))
 }
 
+/// Refuses what a discovery target may not carry: its output is fixed and it is always cached.
+fn refuse_discovery_overrides(staged: &StagedTarget, site: &Site<'_>) -> Result<()> {
+    if let Some(outputs) = &staged.outputs {
+        let value = outputs
+            .first()
+            .map_or_else(String::new, |output| output.as_written().to_owned());
+        return Err(site.invalid(DeclarationField::Output)(Error::InvalidName {
+            kind: NameKind::OutputName,
+            value,
+            reason: "a discovery target's output is fixed, so it takes no outputs",
+        }));
+    }
+    if staged.freshness == Freshness::Always {
+        return Err(site.invalid(DeclarationField::Freshness)(
+            Error::NotAccepted {
+                reason: "a discovery target is always cached, so it cannot always run",
+            },
+        ));
+    }
+    Ok(())
+}
+
 fn convert_target(staged: StagedTarget, site: &Site<'_>) -> Result<Target> {
     let label = declared_label(&staged.name, site)?;
+    if staged.role == TargetRole::Discovery {
+        refuse_discovery_overrides(&staged, site)?;
+    }
     let action = match (staged.rule, staged.run) {
         (Some(rule), None) => Action::UseRule(
             rule.resolve(site.directory())
@@ -218,13 +251,18 @@ fn convert_target(staged: StagedTarget, site: &Site<'_>) -> Result<Target> {
             outputs
         }
         // A build target is its output, so it defaults to one named for itself. A test is a record
-        // of its exit status and what it printed, so it produces no file unless it names one.
+        // of its exit status and what it printed, so it produces no file unless it names one. A
+        // discovery target's one output is its name with `.json`, which is what a build file reads.
         None => match staged.role {
             TargetRole::Build => vec![
                 OutputName::parse(label.name().as_str())
                     .map_err(site.invalid(DeclarationField::Output))?,
             ],
             TargetRole::Test => Vec::new(),
+            TargetRole::Discovery => vec![
+                OutputName::parse(format!("{}.json", label.name()))
+                    .map_err(site.invalid(DeclarationField::Output))?,
+            ],
         },
     };
     let mut env = Vec::with_capacity(staged.env.len());
@@ -303,14 +341,16 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     use super::{build_file, convert, declaration_order, resolve_subdirs};
     use crate::error::{ActionFound, DeclarationField, Error};
     use crate::types::{
         Action, Declaration, DeclarationOrder, Declared, Directory, EntryName, Freshness, Label,
-        NetworkAccess, OutputName, Provenance, StagedAlias, StagedDeclaration, StagedItem,
-        StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target, TargetRole, Written,
+        NetworkAccess, Origin, OutputName, PluginName, PluginRef, PluginVersion, Provenance,
+        StagedAlias, StagedDeclaration, StagedItem, StagedRule, StagedSetting, StagedSubdir,
+        StagedTarget, Target, TargetRole, Written,
     };
 
     fn file_in(directory: &str) -> Provenance {
@@ -341,6 +381,7 @@ mod tests {
     fn declare(item: StagedItem) -> StagedDeclaration {
         StagedDeclaration {
             order: DeclarationOrder::new(4),
+            origin: Origin::BuildFile,
             item,
         }
     }
@@ -440,6 +481,38 @@ mod tests {
     }
 
     #[test]
+    fn a_discovery_defaults_to_one_json_output_named_for_it() {
+        let mut staged = staged_target("pkgs");
+        staged.role = TargetRole::Discovery;
+        let declaration = convert_target_in("svc", staged).unwrap();
+        let outputs: Vec<&str> = target_of(&declaration)
+            .outputs
+            .iter()
+            .map(OutputName::as_str)
+            .collect();
+        assert_eq!(outputs, ["pkgs.json"]);
+    }
+
+    #[test]
+    fn a_discovery_naming_outputs_or_always_is_refused_on_that_field() {
+        let mut with_outputs = staged_target("pkgs");
+        with_outputs.role = TargetRole::Discovery;
+        with_outputs.outputs = Some(Vec::new());
+        let mut always = staged_target("pkgs");
+        always.role = TargetRole::Discovery;
+        always.freshness = Freshness::Always;
+        for (staged, expected) in [
+            (with_outputs, DeclarationField::Output),
+            (always, DeclarationField::Freshness),
+        ] {
+            match convert_target_in("svc", staged).unwrap_err() {
+                Error::InvalidDeclaration { field, .. } => assert_eq!(field, expected),
+                other => unreachable!("expected InvalidDeclaration, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
     fn a_test_declares_no_outputs_by_default() {
         let mut staged = staged_target("app_test");
         staged.role = TargetRole::Test;
@@ -499,6 +572,31 @@ mod tests {
                 }
                 other => unreachable!("expected ActionConflict, got {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn a_refused_declaration_of_a_plugin_carries_the_plugins_origin() {
+        let go = PluginRef {
+            name: PluginName::parse("go").unwrap(),
+            version: PluginVersion::parse("1.2.0").unwrap(),
+            run: BTreeSet::new(),
+            env: BTreeSet::new(),
+        };
+        let origin = Origin::plugins(vec![go]).unwrap();
+        let by_plugin = |target: StagedTarget| StagedDeclaration {
+            origin: origin.clone(),
+            ..declare(StagedItem::Target(target))
+        };
+        let mut neither = staged_target("app");
+        neither.run = None;
+        match convert(by_plugin(neither), &file_in("")).unwrap_err() {
+            Error::ActionConflict { origin: found, .. } => assert_eq!(found, origin),
+            other => unreachable!("expected ActionConflict, got {other:?}"),
+        }
+        match convert(by_plugin(staged_target("a/b")), &file_in("")).unwrap_err() {
+            Error::InvalidDeclaration { origin: found, .. } => assert_eq!(found, origin),
+            other => unreachable!("expected InvalidDeclaration, got {other:?}"),
         }
     }
 

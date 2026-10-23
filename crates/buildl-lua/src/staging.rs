@@ -13,8 +13,8 @@ use core::fmt;
 use core::mem::size_of;
 
 use buildl_core::{
-    DeclarationOrder, Diagnostic, Directory, EvaluationFailure, StagedDeclaration, StagedFile,
-    StagedItem, StagedSubdir, Written,
+    DeclarationOrder, Diagnostic, Directory, EvaluationFailure, Origin, StagedDeclaration,
+    StagedFile, StagedItem, StagedSubdir, Written,
 };
 
 /// Why the buffer refused a record.
@@ -59,11 +59,15 @@ impl Staging {
         }
     }
 
-    /// Stages a declaration, charging its record size plus the bytes of its text.
-    pub(crate) fn stage(&mut self, item: StagedItem) -> Result<(), Exceeded> {
+    /// Stages a declaration made by `origin`, charging its record size plus the bytes of its text.
+    pub(crate) fn stage(&mut self, item: StagedItem, origin: &Origin) -> Result<(), Exceeded> {
         let charge = record_size::<StagedDeclaration>().saturating_add(item_bytes(&item));
         let order = self.admit(charge)?;
-        self.declarations.push(StagedDeclaration { order, item });
+        self.declarations.push(StagedDeclaration {
+            order,
+            origin: origin.clone(),
+            item,
+        });
         Ok(())
     }
 
@@ -168,10 +172,12 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::BTreeSet;
+
     use buildl_core::{
         DeclarationOrder, Diagnostic, EvaluationFailure, EvaluationLimit, Freshness, NetworkAccess,
-        StagedAlias, StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, TargetRole,
-        Written,
+        Origin, PluginName, PluginRef, PluginVersion, StagedAlias, StagedItem, StagedRule,
+        StagedSetting, StagedSubdir, StagedTarget, TargetRole, Written,
     };
 
     use super::{Exceeded, Staging, item_bytes, record_size};
@@ -192,9 +198,13 @@ mod tests {
     #[test]
     fn numbers_declarations_and_subdirs_from_one_counter() {
         let mut staging = Staging::new(u64::MAX);
-        staging.stage(alias("default", "app")).unwrap();
+        staging
+            .stage(alias("default", "app"), &Origin::BuildFile)
+            .unwrap();
         staging.stage_subdir(Written::new("lib")).unwrap();
-        staging.stage(alias("all", "app")).unwrap();
+        staging
+            .stage(alias("all", "app"), &Origin::BuildFile)
+            .unwrap();
         let file = staging.finish().unwrap();
         let orders: Vec<u32> = file
             .declarations
@@ -209,6 +219,30 @@ mod tests {
                 order: DeclarationOrder::new(1),
             }]
         );
+    }
+
+    #[test]
+    fn records_the_origin_each_declaration_is_staged_with() {
+        let plugin = Origin::plugins(vec![PluginRef {
+            name: PluginName::parse("go").unwrap(),
+            version: PluginVersion::parse("1.0.0").unwrap(),
+            run: BTreeSet::new(),
+            env: BTreeSet::new(),
+        }])
+        .unwrap();
+        let mut staging = Staging::new(u64::MAX);
+        staging
+            .stage(alias("default", "app"), &Origin::BuildFile)
+            .unwrap();
+        staging.stage(alias("all", "app"), &plugin).unwrap();
+        let origins: Vec<Origin> = staging
+            .finish()
+            .unwrap()
+            .declarations
+            .into_iter()
+            .map(|declaration| declaration.origin)
+            .collect();
+        assert_eq!(origins, [Origin::BuildFile, plugin]);
     }
 
     #[test]
@@ -240,7 +274,10 @@ mod tests {
     fn refuses_once_every_order_is_used() {
         let mut staging = Staging::new(u64::MAX);
         staging.next = u32::MAX;
-        assert_eq!(staging.stage(alias("default", "app")), Err(Exceeded::Order));
+        assert_eq!(
+            staging.stage(alias("default", "app"), &Origin::BuildFile),
+            Err(Exceeded::Order)
+        );
     }
 
     #[test]
@@ -291,7 +328,9 @@ mod tests {
     #[test]
     fn a_recorded_refusal_wins_over_staged_records() {
         let mut staging = Staging::new(u64::MAX);
-        staging.stage(alias("default", "app")).unwrap();
+        staging
+            .stage(alias("default", "app"), &Origin::BuildFile)
+            .unwrap();
         staging.record(EvaluationFailure::Runtime, Diagnostic::new("boom"));
         assert!(staging.finish().is_err());
     }

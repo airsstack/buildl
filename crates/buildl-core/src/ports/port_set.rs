@@ -104,14 +104,14 @@ mod tests {
     use crate::error::Result;
     use crate::ports::{
         ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher,
-        EventLog, ExecStrategy, GraphRecord, Host, Manifest, Ports, Reporter, StatCache,
-        ToolResolver,
+        EventLog, ExecStrategy, GraphRecord, Host, Manifest, Ports, Reporter, RunHistory,
+        StatCache, ToolResolver,
     };
     use crate::types::{
-        Approval, BuildFile, CacheRow, Captured, Ceiling, Channel, Digest, Directory, EnvName,
-        EnvValue, Evaluated, Exit, FileMode, Found, InputStat, Label, LiveSink, OutcomeEvent,
-        OutputPath, Platform, Program, RawOutcome, ReadyAction, SourcePath, StatEntry, Summary,
-        TargetGraph, Timestamp, Turn, WantedSet, Workspace,
+        Approval, Attribution, BuildFile, CacheRow, Captured, Ceiling, Channel, Digest, Directory,
+        Discovered, EnvName, EnvValue, Evaluated, Exit, FileMode, Found, InputStat, Label,
+        LiveSink, LogLine, OutcomeEvent, OutputPath, Platform, Program, RawOutcome, ReadyAction,
+        SourcePath, StatEntry, Summary, TargetGraph, Timestamp, Turn, WantedSet, Workspace,
     };
 
     /// One port type answering that there is nothing, standing in for every port.
@@ -119,7 +119,7 @@ mod tests {
     struct Stub;
 
     impl DeclarationSource for Stub {
-        fn evaluate(&self, _file: &BuildFile) -> Result<Evaluated> {
+        fn evaluate(&self, _file: &BuildFile, _discovered: &Discovered) -> Result<Evaluated> {
             Ok(Evaluated::Absent)
         }
     }
@@ -137,6 +137,7 @@ mod tests {
                 },
                 execution: crate::types::Execution::default(),
                 approver: crate::types::ApproverMode::Manifest,
+                plugins: std::collections::BTreeMap::new(),
             })
         }
     }
@@ -225,6 +226,12 @@ mod tests {
         }
     }
 
+    impl RunHistory for Stub {
+        fn lines(&self) -> Result<Vec<LogLine>> {
+            Ok(Vec::new())
+        }
+    }
+
     impl ExecStrategy for Stub {
         type Dir = ();
 
@@ -287,7 +294,7 @@ mod tests {
     }
 
     impl Approver for Stub {
-        fn approve(&mut self, _wanted: &WantedSet) -> Result<Approval> {
+        fn approve(&mut self, _wanted: &WantedSet, _attribution: &Attribution) -> Result<Approval> {
             Ok(Approval::Granted)
         }
     }

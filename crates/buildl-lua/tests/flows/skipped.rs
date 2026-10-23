@@ -1,10 +1,13 @@
 //! `buildl.sources` against a real workspace that has build outputs in it.
 
 use core::num::NonZeroU64;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use buildl_core::{BuildFile, DeclarationSource, Directory, Evaluated, Provenance, StagedItem};
+use buildl_core::{
+    BuildFile, DeclarationSource, Directory, Discovered, Evaluated, Provenance, StagedItem,
+};
 use buildl_lua::{DeclarationLimits, LuaSource};
 
 use crate::common::workspace;
@@ -46,7 +49,8 @@ fn listed(root: &Path, source: &LuaSource, file: &str, directory: &str) -> Vec<S
         PathBuf::from(file),
         Directory::parse(directory).unwrap(),
     ));
-    let Evaluated::Staged(staged) = source.evaluate(&build_file).unwrap() else {
+    let Evaluated::Staged(staged) = source.evaluate(&build_file, &Discovered::empty()).unwrap()
+    else {
         panic!("{} exists under {}", file, root.display());
     };
     let StagedItem::Target(target) = &staged.declarations[0].item else {
@@ -62,7 +66,7 @@ fn listed(root: &Path, source: &LuaSource, file: &str, directory: &str) -> Vec<S
 #[test]
 fn an_empty_skip_list_lists_every_file() {
     let (_dir, root) = build_tree();
-    let source = LuaSource::new(&root, DeclarationLimits::default(), []);
+    let source = LuaSource::new(&root, DeclarationLimits::default(), [], BTreeMap::new());
     let all = listed(&root, &source, "build.lua", "");
     assert!(all.contains(&"out/app.o".to_owned()));
     assert!(all.contains(&".buildl/state.json".to_owned()));
@@ -75,6 +79,7 @@ fn the_output_and_state_directories_are_not_listed_from_the_workspace_root() {
         &root,
         DeclarationLimits::default(),
         directories(&["out", ".buildl"]),
+        BTreeMap::new(),
     );
     assert_eq!(
         listed(&root, &source, "build.lua", ""),
@@ -96,6 +101,7 @@ fn differently_named_directories_are_skipped_instead() {
         &root,
         DeclarationLimits::default(),
         directories(&["target", "out/cas"]),
+        BTreeMap::new(),
     );
     let all = listed(&root, &source, "build.lua", "");
     assert!(!all.iter().any(|path| path.starts_with("target/")));
@@ -111,6 +117,7 @@ fn a_nested_directory_with_the_same_name_is_still_listed() {
         &root,
         DeclarationLimits::default(),
         directories(&["out", ".buildl"]),
+        BTreeMap::new(),
     );
     assert!(listed(&root, &source, "build.lua", "").contains(&"lib/out/keep.c".to_owned()));
 }
@@ -124,6 +131,7 @@ fn a_subdirectory_build_file_never_sees_a_skipped_directory_below_it() {
         &root,
         DeclarationLimits::default(),
         directories(&["lib/gen"]),
+        BTreeMap::new(),
     );
     assert_eq!(
         listed(&root, &source, "lib/build.lua", "lib"),
@@ -139,6 +147,7 @@ fn a_build_file_inside_a_skipped_directory_lists_nothing() {
         &root,
         DeclarationLimits::default(),
         directories(&["out", ".buildl"]),
+        BTreeMap::new(),
     );
     assert_eq!(
         listed(&root, &source, "out/build.lua", "out"),
@@ -156,7 +165,7 @@ fn skipped_directories_do_not_count_against_the_walk_limit() {
     fs::write(root.join("main.c"), "").unwrap();
     // The root, build.lua and main.c are three entries; out's fifty files must not be visited.
     let limits = DeclarationLimits::default().with_walk_entries(NonZeroU64::new(3).unwrap());
-    let source = LuaSource::new(&root, limits, directories(&["out"]));
+    let source = LuaSource::new(&root, limits, directories(&["out"]), BTreeMap::new());
     assert_eq!(
         listed(&root, &source, "build.lua", ""),
         ["build.lua", "main.c"]

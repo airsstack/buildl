@@ -6,21 +6,28 @@
 //! host's stdout: `math.random`, `math.randomseed` and `print`, and replaces `tostring` and
 //! `string.format` with versions that refuse address-derived text.
 //!
-//! Responsibilities: [`BuildlModule`]; turning a primitive call into a staged record or a sticky
-//! refusal that names the build file's line.
+//! Responsibilities: [`BuildlModule`]; building a primitives table whose declarations carry a
+//! given origin; the snapshot of the language globals taken at install; turning a primitive call
+//! into a staged record or a sticky refusal that names the line, in the build file or a plugin
+//! file, that made the call; answering `buildl.discovered` from the evaluation's results.
 //!
 //! Non-responsibilities: the argument shapes, which `primitives` owns, the walk behind
-//! `buildl.sources`, which `sources` owns, and the replacement functions, which `stable_text`
-//! owns.
+//! `buildl.sources`, which `sources` owns, the replacement functions, which `stable_text` owns,
+//! and loading the plugins `buildl.use` names, which `plugin` owns.
 
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, TryLockError};
 
 use airsl::mlua::{self, Lua, Table, Value};
 use airsl::{HostModule, InstallContext, ModuleName};
-use buildl_core::{EvaluationFailure, EvaluationLimit, StagedItem, TargetRole};
+use buildl_core::{EvaluationFailure, EvaluationLimit, Origin, PluginName, StagedItem, TargetRole};
 
+use crate::plugin::Plugins;
 use crate::primitives;
-use crate::refusal::Refusal;
+use crate::refusal::{CallSite, Refusal};
+use crate::results::Results;
+use crate::snapshot::copy_tables;
 use crate::sources::Sources;
 use crate::stable_text;
 use crate::staging::{Exceeded, Staging};
@@ -31,19 +38,34 @@ pub(crate) struct BuildlModule {
     name: ModuleName,
     staging: Arc<Mutex<Staging>>,
     sources: Sources,
+    results: Results,
+    plugins: Plugins,
 }
 
 impl BuildlModule {
-    /// A module staging into `staging`, whose `buildl.sources` walks `sources`.
+    /// A module staging into `staging`, whose `buildl.sources` walks `sources`, whose
+    /// `buildl.discovered` reads `results`, and whose `buildl.use` loads the plugins in `plugins`,
+    /// each from the directory it maps to.
+    ///
+    /// `root` is the workspace root, which names the files a plugin's errors point at.
     ///
     /// # Errors
     ///
     /// Never in practice: the only failure is `buildl` not being a valid module name.
-    pub(crate) fn new(staging: Arc<Mutex<Staging>>, sources: Sources) -> airsl::Result<Self> {
+    pub(crate) fn new(
+        staging: Arc<Mutex<Staging>>,
+        sources: Sources,
+        results: Results,
+        root: &Path,
+        plugins: BTreeMap<PluginName, PathBuf>,
+    ) -> airsl::Result<Self> {
+        let plugins = Plugins::new(root, plugins, &staging, &sources, &results);
         Ok(Self {
             name: ModuleName::new("buildl")?,
             staging,
             sources,
+            results,
+            plugins,
         })
     }
 }
@@ -61,70 +83,21 @@ impl HostModule for BuildlModule {
     ) -> airsl::Result<()> {
         let fail = |error| airsl::Error::lua("buildl", error);
 
-        for (primitive, role) in [("target", TargetRole::Build), ("test", TargetRole::Test)] {
-            let staging = Arc::clone(&self.staging);
-            let function = lua
-                .create_function(move |lua, (name, options): (Value, Value)| {
-                    declare(lua, &staging, primitive, || {
-                        primitives::target(&name, &options, role).map(StagedItem::Target)
-                    })
-                })
-                .map_err(fail)?;
-            table.set(primitive, function).map_err(fail)?;
+        let primitives = primitives_table(
+            lua,
+            &self.staging,
+            &self.sources,
+            &self.results,
+            &Origin::BuildFile,
+        )
+        .map_err(fail)?;
+        // `table` is the module table airsl binds as `airsstack.buildl`, so the primitives are
+        // copied into it rather than replacing it.
+        for pair in primitives.pairs::<String, Value>() {
+            let (name, function) = pair.map_err(fail)?;
+            table.set(name, function).map_err(fail)?;
         }
-
-        let staging = Arc::clone(&self.staging);
-        let rule = lua
-            .create_function(move |lua, (name, options): (Value, Value)| {
-                declare(lua, &staging, "rule", || {
-                    primitives::rule(&name, &options).map(StagedItem::Rule)
-                })
-            })
-            .map_err(fail)?;
-        table.set("rule", rule).map_err(fail)?;
-
-        let staging = Arc::clone(&self.staging);
-        let alias = lua
-            .create_function(move |lua, (name, target): (Value, Value)| {
-                declare(lua, &staging, "alias", || {
-                    primitives::alias(&name, &target).map(StagedItem::Alias)
-                })
-            })
-            .map_err(fail)?;
-        table.set("alias", alias).map_err(fail)?;
-
-        let staging = Arc::clone(&self.staging);
-        let option = lua
-            .create_function(move |lua, (name, options): (Value, Value)| {
-                declare(lua, &staging, "option", || {
-                    primitives::option(&name, &options).map(StagedItem::Setting)
-                })
-            })
-            .map_err(fail)?;
-        table.set("option", option).map_err(fail)?;
-
-        let staging = Arc::clone(&self.staging);
-        let subdir = lua
-            .create_function(move |lua, path: Value| {
-                guarded(lua, &staging, "subdir", |staging| {
-                    let path = primitives::subdir(&path)?;
-                    staging.stage_subdir(path).map_err(exceeded)
-                })
-            })
-            .map_err(fail)?;
-        table.set("subdir", subdir).map_err(fail)?;
-
-        let staging = Arc::clone(&self.staging);
-        let walk = self.sources.clone();
-        let sources = lua
-            .create_function(move |lua, pattern: Value| {
-                let found = guarded(lua, &staging, "sources", |_| {
-                    walk.find(&primitives::pattern(&pattern)?)
-                })?;
-                lua.create_sequence_from(found)
-            })
-            .map_err(fail)?;
-        table.set("sources", sources).map_err(fail)?;
+        self.plugins.bind_use(lua, table, &[]).map_err(fail)?;
 
         let globals = lua.globals();
         globals.set("buildl", table.clone()).map_err(fail)?;
@@ -133,19 +106,136 @@ impl HostModule for BuildlModule {
         math.set("randomseed", Value::Nil).map_err(fail)?;
         globals.set("print", Value::Nil).map_err(fail)?;
         stable_text::install(lua).map_err(fail)?;
+        record_language(lua).map_err(fail)?;
         Ok(())
     }
 }
 
-/// Reads a declaration with `read` and stages it.
+/// The Lua registry key holding the snapshot of the language globals [`record_language`] takes.
+pub(crate) const LANGUAGE_REGISTRY_KEY: &str = "buildl.language";
+
+/// Globals left out of the language snapshot: the two names a build file reaches buildl through,
+/// the globals table itself, and `require`, which plugin code gets its own version of.
+const NOT_LANGUAGE: [&str; 4] = ["buildl", "airsstack", "_G", "require"];
+
+/// Builds the table of declaration primitives whose declarations carry `origin`.
+///
+/// Every table built for one evaluation shares its `staging`, `sources` and `results`, so the
+/// declarations of a build file and of the plugins it uses land in one numbered buffer under one
+/// byte budget, `sources` walks the build file's directory whichever table asks, and
+/// `buildl.discovered` reads the same results, relative to the same directory.
+pub(crate) fn primitives_table(
+    lua: &Lua,
+    staging: &Arc<Mutex<Staging>>,
+    sources: &Sources,
+    results: &Results,
+    origin: &Origin,
+) -> mlua::Result<Table> {
+    let table = lua.create_table()?;
+    let origin = Arc::new(origin.clone());
+
+    for (primitive, role) in [
+        ("target", TargetRole::Build),
+        ("test", TargetRole::Test),
+        ("discover", TargetRole::Discovery),
+    ] {
+        let staging = Arc::clone(staging);
+        let origin = Arc::clone(&origin);
+        let function = lua.create_function(move |lua, (name, options): (Value, Value)| {
+            declare(lua, &staging, &origin, primitive, || {
+                primitives::target(&name, &options, role).map(StagedItem::Target)
+            })
+        })?;
+        table.set(primitive, function)?;
+    }
+
+    let staging_ref = Arc::clone(staging);
+    let origin_ref = Arc::clone(&origin);
+    let rule = lua.create_function(move |lua, (name, options): (Value, Value)| {
+        declare(lua, &staging_ref, &origin_ref, "rule", || {
+            primitives::rule(&name, &options).map(StagedItem::Rule)
+        })
+    })?;
+    table.set("rule", rule)?;
+
+    let staging_ref = Arc::clone(staging);
+    let origin_ref = Arc::clone(&origin);
+    let alias = lua.create_function(move |lua, (name, target): (Value, Value)| {
+        declare(lua, &staging_ref, &origin_ref, "alias", || {
+            primitives::alias(&name, &target).map(StagedItem::Alias)
+        })
+    })?;
+    table.set("alias", alias)?;
+
+    let staging_ref = Arc::clone(staging);
+    let origin_ref = Arc::clone(&origin);
+    let option = lua.create_function(move |lua, (name, options): (Value, Value)| {
+        declare(lua, &staging_ref, &origin_ref, "option", || {
+            primitives::option(&name, &options).map(StagedItem::Setting)
+        })
+    })?;
+    table.set("option", option)?;
+
+    let staging_ref = Arc::clone(staging);
+    let subdir = lua.create_function(move |lua, path: Value| {
+        guarded(lua, &staging_ref, "subdir", |staging| {
+            let path = primitives::subdir(&path)?;
+            staging.stage_subdir(path).map_err(exceeded)
+        })
+    })?;
+    table.set("subdir", subdir)?;
+
+    let staging_ref = Arc::clone(staging);
+    let walk = sources.clone();
+    let found = lua.create_function(move |lua, pattern: Value| {
+        let found = guarded(lua, &staging_ref, "sources", |_| {
+            walk.find(&primitives::pattern(&pattern)?)
+        })?;
+        lua.create_sequence_from(found)
+    })?;
+    table.set("sources", found)?;
+
+    let staging_ref = Arc::clone(staging);
+    let results = results.clone();
+    let discovered = lua.create_function(move |lua, label: Value| {
+        let label = guarded(lua, &staging_ref, "discovered", |_| {
+            primitives::discovered(&label, results.directory())
+        })?;
+        results
+            .get(&label)
+            .map(|bytes| lua.create_string(bytes))
+            .transpose()
+    })?;
+    table.set("discovered", discovered)?;
+
+    Ok(table)
+}
+
+/// Snapshots the language globals (every global name and value except [`NOT_LANGUAGE`]) into the
+/// registry, where a build file cannot reach it.
+///
+/// A table among them, such as `string` or `table`, is snapshotted as a copy. A build file that
+/// reassigns `string`, or assigns into it, after this call changes its own globals and nothing the
+/// snapshot holds.
+pub(crate) fn record_language(lua: &Lua) -> mlua::Result<()> {
+    let snapshot = lua.create_table()?;
+    copy_tables(lua, &lua.globals(), &snapshot)?;
+    for name in NOT_LANGUAGE {
+        snapshot.set(name, Value::Nil)?;
+    }
+    lua.set_named_registry_value(LANGUAGE_REGISTRY_KEY, snapshot)
+}
+
+/// Reads a declaration with `read` and stages it as made by `origin`.
 fn declare(
     lua: &Lua,
     staging: &Mutex<Staging>,
+    origin: &Origin,
     primitive: &'static str,
     read: impl FnOnce() -> Result<StagedItem, Refusal>,
 ) -> mlua::Result<()> {
     guarded(lua, staging, primitive, |staging| {
-        staging.stage(read()?).map_err(exceeded)
+        staging.stage(read()?, origin).map_err(exceeded)
     })
 }
 
@@ -153,18 +243,19 @@ fn declare(
 ///
 /// A file that already failed fails every later call with the same message. A new refusal is
 /// recorded — so a `pcall` that swallows it does not un-fail the file — and raised as a Lua error
-/// naming the line that made the call.
+/// naming the line that made the call: a line of the build file, or of the plugin file the call
+/// came from.
 ///
 /// The buffer stays locked while `work` runs, and `work` calls into Lua, which can run a
 /// finalizer that calls a primitive again. That re-entrant call finds the lock taken and fails with
 /// a Lua error instead of waiting on itself; it records nothing, because the buffer is unavailable.
-fn guarded<T>(
+pub(crate) fn guarded<T>(
     lua: &Lua,
     staging: &Mutex<Staging>,
     primitive: &'static str,
     work: impl FnOnce(&mut Staging) -> Result<T, Refusal>,
 ) -> mlua::Result<T> {
-    let line = call_site(lua);
+    let site = call_site(lua);
     let mut staging = match staging.try_lock() {
         Ok(staging) => staging,
         Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
@@ -178,7 +269,7 @@ fn guarded<T>(
     let outcome = recorded.map_or_else(
         || {
             work(&mut staging).map_err(|refusal| {
-                let diagnostic = refusal.diagnostic(primitive, line);
+                let diagnostic = refusal.diagnostic(primitive, site.as_ref());
                 let message = diagnostic.to_string();
                 staging.record(refusal.failure().clone(), diagnostic);
                 message
@@ -190,15 +281,34 @@ fn guarded<T>(
     outcome.map_err(mlua::Error::RuntimeError)
 }
 
-/// The line of the nearest Lua frame on the stack: the build-file line that made the call, even
-/// when it went through `pcall`.
-fn call_site(lua: &Lua) -> Option<usize> {
-    #[expect(
-        clippy::redundant_closure_for_method_calls,
-        reason = "`Debug::current_line` as a path is not general over `Debug`'s lifetime"
-    )]
+/// Marks a chunk name as a plugin's. Lua takes a name that starts with `=` as given, and airsl
+/// names the build file's chunk with a leading `@`, so the mark tells the two apart.
+const PLUGIN_CHUNK_MARK: char = '=';
+
+/// The name the plugin file `chunk`, as the workspace names it, is compiled under.
+pub(crate) fn plugin_chunk_name(chunk: &str) -> String {
+    format!("{PLUGIN_CHUNK_MARK}{chunk}")
+}
+
+/// Where the nearest Lua frame on the stack is: the line that made the call, even when it went
+/// through `pcall`, in the build file or in the plugin file the frame's chunk is named after.
+fn call_site(lua: &Lua) -> Option<CallSite> {
     (1..)
-        .map_while(|level| lua.inspect_stack(level, |debug| debug.current_line()))
+        .map_while(|level| {
+            lua.inspect_stack(level, |debug| {
+                let line = debug.current_line()?;
+                let source = debug.source().source;
+                let plugin_chunk = source
+                    .as_deref()
+                    .and_then(|name| name.strip_prefix(PLUGIN_CHUNK_MARK));
+                Some(
+                    plugin_chunk.map_or(CallSite::BuildFile { line }, |chunk| CallSite::Plugin {
+                        chunk: chunk.to_owned(),
+                        line,
+                    }),
+                )
+            })
+        })
         .flatten()
         .next()
 }
@@ -219,18 +329,23 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
     use std::sync::{Arc, Mutex};
 
     use airsl::{Engine, LanguageSurface, ModuleSet, Policy, Script};
     use buildl_core::{
         DeclarationOrder, Diagnostic, Directory, EvaluationFailure, EvaluationLimit, Freshness,
-        NetworkAccess, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
+        NetworkAccess, Origin, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
         StagedSetting, StagedSubdir, StagedTarget, TargetRole, Written,
     };
 
-    use super::BuildlModule;
+    use airsl::mlua::{Lua, Table, Value};
+    use buildl_core::{PluginName, PluginRef, PluginVersion};
+
+    use super::{BuildlModule, LANGUAGE_REGISTRY_KEY, primitives_table, record_language};
     use crate::limits::DeclarationLimits;
+    use crate::results::Results;
     use crate::sources::Sources;
     use crate::staging::Staging;
 
@@ -252,6 +367,9 @@ mod tests {
                         DeclarationLimits::default().walk_entries(),
                         &[],
                     ),
+                    Results::none(),
+                    &root,
+                    BTreeMap::new(),
                 )
                 .unwrap(),
             ))
@@ -338,6 +456,7 @@ mod tests {
         };
         let declared = |order, item| StagedDeclaration {
             order: DeclarationOrder::new(order),
+            origin: Origin::BuildFile,
             item,
         };
         assert_eq!(
@@ -497,5 +616,98 @@ mod tests {
                 subdirs: Vec::new(),
             }
         );
+    }
+
+    fn plugin(name: &str) -> PluginRef {
+        PluginRef {
+            name: PluginName::parse(name).unwrap(),
+            version: PluginVersion::parse("1.0.0").unwrap(),
+            run: BTreeSet::new(),
+            env: BTreeSet::new(),
+        }
+    }
+
+    #[test]
+    fn a_table_built_for_an_origin_stamps_its_declarations() {
+        let lua = Lua::new();
+        let staging = Arc::new(Mutex::new(Staging::new(u64::MAX)));
+        let sources = Sources::new(
+            std::path::Path::new("."),
+            &Directory::root(),
+            DeclarationLimits::default().walk_entries(),
+            &[],
+        );
+        let outer = Origin::plugins(vec![plugin("outer")]).unwrap();
+        let nested = Origin::plugins(vec![plugin("outer"), plugin("inner")]).unwrap();
+        for (name, origin) in [("outer", &outer), ("nested", &nested)] {
+            let table =
+                primitives_table(&lua, &staging, &sources, &Results::none(), origin).unwrap();
+            lua.globals().set(name, table).unwrap();
+        }
+        lua.load(
+            "outer.alias('a', 'x')\n\
+             nested.alias('b', 'x')\n\
+             outer.option('mode', { default = 'debug' })",
+        )
+        .exec()
+        .unwrap();
+        let staged = std::mem::replace(&mut *staging.lock().unwrap(), Staging::new(0))
+            .finish()
+            .unwrap();
+        let origins: Vec<&Origin> = staged.declarations.iter().map(|d| &d.origin).collect();
+        assert_eq!(origins, [&outer, &nested, &outer]);
+    }
+
+    #[test]
+    fn the_file_table_still_stamps_build_file() {
+        let (result, staged) = run(
+            "buildl.alias('a', 'x')\n\
+             airsstack.buildl.target('t', { run = { 'x' } })\n\
+             return 'ok'",
+            u64::MAX,
+        );
+        assert_eq!(result.unwrap(), "ok");
+        let staged = staged.unwrap();
+        assert_eq!(staged.declarations.len(), 2);
+        assert!(
+            staged
+                .declarations
+                .iter()
+                .all(|declaration| declaration.origin == Origin::BuildFile)
+        );
+    }
+
+    #[test]
+    fn the_language_snapshot_excludes_buildl_airsstack_and_g() {
+        let lua = Lua::new();
+        let globals = lua.globals();
+        for name in ["buildl", "airsstack"] {
+            globals.set(name, lua.create_table().unwrap()).unwrap();
+        }
+        globals.set("answer", 42).unwrap();
+        record_language(&lua).unwrap();
+
+        let snapshot: Table = lua.named_registry_value(LANGUAGE_REGISTRY_KEY).unwrap();
+        let mut names: Vec<String> = snapshot
+            .pairs::<String, Value>()
+            .map(|pair| pair.unwrap().0)
+            .collect();
+        names.sort();
+        assert!(names.contains(&"answer".to_owned()), "{names:?}");
+        assert!(names.contains(&"math".to_owned()), "{names:?}");
+        for excluded in ["buildl", "airsstack", "_G", "require"] {
+            assert!(!names.contains(&excluded.to_owned()), "{excluded}");
+        }
+
+        globals.set("answer", "changed").unwrap();
+        assert_eq!(snapshot.get::<i64>("answer").unwrap(), 42);
+
+        let math: Table = globals.get("math").unwrap();
+        math.set("floor", Value::Nil).unwrap();
+        let recorded: Table = snapshot.get("math").unwrap();
+        assert!(matches!(
+            recorded.get::<Value>("floor").unwrap(),
+            Value::Function(_)
+        ));
     }
 }

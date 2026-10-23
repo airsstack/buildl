@@ -33,6 +33,7 @@ use crate::graph::GraphFile;
 use crate::host::LocalHost;
 use crate::log::LocalLog;
 use crate::manifest::{TomlManifest, WorkspaceRoot};
+use crate::plugins::{Lock, check};
 use crate::search_path::SearchPath;
 use crate::statcache::LocalStatCache;
 use crate::state::{LockError, Scratch, StateLayout, StateLock};
@@ -118,6 +119,13 @@ impl Wiring {
         &self.scratch
     }
 
+    /// The directories programs are looked for in: the one search path the tool lookup, the
+    /// strategies and plugin fetching share.
+    #[must_use]
+    pub const fn search(&self) -> &SearchPath {
+        &self.search
+    }
+
     /// The workspace root, and where the search for it began.
     #[must_use]
     pub const fn root(&self) -> &WorkspaceRoot {
@@ -153,8 +161,27 @@ impl Wiring {
     /// Build files are evaluated under the ceilings the manifest sets, each one it leaves out
     /// taking its default, and their source listings stay out of the output and the state
     /// directory.
-    #[must_use]
-    pub fn source(&self) -> LuaSource {
+    ///
+    /// Every plugin `buildl.toml` names is checked first, once, against `buildl.lock` and the
+    /// plugin store: a command that makes a source refuses before any build file is opened. The
+    /// directories of the plugins that pass are what a build file's `buildl.use` loads from.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::CorruptState`] when `buildl.lock` is damaged, an adapter error when it
+    /// cannot be read, and what [`check`] returns for a plugin that is not there to use.
+    pub fn source(&self) -> Result<LuaSource> {
+        let lock = Lock::read(self.root.as_path())?;
+        let checked = check(
+            self.root.as_path(),
+            &self.layout(),
+            self.manifest.plugins(),
+            &lock,
+        )?;
+        let plugins = checked
+            .iter()
+            .map(|(name, directory)| (name.clone(), directory.to_path_buf()))
+            .collect();
         let defaults = DeclarationLimits::default();
         let settings = self.manifest.declaration();
         let limits = DeclarationLimits::new(
@@ -170,11 +197,12 @@ impl Wiring {
                 .walk_entries
                 .unwrap_or_else(|| defaults.walk_entries()),
         );
-        LuaSource::new(
+        Ok(LuaSource::new(
             self.root.as_path(),
             limits,
             [self.workspace.out.clone(), self.workspace.state.clone()],
-        )
+            plugins,
+        ))
     }
 
     /// Whether this version of buildl can run actions under the workspace's strategy.
@@ -331,7 +359,8 @@ impl Wiring {
     /// # Errors
     ///
     /// Returns whatever an adapter returns when it is made: the host's, the stat cache's and the
-    /// action cache's own errors, unchanged.
+    /// action cache's own errors, unchanged. Returns what [`Wiring::source`] returns first, when
+    /// a plugin the manifest names is not there to use.
     pub fn ports<R: Reporter, C: Console>(
         &self,
         lock: &StateLock,
@@ -392,7 +421,7 @@ impl Wiring {
         let layout = lock.layout();
         let root = self.root.as_path();
         Ok(PortSet {
-            source: self.source(),
+            source: self.source()?,
             manifest: self.manifest.clone(),
             host: LocalHost::new()?,
             digester: FileDigester::new(root),
@@ -521,7 +550,7 @@ mod tests {
         );
         let every = Wiring::read(&root).unwrap();
         assert_eq!(
-            every.source(),
+            every.source().unwrap(),
             LuaSource::new(
                 &root,
                 DeclarationLimits::new(
@@ -530,6 +559,7 @@ mod tests {
                 )
                 .with_walk_entries(NonZeroU64::new(70).unwrap()),
                 skipped.clone(),
+                BTreeMap::new(),
             )
         );
 
@@ -537,18 +567,22 @@ mod tests {
             workspace("[workspace]\nout = \"dist\"\n\n[declaration]\ninstructions = 5000\n");
         let one = Wiring::read(&root).unwrap();
         assert_eq!(
-            one.source(),
+            one.source().unwrap(),
             LuaSource::new(
                 &root,
                 DeclarationLimits::new(defaults.memory_bytes(), NonZeroU64::new(5000).unwrap())
                     .with_walk_entries(defaults.walk_entries()),
                 skipped.clone(),
+                BTreeMap::new(),
             )
         );
 
         let (_dir, root) = workspace("[workspace]\nout = \"dist\"\n");
         let none = Wiring::read(&root).unwrap();
-        assert_eq!(none.source(), LuaSource::new(&root, defaults, skipped));
+        assert_eq!(
+            none.source().unwrap(),
+            LuaSource::new(&root, defaults, skipped, BTreeMap::new())
+        );
     }
 
     #[test]
@@ -835,7 +869,7 @@ mod tests {
 
         let ports = wiring.ports(&lock, Silent, NoTerminal).unwrap();
 
-        assert_eq!(ports.source, wiring.source());
+        assert_eq!(ports.source, wiring.source().unwrap());
         assert_eq!(ports.manifest, TomlManifest::read(wiring.root()).unwrap());
         assert_eq!(ports.host, LocalHost::new().unwrap());
         assert_eq!(ports.digester, FileDigester::new(&root));

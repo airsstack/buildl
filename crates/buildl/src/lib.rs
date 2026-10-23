@@ -13,8 +13,8 @@
 //! # Using it
 //!
 //! A caller opens a [`Workspace`] and calls a command on it: [`Workspace::check`],
-//! [`Workspace::graph`], [`Workspace::plan`], [`Workspace::build`] or [`Workspace::verify`]. It
-//! names no adapter. A build is lent the caller's own [`Reporter`]: [`report::TerminalReporter`] writes what the
+//! [`Workspace::graph`], [`Workspace::plan`], [`Workspace::build`], [`Workspace::verify`] or
+//! [`Workspace::fetch_plugins`]. It names no adapter. A build is lent the caller's own [`Reporter`]: [`report::TerminalReporter`] writes what the
 //! `buildl` binary shows, and [`report::Silent`] shows nothing. The values a command takes and
 //! returns are `buildl-core`'s, re-exported here as [`buildl_core`], so a caller depends on this
 //! crate alone.
@@ -45,7 +45,7 @@
 //! fs::write(dir.path().join("a.txt"), "a\n")?;
 //!
 //! let workspace = Workspace::open(dir.path())?;
-//! assert_eq!(workspace.check()?.len(), 1);
+//! assert_eq!(workspace.check()?.declarations.len(), 1);
 //!
 //! let (everything, settings) = (Scope::Workspace, BTreeMap::new());
 //! let built = workspace.build(
@@ -86,6 +86,13 @@
 //! cached target, or a sample of them when asked, in the input sandbox, and refuses a workspace
 //! on `bare`.
 //!
+//! Every command that loads build files first checks each plugin `buildl.toml` names in
+//! `[plugins.<name>]` against `buildl.lock` and the plugin store, and hands the directories to
+//! the Lua evaluator; none of them reaches the network, and [`Workspace::fetch_plugins`] is the
+//! one that does. A workspace that declares a discovery target is loaded a second time with the
+//! last result of each, read from the build log and the content store, and
+//! [`Workspace::build`] and [`Workspace::test`] run the discovery targets first.
+//!
 //! # Where things live
 //!
 //! Each port a local build is served through has a module of its own here, named after its
@@ -118,6 +125,11 @@
 //! |---|---|
 //! | [`state`] | where each file of the state directory is, the lock on it, and writing a file whole |
 //! | [`search_path`] | the rule that leads from a program's name to a file |
+//!
+//! [`plugins`] serves no port and is in neither table: it holds `buildl.lock`, the digest of a
+//! plugin's files, the check that every plugin a workspace names is ready to use, and the fetch
+//! that pins a git plugin through the system `git`; it names only [`state`], [`search_path`] and
+//! `buildl-core`.
 //!
 //! The adapters meet in two modules and nowhere else. Neither is public: what they hold is
 //! exported from the crate root.
@@ -168,6 +180,7 @@ pub mod graph;
 pub mod host;
 pub mod log;
 pub mod manifest;
+pub mod plugins;
 pub mod report;
 pub mod search_path;
 pub mod statcache;

@@ -8,6 +8,7 @@ pub mod common;
 
 mod build;
 mod check;
+mod discovery;
 mod doctor;
 mod gc;
 mod graph;

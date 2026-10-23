@@ -95,6 +95,13 @@ impl StateLayout {
     pub fn blob_staging(&self) -> PathBuf {
         self.blobs().join("tmp")
     }
+
+    /// `plugins`: the directory fetched plugins are stored in, one directory per plugin and
+    /// commit.
+    #[must_use]
+    pub fn plugins(&self) -> PathBuf {
+        self.dir.join("plugins")
+    }
 }
 
 #[cfg(test)]
@@ -140,5 +147,10 @@ mod tests {
         let layout = layout();
         assert_eq!(layout.blobs(), Path::new("/work/.buildl/cas"));
         assert_eq!(layout.blob_staging(), Path::new("/work/.buildl/cas/tmp"));
+    }
+
+    #[test]
+    fn fetched_plugins_are_kept_in_a_directory_of_their_own() {
+        assert_eq!(layout().plugins(), Path::new("/work/.buildl/plugins"));
     }
 }

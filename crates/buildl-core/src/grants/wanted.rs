@@ -4,7 +4,8 @@
 //! Its own file because it is the one account of the wanted set's sites: the plan holds every
 //! one of them to the ceiling before anything is asked of the machine.
 //!
-//! Responsibilities: [`Sites`] and [`sites`]; and [`wanted`], the wanted set the sites make.
+//! Responsibilities: [`Sites`] and [`sites`]; [`program_of`], the program one target wants; and
+//! [`wanted`], the wanted set the sites make.
 //!
 //! Non-responsibilities: holding a want to the ceiling, which the plan's check does; finding a
 //! program on the machine; and deciding what a program is, which is Placement's expansion and
@@ -50,19 +51,7 @@ pub(crate) fn sites<'g>(
     let mut env = BTreeMap::new();
     let mut inputs = BTreeMap::new();
     for (node, id) in graph.nodes().iter().zip((0_u32..).map(NodeId::new)) {
-        let dep_paths = layout.deps(graph, id);
-        let lists = Lists {
-            inputs: &node.inputs,
-            outputs: layout.outputs(id),
-            deps: &dep_paths,
-        };
-        let program = expand(&node.run, settings, &lists)
-            .into_iter()
-            .next()
-            .and_then(|first| Argument::parse(first).ok())
-            .as_ref()
-            .and_then(Program::of);
-        if let Some(program) = program.filter(|program| !built(program, &dep_paths)) {
+        if let Some(program) = program_of(graph, node, id, settings, layout) {
             programs.entry(program).or_insert(node);
         }
         for name in &node.env {
@@ -77,6 +66,30 @@ pub(crate) fn sites<'g>(
         env,
         inputs,
     }
+}
+
+/// The program the target `node`, at `id` in `graph`, wants to run: the first text its command
+/// expands to; `None` when the command names no program or when a dependency builds it.
+pub(crate) fn program_of(
+    graph: &TargetGraph,
+    node: &Node,
+    id: NodeId,
+    settings: &BTreeMap<SettingName, SettingValue>,
+    layout: &Layout,
+) -> Option<Program> {
+    let dep_paths = layout.deps(graph, id);
+    let lists = Lists {
+        inputs: &node.inputs,
+        outputs: layout.outputs(id),
+        deps: &dep_paths,
+    };
+    expand(&node.run, settings, &lists)
+        .into_iter()
+        .next()
+        .and_then(|first| Argument::parse(first).ok())
+        .as_ref()
+        .and_then(Program::of)
+        .filter(|program| !built(program, &dep_paths))
 }
 
 /// The wanted set of `graph`, whose wants are `sites`, built in `workspace`.

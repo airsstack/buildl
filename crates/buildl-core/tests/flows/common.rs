@@ -8,14 +8,15 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use buildl_core::{
-    ActionCache, Approval, Approver, BuildFile, CacheRow, Ceiling, Clock, ContentStore,
-    DeclarationOrder, DeclarationSource, Diagnostic, Digest, Digester, Directory, Dispatcher,
-    EnvName, EnvValue, Error, Evaluated, EvaluationFailure, EventLog, ExecStrategy, Exit, FileStat,
-    Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest, NetworkAccess, OutcomeEvent,
-    OutputPath, Platform, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result,
-    RunHistory, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
-    StagedSetting, StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp,
-    ToolResolver, WantedSet, Workspace, Written,
+    ActionCache, Approval, Approver, Attribution, BuildFile, CacheRow, Ceiling, Clock,
+    ContentStore, DeclarationOrder, DeclarationSource, Diagnostic, Digest, Digester, Directory,
+    Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EvaluationFailure, EventLog,
+    ExecStrategy, Exit, FileStat, Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest,
+    NetworkAccess, Origin, OutcomeEvent, OutputPath, Platform, PluginName, PluginRef,
+    PluginVersion, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory,
+    SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
+    StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver,
+    WantedSet, Workspace, Written,
 };
 use buildl_core::{ActionOutcome, Pipeline};
 use buildl_core::{
@@ -38,13 +39,16 @@ pub enum FakeFile {
 /// Built with [`FakeSource::new`] it holds one set of files. Built with
 /// [`FakeSource::with_second_run`] it holds two, and switches from the first to the second when
 /// the root directory is evaluated a second time, so every directory evaluated after that point
-/// reads from the second set. A directory it holds no file for evaluates to
-/// [`Evaluated::Absent`].
+/// reads from the second set. Built with [`FakeSource::declaring_from_results`] it holds two, and
+/// reads from the second whenever it is handed a discovery result. A directory it holds no file
+/// for evaluates to [`Evaluated::Absent`].
 #[derive(Debug)]
 pub struct FakeSource {
     first: BTreeMap<Directory, FakeFile>,
     second: Option<BTreeMap<Directory, FakeFile>>,
+    from_results: Option<BTreeMap<Directory, FakeFile>>,
     root_evaluations: AtomicU32,
+    root_loads: Mutex<Vec<Discovered>>,
     evaluated: Mutex<Vec<Directory>>,
 }
 
@@ -55,7 +59,26 @@ impl FakeSource {
         Self {
             first: files,
             second: None,
+            from_results: None,
             root_evaluations: AtomicU32::new(0),
+            root_loads: Mutex::new(Vec::new()),
+            evaluated: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// A source returning `without` while it is handed no discovery result, and `with` once it
+    /// is handed one: a workspace whose discovery targets declare more targets.
+    #[must_use]
+    pub const fn declaring_from_results(
+        without: BTreeMap<Directory, FakeFile>,
+        with: BTreeMap<Directory, FakeFile>,
+    ) -> Self {
+        Self {
+            first: without,
+            second: None,
+            from_results: Some(with),
+            root_evaluations: AtomicU32::new(0),
+            root_loads: Mutex::new(Vec::new()),
             evaluated: Mutex::new(Vec::new()),
         }
     }
@@ -70,9 +93,21 @@ impl FakeSource {
         Self {
             first,
             second: Some(second),
+            from_results: None,
             root_evaluations: AtomicU32::new(0),
+            root_loads: Mutex::new(Vec::new()),
             evaluated: Mutex::new(Vec::new()),
         }
+    }
+
+    /// What each evaluation of the root build file was handed, in evaluation order: one entry per
+    /// load of the workspace.
+    #[must_use]
+    pub fn root_loads(&self) -> Vec<Discovered> {
+        self.root_loads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Every directory evaluated so far, in evaluation order.
@@ -86,17 +121,22 @@ impl FakeSource {
 }
 
 impl DeclarationSource for FakeSource {
-    fn evaluate(&self, file: &BuildFile) -> Result<Evaluated> {
+    fn evaluate(&self, file: &BuildFile, discovered: &Discovered) -> Result<Evaluated> {
         let directory = file.directory();
         if directory.is_root() {
             self.root_evaluations.fetch_add(1, Ordering::SeqCst);
+            self.root_loads
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(discovered.clone());
         }
         self.evaluated
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(directory.clone());
-        let files = match &self.second {
-            Some(second) if self.root_evaluations.load(Ordering::SeqCst) > 1 => second,
+        let files = match (&self.second, &self.from_results) {
+            (Some(second), _) if self.root_evaluations.load(Ordering::SeqCst) > 1 => second,
+            (_, Some(with)) if *discovered != Discovered::empty() => with,
             _ => &self.first,
         };
         match files.get(directory) {
@@ -345,6 +385,7 @@ struct CasState {
     unplaceable: BTreeSet<OutputPath>,
     modes: BTreeMap<OutputPath, FileMode>,
     touches: Vec<Touch>,
+    unreadable: bool,
 }
 
 /// What the content store was asked to do to content, in the order it was asked.
@@ -411,6 +452,12 @@ impl FakeCas {
         self.state().blobs.insert(digest, bytes);
     }
 
+    /// Makes every later read of content report that nothing is held, as a store that lost its
+    /// blobs would; what is held and placed is unchanged.
+    pub fn lose_reads(&self) {
+        self.state().unreadable = true;
+    }
+
     /// Makes every later attempt to place content at `path` fail.
     pub fn fail_place(&self, path: OutputPath) {
         self.state().unplaceable.insert(path);
@@ -449,7 +496,11 @@ impl ContentStore for FakeCas {
     }
 
     fn get(&self, digest: &Digest) -> Result<Option<Vec<u8>>> {
-        Ok(self.state().blobs.get(digest).cloned())
+        let state = self.state();
+        if state.unreadable {
+            return Ok(None);
+        }
+        Ok(state.blobs.get(digest).cloned())
     }
 
     fn clear(&self, at: &OutputPath) -> Result<()> {
@@ -518,6 +569,18 @@ impl EventLog for FakeLog {
         }
         self.events.push(event.clone());
         Ok(())
+    }
+}
+
+impl RunHistory for FakeLog {
+    /// Every event appended, read back as its canonical JSON would read it from a file.
+    fn lines(&self) -> Result<Vec<LogLine>> {
+        let mut lines = Vec::new();
+        for event in &self.events {
+            let run = json::canonical::from_slice(&json::canonical::to_vec(event)?)?;
+            lines.push(LogLine::Event(run));
+        }
+        Ok(lines)
     }
 }
 
@@ -1038,13 +1101,15 @@ pub enum Answer {
 }
 
 /// An approver that gives the same [`Answer`] every time and keeps each set it was asked about,
-/// in order.
+/// and the attribution given with it, in order.
 #[derive(Debug)]
 pub struct FakeApprover {
     /// What it answers.
     pub answer: Answer,
     /// The sets it was asked about.
     pub asked: Vec<WantedSet>,
+    /// The attribution given with each of them.
+    pub attributions: Vec<Attribution>,
 }
 
 impl FakeApprover {
@@ -1054,6 +1119,7 @@ impl FakeApprover {
         Self {
             answer,
             asked: Vec::new(),
+            attributions: Vec::new(),
         }
     }
 }
@@ -1066,8 +1132,9 @@ impl Default for FakeApprover {
 }
 
 impl Approver for FakeApprover {
-    fn approve(&mut self, wanted: &WantedSet) -> Result<Approval> {
+    fn approve(&mut self, wanted: &WantedSet, attribution: &Attribution) -> Result<Approval> {
         self.asked.push(wanted.clone());
+        self.attributions.push(attribution.clone());
         match &self.answer {
             Answer::Grant => Ok(Approval::Granted),
             Answer::Deny(reason) => Ok(Approval::Denied {
@@ -1119,6 +1186,7 @@ pub fn open_workspace() -> Workspace {
         },
         execution: buildl_core::Execution::default(),
         approver: buildl_core::ApproverMode::Manifest,
+        plugins: std::collections::BTreeMap::new(),
     }
 }
 
@@ -1167,6 +1235,22 @@ pub fn program(raw: &str) -> Program {
     Program::parse(raw).unwrap_or_else(|error| unreachable!("fixture program: {error}"))
 }
 
+/// A plugin named `name` at `version`, whose manifest asks for nothing.
+///
+/// # Panics
+///
+/// Panics when `name` or `version` is not valid; a test fixture is wrong then.
+#[must_use]
+pub fn plugin(name: &str, version: &str) -> PluginRef {
+    PluginRef {
+        name: PluginName::parse(name).unwrap_or_else(|error| unreachable!("fixture name: {error}")),
+        version: PluginVersion::parse(version)
+            .unwrap_or_else(|error| unreachable!("fixture version: {error}")),
+        run: BTreeSet::new(),
+        env: BTreeSet::new(),
+    }
+}
+
 /// A directory from known-valid text.
 ///
 /// # Panics
@@ -1182,11 +1266,18 @@ pub fn dir(raw: &str) -> Directory {
 /// Call order counts declarations first, then subdirs.
 #[must_use]
 pub fn file(items: Vec<StagedItem>, subdirs: &[&str]) -> FakeFile {
+    file_by(&Origin::BuildFile, items, subdirs)
+}
+
+/// A build file as [`file`] builds one, every declaration in it made by `origin`.
+#[must_use]
+pub fn file_by(origin: &Origin, items: Vec<StagedItem>, subdirs: &[&str]) -> FakeFile {
     let declarations: Vec<StagedDeclaration> = items
         .into_iter()
         .zip(0_u32..)
         .map(|(item, index)| StagedDeclaration {
             order: DeclarationOrder::new(index),
+            origin: origin.clone(),
             item,
         })
         .collect();
@@ -1371,11 +1462,11 @@ mod tests {
 
     use buildl_core::{
         ActionCache, ActionKey, ActionOutcome, Argument, CacheRow, Captured, Channel, Clock,
-        Command, ContentStore, Digest, Directory, Dispatcher, EntryName, Error, EventLog,
-        ExecStrategy, Exit, GraphRecord, KeyComponents, Label, NetworkAccess, OutcomeClass,
-        OutcomeEvent, OutputName, OutputPath, OwnComponents, Platform, PortName, Provenance,
-        ReadyAction, Reporter, SourcePath, Summary, Tally, TargetGraph, TargetRole, Timestamp,
-        json, load, resolve,
+        Command, ContentStore, Digest, Directory, Discovered, Dispatcher, EntryName, Error,
+        EventLog, ExecStrategy, Exit, GraphRecord, KeyComponents, Label, NetworkAccess,
+        OutcomeClass, OutcomeEvent, OutputName, OutputPath, OwnComponents, Platform, PortName,
+        Provenance, ReadyAction, Reporter, SourcePath, Summary, Tally, TargetGraph, TargetRole,
+        Timestamp, json, load, resolve,
     };
 
     use super::{
@@ -1513,7 +1604,16 @@ mod tests {
         let targets = names.iter().map(|name| target(name, &[])).collect();
         let source = FakeSource::new(workspace(vec![("", file(targets, &[]))]));
         let entry = EntryName::parse("build.lua").unwrap();
-        resolve(load(&source, &mut FakeDispatcher::default(), &entry).unwrap()).unwrap()
+        resolve(
+            load(
+                &source,
+                &mut FakeDispatcher::default(),
+                &entry,
+                &Discovered::empty(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
     }
 
     #[test]

@@ -1,0 +1,19 @@
+[workspace]
+name   = "plugin_path"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["cp", "sort"]
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
+
+[execution]
+workers  = 1
+timeout  = "1m"
+strategy = "bare"
+
+[plugins.hello]
+path     = "plugins/hello"
+proc.run = ["cp"]

@@ -1,12 +1,12 @@
 //! [`TomlManifest`], the [`Manifest`] read from a workspace's `buildl.toml`.
 //!
 //! Its own file because it is the adapter's entry point: it turns the manifest's text into the
-//! three values the rest of buildl is assembled from, once, and refuses the whole file when any
+//! values the rest of buildl is assembled from, once, and refuses the whole file when any
 //! part of it is wrong. A manifest is the ceiling on what a build may do, so nothing in it is
 //! skipped and nothing is guessed.
 //!
-//! Responsibilities: [`TomlManifest`], its [`Manifest`] implementation, and
-//! [`DeclarationSettings`].
+//! Responsibilities: [`TomlManifest`], its [`Manifest`] implementation, the sources of the
+//! plugins it names, and [`DeclarationSettings`].
 //!
 //! Non-responsibilities: the defaults for the ceilings a build file is evaluated under. A
 //! ceiling the manifest leaves out stays absent here, and whoever evaluates build files supplies
@@ -14,9 +14,12 @@
 
 use core::fmt;
 use core::num::NonZeroU64;
+use std::collections::BTreeMap;
 use std::fs;
 
-use buildl_core::{Diagnostic, EntryName, Error, Manifest, PortName, Result, Workspace};
+use buildl_core::{
+    Diagnostic, EntryName, Error, Manifest, PluginName, PluginSource, PortName, Result, Workspace,
+};
 
 use crate::manifest::interpret;
 use crate::manifest::root::{MANIFEST_FILE, WorkspaceRoot};
@@ -63,6 +66,7 @@ pub struct TomlManifest {
     workspace: Workspace,
     entry: EntryName,
     declaration: DeclarationSettings,
+    plugins: BTreeMap<PluginName, PluginSource>,
 }
 
 impl TomlManifest {
@@ -88,10 +92,12 @@ impl TomlManifest {
     /// refuses.
     pub fn parse(text: &str) -> Result<Self> {
         let raw: Raw = toml::from_str(text).map_err(|error| interpret::unparsed(text, &error))?;
+        let workspace = interpret::workspace(text, &raw)?;
         Ok(Self {
             entry: interpret::entry(text, &raw.workspace)?,
-            workspace: interpret::workspace(text, &raw)?,
             declaration: interpret::declaration(text, &raw.declaration)?,
+            plugins: interpret::plugins(text, &raw.plugins, &workspace)?,
+            workspace,
         })
     }
 
@@ -105,6 +111,13 @@ impl TomlManifest {
     #[must_use]
     pub const fn declaration(&self) -> DeclarationSettings {
         self.declaration
+    }
+
+    /// Where each plugin the manifest names comes from, by plugin name. What the workspace lets
+    /// each plugin have is in [`Manifest::workspace`].
+    #[must_use]
+    pub const fn plugins(&self) -> &BTreeMap<PluginName, PluginSource> {
+        &self.plugins
     }
 }
 
@@ -143,12 +156,12 @@ mod tests {
     )]
 
     use core::num::NonZeroU64;
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
 
     use buildl_core::{
-        ApproverMode, Directory, EnvName, Error, Execution, Isolation, Manifest, PortName, Program,
-        Timeout, Workers,
+        ApproverMode, Directory, EnvName, Error, Execution, GitUrl, Isolation, Manifest, PluginCap,
+        PluginName, PluginNetwork, PluginSource, PortName, Program, Rev, Timeout, Workers,
     };
 
     use super::{DeclarationSettings, TomlManifest};
@@ -372,12 +385,249 @@ strategy = "bare"
             ),
             (
                 "out = \"out\"\n",
-                "manifest: buildl.toml:1:1: unknown field `out`, expected one of `workspace`, `ceiling`, `declaration`, `execution`, `approver`",
+                "manifest: buildl.toml:1:1: unknown field `out`, expected one of `workspace`, `ceiling`, `declaration`, `execution`, `approver`, `plugins`",
             ),
         ];
         for (text, expected) in cases {
             assert_eq!(refusal(text), expected, "{text:?}");
         }
+    }
+
+    fn plugin(name: &str) -> PluginName {
+        PluginName::parse(name).unwrap()
+    }
+
+    fn sources(text: &str) -> BTreeMap<PluginName, PluginSource> {
+        TomlManifest::parse(text).unwrap().plugins().clone()
+    }
+
+    #[test]
+    fn a_path_plugin_is_read() {
+        let found = sources("[plugins.ourgo]\npath = \"plugins/ourgo\"\n");
+        assert_eq!(
+            found,
+            BTreeMap::from([(plugin("ourgo"), PluginSource::Path(dir("plugins/ourgo")))])
+        );
+    }
+
+    #[test]
+    fn a_git_plugin_is_read() {
+        let commit = "0123456789abcdef0123456789abcdef01234567";
+        let text = format!(
+            "[plugins.go]\ngit = \"https://example.com/acme/go.git\"\nrev = \"v1.2.0\"\n\n[plugins.rust]\ngit = \"file:///srv/rust\"\nrev = \"{commit}\"\n"
+        );
+        assert_eq!(
+            sources(&text),
+            BTreeMap::from([
+                (
+                    plugin("go"),
+                    PluginSource::Git {
+                        url: GitUrl::parse("https://example.com/acme/go.git").unwrap(),
+                        rev: Rev::parse("v1.2.0").unwrap(),
+                    }
+                ),
+                (
+                    plugin("rust"),
+                    PluginSource::Git {
+                        url: GitUrl::parse("file:///srv/rust").unwrap(),
+                        rev: Rev::parse(commit).unwrap(),
+                    }
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn github_expands_to_a_url() {
+        let found = sources("[plugins.go]\ngithub = \"acme/buildl-go\"\nrev = \"v1\"\n");
+        assert_eq!(
+            found.get(&plugin("go")),
+            Some(&PluginSource::Git {
+                url: GitUrl::parse("https://github.com/acme/buildl-go").unwrap(),
+                rev: Rev::parse("v1").unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn two_sources_are_refused() {
+        let one = "must name exactly one of path, git and github";
+        let cases = [
+            "[plugins.go]\npath = \"p\"\ngit = \"https://x/y\"\n",
+            "[plugins.go]\ngit = \"https://x/y\"\ngithub = \"a/b\"\nrev = \"v1\"\n",
+            "[plugins.go]\npath = \"p\"\ngithub = \"a/b\"\n",
+        ];
+        for text in cases {
+            assert_eq!(
+                refusal(text),
+                format!("manifest: buildl.toml:1:10: plugins.go: {one}"),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_source_is_refused() {
+        for text in [
+            "[plugins.go]\n",
+            "[plugins.go]\nrev = \"v1\"\nnetwork = true\n",
+        ] {
+            assert_eq!(
+                refusal(text),
+                "manifest: buildl.toml:1:10: plugins.go: must name exactly one of path, git and github",
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rev_with_path_is_refused() {
+        assert_eq!(
+            refusal("[plugins.go]\npath = \"p\"\nrev = \"v1\"\n"),
+            "manifest: buildl.toml:3:7: plugins.go.rev: a path plugin has no rev"
+        );
+    }
+
+    #[test]
+    fn git_without_rev_is_refused() {
+        for text in [
+            "[plugins.go]\ngit = \"https://x/y\"\n",
+            "[plugins.go]\ngithub = \"a/b\"\n",
+        ] {
+            assert_eq!(
+                refusal(text),
+                "manifest: buildl.toml:1:10: plugins.go: a git plugin needs a rev, a tag or a full commit",
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn path_inside_out_is_refused() {
+        let cases = [
+            ("", "out", "output directory out"),
+            ("", "out/x", "output directory out"),
+            ("", ".buildl", "state directory .buildl"),
+            ("", ".buildl/plugins/go", "state directory .buildl"),
+            ("", "", "output directory out"),
+            (
+                "[workspace]\nout = \"gen/files\"\n",
+                "gen",
+                "output directory gen/files",
+            ),
+            (
+                "[workspace]\nout = \"gen/files\"\n",
+                "gen/files/go",
+                "output directory gen/files",
+            ),
+        ];
+        for (head, path, within) in cases {
+            let text = format!("{head}[plugins.go]\npath = {path:?}\n");
+            let shown = refusal(&text);
+            assert!(
+                shown.contains(&format!(
+                    "plugins.go.path: invalid plugin directory: {path:?}"
+                )) && shown.contains(&format!("must not be, hold or lie inside the {within}")),
+                "{text:?}: {shown}"
+            );
+        }
+        assert!(TomlManifest::parse("[plugins.go]\npath = \"outer\"\n").is_ok());
+        assert!(TomlManifest::parse("[plugins.go]\npath = \"tools/out\"\n").is_ok());
+    }
+
+    #[test]
+    fn an_unknown_plugin_key_names_its_line() {
+        assert_eq!(
+            refusal("[plugins.go]\ngit = \"https://x/y\"\nrev = \"v1\"\nbranch = \"main\"\n"),
+            "manifest: buildl.toml:4:1: unknown field `branch`, expected one of `path`, `git`, `github`, `rev`, `proc`, `env`, `network`"
+        );
+    }
+
+    #[test]
+    fn a_bad_plugin_value_names_its_key_and_place() {
+        let cases = [
+            (
+                "[plugins.\"a b\"]\npath = \"p\"\n",
+                "manifest: buildl.toml:1:10: plugins: invalid plugin name: \"a b\" — may hold only ASCII letters, digits, '.', '-' and '_'",
+            ),
+            (
+                "[plugins.go]\ngithub = \"acme\"\nrev = \"v1\"\n",
+                "manifest: buildl.toml:2:10: plugins.go.github: invalid git URL: \"acme\" — must be written owner/repo",
+            ),
+            (
+                "[plugins.go]\ngit = \"\"\nrev = \"v1\"\n",
+                "manifest: buildl.toml:2:7: plugins.go.git: invalid git URL: \"\" — must not be empty",
+            ),
+            (
+                "[plugins.go]\ngit = \"https://x/y\"\nrev = \"a..b\"\n",
+                "manifest: buildl.toml:3:7: plugins.go.rev: invalid tag name: \"a..b\" — must not contain '..'",
+            ),
+            (
+                "[plugins.go]\npath = \"../x\"\n",
+                "manifest: buildl.toml:2:8: plugins.go.path: invalid directory: \"../x\" — must not contain a '.' or '..' segment",
+            ),
+            (
+                "[plugins.go]\npath = \"p\"\nproc.run = [\"$CC\"]\n",
+                "manifest: buildl.toml:3:13: plugins.go.proc.run: invalid program: \"$CC\" — must not hold '$'",
+            ),
+            (
+                "[plugins.go]\npath = \"p\"\nenv.read = [\"MY-VAR\"]\n",
+                "manifest: buildl.toml:3:13: plugins.go.env.read: invalid environment variable name: \"MY-VAR\" — may hold only ASCII letters, digits and '_'",
+            ),
+            (
+                "[plugins.go]\npath = \"p\"\nnetwork = \"yes\"\n",
+                "manifest: buildl.toml:3:11: invalid type: string \"yes\", expected a boolean",
+            ),
+        ];
+        for (text, expected) in cases {
+            assert_eq!(refusal(text), expected, "{text:?}");
+        }
+    }
+
+    #[test]
+    fn caps_reach_workspace_plugins() {
+        let manifest = TomlManifest::parse(
+            r#"[plugins.go]
+git = "https://example.com/go"
+rev = "v1"
+proc.run = ["go", "gofmt"]
+env.read = ["HOME", "GOCACHE"]
+network = true
+
+[plugins.ourgo]
+path = "plugins/ourgo"
+"#,
+        )
+        .unwrap();
+        let workspace = manifest.workspace().unwrap();
+        assert_eq!(
+            workspace.plugins,
+            BTreeMap::from([
+                (
+                    plugin("go"),
+                    PluginCap {
+                        run: ["go", "gofmt"]
+                            .into_iter()
+                            .map(|program| Program::parse(program).unwrap())
+                            .collect(),
+                        env: ["HOME", "GOCACHE"]
+                            .into_iter()
+                            .map(|name| EnvName::parse(name).unwrap())
+                            .collect(),
+                        network: PluginNetwork::Allowed,
+                    }
+                ),
+                (plugin("ourgo"), PluginCap::default()),
+            ])
+        );
+        assert!(
+            TomlManifest::parse("")
+                .unwrap()
+                .workspace()
+                .unwrap()
+                .plugins
+                .is_empty()
+        );
     }
 
     #[test]

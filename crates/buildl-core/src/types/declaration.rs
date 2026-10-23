@@ -5,8 +5,8 @@
 //! in.
 //!
 //! Responsibilities: [`Declaration`], the four kinds in [`Declared`] — [`Target`], [`Rule`],
-//! [`Alias`] and [`Setting`] — a target's [`Action`], and the three two-state flags
-//! [`TargetRole`], [`NetworkAccess`] and [`Freshness`].
+//! [`Alias`] and [`Setting`] — a target's [`Action`], its [`TargetRole`], and the two two-state
+//! flags [`NetworkAccess`] and [`Freshness`].
 //!
 //! Non-responsibilities: relationships between declarations. Whether a label is declared twice,
 //! whether a dependency exists, and whether a rule reference names a rule all need every build
@@ -15,17 +15,32 @@
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    Command, Description, EnvName, Label, OutputName, Provenance, SettingName, SettingValue,
-    SourcePath,
+    Command, Description, EnvName, Label, Origin, OutputName, Provenance, SettingName,
+    SettingValue, SourcePath,
 };
 
-/// Whether a target is built for its outputs or run as a test.
+/// Whether a target is built for its outputs, run as a test, or run to discover what to declare.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum TargetRole {
     /// Declared with `b.target`.
     Build,
     /// Declared with `b.test`.
     Test,
+    /// Declared with `b.discover`: a cached action with one output, `<name>.json`, that a later
+    /// pass of the build files reads.
+    Discovery,
+}
+
+impl TargetRole {
+    /// The build-file function that declares a target of this role, as it is written there.
+    #[must_use]
+    pub const fn declaring_function(self) -> &'static str {
+        match self {
+            Self::Build => "b.target",
+            Self::Test => "b.test",
+            Self::Discovery => "b.discover",
+        }
+    }
 }
 
 /// Whether a target's action may reach the network.
@@ -55,12 +70,12 @@ pub enum Action {
     Run(Command),
 }
 
-/// A buildable or testable target, declared with `b.target` or `b.test`.
+/// A target, declared with `b.target`, `b.test` or `b.discover`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Target {
     /// The target's name, in the directory that declared it.
     pub label: Label,
-    /// Whether it builds or tests.
+    /// Whether it builds, tests or discovers.
     pub role: TargetRole,
     /// How it produces its outputs.
     pub action: Action,
@@ -133,18 +148,23 @@ impl Declared {
     }
 }
 
-/// One validated declaration and the build file that made it.
+/// One validated declaration, the build file that made it, and whose code the call came from.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Declaration {
     provenance: Provenance,
+    origin: Origin,
     item: Declared,
 }
 
 impl Declaration {
-    /// Records `item` as declared by the build file `provenance` names.
+    /// Records `item` as declared by the build file `provenance` names, in code of `origin`.
     #[must_use]
-    pub const fn new(provenance: Provenance, item: Declared) -> Self {
-        Self { provenance, item }
+    pub const fn new(provenance: Provenance, origin: Origin, item: Declared) -> Self {
+        Self {
+            provenance,
+            origin,
+            item,
+        }
     }
 
     /// The build file that made the declaration.
@@ -153,16 +173,22 @@ impl Declaration {
         &self.provenance
     }
 
+    /// Whose code made the declaration.
+    #[must_use]
+    pub const fn origin(&self) -> &Origin {
+        &self.origin
+    }
+
     /// What was declared.
     #[must_use]
     pub const fn item(&self) -> &Declared {
         &self.item
     }
 
-    /// The build file and what it declared, by value.
+    /// The build file, the origin and what was declared, by value.
     #[must_use]
-    pub fn into_parts(self) -> (Provenance, Declared) {
-        (self.provenance, self.item)
+    pub fn into_parts(self) -> (Provenance, Origin, Declared) {
+        (self.provenance, self.origin, self.item)
     }
 }
 
@@ -180,8 +206,8 @@ mod tests {
         TargetRole,
     };
     use crate::types::{
-        Argument, Command, Description, Directory, Label, OutputName, Provenance, SettingName,
-        SettingValue,
+        Argument, Command, Description, Directory, Label, Origin, OutputName, Provenance,
+        SettingName, SettingValue,
     };
 
     fn label(raw: &str) -> Label {
@@ -204,6 +230,13 @@ mod tests {
             network: NetworkAccess::Sealed,
             freshness: Freshness::Cached,
         }
+    }
+
+    #[test]
+    fn each_role_names_the_function_that_declares_it() {
+        assert_eq!(TargetRole::Build.declaring_function(), "b.target");
+        assert_eq!(TargetRole::Test.declaring_function(), "b.test");
+        assert_eq!(TargetRole::Discovery.declaring_function(), "b.discover");
     }
 
     #[test]
@@ -230,12 +263,17 @@ mod tests {
     #[test]
     fn exposes_its_provenance_and_item() {
         let provenance = Provenance::new(PathBuf::from("build.lua"), Directory::root());
-        let declaration = Declaration::new(provenance.clone(), Declared::Target(target()));
+        let declaration = Declaration::new(
+            provenance.clone(),
+            Origin::BuildFile,
+            Declared::Target(target()),
+        );
         assert_eq!(declaration.provenance(), &provenance);
+        assert_eq!(declaration.origin(), &Origin::BuildFile);
         assert_eq!(declaration.item(), &Declared::Target(target()));
         assert_eq!(
             declaration.into_parts(),
-            (provenance, Declared::Target(target()))
+            (provenance, Origin::BuildFile, Declared::Target(target()))
         );
     }
 
@@ -243,6 +281,7 @@ mod tests {
     fn serializes_as_exact_canonical_json_and_round_trips() {
         let declaration = Declaration::new(
             Provenance::new(PathBuf::from("build.lua"), Directory::root()),
+            Origin::BuildFile,
             Declared::Target(target()),
         );
         let json = crate::json::canonical::to_string(&declaration).unwrap();
@@ -252,7 +291,7 @@ mod tests {
                 r#"{"item":{"Target":{"action":{"Run":["cc","$deps","-o","$out"]},"#,
                 r#""deps":["//:main.o"],"env":[],"freshness":"Cached","inputs":[],"#,
                 r#""label":"//:app","network":"Sealed","outputs":["app"],"role":"Build"}},"#,
-                r#""provenance":{"directory":"","file":"build.lua"}}"#
+                r#""origin":"BuildFile","provenance":{"directory":"","file":"build.lua"}}"#
             )
         );
         assert_eq!(
@@ -289,6 +328,7 @@ mod tests {
         for item in items {
             let declaration = Declaration::new(
                 Provenance::new(PathBuf::from("build.lua"), Directory::root()),
+                Origin::BuildFile,
                 item,
             );
             let json = crate::json::canonical::to_string(&declaration).unwrap();
@@ -302,6 +342,7 @@ mod tests {
     #[test]
     fn flags_order_their_default_first() {
         assert!(TargetRole::Build < TargetRole::Test);
+        assert!(TargetRole::Test < TargetRole::Discovery);
         assert!(NetworkAccess::Sealed < NetworkAccess::Declared);
         assert!(Freshness::Cached < Freshness::Always);
     }

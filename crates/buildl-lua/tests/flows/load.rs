@@ -1,10 +1,11 @@
 //! `buildl_core::load` over a real workspace, through this adapter.
 
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use buildl_core::{
-    Action, Argument, Command, Declaration, Declared, Directory, EntryName, Freshness, Label,
-    NetworkAccess, OutputName, Provenance, SourcePath, Target, TargetRole, load,
+    Action, Argument, Command, Declaration, Declared, Directory, Discovered, EntryName, Freshness,
+    Label, NetworkAccess, Origin, OutputName, Provenance, SourcePath, Target, TargetRole, load,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -36,6 +37,7 @@ fn target(
     };
     Declaration::new(
         Provenance::new(PathBuf::from(file), directory),
+        Origin::BuildFile,
         Declared::Target(Target {
             label: Label::parse(label).unwrap(),
             role: TargetRole::Build,
@@ -55,11 +57,17 @@ fn target(
 
 #[test]
 fn load_turns_a_real_workspace_into_declarations() {
-    let source = LuaSource::new(fixture("workspace"), DeclarationLimits::default(), []);
+    let source = LuaSource::new(
+        fixture("workspace"),
+        DeclarationLimits::default(),
+        [],
+        BTreeMap::new(),
+    );
     let declarations = load(
         &source,
         &mut InlineDispatcher,
         &EntryName::parse("build.lua").unwrap(),
+        &Discovered::empty(),
     )
     .unwrap();
     let expected = vec![

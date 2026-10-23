@@ -14,9 +14,9 @@ use std::path::PathBuf;
 use crate::execute::perform::Kept;
 use crate::types::{
     ActionKey, Argument, CacheRow, Command, Digest, Directory, FileMode, Freshness, KeyComponents,
-    Label, NetworkAccess, Node, NodeId, OutputManifest, OutputName, OutputPath, OwnComponents,
-    Platform, Program, Provenance, SettingName, SettingValue, SourcePath, StoredFile, TargetGraph,
-    TargetRole, Tree, TreeEntry, TreePath,
+    Label, NetworkAccess, Node, NodeId, Origin, OutputManifest, OutputName, OutputPath,
+    OwnComponents, Platform, Program, Provenance, SettingName, SettingValue, SourcePath,
+    StoredFile, TargetGraph, TargetRole, Tree, TreeEntry, TreePath,
 };
 
 /// A directory from known-valid text.
@@ -159,6 +159,8 @@ pub(crate) fn node(raw: &str, change: impl FnOnce(&mut Node)) -> Node {
     };
     let mut node = Node {
         provenance: Provenance::new(file, directory),
+        origin: Origin::BuildFile,
+        narrowing: Vec::new(),
         role: TargetRole::Build,
         run: command(&["cc"]),
         description: None,

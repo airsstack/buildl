@@ -100,19 +100,24 @@ impl Exit {
             | Error::InvalidQuery { .. }
             | Error::NoRun { .. }
             | Error::NotATest { .. } => Self::Usage,
-            Error::MissingTool { .. } | Error::MissingOutput { .. } => Self::Infrastructure,
+            Error::MissingTool { .. } | Error::MissingOutput { .. } | Error::PluginFetch { .. } => {
+                Self::Infrastructure
+            }
             // A manifest that is missing, refused, or asks for what this buildl cannot run is
             // fixed by editing it; every other port failing is the builder's trouble.
             Error::Adapter { port, .. } => match port {
                 PortName::Manifest => Self::Definition,
                 _ => Self::Infrastructure,
             },
-            Error::Refused { .. } | Error::NotApproved { .. } => Self::Refused,
+            Error::Refused { .. } | Error::PluginRefused { .. } | Error::NotApproved { .. } => {
+                Self::Refused
+            }
             Error::Evaluation { .. }
             | Error::MissingBuildFile { .. }
             | Error::InvalidDeclaration { .. }
             | Error::ActionConflict { .. }
             | Error::Nondeterministic { .. }
+            | Error::DiscoveryChanged { .. }
             | Error::DuplicateLabel { .. }
             | Error::DuplicateSetting { .. }
             | Error::UnknownReference { .. }
@@ -124,11 +129,15 @@ impl Exit {
             | Error::InputNotAFile { .. }
             | Error::PinnedEnv { .. }
             | Error::OutputConflict { .. }
-            | Error::NoProgram { .. } => Self::Definition,
+            | Error::NoProgram { .. }
+            | Error::PluginTree { .. }
+            | Error::PluginNotFetched { .. } => Self::Definition,
             Error::CorruptState { .. }
             | Error::UnreadableJson { .. }
-            | Error::NonCanonicalJson { .. } => Self::CorruptState,
+            | Error::NonCanonicalJson { .. }
+            | Error::PluginChanged { .. } => Self::CorruptState,
             Error::InvalidName { .. }
+            | Error::NotAccepted { .. }
             | Error::CanonicalJson { .. }
             | Error::FloatRejected { .. }
             | Error::ForeignPlan
@@ -168,9 +177,10 @@ mod tests {
     use buildl::buildl_core::{
         ActionFound, ActionOutcome, Ceiling, Check, DeclarationField, DeclarationOrder,
         DeclarationSite, DeclaredKind, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
-        Error, EvaluationFailure, FileChange, InfraKind, InputKind, Label, OutcomeClass,
-        OutputDifference, OutputName, OutputPath, OutputRefusal, PortName, Program, Provenance,
-        SettingName, SourcePath, TargetRole, TreeFault, Verification, Want, WantedSet,
+        Error, EvaluationFailure, FileChange, InfraKind, InputKind, Label, Origin, OutcomeClass,
+        OutputDifference, OutputName, OutputPath, OutputRefusal, PluginName, PluginRef,
+        PluginVersion, PluginViolation, PortName, Program, Provenance, SettingName, SourcePath,
+        TargetRole, TreeFault, Verification, Want, WantedSet,
     };
 
     use super::Exit;
@@ -189,6 +199,7 @@ mod tests {
         DeclarationSite {
             label: label("//:app"),
             provenance: root_file(),
+            origin: Origin::BuildFile,
         }
     }
 
@@ -230,8 +241,8 @@ mod tests {
             },
             Error::NotATest {
                 asked: label("//:app"),
-                target: label("//:app"),
-                provenance: Box::new(root_file()),
+                declared_with: TargetRole::Build,
+                site: Box::new(site()),
             },
         ]
     }
@@ -248,6 +259,7 @@ mod tests {
             Error::MissingOutput {
                 label: label("//:app"),
             },
+            plugin_fetch(),
         ]
     }
 
@@ -259,8 +271,30 @@ mod tests {
                 site: Some(Box::new(site())),
                 ceiling: Box::new(nothing()),
             },
+            plugin_refused(),
             not_approved(),
         ]
+    }
+
+    /// A plugin's refusal of a target that wants to run `curl`.
+    fn plugin_refused() -> Error {
+        let go = PluginRef {
+            name: PluginName::parse("go").unwrap(),
+            version: PluginVersion::parse("1.3.0").unwrap(),
+            run: BTreeSet::new(),
+            env: BTreeSet::new(),
+        };
+        Error::PluginRefused {
+            violation: Box::new(PluginViolation {
+                want: Want::Program(Program::parse("curl").unwrap()),
+                site: DeclarationSite {
+                    origin: Origin::plugins(vec![go.clone()]).unwrap(),
+                    ..site()
+                },
+                plugin: go,
+                allowed: BTreeSet::new(),
+            }),
+        }
     }
 
     /// The approver's refusal of a build that wants to run `cc`.
@@ -290,12 +324,14 @@ mod tests {
             },
             Error::InvalidDeclaration {
                 provenance: root_file(),
+                origin: Origin::BuildFile,
                 order: DeclarationOrder::new(1),
                 field: DeclarationField::Name,
                 source: Box::new(Label::parse("app").unwrap_err()),
             },
             Error::ActionConflict {
                 provenance: root_file(),
+                origin: Origin::BuildFile,
                 order: DeclarationOrder::new(1),
                 found: ActionFound::Neither,
             },
@@ -304,7 +340,16 @@ mod tests {
                 first_run: None,
                 second_run: None,
             },
+            discovery_changed(),
         ]
+    }
+
+    /// A discovery target the build files declared differently once its result was read.
+    fn discovery_changed() -> Error {
+        Error::DiscoveryChanged {
+            label: label("//:pkgs"),
+            provenance: root_file(),
+        }
     }
 
     /// A value of each variant that is a mistake of a build file found while resolving the
@@ -313,7 +358,7 @@ mod tests {
         vec![
             Error::DuplicateLabel {
                 label: label("//:app"),
-                sites: vec![root_file(), root_file()],
+                sites: vec![site(), site()],
             },
             Error::DuplicateSetting {
                 name: SettingName::parse("mode").unwrap(),
@@ -340,6 +385,43 @@ mod tests {
             Error::DependencyCycle { path: vec![site()] },
             Error::TooManyTargets { count: 7 },
         ]
+    }
+
+    /// A value of each variant that is a mistake in what a workspace's plugins hold.
+    fn plugin_errors() -> Vec<Error> {
+        vec![plugin_tree(), plugin_not_fetched()]
+    }
+
+    /// A plugin the lock does not pin.
+    fn plugin_not_fetched() -> Error {
+        Error::PluginNotFetched {
+            plugin: PluginName::parse("go").unwrap(),
+            reason: "run `buildl plugins fetch`".to_owned(),
+        }
+    }
+
+    /// A plugin whose store was edited after it was fetched.
+    fn plugin_changed() -> Error {
+        Error::PluginChanged {
+            plugin: PluginName::parse("go").unwrap(),
+            reason: "its files are not the ones that were locked".to_owned(),
+        }
+    }
+
+    /// A plugin `git` could not fetch.
+    fn plugin_fetch() -> Error {
+        Error::PluginFetch {
+            plugin: PluginName::parse("go").unwrap(),
+            diagnostic: Diagnostic::new("git was not found"),
+        }
+    }
+
+    /// A plugin whose directory holds a link.
+    fn plugin_tree() -> Error {
+        Error::PluginTree {
+            plugin: PluginName::parse("go").unwrap(),
+            path: PathBuf::from(".buildl/plugins/go/c0ffee/bin/link"),
+        }
     }
 
     /// A value of each variant that is a mistake of a build file found while planning, or
@@ -503,8 +585,8 @@ mod tests {
     fn not_a_test_is_a_usage_error() {
         let error = Error::NotATest {
             asked: label("//:default"),
-            target: label("//:app"),
-            provenance: Box::new(root_file()),
+            declared_with: TargetRole::Build,
+            site: Box::new(site()),
         };
         assert_eq!(Exit::of_error(&error), Exit::Usage);
     }
@@ -528,6 +610,38 @@ mod tests {
     }
 
     #[test]
+    fn plugin_refused_exits_4() {
+        assert_eq!(Exit::of_error(&plugin_refused()), Exit::Refused);
+        assert_eq!(Exit::Refused as u8, 4);
+    }
+
+    #[test]
+    fn plugin_fetch_exits_3() {
+        assert_eq!(Exit::of_error(&plugin_fetch()), Exit::Infrastructure);
+        assert_eq!(Exit::Infrastructure as u8, 3);
+    }
+
+    #[test]
+    fn plugin_tree_exits_5() {
+        assert_eq!(Exit::of_error(&plugin_tree()), Exit::Definition);
+        assert_eq!(Exit::Definition as u8, 5);
+    }
+
+    #[test]
+    fn discovery_changed_exits_5() {
+        assert_eq!(Exit::of_error(&discovery_changed()), Exit::Definition);
+        assert_eq!(Exit::Definition as u8, 5);
+    }
+
+    #[test]
+    fn plugin_not_fetched_exits_5_and_changed_exits_6() {
+        assert_eq!(Exit::of_error(&plugin_not_fetched()), Exit::Definition);
+        assert_eq!(Exit::of_error(&plugin_changed()), Exit::CorruptState);
+        assert_eq!(Exit::Definition as u8, 5);
+        assert_eq!(Exit::CorruptState as u8, 6);
+    }
+
+    #[test]
     fn missing_output_is_an_infrastructure_failure() {
         let error = Error::MissingOutput {
             label: label("//:app"),
@@ -543,21 +657,32 @@ mod tests {
             (Exit::Refused, refusals()),
             (
                 Exit::Definition,
-                [load_errors(), resolve_errors(), plan_errors()]
+                [
+                    load_errors(),
+                    resolve_errors(),
+                    plan_errors(),
+                    plugin_errors(),
+                ]
+                .into_iter()
+                .flatten()
+                .collect(),
+            ),
+            (
+                Exit::CorruptState,
+                [state_errors(), vec![plugin_changed()]]
                     .into_iter()
                     .flatten()
                     .collect(),
             ),
-            (Exit::CorruptState, state_errors()),
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [5, 3, 2, 17, 3, 7]);
+        assert_eq!(counts, [5, 4, 3, 20, 4, 7]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 37, "a variant is listed twice");
+        assert_eq!(variants.len(), 43, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");
@@ -580,6 +705,7 @@ mod tests {
             PortName::Approver,
             PortName::GraphRecord,
             PortName::RunHistory,
+            PortName::PluginStore,
         ] {
             assert_eq!(
                 Exit::of_error(&adapter(port)),

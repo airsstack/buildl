@@ -15,8 +15,8 @@ use std::collections::BTreeMap;
 use serde::{Serialize, Serializer};
 
 use crate::types::{
-    Command, Description, EnvName, Freshness, Label, NetworkAccess, NodeId, OutputName, Provenance,
-    SettingName, SettingValue, SourcePath, TargetRole,
+    Command, Description, EnvName, Freshness, Label, NetworkAccess, NodeId, Origin, OutputName,
+    PluginRef, Provenance, SettingName, SettingValue, SourcePath, TargetRole,
 };
 
 /// One runnable target: what a build or test target became once its references were resolved.
@@ -29,6 +29,12 @@ pub struct Node {
     pub label: Label,
     /// The build file that declared it.
     pub provenance: Provenance,
+    /// Whose code declared it; shown in the graph's JSON.
+    pub origin: Origin,
+    /// The plugins whose caps hold the target: its own origin chain, then each plugin of the
+    /// chain of the rule it names that is not already in it. Empty for a build-file target that
+    /// names no plugin's rule. Not part of the graph's JSON.
+    pub narrowing: Vec<PluginRef>,
     /// Whether it builds or tests.
     pub role: TargetRole,
     /// The command it runs: its own, or the one of the rule it named.
@@ -171,6 +177,7 @@ struct TargetView<'a> {
     freshness: Freshness,
     inputs: &'a [SourcePath],
     network: NetworkAccess,
+    origin: &'a Origin,
     outputs: &'a [OutputName],
     provenance: &'a Provenance,
     role: TargetRole,
@@ -215,6 +222,7 @@ impl Serialize for TargetGraph {
                     freshness: node.freshness,
                     inputs: &node.inputs,
                     network: node.network,
+                    origin: &node.origin,
                     outputs: &node.outputs,
                     provenance: &node.provenance,
                     role: node.role,
@@ -244,7 +252,7 @@ mod tests {
 
     use super::{Node, TargetGraph};
     use crate::types::{
-        Argument, Command, Description, EnvName, Freshness, Label, NetworkAccess, NodeId,
+        Argument, Command, Description, EnvName, Freshness, Label, NetworkAccess, NodeId, Origin,
         OutputName, Provenance, SettingName, SettingValue, SourcePath, TargetRole,
     };
 
@@ -262,6 +270,8 @@ mod tests {
         };
         Node {
             provenance: Provenance::new(file, directory),
+            origin: Origin::BuildFile,
+            narrowing: Vec::new(),
             role: TargetRole::Build,
             run: Command::new(vec![Argument::parse("cc").unwrap()]).unwrap(),
             description: None,
@@ -372,14 +382,14 @@ mod tests {
                 r#"{"aliases":{"//:default":"//:app"},"settings":{"test_filter":""},"targets":{"#,
                 r#""//:app":{"deps":["//a-b:x","//a:z"],"description":"link $out","#,
                 r#""env":["HOME"],"freshness":"Always","inputs":["main.c"],"#,
-                r#""network":"Declared","outputs":["app"],"#,
+                r#""network":"Declared","origin":"BuildFile","outputs":["app"],"#,
                 r#""provenance":{"directory":"","file":"build.lua"},"role":"Test","run":["cc"]},"#,
                 r#""//a-b:x":{"deps":[],"description":null,"env":[],"freshness":"Cached","#,
-                r#""inputs":[],"network":"Sealed","outputs":["x"],"#,
+                r#""inputs":[],"network":"Sealed","origin":"BuildFile","outputs":["x"],"#,
                 r#""provenance":{"directory":"a-b","file":"a-b/build.lua"},"role":"Build","#,
                 r#""run":["cc"]},"#,
                 r#""//a:z":{"deps":[],"description":null,"env":[],"freshness":"Cached","#,
-                r#""inputs":[],"network":"Sealed","outputs":["z"],"#,
+                r#""inputs":[],"network":"Sealed","origin":"BuildFile","outputs":["z"],"#,
                 r#""provenance":{"directory":"a","file":"a/build.lua"},"role":"Build","#,
                 r#""run":["cc"]}}}"#
             )

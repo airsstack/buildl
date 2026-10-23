@@ -14,8 +14,9 @@
 //!   about.
 //! - [`ActionFound`] — what an [`Error::ActionConflict`] found instead of one action.
 //! - [`DeclaredKind`] — what a label an [`Error::WrongReferenceKind`] is about was declared as.
-//! - [`DeclarationSite`] — a declared label and its build file: the declaration holding a bad
-//!   reference, or one target on a dependency cycle.
+//! - [`DeclarationSite`] — a declared label, its build file and whose code declared it: the
+//!   declaration holding a bad reference, one target on a dependency cycle, one declaration of a
+//!   duplicated label, or the target a test run named that is not a test.
 //! - [`PortName`] — which port an [`Error::Adapter`] came through.
 //! - [`TreeFault`] — why a list of files an [`Error::InvalidTree`] is about is not a tree.
 //! - [`Result`] — the crate-wide alias.
@@ -29,8 +30,8 @@ use std::path::PathBuf;
 
 use crate::types::{
     Ceiling, Declaration, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
-    FieldName, InputKind, Label, Node, OutputPath, Program, Provenance, SettingName, SourcePath,
-    TreePath, Want, WantedSet, Written,
+    FieldName, InputKind, Label, Node, Origin, OutputPath, PluginName, PluginViolation, Program,
+    Provenance, SettingName, SourcePath, TargetRole, TreePath, Want, WantedSet, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -50,6 +51,12 @@ pub enum Error {
         /// The rejected input, as given.
         value: String,
         /// Why the grammar rejected it.
+        reason: &'static str,
+    },
+    /// A declaration holds a value its kind of target does not take.
+    #[error("{reason}")]
+    NotAccepted {
+        /// Why the declaration cannot hold the value.
         reason: &'static str,
     },
     /// A value could not be serialized as JSON at all.
@@ -116,10 +123,15 @@ pub enum Error {
         requested_by: Option<Provenance>,
     },
     /// A value in a declaration did not satisfy its grammar.
-    #[error("{provenance}: declaration {order}: invalid {field}: {source}")]
+    #[error(
+        "{provenance}{}: declaration {order}: invalid {field}: {source}",
+        plugin_suffix(.origin)
+    )]
     InvalidDeclaration {
         /// The build file.
         provenance: Provenance,
+        /// Whose code made the declaration.
+        origin: Origin,
         /// The call's position in the file.
         order: DeclarationOrder,
         /// The field holding the value.
@@ -129,10 +141,15 @@ pub enum Error {
         source: Box<Self>,
     },
     /// A target named both or neither of `rule` and `run`.
-    #[error("{provenance}: declaration {order}: a target names {found}")]
+    #[error(
+        "{provenance}{}: declaration {order}: a target names {found}",
+        plugin_suffix(.origin)
+    )]
     ActionConflict {
         /// The build file.
         provenance: Provenance,
+        /// Whose code made the declaration.
+        origin: Origin,
         /// The call's position in the file.
         order: DeclarationOrder,
         /// What was found instead of exactly one.
@@ -148,13 +165,27 @@ pub enum Error {
         /// The second evaluation's declaration at the first difference; `None` past its end.
         second_run: Option<Box<Declaration>>,
     },
+    /// The build files, evaluated with the results of the discovery targets, declared different
+    /// discovery targets than they did without them.
+    #[error(
+        "{provenance}: discovery target {label} differs once discovery results are read; a \
+         discovery target may not depend on a discovery result"
+    )]
+    DiscoveryChanged {
+        /// The first discovery target, in declaration order, that one evaluation declared and
+        /// the other did not or declared differently.
+        label: Label,
+        /// The build file that declares it.
+        provenance: Provenance,
+    },
     /// A label was declared more than once, as any mix of target, rule and alias.
-    #[error("{label} is declared more than once: {}", sites_list(.sites))]
+    #[error("{label} is declared more than once: {}", declaring_sites(.sites))]
     DuplicateLabel {
         /// The label.
         label: Label,
-        /// The build file of every declaration of it, in the declarations' own order.
-        sites: Vec<Provenance>,
+        /// Every declaration of it, with its build file and whose code made it, in the
+        /// declarations' own order.
+        sites: Vec<DeclarationSite>,
     },
     /// A build setting was declared more than once.
     #[error("setting {name} is declared more than once: {}", sites_list(.sites))]
@@ -166,9 +197,8 @@ pub enum Error {
     },
     /// A reference names a label nothing declares.
     #[error(
-        "{}: {}: {field} {reference} is not declared{}",
-        .site.provenance,
-        .site.label,
+        "{}: {field} {reference} is not declared{}",
+        .site,
         suggestion_suffix(.suggestion.as_ref())
     )]
     UnknownReference {
@@ -183,9 +213,8 @@ pub enum Error {
     },
     /// A reference names a declaration of a kind its field cannot name.
     #[error(
-        "{}: {}: {field} {reference} names {}, declared in {declared_in}",
-        .site.provenance,
-        .site.label,
+        "{}: {field} {reference} names {}, declared in {declared_in}",
+        .site,
         .found.with_article()
     )]
     WrongReferenceKind {
@@ -202,9 +231,8 @@ pub enum Error {
     },
     /// A command references a build setting nothing declares.
     #[error(
-        "{}: {}: setting {name} is not declared{}",
-        .site.provenance,
-        .site.label,
+        "{}: setting {name} is not declared{}",
+        .site,
         suggestion_suffix(.suggestion.as_ref())
     )]
     UnknownSetting {
@@ -240,6 +268,12 @@ pub enum Error {
         /// What the workspace allows.
         ceiling: Box<Ceiling>,
     },
+    /// A plugin's target wants something its plugin does not allow.
+    #[error("{}: {}", .violation.site, .violation)]
+    PluginRefused {
+        /// The want, the target that made it, and the plugin that does not allow it.
+        violation: Box<PluginViolation>,
+    },
     /// The approver did not approve what a build wants.
     #[error("{}", denial(.reason, .unapproved))]
     NotApproved {
@@ -250,9 +284,8 @@ pub enum Error {
     },
     /// A command names a program that cannot be found.
     #[error(
-        "{}: {}: program {program} was not found",
-        .site.provenance,
-        .site.label
+        "{}: program {program} was not found",
+        .site
     )]
     MissingTool {
         /// The lowest-labelled target whose command names the program, and its build file.
@@ -262,9 +295,8 @@ pub enum Error {
     },
     /// A target declares an environment variable the workspace's execution strategy sets itself.
     #[error(
-        "{}: {}: env {name} is set to {value} by the sandbox and cannot be declared",
-        .site.provenance,
-        .site.label
+        "{}: env {name} is set to {value} by the sandbox and cannot be declared",
+        .site
     )]
     PinnedEnv {
         /// The variable.
@@ -276,9 +308,8 @@ pub enum Error {
     },
     /// A target reads a workspace file that does not exist.
     #[error(
-        "{}: {}: input {path} does not exist",
-        .site.provenance,
-        .site.label
+        "{}: input {path} does not exist",
+        .site
     )]
     MissingInput {
         /// The lowest-labelled target declaring the input, and its build file.
@@ -288,9 +319,8 @@ pub enum Error {
     },
     /// A target reads a workspace path that holds something other than a regular file.
     #[error(
-        "{}: {}: input {path} is {found}; an input must be a regular file",
-        .site.provenance,
-        .site.label
+        "{}: input {path} is {found}; an input must be a regular file",
+        .site
     )]
     InputNotAFile {
         /// The lowest-labelled target declaring the input, and its build file.
@@ -319,15 +349,19 @@ pub enum Error {
     },
     /// A test run was asked for a target that is not a test.
     #[error(
-        "target {asked} was asked for as a test, but {target} is declared with b.target in {provenance}"
+        "target {asked} was asked for as a test, but {} is declared with {} in {}",
+        .site.label,
+        .declared_with.declaring_function(),
+        .site.located()
     )]
     NotATest {
         /// The label that was asked for.
         asked: Label,
-        /// The target it names: the same label unless an alias was followed.
-        target: Label,
-        /// The build file that declares the target.
-        provenance: Box<Provenance>,
+        /// The role the target it names was declared with, which says which function declared it.
+        declared_with: TargetRole,
+        /// The target it names, which is the same label unless an alias was followed, and its
+        /// build file.
+        site: Box<DeclarationSite>,
     },
     /// A query was written in neither of the two forms a query takes.
     #[error("query `{expression}` is not deps(<target>) or rdeps(<target>)")]
@@ -364,9 +398,9 @@ pub enum Error {
     #[error(
         "{path}: {} ({}) and {} ({}) cannot both write here",
         .first.label,
-        .first.provenance,
+        .first.located(),
         .second.label,
-        .second.provenance
+        .second.located()
     )]
     OutputConflict {
         /// The shorter of the two paths: the one both outputs need.
@@ -379,9 +413,8 @@ pub enum Error {
     /// A command names no program once its placeholders are expanded: it expanded to no
     /// argument, or its first argument is empty or still holds a `$`.
     #[error(
-        "{}: {}: the command names no program once expanded",
-        .site.provenance,
-        .site.label
+        "{}: the command names no program once expanded",
+        .site
     )]
     NoProgram {
         /// The target whose command it is, and its build file.
@@ -419,6 +452,45 @@ pub enum Error {
     InvalidTree {
         /// What is wrong with the list.
         fault: TreeFault,
+    },
+    /// A plugin's directory holds something other than regular files with Unicode names.
+    #[error(
+        "plugin {plugin}: {} is not a regular file with a Unicode name; a plugin holds regular files only",
+        .path.display()
+    )]
+    PluginTree {
+        /// The plugin.
+        plugin: PluginName,
+        /// The first such path found.
+        path: PathBuf,
+    },
+    /// A plugin `buildl.toml` names is not there to use: it is a directory that does not
+    /// exist, a git plugin that `buildl.lock` does not pin as `buildl.toml` names it or whose
+    /// store is missing, or a git revision that holds no file.
+    #[error("plugin {plugin} is not fetched: {reason}")]
+    PluginNotFetched {
+        /// The plugin.
+        plugin: PluginName,
+        /// What is missing, and what to do about it.
+        reason: String,
+    },
+    /// A plugin's files are not the ones `buildl.lock` pinned: the store was changed after the
+    /// plugin was fetched.
+    #[error("plugin {plugin} was changed after it was fetched: {reason}")]
+    PluginChanged {
+        /// The plugin.
+        plugin: PluginName,
+        /// How the files differ from the lock.
+        reason: String,
+    },
+    /// `git` could not fetch a plugin: it is not installed, or it refused the repository, the
+    /// revision or the checkout.
+    #[error("plugin {plugin} could not be fetched: {diagnostic}")]
+    PluginFetch {
+        /// The plugin.
+        plugin: PluginName,
+        /// What `git` printed, or why it could not be run, for display only.
+        diagnostic: Diagnostic,
     },
 }
 
@@ -458,6 +530,24 @@ fn sites_list(sites: &[Provenance]) -> String {
     rendered.join(", ")
 }
 
+/// The build file of every declaration of a duplicated label, separated by commas, each followed
+/// by the plugin chain when a plugin made it.
+fn declaring_sites(sites: &[DeclarationSite]) -> String {
+    let rendered: Vec<String> = sites
+        .iter()
+        .map(|site| format!("{}{}", site.provenance, plugin_suffix(&site.origin)))
+        .collect();
+    rendered.join(", ")
+}
+
+/// ` (plugin <chain>)` when a plugin made the declaration; nothing for a build file.
+fn plugin_suffix(origin: &Origin) -> String {
+    match origin {
+        Origin::BuildFile => String::new(),
+        chain @ Origin::Plugins(_) => format!(" (plugin {chain})"),
+    }
+}
+
 /// The suffix offering the nearest declared name, when there is one.
 fn suggestion_suffix<T: fmt::Display>(suggestion: Option<&T>) -> String {
     suggestion.map_or_else(String::new, |nearest| format!(" (did you mean {nearest}?)"))
@@ -481,7 +571,7 @@ fn damaged_suffix(damaged: &[NonZeroUsize]) -> String {
 fn cycle_path(path: &[DeclarationSite]) -> String {
     let mut rendered: Vec<String> = path
         .iter()
-        .map(|site| format!("{} ({})", site.label, site.provenance))
+        .map(|site| format!("{} ({})", site.label, site.located()))
         .collect();
     if let Some(first) = path.first() {
         rendered.push(first.label.to_string());
@@ -522,15 +612,18 @@ fn refusal(want: &Want, site: Option<&DeclarationSite>, ceiling: &Ceiling) -> St
             "fs.write",
             allowed_list(ceiling.write.iter().map(directory_text)),
         ),
+        Want::Network(label) => (
+            format!("network of {label}"),
+            "network",
+            "nothing".to_owned(),
+        ),
     };
-    let holder = site.map_or_else(String::new, |site| {
-        format!("{}: {}: ", site.provenance, site.label)
-    });
+    let holder = site.map_or_else(String::new, |site| format!("{site}: "));
     format!("{holder}{wanted} is outside the ceiling ({list} allows: {allowed})")
 }
 
 /// The entries of one ceiling list, separated by commas; `nothing` for an empty list.
-fn allowed_list<T: fmt::Display>(entries: impl IntoIterator<Item = T>) -> String {
+pub(crate) fn allowed_list<T: fmt::Display>(entries: impl IntoIterator<Item = T>) -> String {
     let rendered: Vec<String> = entries.into_iter().map(|entry| entry.to_string()).collect();
     if rendered.is_empty() {
         "nothing".to_owned()
@@ -540,7 +633,7 @@ fn allowed_list<T: fmt::Display>(entries: impl IntoIterator<Item = T>) -> String
 }
 
 /// A directory as a refusal shows it: the workspace root, whose text is empty, as `.`.
-fn directory_text(directory: &Directory) -> &str {
+pub(crate) fn directory_text(directory: &Directory) -> &str {
     if directory.is_root() {
         "."
     } else {
@@ -581,24 +674,52 @@ impl fmt::Display for DeclaredKind {
     }
 }
 
-/// A declared label and the build file that declared it.
+/// A declared label, the build file that declared it, and whose code made the declaration.
 ///
-/// Names the declaration an error is about: the one holding a bad reference, or one target on
-/// a dependency cycle.
+/// Names the declaration an error is about: the one holding a bad reference, one target on a
+/// dependency cycle, one declaration of a duplicated label, or the target a test run named that
+/// is not a test. Displays as `<file>: <label>`, followed by `(plugin <chain>)` when a
+/// plugin made the declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeclarationSite {
     /// The declared label.
     pub label: Label,
     /// The build file that declared it.
     pub provenance: Provenance,
+    /// Whose code made the declaration: the build file itself, or a plugin chain.
+    pub origin: Origin,
+}
+
+impl DeclarationSite {
+    /// The build file, then the plugin chain when a plugin made the declaration: `build.lua` or
+    /// `build.lua, plugin ourgo@0.1.0 > go@1.2.0`.
+    fn located(&self) -> String {
+        match &self.origin {
+            Origin::BuildFile => self.provenance.to_string(),
+            chain @ Origin::Plugins(_) => format!("{}, plugin {chain}", self.provenance),
+        }
+    }
+}
+
+impl fmt::Display for DeclarationSite {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}: {}{}",
+            self.provenance,
+            self.label,
+            plugin_suffix(&self.origin)
+        )
+    }
 }
 
 impl From<&Node> for DeclarationSite {
-    /// The site of a graph node: its label, and the build file that declared it.
+    /// The site of a graph node: its label, the build file that declared it, and its origin.
     fn from(node: &Node) -> Self {
         Self {
             label: node.label.clone(),
             provenance: node.provenance.clone(),
+            origin: node.origin.clone(),
         }
     }
 }
@@ -637,6 +758,8 @@ pub enum PortName {
     Sweep,
     /// What settles whether a build may run.
     Approver,
+    /// Where plugins are fetched to and the lock that pins them.
+    PluginStore,
 }
 
 impl fmt::Display for PortName {
@@ -656,6 +779,7 @@ impl fmt::Display for PortName {
             Self::GraphRecord => "graph record",
             Self::Sweep => "sweep",
             Self::Approver => "approver",
+            Self::PluginStore => "plugin store",
         })
     }
 }
@@ -757,6 +881,8 @@ pub enum DeclarationField {
     SettingName,
     /// A setting's default value.
     SettingValue,
+    /// A target's `always` flag.
+    Freshness,
     /// A `subdir` request.
     Subdir,
 }
@@ -775,6 +901,7 @@ impl fmt::Display for DeclarationField {
             Self::Target => "target",
             Self::SettingName => "setting name",
             Self::SettingValue => "setting value",
+            Self::Freshness => "freshness",
             Self::Subdir => "subdir",
         })
     }
@@ -849,6 +976,18 @@ pub enum NameKind {
     Approver,
     /// The path of a file inside a directory an action left as an output.
     TreePath,
+    /// The name of a plugin.
+    PluginName,
+    /// The version text a plugin's manifest states.
+    PluginVersion,
+    /// The chain of plugins that declared a target.
+    PluginChain,
+    /// A full git commit id.
+    CommitId,
+    /// A git tag name.
+    TagName,
+    /// The URL of a git repository.
+    GitUrl,
 }
 
 impl fmt::Display for NameKind {
@@ -876,6 +1015,12 @@ impl fmt::Display for NameKind {
             Self::Isolation => "execution strategy",
             Self::Approver => "approver mode",
             Self::TreePath => "tree path",
+            Self::PluginName => "plugin name",
+            Self::PluginVersion => "plugin version",
+            Self::PluginChain => "plugin chain",
+            Self::CommitId => "commit id",
+            Self::TagName => "tag name",
+            Self::GitUrl => "git URL",
         })
     }
 }
@@ -921,9 +1066,9 @@ mod tests {
     };
     use crate::types::{
         Argument, Ceiling, Command, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName,
-        EnvValue, FieldName, Freshness, InputKind, Label, NetworkAccess, Node, OutputName,
-        OutputPath, Program, Provenance, SettingName, SourcePath, TargetName, TargetRole, TreePath,
-        Want, WantedSet, Written,
+        EnvValue, FieldName, Freshness, InputKind, Label, NetworkAccess, Node, Origin, OutputName,
+        OutputPath, PluginName, PluginRef, PluginVersion, PluginViolation, Program, Provenance,
+        SettingName, SourcePath, TargetName, TargetRole, TreePath, Want, WantedSet, Written,
     };
 
     fn lib_file() -> Provenance {
@@ -953,6 +1098,7 @@ mod tests {
         DeclarationSite {
             label: label(raw),
             provenance: root_file(),
+            origin: Origin::BuildFile,
         }
     }
 
@@ -960,11 +1106,29 @@ mod tests {
     fn duplicate_label_names_every_site() {
         let err = Error::DuplicateLabel {
             label: label("//:a"),
-            sites: vec![root_file(), root_file()],
+            sites: vec![root_site("//:a"), root_site("//:a")],
         };
         assert_eq!(
             err.to_string(),
             "//:a is declared more than once: build.lua, build.lua"
+        );
+    }
+
+    #[test]
+    fn duplicate_label_names_the_plugin_chain_of_the_declaration_a_plugin_made() {
+        let err = Error::DuplicateLabel {
+            label: label("//:a"),
+            sites: vec![
+                root_site("//:a"),
+                DeclarationSite {
+                    origin: ourgo_chain(),
+                    ..root_site("//:a")
+                },
+            ],
+        };
+        assert_eq!(
+            err.to_string(),
+            "//:a is declared more than once: build.lua, build.lua (plugin ourgo@0.1.0 > go@1.2.0)"
         );
     }
 
@@ -1064,10 +1228,12 @@ mod tests {
                 DeclarationSite {
                     label: label("//:a"),
                     provenance: root_file(),
+                    origin: Origin::BuildFile,
                 },
                 DeclarationSite {
                     label: label("//lib:b"),
                     provenance: lib_file(),
+                    origin: Origin::BuildFile,
                 },
             ],
         };
@@ -1083,6 +1249,7 @@ mod tests {
             path: vec![DeclarationSite {
                 label: label("//:a"),
                 provenance: root_file(),
+                origin: Origin::BuildFile,
             }],
         };
         assert_eq!(
@@ -1105,6 +1272,8 @@ mod tests {
         let node = Node {
             label: label("//lib:text"),
             provenance: lib_file(),
+            origin: Origin::BuildFile,
+            narrowing: Vec::new(),
             role: TargetRole::Build,
             run: Command::new(vec![Argument::parse("cc").unwrap()]).unwrap(),
             description: None,
@@ -1119,7 +1288,57 @@ mod tests {
             DeclarationSite {
                 label: label("//lib:text"),
                 provenance: lib_file(),
+                origin: Origin::BuildFile,
             }
+        );
+    }
+
+    /// A plugin chain `ourgo@0.1.0 > go@1.2.0`.
+    fn ourgo_chain() -> Origin {
+        let plugin = |name: &str, version: &str| PluginRef {
+            name: PluginName::parse(name).unwrap(),
+            version: PluginVersion::parse(version).unwrap(),
+            run: BTreeSet::new(),
+            env: BTreeSet::new(),
+        };
+        Origin::plugins(vec![plugin("ourgo", "0.1.0"), plugin("go", "1.2.0")]).unwrap()
+    }
+
+    #[test]
+    fn a_site_with_a_plugin_origin_names_the_chain() {
+        let site = DeclarationSite {
+            origin: ourgo_chain(),
+            ..root_site("//:app")
+        };
+        assert_eq!(
+            site.to_string(),
+            "build.lua: //:app (plugin ourgo@0.1.0 > go@1.2.0)"
+        );
+        let missing = Error::MissingTool {
+            site: Box::new(site.clone()),
+            program: Program::parse("cc").unwrap(),
+        };
+        assert_eq!(
+            missing.to_string(),
+            "build.lua: //:app (plugin ourgo@0.1.0 > go@1.2.0): program cc was not found"
+        );
+        let cycle = Error::DependencyCycle { path: vec![site] };
+        assert_eq!(
+            cycle.to_string(),
+            "dependency cycle: //:app (build.lua, plugin ourgo@0.1.0 > go@1.2.0) -> //:app"
+        );
+    }
+
+    #[test]
+    fn a_build_file_site_reads_as_today() {
+        assert_eq!(root_site("//:app").to_string(), "build.lua: //:app");
+        let err = Error::MissingTool {
+            site: Box::new(root_site("//:app")),
+            program: Program::parse("cc").unwrap(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app: program cc was not found"
         );
     }
 
@@ -1245,6 +1464,109 @@ mod tests {
         );
     }
 
+    /// A violation of `go@1.3.0` by `//:app`, made by `ourgo@0.1.0 > go@1.3.0`, of `want`, with
+    /// `allowed` listed.
+    fn violation(want: Want, allowed: &[&str]) -> Error {
+        let plugin = |name: &str, version: &str| PluginRef {
+            name: PluginName::parse(name).unwrap(),
+            version: PluginVersion::parse(version).unwrap(),
+            run: BTreeSet::new(),
+            env: BTreeSet::new(),
+        };
+        let chain = vec![plugin("ourgo", "0.1.0"), plugin("go", "1.3.0")];
+        Error::PluginRefused {
+            violation: Box::new(PluginViolation {
+                want,
+                site: DeclarationSite {
+                    label: label("//:app"),
+                    provenance: root_file(),
+                    origin: Origin::plugins(chain.clone()).unwrap(),
+                },
+                plugin: chain[1].clone(),
+                allowed: allowed.iter().map(|text| (*text).to_owned()).collect(),
+            }),
+        }
+    }
+
+    #[test]
+    fn a_plugin_tree_names_the_plugin_and_the_path() {
+        let err = Error::PluginTree {
+            plugin: PluginName::parse("go").unwrap(),
+            path: PathBuf::from(".buildl/plugins/go/c0ffee/bin/link"),
+        };
+        assert_eq!(
+            err.to_string(),
+            "plugin go: .buildl/plugins/go/c0ffee/bin/link is not a regular file with a Unicode \
+             name; a plugin holds regular files only"
+        );
+    }
+
+    #[test]
+    fn a_plugin_not_fetched_names_the_plugin_and_the_reason() {
+        let err = Error::PluginNotFetched {
+            plugin: PluginName::parse("go").unwrap(),
+            reason: "run `buildl plugins fetch`".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "plugin go is not fetched: run `buildl plugins fetch`"
+        );
+    }
+
+    #[test]
+    fn a_plugin_changed_names_the_plugin_and_the_reason() {
+        let err = Error::PluginChanged {
+            plugin: PluginName::parse("go").unwrap(),
+            reason: "its files differ from buildl.lock".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "plugin go was changed after it was fetched: its files differ from buildl.lock"
+        );
+    }
+
+    #[test]
+    fn a_plugin_fetch_names_the_plugin_and_what_git_said() {
+        let err = Error::PluginFetch {
+            plugin: PluginName::parse("go").unwrap(),
+            diagnostic: Diagnostic::new("fatal: couldn't find remote ref refs/tags/v9"),
+        };
+        assert_eq!(
+            err.to_string(),
+            "plugin go could not be fetched: fatal: couldn't find remote ref refs/tags/v9"
+        );
+    }
+
+    #[test]
+    fn a_plugin_refused_program_names_the_site_the_plugin_and_what_it_allows() {
+        let err = violation(Want::Program(Program::parse("curl").unwrap()), &["go"]);
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app (plugin ourgo@0.1.0 > go@1.3.0): program curl is outside plugin \
+             go@1.3.0 (proc.run allows: go)"
+        );
+    }
+
+    #[test]
+    fn a_plugin_refused_variable_reads_like_a_refused_program() {
+        let err = violation(Want::Env(EnvName::parse("HOME").unwrap()), &[]);
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app (plugin ourgo@0.1.0 > go@1.3.0): environment variable HOME is \
+             outside plugin go@1.3.0 (env.read allows: nothing)"
+        );
+    }
+
+    #[test]
+    fn a_plugin_refused_network_says_the_network_is_not_allowed() {
+        let err = violation(Want::Network(label("//:app")), &[]);
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app (plugin ourgo@0.1.0 > go@1.3.0): network is outside plugin \
+             go@1.3.0 (network not allowed)"
+        );
+    }
+
     #[test]
     fn a_refused_variable_names_the_site_and_what_may_be_read() {
         let err = Error::Refused {
@@ -1266,6 +1588,7 @@ mod tests {
             site: Some(Box::new(DeclarationSite {
                 label: label("//lib:text"),
                 provenance: lib_file(),
+                origin: Origin::BuildFile,
             })),
             ceiling: Box::new(ceiling()),
         };
@@ -1286,6 +1609,19 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "directory out is outside the ceiling (fs.write allows: nothing)"
+        );
+    }
+
+    #[test]
+    fn a_refused_network_reads_as_network() {
+        let err = Error::Refused {
+            want: Want::Network(Label::parse("//:fetch").unwrap()),
+            site: None,
+            ceiling: Box::new(ceiling()),
+        };
+        assert_eq!(
+            err.to_string(),
+            "network of //:fetch is outside the ceiling (network allows: nothing)"
         );
     }
 
@@ -1353,12 +1689,42 @@ mod tests {
     fn not_a_test_names_the_target_and_its_file() {
         let err = Error::NotATest {
             asked: label("//:default"),
-            target: label("//:app"),
-            provenance: Box::new(root_file()),
+            declared_with: TargetRole::Build,
+            site: Box::new(root_site("//:app")),
         };
         assert_eq!(
             err.to_string(),
             "target //:default was asked for as a test, but //:app is declared with b.target in build.lua"
+        );
+    }
+
+    #[test]
+    fn not_a_test_names_the_function_that_declared_a_discovery_target() {
+        let err = Error::NotATest {
+            asked: label("//:pkgs"),
+            declared_with: TargetRole::Discovery,
+            site: Box::new(root_site("//:pkgs")),
+        };
+        assert_eq!(
+            err.to_string(),
+            "target //:pkgs was asked for as a test, but //:pkgs is declared with b.discover in build.lua"
+        );
+    }
+
+    #[test]
+    fn not_a_test_names_the_plugin_chain_of_a_target_a_plugin_declared() {
+        let err = Error::NotATest {
+            asked: label("//:default"),
+            declared_with: TargetRole::Build,
+            site: Box::new(DeclarationSite {
+                origin: ourgo_chain(),
+                ..root_site("//:app")
+            }),
+        };
+        assert_eq!(
+            err.to_string(),
+            "target //:default was asked for as a test, but //:app is declared with b.target in \
+             build.lua, plugin ourgo@0.1.0 > go@1.2.0"
         );
     }
 
@@ -1449,11 +1815,33 @@ mod tests {
             second: Box::new(DeclarationSite {
                 label: label("//lib:text"),
                 provenance: lib_file(),
+                origin: Origin::BuildFile,
             }),
         };
         assert_eq!(
             err.to_string(),
             "out/lib: //:lib (build.lua) and //lib:text (lib/build.lua) cannot both write here"
+        );
+    }
+
+    #[test]
+    fn an_output_conflict_names_the_plugin_chain_of_a_target_a_plugin_declared() {
+        let err = Error::OutputConflict {
+            path: OutputPath::of(
+                &Directory::parse("out").unwrap(),
+                &label("//:lib"),
+                &OutputName::parse("lib").unwrap(),
+            ),
+            first: Box::new(DeclarationSite {
+                origin: ourgo_chain(),
+                ..root_site("//:lib")
+            }),
+            second: Box::new(root_site("//:other")),
+        };
+        assert_eq!(
+            err.to_string(),
+            "out/lib: //:lib (build.lua, plugin ourgo@0.1.0 > go@1.2.0) and //:other (build.lua) \
+             cannot both write here"
         );
     }
 
@@ -1554,6 +1942,7 @@ mod tests {
             (PortName::GraphRecord, "graph record"),
             (PortName::Sweep, "sweep"),
             (PortName::Approver, "approver"),
+            (PortName::PluginStore, "plugin store"),
         ];
         for (port, rendered) in cases {
             assert_eq!(port.to_string(), rendered);
@@ -1584,6 +1973,9 @@ mod tests {
         assert_eq!(NameKind::Isolation.to_string(), "execution strategy");
         assert_eq!(NameKind::Approver.to_string(), "approver mode");
         assert_eq!(NameKind::TreePath.to_string(), "tree path");
+        assert_eq!(NameKind::PluginName.to_string(), "plugin name");
+        assert_eq!(NameKind::PluginVersion.to_string(), "plugin version");
+        assert_eq!(NameKind::PluginChain.to_string(), "plugin chain");
     }
 
     #[test]
@@ -1746,6 +2138,7 @@ mod tests {
         let source_text = source.to_string();
         let err = Error::InvalidDeclaration {
             provenance: lib_file(),
+            origin: Origin::BuildFile,
             order: DeclarationOrder::new(2),
             field: DeclarationField::Dep,
             source: Box::new(source),
@@ -1757,6 +2150,31 @@ mod tests {
         assert_eq!(
             std::error::Error::source(&err).unwrap().to_string(),
             source_text
+        );
+    }
+
+    #[test]
+    fn not_accepted_states_why_the_declaration_cannot_hold_the_value() {
+        let err = Error::NotAccepted {
+            reason: "a discovery target is always cached",
+        };
+        assert_eq!(err.to_string(), "a discovery target is always cached");
+    }
+
+    #[test]
+    fn invalid_declaration_names_the_plugin_chain_of_a_declaration_a_plugin_made() {
+        let err = Error::InvalidDeclaration {
+            provenance: lib_file(),
+            origin: ourgo_chain(),
+            order: DeclarationOrder::new(2),
+            field: DeclarationField::Dep,
+            source: Box::new(TargetName::parse("a/b").unwrap_err()),
+        };
+        assert!(
+            err.to_string().starts_with(
+                "lib/build.lua (plugin ourgo@0.1.0 > go@1.2.0): declaration #2: invalid dep: "
+            ),
+            "{err}"
         );
     }
 
@@ -1774,6 +2192,7 @@ mod tests {
             (DeclarationField::Target, "target"),
             (DeclarationField::SettingName, "setting name"),
             (DeclarationField::SettingValue, "setting value"),
+            (DeclarationField::Freshness, "freshness"),
             (DeclarationField::Subdir, "subdir"),
         ];
         for (field, rendered) in cases {
@@ -1785,6 +2204,7 @@ mod tests {
     fn action_conflict_states_what_was_found() {
         let both = Error::ActionConflict {
             provenance: lib_file(),
+            origin: Origin::BuildFile,
             order: DeclarationOrder::new(0),
             found: ActionFound::Both,
         };
@@ -1794,12 +2214,28 @@ mod tests {
         );
         let neither = Error::ActionConflict {
             provenance: lib_file(),
+            origin: Origin::BuildFile,
             order: DeclarationOrder::new(1),
             found: ActionFound::Neither,
         };
         assert_eq!(
             neither.to_string(),
             "lib/build.lua: declaration #1: a target names neither 'rule' nor 'run'"
+        );
+    }
+
+    #[test]
+    fn action_conflict_names_the_plugin_chain_of_a_declaration_a_plugin_made() {
+        let err = Error::ActionConflict {
+            provenance: lib_file(),
+            origin: ourgo_chain(),
+            order: DeclarationOrder::new(0),
+            found: ActionFound::Both,
+        };
+        assert_eq!(
+            err.to_string(),
+            "lib/build.lua (plugin ourgo@0.1.0 > go@1.2.0): declaration #0: a target names both \
+             'rule' and 'run'"
         );
     }
 
@@ -1813,6 +2249,19 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "lib/build.lua: declarations differ between two evaluations"
+        );
+    }
+
+    #[test]
+    fn discovery_changed_names_the_target_and_its_file() {
+        let err = Error::DiscoveryChanged {
+            label: Label::parse("//lib:pkgs").unwrap(),
+            provenance: lib_file(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "lib/build.lua: discovery target //lib:pkgs differs once discovery results are \
+             read; a discovery target may not depend on a discovery result"
         );
     }
 

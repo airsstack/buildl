@@ -101,6 +101,32 @@ fn interactive_asks_only_about_new_wants() {
 }
 
 #[test]
+fn interactive_asks_for_discovered_targets_only_about_what_discovery_did_not_cover() {
+    let discovery = Fixture::copy_of("discovery", &[]);
+    discovery.approver("interactive");
+    // The targets declared from the discovery result read a variable the discovery target does
+    // not.
+    discovery.replace_line("buildl.toml", "env.read = []", "env.read = [\"X\"]");
+    discovery.replace_line(
+        "build.lua",
+        "  b.target(name, { inputs = { \"item.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })",
+        "  b.target(name, { inputs = { \"item.txt\" }, env = { \"X\" }, run = { \"cp\", \"$in\", \"$out\" } })",
+    );
+    let mut console = Fake::answering(&["y", "y"]);
+
+    let outcomes = discovery.try_build_asking(&mut console).unwrap();
+
+    assert_eq!(ended(&outcomes, &OutcomeClass::Built).len(), 3);
+    assert_eq!(console.prompts.len(), 2, "{:?}", console.prompts);
+    let (first, second) = (&console.prompts[0], &console.prompts[1]);
+    assert!(first.contains("run programs: cp\n"), "{first}");
+    assert!(!first.contains("read variables"), "{first}");
+    assert!(second.contains("read variables: X\n"), "{second}");
+    assert!(!second.contains("run programs"), "{second}");
+    assert!(!second.contains("write into"), "{second}");
+}
+
+#[test]
 fn interactive_no_is_refused_and_builds_nothing() {
     let chain = chain("interactive");
     let mut console = Fake::answering(&["n"]);

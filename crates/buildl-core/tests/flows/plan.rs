@@ -11,15 +11,15 @@ use std::path::Path;
 use buildl_core::{
     ActionKey, CacheRow, DepProducts, Difference, Digest, DirtyReason, EntryName, EnvName,
     EnvValue, Error, EvaluationFailure, FileStat, Freshness, InputKind, KeyComponents, Label,
-    NodeId, OwnComponents, Pipeline, Plan, PlannedKey, Platform, PortName, SettingName,
-    SettingValue, SourcePath, StagedItem, StagedSetting, TargetGraph, Timestamp, ToolIdentity,
-    Verdict, Want, Written, json,
+    NodeId, Origin, OwnComponents, Pipeline, Plan, PlannedKey, Platform, PluginCap, PluginName,
+    PluginRef, PortName, SettingName, SettingValue, SourcePath, StagedItem, StagedSetting,
+    TargetGraph, Timestamp, ToolIdentity, Verdict, Want, Written, json,
 };
 use buildl_core::{Execution, Isolation, Manifest, Scope, Timeout, Workers};
 
 use crate::common::{
-    Answer, FakeApprover, FakeContent, FakeFile, FakePorts, FakeSource, dir, file, ports, program,
-    setting, target, target_with, workspace,
+    Answer, FakeApprover, FakeContent, FakeFile, FakePorts, FakeSource, dir, file, file_by, plugin,
+    ports, program, setting, target, target_with, workspace,
 };
 
 /// The serialized plan of [`crate::graph::fixture`] after a build and one edit, pinned.
@@ -852,9 +852,7 @@ fn a_plan_holds_every_declared_setting_with_its_override_or_else_its_default() {
     );
     let json = json::canonical::to_string(&plan).unwrap();
     assert!(
-        json.starts_with(
-            r#"{"settings":{"level":"1","mode":"release","unused":"busy"},"targets":{"#
-        ),
+        json.contains(r#""settings":{"level":"1","mode":"release","unused":"busy"},"stale_discovery":[],"targets":{"#),
         "{json}"
     );
 }
@@ -1297,4 +1295,169 @@ fn plan_never_asks_the_approver() {
     planned(&mut pipeline);
 
     assert_eq!(pipeline.ports().approver.asked, []);
+}
+
+#[test]
+fn origin_does_not_change_the_key() {
+    let chain = Origin::plugins(vec![
+        running_cc("ourgo", "0.1.0"),
+        running_cc("go", "1.2.0"),
+    ])
+    .unwrap();
+    let items = || vec![target("gen", &[]), target("app", &["gen"])];
+    let plan_by = |origin: &Origin| {
+        let source = FakeSource::new(workspace(vec![("", file_by(origin, items(), &[]))]));
+        let mut pipeline = Pipeline::<FakePorts>::new(ports(source));
+        for name in ["ourgo", "go"] {
+            pipeline
+                .ports_mut()
+                .manifest
+                .workspace
+                .plugins
+                .insert(PluginName::parse(name).unwrap(), cap_running_cc());
+        }
+        pipeline
+            .ports_mut()
+            .tools
+            .fingerprints
+            .insert(program("cc"), Digest::of(b"cc 14.2"));
+        planned(&mut pipeline).verdicts().to_vec()
+    };
+    assert_eq!(plan_by(&Origin::BuildFile), plan_by(&chain));
+}
+
+/// The plugin `name` at `version`, whose manifest lists `cc` to run.
+fn running_cc(name: &str, version: &str) -> PluginRef {
+    let mut plugin = plugin(name, version);
+    plugin.run = BTreeSet::from([program("cc")]);
+    plugin
+}
+
+/// A cap letting a plugin run `cc`.
+fn cap_running_cc() -> PluginCap {
+    PluginCap {
+        run: BTreeSet::from([program("cc")]),
+        ..PluginCap::default()
+    }
+}
+
+/// A pipeline over one root build file whose only target, `//:app`, was made by `chain`.
+fn made_by(chain: Vec<PluginRef>) -> Pipeline<FakePorts> {
+    let origin = Origin::plugins(chain).unwrap();
+    let source = FakeSource::new(workspace(vec![(
+        "",
+        file_by(&origin, vec![target("app", &[])], &[]),
+    )]));
+    Pipeline::<FakePorts>::new(ports(source))
+}
+
+#[test]
+fn plugin_refusal_comes_before_the_ceiling() {
+    let mut go = plugin("go", "1.2.0");
+    go.run = BTreeSet::from([program("gofmt")]);
+    let mut pipeline = made_by(vec![go]);
+    pipeline.ports_mut().manifest.workspace.ceiling.run.clear();
+
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "build.lua: //:app (plugin go@1.2.0): program cc is outside plugin go@1.2.0 \
+         (proc.run allows: nothing)"
+    );
+    match error {
+        Error::PluginRefused { violation } => {
+            assert_eq!(violation.want, Want::Program(program("cc")));
+            assert_eq!(violation.plugin.name.as_str(), "go");
+        }
+        other => unreachable!("expected PluginRefused, got {other:?}"),
+    }
+    let ports = pipeline.ports();
+    assert_eq!(ports.digester.stat_calls(), 0);
+    assert_eq!(ports.tools.lookups(), []);
+}
+
+#[test]
+fn wants_inside_the_plugin_still_meet_the_ceiling() {
+    let mut pipeline = made_by(vec![running_cc("go", "1.2.0")]);
+    let workspace = &mut pipeline.ports_mut().manifest.workspace;
+    workspace
+        .plugins
+        .insert(PluginName::parse("go").unwrap(), cap_running_cc());
+    workspace.ceiling.run.clear();
+
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "build.lua: //:app (plugin go@1.2.0): program cc is outside the ceiling \
+         (proc.run allows: nothing)"
+    );
+    assert!(matches!(error, Error::Refused { .. }), "{error}");
+}
+
+#[test]
+fn a_ceiling_refusal_of_a_plugin_target_names_its_chain() {
+    let mut pipeline = made_by(vec![
+        running_cc("ourgo", "0.1.0"),
+        running_cc("go", "1.2.0"),
+    ]);
+    let workspace = &mut pipeline.ports_mut().manifest.workspace;
+    for name in ["ourgo", "go"] {
+        workspace
+            .plugins
+            .insert(PluginName::parse(name).unwrap(), cap_running_cc());
+    }
+    workspace.ceiling.run.clear();
+
+    let error = pipeline
+        .plan(&entry(), &Scope::Workspace, &Overrides::new())
+        .unwrap_err();
+
+    assert_eq!(
+        error.to_string(),
+        "build.lua: //:app (plugin ourgo@0.1.0 > go@1.2.0): program cc is outside the ceiling \
+         (proc.run allows: nothing)"
+    );
+}
+
+#[test]
+fn plan_carries_the_attribution() {
+    let mut pipeline = made_by(vec![running_cc("go", "1.2.0")]);
+    pipeline
+        .ports_mut()
+        .manifest
+        .workspace
+        .plugins
+        .insert(PluginName::parse("go").unwrap(), cap_running_cc());
+    pipeline
+        .ports_mut()
+        .tools
+        .fingerprints
+        .insert(program("cc"), Digest::of(b"cc 14.2"));
+
+    let plan = planned(&mut pipeline);
+
+    assert_eq!(
+        plan.attribution().to_string(),
+        "  cc: declared by plugin go@1.2.0 for //:app"
+    );
+    let json = json::canonical::to_string(&plan).unwrap();
+    assert!(
+        json.contains(r#""attribution":{"env":{},"network":{},"programs":{"cc":[{"#),
+        "{json}"
+    );
+}
+
+#[test]
+fn a_plan_of_build_file_targets_attributes_nothing() {
+    let mut pipeline = root_only(vec![target("app", &[])]);
+
+    let plan = planned(&mut pipeline);
+
+    assert!(plan.attribution().is_empty());
 }

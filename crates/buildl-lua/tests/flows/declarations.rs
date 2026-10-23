@@ -1,7 +1,7 @@
 //! A build file's calls come back as exactly the staged values they wrote.
 
 use buildl_core::{
-    DeclarationOrder, Evaluated, Freshness, NetworkAccess, StagedAlias, StagedDeclaration,
+    DeclarationOrder, Evaluated, Freshness, NetworkAccess, Origin, StagedAlias, StagedDeclaration,
     StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, TargetRole,
     Written,
 };
@@ -15,6 +15,7 @@ fn strings<T>(texts: &[&str]) -> Vec<Written<T>> {
 const fn declared(order: u32, item: StagedItem) -> StagedDeclaration {
     StagedDeclaration {
         order: DeclarationOrder::new(order),
+        origin: Origin::BuildFile,
         item,
     }
 }

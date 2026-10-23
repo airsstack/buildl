@@ -50,7 +50,7 @@ mod verify_text;
 pub use block::{block, command_text, summary_line, test_line, trailer};
 pub use dot::graph_dot;
 pub use log_text::{damage, header, utc};
-pub use message::{check_line, clean_line, error_text, gc_line};
+pub use message::{check_line, clean_line, error_text, gc_line, not_run_lines};
 pub use paint::Paint;
 pub use plan_text::plan_text;
 pub use query_text::query_text;

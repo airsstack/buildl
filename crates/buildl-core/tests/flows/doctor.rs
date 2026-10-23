@@ -9,13 +9,13 @@
 use std::collections::BTreeSet;
 
 use buildl_core::{
-    Checkup, Directory, EntryName, EnvName, Error, NetworkAccess, Result, StagedItem,
-    StagedSetting, TargetRole, Written, doctor,
+    Checkup, Directory, EntryName, EnvName, Error, NetworkAccess, Origin, Result, StagedItem,
+    StagedSetting, TargetRole, Want, Written, doctor,
 };
 
 use crate::common::{
-    FakeDispatcher, FakeManifest, FakeSource, dir, file, label, open_workspace, program, target,
-    target_with, workspace,
+    FakeCas, FakeDispatcher, FakeHistory, FakeManifest, FakeSource, dir, file, file_by, label,
+    open_workspace, plugin, program, target, target_with, workspace,
 };
 
 fn entry() -> EntryName {
@@ -28,7 +28,20 @@ fn checked(items: Vec<StagedItem>) -> Result<Checkup> {
     let manifest = FakeManifest {
         workspace: open_workspace(),
     };
-    doctor(&source, &mut FakeDispatcher::default(), &manifest, &entry())
+    checked_by(&source, &manifest)
+}
+
+/// The checkup of `source` under `manifest`, with no run recorded.
+fn checked_by(source: &FakeSource, manifest: &FakeManifest) -> Result<Checkup> {
+    doctor(
+        source,
+        &mut FakeDispatcher::default(),
+        manifest,
+        &entry(),
+        &FakeHistory::default(),
+        &FakeCas::default(),
+    )
+    .map(|(checkup, _)| checkup)
 }
 
 fn env_name(raw: &str) -> EnvName {
@@ -142,7 +155,57 @@ fn doctor_hashes_nothing_and_looks_up_no_tool() {
         workspace: open_workspace(),
     };
 
-    doctor(&source, &mut FakeDispatcher::default(), &manifest, &entry()).unwrap();
+    checked_by(&source, &manifest).unwrap();
 
     assert_eq!(source.evaluated(), [Directory::root()]);
+}
+
+#[test]
+fn doctor_reports_every_plugin_violation_and_refuses_nothing() {
+    let origin = Origin::plugins(vec![plugin("go", "1.2.0")]).unwrap();
+    let source = FakeSource::new(workspace(vec![(
+        "",
+        file_by(
+            &origin,
+            vec![
+                target_with("app", |target| target.env = vec![Written::new("HOME")]),
+                target_with("fetch", |target| target.network = NetworkAccess::Declared),
+            ],
+            &[],
+        ),
+    )]));
+    let manifest = FakeManifest {
+        workspace: open_workspace(),
+    };
+
+    let checkup = checked_by(&source, &manifest).unwrap();
+
+    let found: Vec<(String, Want)> = checkup
+        .plugin_violations()
+        .iter()
+        .map(|violation| (violation.site.label.to_string(), violation.want.clone()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("//:app".to_owned(), Want::Program(program("cc"))),
+            ("//:app".to_owned(), Want::Env(env_name("HOME"))),
+            ("//:fetch".to_owned(), Want::Program(program("cc"))),
+            ("//:fetch".to_owned(), Want::Network(label("//:fetch"))),
+        ]
+    );
+    assert_eq!(
+        checkup.attribution().to_string(),
+        "  cc: declared by plugin go@1.2.0 for //:app\n  \
+         HOME: declared by plugin go@1.2.0 for //:app\n  \
+         //:fetch: declared by plugin go@1.2.0 for //:fetch"
+    );
+}
+
+#[test]
+fn doctor_of_build_file_targets_has_no_attribution_and_no_violation() {
+    let checkup = checked(vec![target("app", &[])]).unwrap();
+
+    assert!(checkup.attribution().is_empty());
+    assert_eq!(checkup.plugin_violations(), []);
 }

@@ -1,17 +1,48 @@
-//! Authority: what a graph's targets want, and whether the workspace's ceiling allows it.
+//! Authority: what a graph's targets want, and whether the workspace's ceiling and the plugins
+//! that made them allow it.
 //!
-//! Its own file because this is the check that runs before anything else is asked of the
-//! machine: a build that wants more than its workspace allows is refused here, with nothing
-//! hashed, looked up or read.
+//! Its own file because these are the checks that run before anything else is asked of the
+//! machine: a build that wants more than its workspace or its plugins allow is refused here,
+//! with nothing hashed, looked up or read.
 //!
-//! Responsibilities: [`check`].
+//! Responsibilities: [`check`] and [`plugin_check`].
 //!
-//! Non-responsibilities: what a ceiling is, which is the manifest's to say; collecting what the
-//! targets want, which is Grants'; and finding the programs a build may run.
+//! Non-responsibilities: what a ceiling or a plugin's cap is, which is the manifest's to say;
+//! collecting what the targets want, which is Grants'; and finding the programs a build may run.
+
+use std::collections::BTreeMap;
 
 use crate::error::{DeclarationSite, Error, Result};
+use crate::grants::plugins::plugin_violations;
 use crate::grants::wanted::{Sites, wanted};
-use crate::types::{Directory, Node, SourcePath, TargetGraph, Want, WantedSet, Workspace};
+use crate::placement::layout::Layout;
+use crate::types::{
+    Directory, Node, SettingName, SettingValue, SourcePath, TargetGraph, Want, WantedSet, Workspace,
+};
+
+/// Checks every want of a plugin's targets against the plugins that hold them.
+///
+/// Runs before [`check`], so a plugin's target is refused by its plugin before the ceiling is
+/// asked.
+///
+/// # Errors
+///
+/// Returns [`Error::PluginRefused`] for the first violation, in label order, then chain order.
+pub(crate) fn plugin_check(
+    graph: &TargetGraph,
+    settings: &BTreeMap<SettingName, SettingValue>,
+    layout: &Layout,
+    workspace: &Workspace,
+) -> Result<()> {
+    plugin_violations(graph, settings, layout, workspace)
+        .into_iter()
+        .next()
+        .map_or(Ok(()), |violation| {
+            Err(Error::PluginRefused {
+                violation: Box::new(violation),
+            })
+        })
+}
 
 /// Checks every want against `workspace`'s ceiling and returns what the build wants.
 ///
@@ -93,7 +124,7 @@ mod tests {
 
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{check, holds};
+    use super::{check, holds, plugin_check};
     use crate::error::{DeclarationSite, Error};
     use crate::grants::fixtures::{
         command, dir, env_name, graph, label, node, path, program, settings,
@@ -102,8 +133,8 @@ mod tests {
     use crate::placement::layout::Layout;
     use crate::types::ApproverMode;
     use crate::types::{
-        Ceiling, Directory, Execution, NetworkAccess, Node, SettingName, SettingValue, TargetGraph,
-        Want, WantedSet, Workspace,
+        Ceiling, Directory, Execution, NetworkAccess, Node, Origin, PluginName, PluginRef,
+        PluginVersion, SettingName, SettingValue, TargetGraph, Want, WantedSet, Workspace,
     };
 
     /// A workspace writing to `out` and `.buildl`, whose ceiling allows `cc` and `ld`, `HOME`
@@ -120,6 +151,7 @@ mod tests {
             },
             execution: Execution::default(),
             approver: ApproverMode::Manifest,
+            plugins: std::collections::BTreeMap::new(),
         }
     }
 
@@ -172,7 +204,9 @@ mod tests {
             } => {
                 assert_eq!(*ceiling, workspace.ceiling);
                 let named = site.map(|site| {
-                    let DeclarationSite { label, provenance } = *site;
+                    let DeclarationSite {
+                        label, provenance, ..
+                    } = *site;
                     (label.to_string(), provenance.to_string())
                 });
                 (want, named)
@@ -377,5 +411,44 @@ mod tests {
             refusal(&graph, &workspace),
             (Want::Write(dir("build/out")), None)
         );
+    }
+
+    /// `//:app` running `curl`, declared by the plugin `go`.
+    fn by_go() -> Node {
+        let go = PluginRef {
+            name: PluginName::parse("go").unwrap(),
+            version: PluginVersion::parse("1.2.0").unwrap(),
+            run: BTreeSet::new(),
+            env: BTreeSet::new(),
+        };
+        node("//:app", |node| {
+            node.run = command(&["curl"]);
+            node.origin = Origin::plugins(vec![go.clone()]).unwrap();
+            node.narrowing = vec![go];
+        })
+    }
+
+    fn plugin_checked(graph: &TargetGraph, workspace: &Workspace) -> crate::error::Result<()> {
+        let layout = Layout::of(graph, &workspace.out).unwrap();
+        plugin_check(graph, &BTreeMap::new(), &layout, workspace)
+    }
+
+    #[test]
+    fn a_plugin_target_outside_its_plugins_caps_is_refused_with_the_first_violation() {
+        let graph = graph(vec![by_go()], &[&[]]);
+        match plugin_checked(&graph, &workspace()).unwrap_err() {
+            Error::PluginRefused { violation } => {
+                assert_eq!(violation.want, Want::Program(program("curl")));
+                assert_eq!(violation.site.label, label("//:app"));
+                assert_eq!(violation.plugin.name.as_str(), "go");
+            }
+            other => unreachable!("expected PluginRefused, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_graph_without_a_plugin_violation_passes_the_plugin_check() {
+        let build_file_only = graph(vec![app()], &[&[]]);
+        assert!(plugin_checked(&build_file_only, &workspace()).is_ok());
     }
 }

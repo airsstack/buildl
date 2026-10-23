@@ -22,17 +22,18 @@ use std::path::{Path, PathBuf};
 use buildl::approver::Console;
 use buildl::buildl_core::json::canonical;
 use buildl::buildl_core::{Error, Scope};
+use buildl::plugins::FetchStatus;
 use buildl::report::{
     Mode, Paint, Report, TerminalReporter, check_line, clean_line, damage, error_text, gc_line,
-    graph_dot, header, plan_text, query_text, verify_text,
+    graph_dot, header, not_run_lines, plan_text, query_text, verify_text,
 };
 use buildl::{RunOptions, Workspace};
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 
 use crate::cli::{
-    BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, QueryArgs, Streams, TestArgs,
-    VerifyArgs, overrides,
+    BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, PluginsArgs, PluginsCommand, QueryArgs,
+    Streams, TestArgs, VerifyArgs, overrides,
 };
 use crate::doctor_text::doctor_text;
 use crate::exit::Exit;
@@ -108,16 +109,17 @@ where
     };
     let ended = match cli.command {
         Command::Check => check(&start, stderr),
-        Command::Graph(args) => graph(&start, &args, stdout),
-        Command::Query(args) => query(&start, &args, stdout),
+        Command::Graph(args) => graph(&start, &args, stdout, stderr),
+        Command::Query(args) => query(&start, &args, stdout, stderr),
         Command::Plan(args) => plan(&start, args, stdout),
         Command::Build(args) => build(&start, args, terminal.mode(), paint, stderr, console),
         Command::Test(args) => test(&start, args, terminal.mode(), paint, stderr, console),
         Command::Verify(args) => verify(&start, args, paint, stderr, console),
-        Command::Doctor => doctor(&start, stdout),
+        Command::Doctor => doctor(&start, stdout, stderr),
         Command::Log(args) => log(&start, &args, stdout, stderr),
         Command::Clean => clean(&start, stderr),
         Command::Gc => gc(&start, stderr),
+        Command::Plugins(args) => plugins(&start, &args, stderr),
     };
     match ended {
         Ok(exit) => exit,
@@ -182,10 +184,11 @@ fn scope(workspace: &Workspace, targets: &[String]) -> Result<Scope, clap::Error
 }
 
 /// `check`: evaluates every build file twice, and says on `stderr` how many declarations were
-/// found.
+/// found and which discovery targets have not run.
 fn check<E: Write>(start: &Path, stderr: &mut E) -> Result<Exit, Stop> {
-    let declarations = Workspace::open(start)?.check()?;
-    let _ = stderr.write_all(check_line(&declarations).as_bytes());
+    let loaded = Workspace::open(start)?.check()?;
+    let _ = stderr.write_all(check_line(&loaded.declarations).as_bytes());
+    let _ = stderr.write_all(not_run_lines(&loaded.missing).as_bytes());
     Ok(Exit::Success)
 }
 
@@ -206,9 +209,38 @@ fn gc<E: Write>(start: &Path, stderr: &mut E) -> Result<Exit, Stop> {
     Ok(Exit::Success)
 }
 
-/// `graph`: writes the target graph to `stdout`, as canonical JSON and a newline, or as DOT.
-fn graph<O: Write>(start: &Path, args: &GraphArgs, stdout: &mut O) -> Result<Exit, Stop> {
-    let graph = Workspace::open(start)?.graph()?;
+/// `plugins`: runs the command under it.
+fn plugins<E: Write>(start: &Path, args: &PluginsArgs, stderr: &mut E) -> Result<Exit, Stop> {
+    match args.command {
+        PluginsCommand::Fetch => fetch_plugins(start, stderr),
+    }
+}
+
+/// `plugins fetch`: pins every git plugin in `buildl.lock` and stores its files, and says on
+/// `stderr`, for each in name order, `fetched` or `unchanged`, its name and the commit it is
+/// pinned to.
+fn fetch_plugins<E: Write>(start: &Path, stderr: &mut E) -> Result<Exit, Stop> {
+    let fetched = Workspace::open(start)?.fetch_plugins()?;
+    for plugin in fetched.iter() {
+        let status = match plugin.status {
+            FetchStatus::Fetched => "fetched",
+            FetchStatus::Unchanged => "unchanged",
+        };
+        let _ = writeln!(stderr, "{status} {} {}", plugin.plugin, plugin.commit);
+    }
+    Ok(Exit::Success)
+}
+
+/// `graph`: writes the target graph to `stdout`, as canonical JSON and a newline, or as DOT, and
+/// says on `stderr` which discovery targets have not run.
+fn graph<O: Write, E: Write>(
+    start: &Path,
+    args: &GraphArgs,
+    stdout: &mut O,
+    stderr: &mut E,
+) -> Result<Exit, Stop> {
+    let (graph, missing) = Workspace::open(start)?.graph()?;
+    let _ = stderr.write_all(not_run_lines(&missing).as_bytes());
     let text = if args.format.dot {
         graph_dot(&graph).into_bytes()
     } else {
@@ -223,8 +255,13 @@ fn graph<O: Write>(start: &Path, args: &GraphArgs, stdout: &mut O) -> Result<Exi
 /// `query`: writes to `stdout` the targets the expression reaches, one label a line, or as
 /// canonical JSON and a newline. An empty answer is a success. An expression that is neither
 /// `deps(...)` nor `rdeps(...)`, or whose target fails the label grammar, is a mistake of the
-/// command line, not of the workspace.
-fn query<O: Write>(start: &Path, args: &QueryArgs, stdout: &mut O) -> Result<Exit, Stop> {
+/// command line, not of the workspace. Which discovery targets have not run is said on `stderr`.
+fn query<O: Write, E: Write>(
+    start: &Path,
+    args: &QueryArgs,
+    stdout: &mut O,
+    stderr: &mut E,
+) -> Result<Exit, Stop> {
     let workspace = Workspace::open(start)?;
     let asked = workspace.query_of(&args.expression).map_err(|error| {
         Cli::command().error(
@@ -232,7 +269,8 @@ fn query<O: Write>(start: &Path, args: &QueryArgs, stdout: &mut O) -> Result<Exi
             format!("invalid value '{}' for '<EXPR>': {error}", args.expression),
         )
     })?;
-    let answer = workspace.query(&asked)?;
+    let (answer, missing) = workspace.query(&asked)?;
+    let _ = stderr.write_all(not_run_lines(&missing).as_bytes());
     let text = if args.json {
         let mut json = canonical::to_vec(&answer)?;
         json.push(b'\n');
@@ -245,9 +283,11 @@ fn query<O: Write>(start: &Path, args: &QueryArgs, stdout: &mut O) -> Result<Exi
 }
 
 /// `doctor`: writes to `stdout` what the workspace allows and what its build wants. Wants
-/// outside the ceiling or not approved are reported, and the command succeeded.
-fn doctor<O: Write>(start: &Path, stdout: &mut O) -> Result<Exit, Stop> {
-    let doctor = Workspace::open(start)?.doctor()?;
+/// outside the ceiling or not approved are reported, and the command succeeded. Which discovery
+/// targets have not run is said on `stderr`.
+fn doctor<O: Write, E: Write>(start: &Path, stdout: &mut O, stderr: &mut E) -> Result<Exit, Stop> {
+    let (doctor, missing) = Workspace::open(start)?.doctor()?;
+    let _ = stderr.write_all(not_run_lines(&missing).as_bytes());
     product(stdout, doctor_text(&doctor).as_bytes())?;
     Ok(Exit::Success)
 }
@@ -652,7 +692,7 @@ mod tests {
     #[test]
     fn graph_writes_the_canonical_bytes_and_one_newline_to_stdout() {
         let (_dir, root) = copying();
-        let graph = Workspace::open(&root).unwrap().graph().unwrap();
+        let (graph, _) = Workspace::open(&root).unwrap().graph().unwrap();
         let expected = format!("{}\n", canonical::to_string(&graph).unwrap());
         for args in [&["graph"][..], &["graph", "--json"][..]] {
             let ran = ran(&root, args);
@@ -796,7 +836,8 @@ mod tests {
         assert_eq!(ran.exit, Exit::Success);
         assert_eq!(
             ran.stdout,
-            "run    //:copy: never built\n1 to run, 0 conditional, 0 clean\n"
+            "run    //:copy: never built\n  run programs: cp\n  \
+             write into:   .buildl, out\n1 to run, 0 conditional, 0 clean\n"
         );
         assert_eq!(ran.stderr, "");
     }

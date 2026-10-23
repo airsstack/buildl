@@ -43,7 +43,7 @@ fn doctor_writes_nothing() {
 fn doctor_under_manifest_approves_everything() {
     let chain = Fixture::copy_of("chain", &["greet.sh"]);
 
-    let doctor = chain.open().doctor().unwrap();
+    let doctor = chain.open().doctor().unwrap().0;
 
     assert!(!doctor.checkup().wanted().is_empty());
     assert!(doctor.checkup().outside().is_empty());
@@ -55,7 +55,7 @@ fn doctor_under_manifest_approves_everything() {
 fn doctor_under_deny_approves_nothing() {
     let chain = chain("deny");
 
-    let doctor = chain.open().doctor().unwrap();
+    let doctor = chain.open().doctor().unwrap().0;
 
     assert!(!doctor.checkup().wanted().is_empty());
     assert_eq!(doctor.unapproved(), doctor.checkup().wanted());
@@ -65,14 +65,14 @@ fn doctor_under_deny_approves_nothing() {
 fn doctor_under_interactive_reads_the_remembered_approvals() {
     let chain = chain("interactive");
     assert_eq!(
-        chain.open().doctor().unwrap().unapproved(),
-        chain.open().doctor().unwrap().checkup().wanted()
+        chain.open().doctor().unwrap().0.unapproved(),
+        chain.open().doctor().unwrap().0.checkup().wanted()
     );
     chain
         .try_build_asking(&mut Fake::answering(&["y"]))
         .unwrap();
     assert_eq!(
-        chain.open().doctor().unwrap().unapproved(),
+        chain.open().doctor().unwrap().0.unapproved(),
         &WantedSet::default()
     );
     // A target now reads one more variable, which the ceiling allows.
@@ -87,7 +87,7 @@ fn doctor_under_interactive_reads_the_remembered_approvals() {
         "  env    = { \"BUILDL_FIXTURE_FLAVOR\", \"X\" },",
     );
 
-    let doctor = chain.open().doctor().unwrap();
+    let doctor = chain.open().doctor().unwrap().0;
 
     assert_eq!(
         doctor.unapproved(),

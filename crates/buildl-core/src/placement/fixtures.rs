@@ -12,8 +12,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::types::{
-    Argument, Command, Directory, Freshness, Label, NetworkAccess, Node, NodeId, OutputName,
-    OutputPath, Provenance, SettingName, SettingValue, SourcePath, TargetGraph, TargetRole,
+    Argument, Command, Directory, Freshness, Label, NetworkAccess, Node, NodeId, Origin,
+    OutputName, OutputPath, Provenance, SettingName, SettingValue, SourcePath, TargetGraph,
+    TargetRole,
 };
 
 /// A directory from known-valid text.
@@ -81,6 +82,8 @@ pub(crate) fn node(raw: &str, change: impl FnOnce(&mut Node)) -> Node {
     };
     let mut node = Node {
         provenance: Provenance::new(file, directory),
+        origin: Origin::BuildFile,
+        narrowing: Vec::new(),
         role: TargetRole::Build,
         run: command(&["cc"]),
         description: None,

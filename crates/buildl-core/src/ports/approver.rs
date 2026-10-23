@@ -15,7 +15,7 @@
 //! lend it to one build.
 
 use crate::error::Result;
-use crate::types::{Approval, WantedSet};
+use crate::types::{Approval, Attribution, WantedSet};
 
 /// Says whether a build that wants a set of things may run.
 ///
@@ -28,16 +28,19 @@ use crate::types::{Approval, WantedSet};
 pub trait Approver {
     /// Whether a build that wants `wanted` may run.
     ///
+    /// `attribution` says which plugins' targets are behind the wants it covers. It explains the
+    /// set and never changes it: what an approver remembers or refuses is decided on `wanted`.
+    ///
     /// # Errors
     ///
     /// Returns an error when the approver cannot decide, for example because what it keeps
     /// cannot be read or written. It is never read as approval.
-    fn approve(&mut self, wanted: &WantedSet) -> Result<Approval>;
+    fn approve(&mut self, wanted: &WantedSet, attribution: &Attribution) -> Result<Approval>;
 }
 
 impl<A: Approver + ?Sized> Approver for &mut A {
-    fn approve(&mut self, wanted: &WantedSet) -> Result<Approval> {
-        (**self).approve(wanted)
+    fn approve(&mut self, wanted: &WantedSet, attribution: &Attribution) -> Result<Approval> {
+        (**self).approve(wanted, attribution)
     }
 }
 
@@ -52,7 +55,7 @@ mod tests {
 
     use super::Approver;
     use crate::error::Result;
-    use crate::types::{Approval, WantedSet};
+    use crate::types::{Approval, Attribution, WantedSet};
 
     /// Grants, and counts how many times it was asked.
     #[derive(Default)]
@@ -61,7 +64,7 @@ mod tests {
     }
 
     impl Approver for Counting {
-        fn approve(&mut self, _wanted: &WantedSet) -> Result<Approval> {
+        fn approve(&mut self, _wanted: &WantedSet, _attribution: &Attribution) -> Result<Approval> {
             self.asked += 1;
             Ok(Approval::Granted)
         }
@@ -75,7 +78,7 @@ mod tests {
             write: BTreeSet::new(),
             network: BTreeSet::new(),
         };
-        approver.approve(&wanted).unwrap()
+        approver.approve(&wanted, &Attribution::default()).unwrap()
     }
 
     #[test]

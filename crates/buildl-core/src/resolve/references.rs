@@ -13,7 +13,7 @@
 use crate::error::{DeclarationField, DeclarationSite, DeclaredKind, Error, Result};
 use crate::resolve::index::{Entry, Index, Item};
 use crate::suggest::nearest;
-use crate::types::{Argument, Command, Description, Label, Provenance, Rule, SettingName};
+use crate::types::{Argument, Command, Description, Label, Origin, Provenance, Rule, SettingName};
 
 /// The declaration holding a reference: the one an error about that reference names.
 ///
@@ -25,6 +25,8 @@ pub(crate) struct Holder<'a> {
     pub(crate) label: &'a Label,
     /// The build file that declared it.
     pub(crate) provenance: &'a Provenance,
+    /// Whose code made the declaration.
+    pub(crate) origin: &'a Origin,
 }
 
 impl Holder<'_> {
@@ -33,6 +35,7 @@ impl Holder<'_> {
         DeclarationSite {
             label: self.label.clone(),
             provenance: self.provenance.clone(),
+            origin: self.origin.clone(),
         }
     }
 }
@@ -78,7 +81,7 @@ pub(crate) fn dependency<'a>(
     }
 }
 
-/// The rule a target's `rule` reference names.
+/// The rule a target's `rule` reference names, and whose code declared it.
 ///
 /// # Errors
 ///
@@ -88,13 +91,14 @@ pub(crate) fn rule<'a>(
     index: &'a Index,
     holder: Holder<'_>,
     reference: &Label,
-) -> Result<&'a Rule> {
+) -> Result<(&'a Rule, &'a Origin)> {
     const FIELD: DeclarationField = DeclarationField::Rule;
     match index.labels.get(reference) {
         Some(Entry {
             item: Item::Rule(rule),
+            origin,
             ..
-        }) => Ok(rule),
+        }) => Ok((rule, origin)),
         Some(entry) => Err(wrong_kind(holder, FIELD, reference, entry)),
         None => Err(unknown(
             index,
@@ -232,9 +236,11 @@ mod tests {
 
     use super::{Holder, alias_target, dependency, description_settings, rule, settings};
     use crate::error::{DeclarationField, DeclaredKind, Error};
-    use crate::resolve::fixtures::{alias, command, file, label, rule as a_rule, setting, target};
+    use crate::resolve::fixtures::{
+        alias, command, file, label, plugin, rule as a_rule, setting, target,
+    };
     use crate::resolve::index::{Index, index};
-    use crate::types::{Description, Label, Provenance};
+    use crate::types::{Description, Label, Origin, Provenance};
 
     /// `//:app` and `//lib:text` are targets, `//:default` an alias for `//:app`,
     /// `//tools:cc` a rule, and `test_filter` a setting.
@@ -249,8 +255,14 @@ mod tests {
         .unwrap()
     }
 
+    static BUILD_FILE: Origin = Origin::BuildFile;
+
     fn held_by<'a>(label: &'a Label, provenance: &'a Provenance) -> Holder<'a> {
-        Holder { label, provenance }
+        Holder {
+            label,
+            provenance,
+            origin: &BUILD_FILE,
+        }
     }
 
     /// Asserts `error` is a wrong-kind error for `reference` in `field`, and returns what was
@@ -339,11 +351,32 @@ mod tests {
     }
 
     #[test]
+    fn an_error_names_the_origin_of_the_declaration_holding_the_reference() {
+        let index = workspace();
+        let (holder, root) = (label("//:holder"), file(""));
+        let origin = Origin::plugins(vec![plugin("go")]).unwrap();
+        let held = Holder {
+            label: &holder,
+            provenance: &root,
+            origin: &origin,
+        };
+        match dependency(&index, held, &label("//:ap")).unwrap_err() {
+            Error::UnknownReference { site, .. } => assert_eq!(site.origin, origin),
+            other => unreachable!("expected UnknownReference, got {other:?}"),
+        }
+        match rule(&index, held, &label("//lib:text")).unwrap_err() {
+            Error::WrongReferenceKind { site, .. } => assert_eq!(site.origin, origin),
+            other => unreachable!("expected WrongReferenceKind, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn a_rule_reference_names_a_rule() {
         let index = workspace();
         let (holder, root) = (label("//:holder"), file(""));
-        let found = rule(&index, held_by(&holder, &root), &label("//tools:cc")).unwrap();
+        let (found, origin) = rule(&index, held_by(&holder, &root), &label("//tools:cc")).unwrap();
         assert_eq!(found.run, command(&["cc"]));
+        assert_eq!(origin, &Origin::BuildFile);
     }
 
     #[test]

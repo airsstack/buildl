@@ -5,6 +5,7 @@ use std::fs::{self, File};
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use buildl::approver::Approvals;
 
@@ -311,6 +312,37 @@ fn a_program_outside_the_ceiling_is_refused() {
             "{command}"
         );
     }
+}
+
+#[test]
+fn a_plugin_target_outside_its_cap_exits_4() {
+    let (_dir, root) = workspace(&[
+        (
+            "buildl.toml",
+            concat!(
+                "[ceiling]\nproc.run = [\"cp\", \"sort\"]\nfs.read = [\".\"]\n",
+                "fs.write = [\"out\", \".buildl\"]\n\n",
+                "[execution]\nworkers = 1\nstrategy = \"bare\"\n\n",
+                "[plugins.hello]\npath = \"plugins/hello\"\nproc.run = [\"cp\"]\n",
+            ),
+        ),
+        ("build.lua", "buildl.use(\"hello\").greet(\"greet\")\n"),
+        (
+            "plugins/hello/extension.toml",
+            "[extension]\nname = \"hello\"\nversion = \"0.1.0\"\nentry = \"main.lua\"\napi = 1\n\n[capabilities]\nproc.run = [\"cp\"]\n",
+        ),
+        (
+            "plugins/hello/main.lua",
+            "return { greet = function(name) buildl.target(name, { run = { \"sort\" } }) end }\n",
+        ),
+    ]);
+    for command in ["plan", "build"] {
+        let (status, said) = failed(&root, &[command]);
+        assert_eq!(status, 4, "{command}: {said}");
+        assert!(said.starts_with("error: "), "{command}: {said}");
+        assert!(said.contains("hello"), "{command}: {said}");
+    }
+    assert!(!root.join("out").exists());
 }
 
 #[test]
@@ -1023,4 +1055,195 @@ fn doctor_exits_five_on_a_build_file_error() {
             .to_owned()
         )
     );
+}
+
+/// A git repository, in a temporary directory, holding the files of one plugin named `name`
+/// that declares a target copying `hello.txt`, tagged `v1.0.0`; and the commit the tag names.
+///
+/// The machine's own `git` builds it: a machine with none fails the test that asks.
+fn plugin_repository(name: &str) -> (tempfile::TempDir, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = fs::canonicalize(dir.path()).unwrap();
+    write(
+        &path,
+        "extension.toml",
+        &format!(
+            "[extension]\nname = \"{name}\"\nversion = \"0.1.0\"\nentry = \"main.lua\"\napi = 1\n\n[capabilities]\nproc.run = [\"cp\"]\n"
+        ),
+    );
+    write(
+        &path,
+        "main.lua",
+        concat!(
+            "local module = {}\n",
+            "function module.greet(name)\n",
+            "  buildl.target(name, { inputs = { \"hello.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+            "end\n",
+            "return module\n",
+        ),
+    );
+    git_in(&path, &["init", "-q", "-b", "main"]);
+    git_in(&path, &["add", "."]);
+    git_in(&path, &["commit", "-q", "-m", "plugin"]);
+    git_in(&path, &["tag", "v1.0.0"]);
+    let commit = git_in(&path, &["rev-parse", "HEAD"]);
+    (dir, commit)
+}
+
+/// Runs `git args` in the repository at `path` and returns what it printed to standard output.
+fn git_in(path: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args([
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "tag.gpgsign=false",
+        ])
+        .args(args)
+        .current_dir(path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
+/// The `file://` address of the repository `dir` holds.
+fn repository_url(dir: &tempfile::TempDir) -> String {
+    format!("file://{}", fs::canonicalize(dir.path()).unwrap().display())
+}
+
+/// A workspace whose build file uses each of `plugins`, a plugin named as given and fetched
+/// from the repository given, at the tag `v1.0.0`.
+fn workspace_using(plugins: &[(&str, &tempfile::TempDir)]) -> (tempfile::TempDir, PathBuf) {
+    let tables: Vec<String> = plugins
+        .iter()
+        .map(|(name, repository)| {
+            format!(
+                "\n[plugins.{name}]\ngit = \"{}\"\nrev = \"v1.0.0\"\nproc.run = [\"cp\"]\n",
+                repository_url(repository)
+            )
+        })
+        .collect();
+    let toml = manifest(&["cp"]) + &tables.concat();
+    let lua: Vec<String> = plugins
+        .iter()
+        .map(|(name, _)| format!("buildl.use(\"{name}\").greet(\"{name}-out\")\n"))
+        .collect();
+    let lua = lua.concat();
+    workspace(&[
+        ("buildl.toml", &toml),
+        ("build.lua", &lua),
+        ("hello.txt", "hello\n"),
+    ])
+}
+
+#[test]
+fn plugins_fetch_exits_0_and_reports_each_plugin() {
+    let (zeta_repository, zeta) = plugin_repository("zeta");
+    let (alpha_repository, alpha) = plugin_repository("alpha");
+    let (_dir, root) = workspace_using(&[("zeta", &zeta_repository), ("alpha", &alpha_repository)]);
+
+    let first = run(&root, &["plugins", "fetch"], &[]);
+    assert_eq!(code(&first), 0, "{}", stderr(&first));
+    assert_eq!(stdout(&first), "");
+    assert_eq!(
+        stderr(&first),
+        format!("fetched alpha {alpha}\nfetched zeta {zeta}\n")
+    );
+    assert!(root.join("buildl.lock").is_file());
+
+    let second = run(&root, &["plugins", "fetch"], &[]);
+    assert_eq!(code(&second), 0, "{}", stderr(&second));
+    assert_eq!(stdout(&second), "");
+    assert_eq!(
+        stderr(&second),
+        format!("unchanged alpha {alpha}\nunchanged zeta {zeta}\n")
+    );
+}
+
+#[test]
+fn plugins_fetch_with_no_git_exits_3() {
+    let (repository, _commit) = plugin_repository("hello");
+    let (_dir, root) = workspace_using(&[("hello", &repository)]);
+    let nowhere = tempfile::tempdir().unwrap();
+
+    let output = run(
+        &root,
+        &["plugins", "fetch"],
+        &[("PATH", nowhere.path().as_os_str())],
+    );
+
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 3, "{}", stderr(&output));
+    let text = stderr(&output);
+    assert!(text.starts_with("error: "), "{text}");
+    assert!(text.contains("hello"), "{text}");
+    assert!(!root.join("buildl.lock").exists());
+}
+
+#[test]
+fn plugins_fetch_of_a_plugin_holding_a_link_exits_5() {
+    let (repository, _commit) = plugin_repository("hello");
+    let path = fs::canonicalize(repository.path()).unwrap();
+    symlink("/etc/hosts", path.join("hosts")).unwrap();
+    git_in(&path, &["add", "hosts"]);
+    git_in(&path, &["commit", "-q", "-m", "link"]);
+    git_in(&path, &["tag", "-f", "v1.0.0"]);
+    let (_dir, root) = workspace_using(&[("hello", &repository)]);
+
+    let output = run(&root, &["plugins", "fetch"], &[]);
+
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 5, "{}", stderr(&output));
+    let text = stderr(&output);
+    assert!(text.starts_with("error: "), "{text}");
+    assert!(text.contains("hello") && text.contains("hosts"), "{text}");
+    assert!(!root.join("buildl.lock").exists());
+}
+
+#[test]
+fn plugins_fetch_of_a_tag_that_moved_exits_6() {
+    let (repository, locked) = plugin_repository("hello");
+    let path = fs::canonicalize(repository.path()).unwrap();
+    let (_dir, root) = workspace_using(&[("hello", &repository)]);
+    let fetched = run(&root, &["plugins", "fetch"], &[]);
+    assert_eq!(code(&fetched), 0, "{}", stderr(&fetched));
+    let lock = fs::read(root.join("buildl.lock")).unwrap();
+    // The store is gone, as in a fresh checkout of a workspace whose lock is committed.
+    fs::remove_dir_all(root.join(".buildl/plugins")).unwrap();
+    write(&path, "later.txt", "later");
+    git_in(&path, &["add", "later.txt"]);
+    git_in(&path, &["commit", "-q", "-m", "later"]);
+    git_in(&path, &["tag", "-f", "v1.0.0"]);
+
+    let output = run(&root, &["plugins", "fetch"], &[]);
+
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 6, "{}", stderr(&output));
+    let text = stderr(&output);
+    assert!(text.starts_with("error: "), "{text}");
+    assert!(text.contains("hello") && text.contains(&locked), "{text}");
+    assert_eq!(fs::read(root.join("buildl.lock")).unwrap(), lock);
+}
+
+#[test]
+fn build_after_fetch_succeeds_offline() {
+    let (repository, _commit) = plugin_repository("hello");
+    let (_dir, root) = workspace_using(&[("hello", &repository)]);
+    let fetched = run(&root, &["plugins", "fetch"], &[]);
+    assert_eq!(code(&fetched), 0, "{}", stderr(&fetched));
+
+    drop(repository);
+    let built = run(&root, &["build"], &[]);
+
+    assert_eq!(code(&built), 0, "{}", stderr(&built));
+    assert_eq!(fs::read(root.join("out/hello-out")).unwrap(), b"hello\n");
 }

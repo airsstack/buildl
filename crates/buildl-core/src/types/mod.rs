@@ -27,16 +27,25 @@
 //! - [`Diagnostic`] — an adapter's message for a failure, carried for display only.
 //! - [`Written`] — text exactly as a build file wrote it, typed by what it is meant to become.
 //! - [`Declaration`] and its parts — what a build file declared, validated.
-//! - [`BuildFile`], [`Evaluated`] and the staged values — what crosses the build-file port.
+//! - [`BuildFile`], [`Evaluated`] and the staged values — what crosses the build-file port;
+//!   [`Discovered`] — what discovery targets last produced, handed to the build file that asks.
+//! - [`Loaded`] — the declarations a command loaded and the discovery targets that had no result.
 //! - [`TargetGraph`] and [`Node`] — the runnable targets and the dependencies between them.
 //! - [`ActionKey`], [`KeyComponents`] and their parts — what decides a target's output, and the
 //!   digest that stands for it.
 //! - [`CacheRow`] — what the last successful build of one target recorded.
 //! - [`Ceiling`], [`WantedSet`] and [`Want`] — what a workspace allows, and what a build wants.
+//! - [`Attribution`] — the plugins whose targets are behind each want.
 //! - [`Approval`] and [`DenialReason`] — an approver's answer about what a build wants;
 //!   [`ApproverMode`] — which approver a workspace names.
 //! - [`Checkup`] — what a workspace allows and wants, as `doctor` reports it.
 //! - [`Workspace`] — what a workspace's manifest tells the pipeline.
+//! - [`PluginName`], [`PluginVersion`], [`PluginRef`], [`PluginCap`] and [`PluginNetwork`] — a
+//!   plugin, what its manifest asks for, and what the workspace lets it have; [`PluginChain`]
+//!   — the plugins that made a declaration; [`Origin`] — whose
+//!   code declared a target; [`PluginViolation`] — a want outside a plugin's caps.
+//! - [`PluginSource`] — where a plugin comes from, with [`GitUrl`], [`Rev`], [`TagName`] and
+//!   [`CommitId`] — the parts of a git source.
 //! - [`Execution`], with [`Workers`], [`Timeout`] and [`Isolation`] — how a workspace wants its
 //!   actions run.
 //! - [`Plan`], [`Verdict`] and their parts — what a build would do with each target, and why.
@@ -82,6 +91,7 @@ pub mod action_key;
 pub mod approval;
 pub mod approver_mode;
 pub mod argument;
+pub mod attribution;
 pub mod authority;
 pub mod build_file;
 pub mod cache_row;
@@ -94,6 +104,7 @@ pub mod description;
 pub mod diagnostic;
 pub mod digest;
 pub mod directory;
+pub mod discovered;
 pub mod entry_name;
 pub mod env_name;
 pub mod env_value;
@@ -106,6 +117,7 @@ pub mod isolation;
 pub mod label;
 pub mod live_output;
 pub mod live_sink;
+pub mod loaded;
 pub mod log_line;
 pub mod logged_run;
 pub mod node_id;
@@ -117,6 +129,8 @@ pub mod output_name;
 pub mod output_path;
 pub mod plan;
 pub mod platform;
+pub mod plugin;
+pub mod plugin_source;
 pub mod program;
 pub mod provenance;
 pub mod purpose;
@@ -147,6 +161,7 @@ pub use action_key::{
 pub use approval::{Approval, DenialReason};
 pub use approver_mode::ApproverMode;
 pub use argument::{Argument, Command};
+pub use attribution::Attribution;
 pub use authority::{Ceiling, Want, WantedSet};
 pub use build_file::{
     BuildFile, DeclarationOrder, Evaluated, StagedAlias, StagedDeclaration, StagedFile, StagedItem,
@@ -165,6 +180,7 @@ pub use description::{Description, ExpandedDescription};
 pub use diagnostic::Diagnostic;
 pub use digest::{Digest, Hasher};
 pub use directory::Directory;
+pub use discovered::Discovered;
 pub use entry_name::EntryName;
 pub use env_name::EnvName;
 pub use env_value::EnvValue;
@@ -177,6 +193,7 @@ pub use isolation::Isolation;
 pub use label::Label;
 pub use live_output::LiveOutput;
 pub use live_sink::LiveSink;
+pub use loaded::Loaded;
 pub use log_line::LogLine;
 pub use logged_run::LoggedRun;
 pub use node_id::NodeId;
@@ -188,6 +205,11 @@ pub use output_name::OutputName;
 pub use output_path::OutputPath;
 pub use plan::{Difference, DirtyReason, Plan, PlannedKey, Unfinished, Verdict};
 pub use platform::Platform;
+pub use plugin::{
+    Origin, PluginCap, PluginChain, PluginName, PluginNetwork, PluginRef, PluginVersion,
+    PluginViolation,
+};
+pub use plugin_source::{CommitId, GitUrl, PluginSource, Rev, TagName};
 pub use program::Program;
 pub use provenance::Provenance;
 pub use purpose::Purpose;

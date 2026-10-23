@@ -113,6 +113,51 @@ fn check_writes_nothing() {
     assert!(!shop.root.join(".buildl").exists());
 }
 
+/// A workspace whose one discovery target, `//:pkgs`, has never run.
+fn discovering() -> (tempfile::TempDir, PathBuf) {
+    workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        (
+            "build.lua",
+            "buildl.discover(\"pkgs\", { inputs = { \"list\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+        ),
+        ("list", "[]\n"),
+    ])
+}
+
+const NOT_RUN: &str = "//:pkgs has not run; run buildl build\n";
+
+#[test]
+fn check_prints_the_not_run_note_on_stderr() {
+    let (_dir, root) = discovering();
+    let output = run(&root, &["check"], &[]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(
+        stderr(&output),
+        format!("ok: 1 declaration in 1 build file\n{NOT_RUN}")
+    );
+    assert_eq!(stdout(&output), "");
+    assert!(!root.join(".buildl").exists());
+}
+
+#[test]
+fn the_not_run_note_stays_off_standard_output_for_graph_query_and_doctor() {
+    let (_dir, root) = discovering();
+    for args in [
+        &["graph"][..],
+        &["graph", "--dot"][..],
+        &["query", "deps(//:pkgs)"][..],
+        &["query", "--json", "deps(//:pkgs)"][..],
+        &["doctor"][..],
+    ] {
+        let output = run(&root, args, &[]);
+        assert_eq!(code(&output), 0, "{args:?}");
+        assert_eq!(stderr(&output), NOT_RUN, "{args:?}");
+        assert!(!stdout(&output).contains("has not run"), "{args:?}");
+    }
+    assert!(!root.join(".buildl").exists());
+}
+
 #[test]
 fn graph_json_equals_the_graph_file() {
     let shop = Shop::new();
@@ -199,6 +244,8 @@ fn plan_says_why_each_target_would_run() {
             "run    //:docs: never built\n",
             "run    //:main.o: never built\n",
             "run    //lib:text: never built\n",
+            "  run programs: cc, mkdoc\n",
+            "  write into:   .buildl, out\n",
             "4 to run, 0 conditional, 0 clean\n",
         )
     );
@@ -214,6 +261,8 @@ fn plan_says_why_each_target_would_run() {
             "clean  //:docs\n",
             "run    //:main.o: input main.c changed\n",
             "clean  //lib:text\n",
+            "  run programs: cc, mkdoc\n",
+            "  write into:   .buildl, out\n",
             "1 to run, 1 conditional, 2 clean\n",
         )
     );
@@ -235,6 +284,8 @@ fn plan_names_every_difference_of_a_target() {
             "clean  //:docs\n",
             "run    //:main.o: input main.c changed; tool cc changed; setting mode changed\n",
             "run    //lib:text: tool cc changed\n",
+            "  run programs: cc, mkdoc\n",
+            "  write into:   .buildl, out\n",
             "3 to run, 0 conditional, 1 clean\n",
         )
     );
@@ -247,7 +298,11 @@ fn plan_json_is_one_canonical_line() {
     assert_eq!(code(&first), 0);
     let text = stdout(&first);
     assert!(
-        text.starts_with("{\"settings\":{\"mode\":\"debug\"},\"targets\":{\"//:app\":{"),
+        text.starts_with(concat!(
+            "{\"attribution\":{\"env\":{},\"network\":{},\"programs\":{}},",
+            "\"settings\":{\"mode\":\"debug\"},\"stale_discovery\":[],",
+            "\"targets\":{\"//:app\":{"
+        )),
         "{text}"
     );
     assert!(text.ends_with("}\n"), "{text}");
@@ -680,5 +735,84 @@ fn doctor_prints_the_workspace_authority() {
             ),
             root.display()
         )
+    );
+}
+
+/// A workspace whose one target, `//:greet`, is declared by the path plugin `hello`.
+fn plugin_workspace() -> (tempfile::TempDir, PathBuf) {
+    let manifest = format!(
+        "{}\n[plugins.hello]\npath = \"plugins/hello\"\nproc.run = [\"cp\"]\n",
+        manifest(&["cp"])
+    );
+    workspace(&[
+        ("buildl.toml", &manifest),
+        (
+            "build.lua",
+            "local hello = buildl.use(\"hello\")\nhello.greet(\"greet\")\n",
+        ),
+        ("hello.txt", "hello\n"),
+        (
+            "plugins/hello/extension.toml",
+            "[extension]\nname = \"hello\"\nversion = \"0.1.0\"\nentry = \"main.lua\"\napi = 1\n\n[capabilities]\nproc.run = [\"cp\"]\n",
+        ),
+        (
+            "plugins/hello/main.lua",
+            concat!(
+                "local module = {}\n",
+                "function module.greet(name)\n",
+                "  buildl.target(name, { inputs = { \"hello.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+                "end\n",
+                "return module\n",
+            ),
+        ),
+    ])
+}
+
+#[test]
+fn plan_names_the_plugin_behind_a_want() {
+    let (_dir, root) = plugin_workspace();
+
+    let output = run(&root, &["plan"], &[]);
+
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("declared by plugin hello@0.1.0 for //:greet\n"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn doctor_shows_plugin_attribution_and_exits_0() {
+    let (_dir, root) = plugin_workspace();
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = fs::canonicalize(home_dir.path()).unwrap();
+
+    let output = run_at_home(&root, &["doctor"], &home);
+
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains("declared by plugin hello@0.1.0 for //:greet\n"),
+        "{}",
+        stdout(&output)
+    );
+}
+
+#[test]
+fn graph_json_shows_the_plugin_chain() {
+    let (_dir, root) = plugin_workspace();
+
+    let output = run(&root, &["graph", "--json"], &[]);
+
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert!(
+        stdout(&output).contains(r#""origin":{"Plugins":"#),
+        "{}",
+        stdout(&output)
+    );
+    assert!(
+        stdout(&output).contains(r#""name":"hello""#),
+        "{}",
+        stdout(&output)
     );
 }

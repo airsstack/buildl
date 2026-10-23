@@ -11,7 +11,9 @@
 //! - Evaluating one build file per call on a fresh airsl engine, and returning what it staged
 //!   exactly as written, or the one failure that stopped it.
 //! - Installing the `buildl` module table, reachable from Lua both as `airsstack.buildl` and as
-//!   the global `buildl`: `target`, `test`, `rule`, `alias`, `option`, `subdir` and `sources`.
+//!   the global `buildl`: `target`, `test`, `discover`, `rule`, `alias`, `option`, `subdir`,
+//!   `sources`, `discovered`, which returns the result a discovery target last produced, and
+//!   `use`, which loads a plugin under an environment of its own.
 //! - Keeping the declaration phase sandboxed: airsl's minimal language surface, no grant of any
 //!   kind, only the `json`, `path`, `regex`, `hash` and `glob` modules, and no `math.random`,
 //!   `math.randomseed`, `print` or `airsstack.path.absolute`, and with `tostring` and
@@ -38,10 +40,13 @@
 //! | `limits` | [`DeclarationLimits`] |
 //! | `engine` | the airsl engine configuration |
 //! | `curated` | airsl's `path` module without `absolute` |
+//! | `snapshot` | one-level copies of the library and module tables a plugin must not share |
 //! | `module` | the `buildl` host module, which raises refusals |
+//! | `plugin` | `buildl.use`: a plugin's manifest, environment, `require` and instances |
 //! | `primitives` | each primitive's argument shape |
 //! | `values` | the Lua value readers every primitive shares |
 //! | `refusal` | why a primitive call was refused |
+//! | `results` | the discovery results `buildl.discovered` reads |
 //! | `sources` | the host-side walk behind `buildl.sources` |
 //! | `stable_text` | `tostring` and `string.format` without address-derived text |
 //! | `staging` | the staging buffer: order, byte budget, first refusal |
@@ -55,8 +60,11 @@ mod curated;
 mod engine;
 mod limits;
 mod module;
+mod plugin;
 mod primitives;
 mod refusal;
+mod results;
+mod snapshot;
 mod source;
 mod sources;
 mod stable_text;

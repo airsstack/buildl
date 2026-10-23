@@ -5,7 +5,7 @@
     reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
     ActionOutcome, Digest, EntryName, Error, LiveOutput, OnFailure, OutcomeClass, Pipeline, Rerun,
@@ -307,4 +307,58 @@ fn a_denied_test_run_runs_nothing() {
     assert_eq!(ports.strategy.handed(), []);
     assert_eq!(ports.cache.recorded(), []);
     assert_eq!(ports.log.events, []);
+}
+
+#[test]
+fn a_test_run_naming_a_discovery_target_is_not_a_test() {
+    let mut pipeline = root_only(vec![target_with("pkgs", |staged| {
+        staged.role = TargetRole::Discovery;
+    })]);
+
+    let error = pipeline
+        .test(
+            &EntryName::parse("build.lua").unwrap(),
+            &Scope::Targets(BTreeSet::from([label("//:pkgs")])),
+            &BTreeMap::new(),
+            OnFailure::Stop,
+            LiveOutput::Off,
+            Rerun::Off,
+        )
+        .unwrap_err();
+
+    assert!(matches!(error, Error::NotATest { .. }), "{error:?}");
+    assert_eq!(
+        error.to_string(),
+        "target //:pkgs was asked for as a test, but //:pkgs is declared with b.discover in build.lua"
+    );
+    // Only the discovery run before the refusal ran anything.
+    assert_eq!(pipeline.ports().strategy.ran(), [label("//:pkgs")]);
+}
+
+#[test]
+fn a_workspace_test_run_leaves_discovery_targets_out() {
+    let mut pipeline = root_only(vec![
+        target_with("pkgs", |staged| staged.role = TargetRole::Discovery),
+        target_with("unit", |staged| staged.role = TargetRole::Test),
+    ]);
+
+    let outcomes = tested(
+        &mut pipeline,
+        &Scope::Workspace,
+        OnFailure::KeepGoing,
+        Rerun::Off,
+    );
+
+    // The discovery target runs in the run before the tests; the test run proper is `//:unit`.
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[
+            ("//:pkgs", OutcomeClass::Built),
+            ("//:unit", OutcomeClass::Built)
+        ])
+    );
+    assert_eq!(
+        pipeline.ports().strategy.ran(),
+        [label("//:pkgs"), label("//:unit")]
+    );
 }

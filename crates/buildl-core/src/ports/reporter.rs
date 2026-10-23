@@ -25,6 +25,8 @@ use crate::types::{Captured, Channel, Label, OutcomeEvent, ReadyAction, Summary}
 /// One build makes its calls in this order: one [`begun`], any number of [`started`],
 /// [`printed`] and [`finished`], then one [`summary`]. A build that is refused before it runs
 /// anything makes no call, and one that ends in an error after that calls [`summary`] never.
+/// A command that builds discovery targets first makes that sequence for them, and again for
+/// the build or test run that follows.
 ///
 /// From the first [`printed`] for a target until that target's [`finished`], no [`printed`] and
 /// no [`finished`] is about another target: what one action prints is never interleaved with

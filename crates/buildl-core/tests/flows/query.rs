@@ -12,7 +12,8 @@ use buildl_core::{
 };
 
 use crate::common::{
-    FakeDispatcher, FakePorts, FakeSource, alias, file, ports, target_with, workspace,
+    FakeCas, FakeDispatcher, FakeHistory, FakePorts, FakeSource, alias, file, ports, target_with,
+    workspace,
 };
 
 fn entry() -> EntryName {
@@ -67,9 +68,12 @@ fn deps_answer_what_a_target_needs_across_build_files() {
             &source,
             &mut FakeDispatcher::default(),
             &entry(),
+            &FakeHistory::default(),
+            &FakeCas::default(),
             &asked(Direction::Deps, start),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         assert_eq!(answer, expected, "deps({start})");
     }
 }
@@ -81,18 +85,24 @@ fn rdeps_answer_what_needs_a_target_across_build_files() {
         &source,
         &mut FakeDispatcher::default(),
         &entry(),
+        &FakeHistory::default(),
+        &FakeCas::default(),
         &asked(Direction::Rdeps, "//lib:text"),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     assert_eq!(answer, labels(&["//:app"]));
 
     let answer = pipeline::query(
         &source,
         &mut FakeDispatcher::default(),
         &entry(),
+        &FakeHistory::default(),
+        &FakeCas::default(),
         &asked(Direction::Rdeps, "//:app"),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     assert_eq!(answer, labels(&[]));
 }
 
@@ -103,9 +113,12 @@ fn a_pipeline_answers_what_the_free_function_answers() {
         &fixture(),
         &mut FakeDispatcher::default(),
         &entry(),
+        &FakeHistory::default(),
+        &FakeCas::default(),
         &question,
     )
-    .unwrap();
+    .unwrap()
+    .0;
     let method = Pipeline::<FakePorts>::new(ports(fixture()))
         .query(&entry(), &question)
         .unwrap();
@@ -119,6 +132,8 @@ fn a_target_naming_nothing_is_refused_with_the_nearest_one() {
         &fixture(),
         &mut FakeDispatcher::default(),
         &entry(),
+        &FakeHistory::default(),
+        &FakeCas::default(),
         &asked(Direction::Deps, "//lib:txt"),
     )
     .unwrap_err();
@@ -138,6 +153,8 @@ fn a_missing_build_file_stops_the_query_before_it_is_answered() {
         &source,
         &mut FakeDispatcher::default(),
         &entry(),
+        &FakeHistory::default(),
+        &FakeCas::default(),
         &asked(Direction::Deps, "//:app"),
     )
     .unwrap_err();

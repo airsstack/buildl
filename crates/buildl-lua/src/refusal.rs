@@ -1,15 +1,25 @@
 //! Why a `buildl` primitive turned a call down.
 //!
 //! Its own file because three different readers produce a refusal — the value readers, the
-//! primitives and `buildl.sources` — and none of them knows where in the build file the call was
-//! made. The refusal carries what they do know; the module that installed the primitive adds the
-//! call site when it renders the diagnostic.
+//! primitives and `buildl.sources` — and none of them knows where the call was made. The refusal
+//! carries what they do know; the module that installed the primitive adds the call site when it
+//! renders the diagnostic.
 //!
-//! Responsibilities: [`Refusal`] and its rendering into a [`Diagnostic`].
+//! Responsibilities: [`Refusal`], the [`CallSite`] it is rendered with, and its rendering into a
+//! [`Diagnostic`].
 //!
 //! Non-responsibilities: recording a refusal so it sticks, which the staging buffer does.
 
 use buildl_core::{Diagnostic, EvaluationFailure};
+
+/// Where in Lua code a primitive was called.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum CallSite {
+    /// A line of the build file.
+    BuildFile { line: usize },
+    /// A line of a plugin's file, which the workspace names `chunk`.
+    Plugin { chunk: String, line: usize },
+}
 
 /// A primitive call that was refused: the failure's kind, what was wrong, and — once known — the
 /// name the call declares.
@@ -42,10 +52,14 @@ impl Refusal {
         &self.failure
     }
 
-    /// Renders the refusal for `buildl.<primitive>`, prefixed with the build file's `line` when it
-    /// is known.
-    pub(crate) fn diagnostic(&self, primitive: &str, line: Option<usize>) -> Diagnostic {
-        let location = line.map_or_else(String::new, |line| format!("line {line}: "));
+    /// Renders the refusal for `buildl.<primitive>`, prefixed with where the call was made when
+    /// that is known: `line N: ` for the build file, `<file>:N: ` for a plugin's file.
+    pub(crate) fn diagnostic(&self, primitive: &str, site: Option<&CallSite>) -> Diagnostic {
+        let location = match site {
+            None => String::new(),
+            Some(CallSite::BuildFile { line }) => format!("line {line}: "),
+            Some(CallSite::Plugin { chunk, line }) => format!("{chunk}:{line}: "),
+        };
         let subject = self
             .subject
             .as_ref()
@@ -61,7 +75,7 @@ impl Refusal {
 mod tests {
     use buildl_core::{EvaluationFailure, Written};
 
-    use super::Refusal;
+    use super::{CallSite, Refusal};
 
     fn wrong_run() -> Refusal {
         Refusal::new(
@@ -74,10 +88,24 @@ mod tests {
 
     #[test]
     fn renders_line_primitive_subject_and_detail() {
-        let diagnostic = wrong_run().about("app").diagnostic("target", Some(12));
+        let site = CallSite::BuildFile { line: 12 };
+        let diagnostic = wrong_run().about("app").diagnostic("target", Some(&site));
         assert_eq!(
             diagnostic.as_str(),
             "line 12: buildl.target 'app': field 'run' must be a list of strings, found number"
+        );
+    }
+
+    #[test]
+    fn names_the_plugin_file_for_a_call_made_there() {
+        let site = CallSite::Plugin {
+            chunk: "plugins/go/main.lua".to_owned(),
+            line: 6,
+        };
+        let diagnostic = wrong_run().about("app").diagnostic("target", Some(&site));
+        assert_eq!(
+            diagnostic.as_str(),
+            "plugins/go/main.lua:6: buildl.target 'app': field 'run' must be a list of strings, found number"
         );
     }
 

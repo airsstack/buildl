@@ -122,18 +122,19 @@ fn help_names_every_command_and_flag() {
             "Usage: buildl [OPTIONS] <COMMAND>\n",
             "\n",
             "Commands:\n",
-            "  check   Evaluate every build file twice and run nothing\n",
-            "  graph   Print the target graph\n",
-            "  query   Ask what a target needs, or what needs it\n",
-            "  plan    Say what a build would run, and why\n",
-            "  build   Build targets and what they need\n",
-            "  test    Run test targets and what they need\n",
-            "  verify  Re-run cached actions and name those whose outputs differ\n",
-            "  doctor  Print the workspace's ceiling, approver, run settings and what its build wants\n",
-            "  log     Show what a target printed when it last ran\n",
-            "  clean   Remove the output directory\n",
-            "  gc      Drop rows of targets no longer declared and remove what nothing needs\n",
-            "  help    Print this message or the help of the given subcommand(s)\n",
+            "  check    Evaluate every build file twice and run nothing\n",
+            "  graph    Print the target graph\n",
+            "  query    Ask what a target needs, or what needs it\n",
+            "  plan     Say what a build would run, and why\n",
+            "  build    Build targets and what they need\n",
+            "  test     Run test targets and what they need\n",
+            "  verify   Re-run cached actions and name those whose outputs differ\n",
+            "  doctor   Print the workspace's ceiling, approver, run settings and what its build wants\n",
+            "  log      Show what a target printed when it last ran\n",
+            "  clean    Remove the output directory\n",
+            "  gc       Drop rows of targets no longer declared and remove what nothing needs\n",
+            "  plugins  Work with the plugins `buildl.toml` names\n",
+            "  help     Print this message or the help of the given subcommand(s)\n",
             "\n",
             "Options:\n",
             COLOR,
@@ -374,18 +375,19 @@ fn no_command_prints_the_short_help_on_stderr() {
             "Usage: buildl [OPTIONS] <COMMAND>\n",
             "\n",
             "Commands:\n",
-            "  check   Evaluate every build file twice and run nothing\n",
-            "  graph   Print the target graph\n",
-            "  query   Ask what a target needs, or what needs it\n",
-            "  plan    Say what a build would run, and why\n",
-            "  build   Build targets and what they need\n",
-            "  test    Run test targets and what they need\n",
-            "  verify  Re-run cached actions and name those whose outputs differ\n",
-            "  doctor  Print the workspace's ceiling, approver, run settings and what its build wants\n",
-            "  log     Show what a target printed when it last ran\n",
-            "  clean   Remove the output directory\n",
-            "  gc      Drop rows of targets no longer declared and remove what nothing needs\n",
-            "  help    Print this message or the help of the given subcommand(s)\n",
+            "  check    Evaluate every build file twice and run nothing\n",
+            "  graph    Print the target graph\n",
+            "  query    Ask what a target needs, or what needs it\n",
+            "  plan     Say what a build would run, and why\n",
+            "  build    Build targets and what they need\n",
+            "  test     Run test targets and what they need\n",
+            "  verify   Re-run cached actions and name those whose outputs differ\n",
+            "  doctor   Print the workspace's ceiling, approver, run settings and what its build wants\n",
+            "  log      Show what a target printed when it last ran\n",
+            "  clean    Remove the output directory\n",
+            "  gc       Drop rows of targets no longer declared and remove what nothing needs\n",
+            "  plugins  Work with the plugins `buildl.toml` names\n",
+            "  help     Print this message or the help of the given subcommand(s)\n",
             "\n",
             "Options:\n",
             "      --color <WHEN>  When to colour what is printed [default: auto] [possible values: auto, always, never]\n",
@@ -494,7 +496,8 @@ fn set_reaches_the_plan() {
     assert_eq!(code(&output), 0);
     assert_eq!(
         stdout(&output),
-        "run    //:copy: setting from changed\n1 to run, 0 conditional, 0 clean\n"
+        "run    //:copy: setting from changed\n  run programs: cp\n  \
+         write into:   .buildl, out\n1 to run, 0 conditional, 0 clean\n"
     );
     let built = run(&root, &[&["build"][..], &settings].concat(), &[]);
     assert_eq!(code(&built), 0);
@@ -589,7 +592,8 @@ fn a_changed_tool_is_the_reason_its_targets_run() {
     assert_eq!(code(&output), 0);
     assert_eq!(
         stdout(&output),
-        "run    //:made: tool mytool changed\n1 to run, 0 conditional, 0 clean\n"
+        "run    //:made: tool mytool changed\n  run programs: mytool\n  \
+         write into:   .buildl, out\n1 to run, 0 conditional, 0 clean\n"
     );
 }
 

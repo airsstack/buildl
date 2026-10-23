@@ -63,7 +63,7 @@ mod tests {
 
     use buildl_core::{
         Action, Alias, Argument, Command, Declaration, Declared, Freshness, Label, NetworkAccess,
-        Provenance, Target, TargetRole, resolve,
+        Origin, Provenance, Target, TargetRole, resolve,
     };
 
     use super::graph_dot;
@@ -76,7 +76,7 @@ mod tests {
         } else {
             PathBuf::from(directory.as_str()).join("build.lua")
         };
-        Declaration::new(Provenance::new(file, directory), item)
+        Declaration::new(Provenance::new(file, directory), Origin::BuildFile, item)
     }
 
     /// The target `raw`, running `cc`, depending on `deps` in that order.

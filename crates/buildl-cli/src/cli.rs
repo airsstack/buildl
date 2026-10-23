@@ -9,7 +9,8 @@
 //! - [`Cli`] and [`Command`] — the commands and the flags of each.
 //! - [`Color`] — when to colour what is printed, as asked for.
 //! - [`GraphArgs`], [`QueryArgs`], [`PlanArgs`], [`BuildArgs`], [`TestArgs`], [`VerifyArgs`],
-//!   [`LogArgs`] and [`Selection`] — the arguments of a command.
+//!   [`LogArgs`], [`PluginsArgs`] and [`Selection`] — the arguments of a command.
+//! - [`PluginsCommand`] — the commands under `plugins`.
 //! - [`Streams`] — which streams of a run `log` prints.
 //! - [`Override`] and [`overrides`] — `--set NAME=VALUE`, and the settings of one run.
 //!
@@ -75,6 +76,23 @@ pub(crate) enum Command {
     Clean,
     /// Drop rows of targets no longer declared and remove what nothing needs
     Gc,
+    /// Work with the plugins `buildl.toml` names
+    Plugins(PluginsArgs),
+}
+
+/// The arguments of `plugins`.
+#[derive(Debug, Args)]
+pub(crate) struct PluginsArgs {
+    /// What to do with the plugins.
+    #[command(subcommand)]
+    pub command: PluginsCommand,
+}
+
+/// One command of `plugins`.
+#[derive(Debug, Subcommand)]
+pub(crate) enum PluginsCommand {
+    /// Pin every git plugin in buildl.lock and store its files, so a build needs no network
+    Fetch,
 }
 
 /// The arguments of `graph`.
@@ -356,7 +374,8 @@ mod tests {
     use clap::{CommandFactory, Parser};
 
     use super::{
-        BuildArgs, Cli, Color, Command, LogArgs, PlanArgs, Streams, TestArgs, VerifyArgs, overrides,
+        BuildArgs, Cli, Color, Command, LogArgs, PlanArgs, PluginsCommand, Streams, TestArgs,
+        VerifyArgs, overrides,
     };
 
     /// The command line `args` after the program's name, parsed.
@@ -425,6 +444,22 @@ mod tests {
         assert!(matches!(parsed(&["test"]).command, Command::Test(_)));
         assert!(matches!(parsed(&["verify"]).command, Command::Verify(_)));
         assert!(matches!(parsed(&["log", "app"]).command, Command::Log(_)));
+    }
+
+    #[test]
+    fn plugins_fetch_parses_and_plugins_alone_is_refused() {
+        let Command::Plugins(plugins) = parsed(&["plugins", "fetch"]).command else {
+            panic!("expected plugins");
+        };
+        assert!(matches!(plugins.command, PluginsCommand::Fetch));
+        assert_eq!(
+            refused(&["plugins"]),
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+        assert_eq!(
+            refused(&["plugins", "update"]),
+            ErrorKind::InvalidSubcommand
+        );
     }
 
     #[test]

@@ -15,9 +15,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
-    ActionOutcome, ApproverMode, Checkup, Collected, Declaration, Diagnostic, Directory, Error,
-    Label, LiveOutput, OnFailure, Pipeline, Plan, PortName, Query, Reporter, Rerun, Result, Sample,
-    Scope, SettingName, SettingValue, Shown, TargetGraph, Verification, WantedSet, pipeline,
+    ActionOutcome, ApproverMode, Checkup, Collected, Diagnostic, Directory, Error, Label,
+    LiveOutput, Loaded, OnFailure, Pipeline, Plan, PortName, Query, Reporter, Rerun, Result,
+    Sample, Scope, SettingName, SettingValue, Shown, TargetGraph, Verification, WantedSet,
+    pipeline,
 };
 
 use crate::approver::{Console, NoTerminal};
@@ -25,6 +26,7 @@ use crate::cache::LocalCache;
 use crate::cas::LocalCas;
 use crate::local_ports::Wiring;
 use crate::log::LocalLog;
+use crate::plugins::{Fetched, fetch};
 use crate::report::Silent;
 use crate::state::{Cleaned, clear_out};
 
@@ -93,8 +95,8 @@ impl Doctor {
 ///
 /// Opening one reads its manifest and nothing else. The state directory is taken by
 /// [`Workspace::plan`], [`Workspace::build`], [`Workspace::test`], [`Workspace::verify`],
-/// [`Workspace::gc`] and [`Workspace::clean`] only, and only while one of them runs, so a
-/// workspace kept open holds nothing while it is idle.
+/// [`Workspace::gc`], [`Workspace::clean`] and [`Workspace::fetch_plugins`] only, and only while
+/// one of them runs, so a workspace kept open holds nothing while it is idle.
 /// [`Workspace::check`], [`Workspace::graph`], [`Workspace::query`], [`Workspace::doctor`] and
 /// [`Workspace::log`] hold nothing even while they run.
 #[derive(Debug)]
@@ -165,77 +167,113 @@ impl Workspace {
         Query::parse(raw, |target| self.label(target))
     }
 
-    /// Evaluates every build file twice and returns the declarations when both runs agree.
+    /// The build log, which touches nothing on disk until it is read.
+    fn history(&self) -> LocalLog {
+        LocalLog::new(&self.wiring.layout())
+    }
+
+    /// The content store, which touches nothing on disk until a blob is read from it.
+    fn cas(&self) -> LocalCas {
+        LocalCas::new(self.wiring.root().as_path(), &self.wiring.layout())
+    }
+
+    /// Evaluates every build file twice and returns the declarations when both runs agree, with
+    /// the discovery targets that have no result to declare from.
     ///
-    /// Takes no lock and opens no state file, so it is stopped neither by a running build nor
-    /// by a state directory that cannot be used.
+    /// A workspace that declares a discovery target is evaluated a second time with the last
+    /// result of each, read from the build log and the store. Takes no lock and creates no
+    /// state file, so it is stopped neither by a running build nor by a state directory that
+    /// cannot be used; a log or a stored result that cannot be read is no result, never an
+    /// error. Reading a result removes a stored blob whose bytes fail their digest, the one change
+    /// it makes to the state.
     ///
     /// # Errors
     ///
-    /// Returns whatever [`pipeline::check`] returns.
-    pub fn check(&self) -> Result<Vec<Declaration>> {
+    /// Returns what [`Wiring::source`] returns when a plugin the manifest names is not there to
+    /// use, then whatever [`pipeline::check`] returns.
+    pub fn check(&self) -> Result<Loaded> {
         pipeline::check(
-            &self.wiring.source(),
+            &self.wiring.source()?,
             &mut self.wiring.dispatcher(),
             self.wiring.entry(),
+            &self.history(),
+            &self.cas(),
         )
     }
 
-    /// Evaluates every build file once and resolves the declarations into the target graph.
+    /// Evaluates every build file and resolves the declarations into the target graph, with the
+    /// discovery targets that have no result to declare from.
     ///
-    /// Takes no lock and opens no state file, as [`Workspace::check`].
+    /// Takes no lock and creates no state file, and reads discovery results, as
+    /// [`Workspace::check`].
     ///
     /// # Errors
     ///
-    /// Returns whatever [`pipeline::graph`] returns.
-    pub fn graph(&self) -> Result<TargetGraph> {
+    /// Returns what [`Wiring::source`] returns when a plugin the manifest names is not there to
+    /// use, then whatever [`pipeline::graph`] returns.
+    pub fn graph(&self) -> Result<(TargetGraph, Vec<Label>)> {
         pipeline::graph(
-            &self.wiring.source(),
+            &self.wiring.source()?,
             &mut self.wiring.dispatcher(),
             self.wiring.entry(),
+            &self.history(),
+            &self.cas(),
         )
     }
 
-    /// Evaluates every build file once and answers `query`: the targets it reaches, in label
-    /// order, without the target it names.
+    /// Evaluates every build file and answers `query`: the targets it reaches, in label order,
+    /// without the target it names, with the discovery targets that have no result to declare
+    /// from.
     ///
-    /// Takes no lock and opens no state file, as [`Workspace::check`].
+    /// Takes no lock and creates no state file, and reads discovery results, as
+    /// [`Workspace::check`].
     ///
     /// # Errors
     ///
-    /// Returns whatever [`pipeline::query`] returns.
-    pub fn query(&self, query: &Query) -> Result<BTreeSet<Label>> {
+    /// Returns what [`Wiring::source`] returns when a plugin the manifest names is not there to
+    /// use, then whatever [`pipeline::query`] returns.
+    pub fn query(&self, query: &Query) -> Result<(BTreeSet<Label>, Vec<Label>)> {
         pipeline::query(
-            &self.wiring.source(),
+            &self.wiring.source()?,
             &mut self.wiring.dispatcher(),
             self.wiring.entry(),
+            &self.history(),
+            &self.cas(),
             query,
         )
     }
 
-    /// Evaluates every build file once and reports what the workspace allows, what its build
-    /// wants, and which of those wants are outside its ceiling or not yet approved.
+    /// Evaluates every build file and reports what the workspace allows, what its build wants,
+    /// and which of those wants are outside its ceiling or not yet approved, with the discovery
+    /// targets that have no result to declare from.
     ///
-    /// Takes no lock, opens no state file and asks nothing: under `interactive` it reads the
-    /// remembered approvals, and it writes nothing anywhere.
+    /// Takes no lock, creates no state file and asks nothing: it reads discovery results as
+    /// [`Workspace::check`] does, and under `interactive` the remembered approvals. It writes
+    /// nothing but the store's own removal of a blob whose bytes fail their digest.
     ///
     /// # Errors
     ///
-    /// Returns whatever [`pipeline::doctor`](fn@pipeline::doctor) returns, and under
+    /// Returns what [`Wiring::source`] returns when a plugin the manifest names is not there to
+    /// use, then whatever [`pipeline::doctor`](fn@pipeline::doctor) returns, and under
     /// `interactive` whatever reading the remembered approvals returns.
-    pub fn doctor(&self) -> Result<Doctor> {
-        let checkup = pipeline::doctor(
-            &self.wiring.source(),
+    pub fn doctor(&self) -> Result<(Doctor, Vec<Label>)> {
+        let (checkup, missing) = pipeline::doctor(
+            &self.wiring.source()?,
             &mut self.wiring.dispatcher(),
             self.wiring.manifest(),
             self.wiring.entry(),
+            &self.history(),
+            &self.cas(),
         )?;
         let unapproved = match checkup.workspace().approver {
             ApproverMode::Manifest => WantedSet::default(),
             ApproverMode::Deny => checkup.wanted().clone(),
             ApproverMode::Interactive => checkup.wanted().minus(&self.wiring.approvals()?.read()?),
         };
-        Ok(Doctor::new(checkup, self.root().to_path_buf(), unapproved))
+        Ok((
+            Doctor::new(checkup, self.root().to_path_buf(), unapproved),
+            missing,
+        ))
     }
 
     /// The newest logged run of `label` that stored its output, with what it printed read back
@@ -415,7 +453,9 @@ impl Workspace {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::Adapter`](buildl_core::Error::Adapter), naming
+    /// Returns what [`Wiring::source`] returns when a plugin the manifest names is not there to
+    /// use, before the state directory is taken. Then returns
+    /// [`Error::Adapter`](buildl_core::Error::Adapter), naming
     /// [`PortName::ActionCache`](buildl_core::PortName::ActionCache), when another process
     /// holds the workspace, and naming
     /// [`PortName::ExecStrategy`](buildl_core::PortName::ExecStrategy) when the scratch
@@ -426,13 +466,14 @@ impl Workspace {
     /// fail to load. A `gc` that succeeded and whose rows could not be folded returns the
     /// fold's error.
     pub fn gc(&self) -> Result<Collected> {
+        let source = self.wiring.source()?;
         let lock = self.wiring.lock()?;
         let layout = lock.layout();
         let mut cache = LocalCache::open(layout)?;
         let cas = LocalCas::new(self.wiring.root().as_path(), layout);
         let log = LocalLog::new(layout);
         let collected = pipeline::gc(
-            &self.wiring.source(),
+            &source,
             &mut self.wiring.dispatcher(),
             self.wiring.entry(),
             &mut cache,
@@ -447,6 +488,34 @@ impl Workspace {
         drop(log);
         drop(lock);
         concluded(collected, folded)
+    }
+
+    /// Pins every git plugin `buildl.toml` names in `buildl.lock` and stores its files under the
+    /// state directory, so that a build afterwards needs no network, and drops from the lock and
+    /// the store what the manifest no longer names.
+    ///
+    /// Holds the state directory while it runs. Reads the manifest's plugin sources and no build
+    /// file, and asks no approver. It runs the `git` found on the process's search path, and
+    /// only when a plugin has to be fetched. The result lists the git plugins in name order,
+    /// each with the commit it is pinned to and whether anything was fetched for it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Refused`](buildl_core::Error::Refused) when the state directory is
+    /// outside what the workspace allows a build to write into, and
+    /// [`Error::Adapter`](buildl_core::Error::Adapter), naming
+    /// [`PortName::ActionCache`](buildl_core::PortName::ActionCache), when another process
+    /// holds the workspace, and naming
+    /// [`PortName::ExecStrategy`](buildl_core::PortName::ExecStrategy) when the scratch
+    /// directory cannot be removed. Otherwise returns whatever [`fetch`] returns.
+    pub fn fetch_plugins(&self) -> Result<Fetched> {
+        let lock = self.wiring.lock()?;
+        fetch(
+            self.wiring.root().as_path(),
+            lock.layout(),
+            self.wiring.manifest().plugins(),
+            self.wiring.search(),
+        )
     }
 
     /// Runs the tests `scope` asks for, every test when it asks for the workspace, telling
@@ -724,15 +793,15 @@ mod tests {
         let (_dir, root) = copying();
         let workspace = Workspace::open(&root).unwrap();
 
-        let declarations = workspace.check().unwrap();
-        let graph = workspace.graph().unwrap();
+        let declarations = workspace.check().unwrap().declarations;
+        let (graph, _) = workspace.graph().unwrap();
 
         assert_eq!(declarations.len(), 1);
         assert_eq!(
             canonical::to_string(&graph).unwrap(),
             "{\"aliases\":{},\"settings\":{},\"targets\":{\"//:copy\":{\"deps\":[],\
              \"description\":null,\"env\":[],\"freshness\":\"Cached\",\"inputs\":[\"a.txt\"],\
-             \"network\":\"Sealed\",\"outputs\":[\"copy\"],\"provenance\":{\"directory\":\"\",\
+             \"network\":\"Sealed\",\"origin\":\"BuildFile\",\"outputs\":[\"copy\"],\"provenance\":{\"directory\":\"\",\
              \"file\":\"build.lua\"},\"role\":\"Build\",\"run\":[\"cp\",\"$in\",\"$out\"]}}}"
         );
         assert_eq!(names(&root), ["a.txt", "build.lua", "buildl.toml"]);
@@ -745,10 +814,10 @@ mod tests {
         let _held = workspace.wiring.lock().unwrap();
         fs::write(root.join(".buildl/cache.json"), "not a cache").unwrap();
 
-        assert_eq!(workspace.check().unwrap().len(), 1);
+        assert_eq!(workspace.check().unwrap().declarations.len(), 1);
         workspace.graph().unwrap();
         let query = workspace.query_of("deps(//:copy)").unwrap();
-        assert_eq!(workspace.query(&query).unwrap(), BTreeSet::new());
+        assert_eq!(workspace.query(&query).unwrap().0, BTreeSet::new());
     }
 
     #[test]
@@ -784,6 +853,44 @@ mod tests {
         assert!(!root.join("out").exists());
         // The directory was let go when the plan returned.
         workspace.wiring.lock().unwrap();
+    }
+
+    #[test]
+    fn fetch_plugins_of_a_workspace_with_no_git_plugin_fetches_nothing_and_opens_no_build_file() {
+        // The build file does not evaluate: fetching never reads it.
+        let (_dir, root) = workspace(&[
+            ("buildl.toml", BARE),
+            ("build.lua", "buildl.target(\n"),
+            ("a.txt", "a\n"),
+        ]);
+        let workspace = Workspace::open(&root).unwrap();
+
+        let fetched = workspace.fetch_plugins().unwrap();
+
+        assert_eq!(fetched.iter().count(), 0);
+        assert!(!root.join("buildl.lock").exists());
+        // The directory was let go when the fetch returned.
+        workspace.wiring.lock().unwrap();
+    }
+
+    #[test]
+    fn fetch_plugins_is_refused_while_another_buildl_holds_the_workspace() {
+        let (_dir, root) = copying();
+        let workspace = Workspace::open(&root).unwrap();
+        let _held = workspace.wiring.lock().unwrap();
+
+        let error = workspace.fetch_plugins().unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                Error::Adapter {
+                    port: PortName::ActionCache,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
     }
 
     #[test]
@@ -855,7 +962,7 @@ mod tests {
         assert_eq!(fs::read(root.join("out/copy")).unwrap(), b"a\n");
         assert_eq!(
             fs::read(root.join(".buildl/graph.json")).unwrap(),
-            canonical::to_vec(&workspace.graph().unwrap()).unwrap()
+            canonical::to_vec(&workspace.graph().unwrap().0).unwrap()
         );
         // The directory was let go when the build returned.
         workspace.wiring.lock().unwrap();
@@ -889,7 +996,7 @@ mod tests {
         assert_eq!(names(&root.join("out")), ["copy"]);
         assert_eq!(
             fs::read(root.join(".buildl/graph.json")).unwrap(),
-            canonical::to_vec(&workspace.graph().unwrap()).unwrap()
+            canonical::to_vec(&workspace.graph().unwrap().0).unwrap()
         );
     }
 

@@ -1,10 +1,12 @@
 //! The assembly: from a target graph, and what the ports report, to one plan.
 //!
 //! Its own file because it is where this phase's steps meet and where their order is fixed:
-//! read the manifest, check the overrides, place every output, check every want against the
-//! ceiling, refuse a variable the strategy pins, and only then ask the machine anything — find
-//! the tools, digest the inputs, read the environment — before keying every target and comparing
-//! each key with the one its last build recorded.
+//! read the manifest, check the overrides, place every output, check every want of a plugin's
+//! targets against its plugins, check every want against the ceiling, refuse a variable the
+//! strategy pins, and only then ask the machine anything — find the tools, digest the inputs,
+//! read the environment — before keying every target and comparing each key with the one its
+//! last build recorded. The plugins behind the wants are named from the same graph once the
+//! ceiling has passed.
 //!
 //! Responsibilities: [`plan`].
 //!
@@ -16,9 +18,10 @@
 use std::collections::BTreeMap;
 
 use crate::error::Result;
+use crate::grants::attribution::attribution;
 use crate::grants::wanted::sites;
 use crate::placement::layout::Layout;
-use crate::plan::authority::check;
+use crate::plan::authority::{check, plugin_check};
 use crate::plan::components::{Gathered, environment, own};
 use crate::plan::inputs::digests;
 use crate::plan::order::topological;
@@ -65,15 +68,17 @@ use crate::types::{Plan, Rerun, SettingName, SettingValue, TargetGraph};
 ///    declared setting;
 /// 3. [`Error::OutputConflict`](crate::Error::OutputConflict) for two outputs of the planned
 ///    graph that would be written to one place;
-/// 4. [`Error::Refused`](crate::Error::Refused) for a want outside the workspace's ceiling,
+/// 4. [`Error::PluginRefused`](crate::Error::PluginRefused) for a want of a plugin's target that
+///    one of the plugins holding it does not allow;
+/// 5. [`Error::Refused`](crate::Error::Refused) for a want outside the workspace's ceiling,
 ///    a program named through `$in`, `$out` or `$deps` included; nothing is asked of any other
 ///    port before this check has passed;
-/// 5. [`Error::PinnedEnv`](crate::Error::PinnedEnv) for a target that declares a variable the
+/// 6. [`Error::PinnedEnv`](crate::Error::PinnedEnv) for a target that declares a variable the
 ///    workspace's strategy pins;
-/// 6. [`Error::MissingTool`](crate::Error::MissingTool) for a program that cannot be found;
-/// 7. [`Error::MissingInput`](crate::Error::MissingInput) for an input that does not exist, and
+/// 7. [`Error::MissingTool`](crate::Error::MissingTool) for a program that cannot be found;
+/// 8. [`Error::MissingInput`](crate::Error::MissingInput) for an input that does not exist, and
 ///    [`Error::InputNotAFile`](crate::Error::InputNotAFile) for one that is not a regular file;
-/// 8. whatever the host port returns for an environment variable.
+/// 9. whatever the host port returns for an environment variable.
 ///
 /// A port's own failure is returned from the step that met it.
 pub fn plan<P: Ports>(
@@ -85,8 +90,10 @@ pub fn plan<P: Ports>(
     let workspace = ports.manifest.workspace()?;
     let settings = effective(graph.settings(), overrides)?;
     let layout = Layout::of(graph, &workspace.out)?;
+    plugin_check(graph, &settings, &layout, &workspace)?;
     let sites = sites(graph, &settings, &layout);
     let wanted = check(graph, &sites, &workspace)?;
+    let attribution = attribution(graph, &settings, &layout);
     pinned(&sites, &workspace)?;
 
     let Named {
@@ -120,5 +127,11 @@ pub fn plan<P: Ports>(
         .iter()
         .map(|node| node.label.clone())
         .collect();
-    Ok(Plan::new(labels, verdicts, wanted, gathered.settings))
+    Ok(Plan::new(
+        labels,
+        verdicts,
+        wanted,
+        attribution,
+        gathered.settings,
+    ))
 }

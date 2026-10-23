@@ -163,8 +163,8 @@ fn refused_after(damage: fn(&[u8]) -> Vec<u8>) {
     // An action that ran would have left a line in the log.
     assert_eq!(chain.log_lines().len(), 6);
     let workspace = chain.open();
-    assert_eq!(workspace.check().unwrap().len(), 9);
-    assert_eq!(workspace.graph().unwrap().len(), 6);
+    assert_eq!(workspace.check().unwrap().declarations.len(), 9);
+    assert_eq!(workspace.graph().unwrap().0.len(), 6);
 }
 
 #[test]

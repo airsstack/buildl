@@ -17,8 +17,8 @@ use std::collections::BTreeMap;
 use serde::{Serialize, Serializer};
 
 use crate::types::{
-    ActionKey, EnvName, Label, NodeId, OwnComponents, SettingName, SettingValue, SourcePath,
-    WantedSet,
+    ActionKey, Attribution, EnvName, Label, NodeId, OwnComponents, SettingName, SettingValue,
+    SourcePath, WantedSet,
 };
 
 /// One way a target's key differs from the key its last build recorded.
@@ -104,8 +104,10 @@ pub enum Verdict {
     Conditional(Unfinished),
 }
 
-/// What a build of a workspace would do: one verdict per target, what the build wants, and the
-/// value every build setting has for it.
+/// What a build of a workspace would do: one verdict per target, and what the build wants.
+///
+/// It also holds which plugins' targets are behind each want, the value every build setting has
+/// for it, and the discovery targets that are not clean.
 ///
 /// A plan is obtained from [`plan`](fn@crate::plan). Its verdicts are addressed by the
 /// [`NodeId`]s of the graph it was made from.
@@ -114,24 +116,37 @@ pub struct Plan {
     labels: Vec<Label>,
     verdicts: Vec<Verdict>,
     wanted: WantedSet,
+    attribution: Attribution,
     settings: BTreeMap<SettingName, SettingValue>,
+    stale_discovery: Vec<Label>,
 }
 
 impl Plan {
     /// Assembles a plan from one label and one verdict per node, both in id order, with what the
-    /// build wants and the value of every declared setting.
+    /// build wants, the plugins behind those wants, and the value of every declared setting.
     pub(crate) const fn new(
         labels: Vec<Label>,
         verdicts: Vec<Verdict>,
         wanted: WantedSet,
+        attribution: Attribution,
         settings: BTreeMap<SettingName, SettingValue>,
     ) -> Self {
         Self {
             labels,
             verdicts,
             wanted,
+            attribution,
             settings,
+            stale_discovery: Vec::new(),
         }
+    }
+
+    /// This plan, naming `stale` as the discovery targets that are not up to date. Nothing is
+    /// checked: the labels are taken as given.
+    #[must_use]
+    pub(crate) fn with_stale_discovery(mut self, stale: Vec<Label>) -> Self {
+        self.stale_discovery = stale;
+        self
     }
 
     /// The number of targets.
@@ -170,6 +185,13 @@ impl Plan {
         &self.wanted
     }
 
+    /// The plugins whose targets are behind each want, for display; the wanted set itself is
+    /// unchanged by them.
+    #[must_use]
+    pub const fn attribution(&self) -> &Attribution {
+        &self.attribution
+    }
+
     /// The settings in force: every setting the plan's graph declares, with the value it has for
     /// this plan — the one it was overridden with, or else its default.
     ///
@@ -178,6 +200,16 @@ impl Plan {
     #[must_use]
     pub const fn settings(&self) -> &BTreeMap<SettingName, SettingValue> {
         &self.settings
+    }
+
+    /// The discovery targets that are not clean, in label order: the targets declared from their
+    /// last results may change once they have run.
+    ///
+    /// Empty unless the plan was made by [`Pipeline::plan`](crate::Pipeline::plan), and empty
+    /// when no discovery target is declared.
+    #[must_use]
+    pub fn stale_discovery(&self) -> &[Label] {
+        &self.stale_discovery
     }
 }
 
@@ -198,10 +230,12 @@ struct TargetView<'a> {
 }
 
 /// A plan as it is written to JSON: every setting under its name, every target under its label,
-/// no id anywhere.
+/// the discovery targets that are not up to date, no id anywhere.
 #[derive(Serialize)]
 struct PlanView<'a> {
+    attribution: &'a Attribution,
     settings: &'a BTreeMap<SettingName, SettingValue>,
+    stale_discovery: &'a [Label],
     targets: BTreeMap<&'a Label, TargetView<'a>>,
     wanted: &'a WantedSet,
 }
@@ -265,7 +299,9 @@ impl Serialize for Plan {
             .map(|(label, verdict)| (label, self.target_view(verdict)))
             .collect();
         PlanView {
+            attribution: &self.attribution,
             settings: &self.settings,
+            stale_discovery: &self.stale_discovery,
             targets,
             wanted: &self.wanted,
         }
@@ -285,9 +321,9 @@ mod tests {
     use super::{Difference, DirtyReason, Plan, PlannedKey, Unfinished, Verdict};
     use crate::json::canonical;
     use crate::types::{
-        ActionKey, Argument, Command, Directory, EnvName, KeyComponents, Label, NetworkAccess,
-        NodeId, OutputName, OwnComponents, Platform, Program, SettingName, SettingValue,
-        SourcePath, WantedSet,
+        ActionKey, Argument, Attribution, Command, Directory, EnvName, KeyComponents, Label,
+        NetworkAccess, NodeId, OutputName, OwnComponents, Platform, Program, SettingName,
+        SettingValue, SourcePath, WantedSet,
     };
 
     fn label(raw: &str) -> Label {
@@ -370,7 +406,13 @@ mod tests {
                 awaiting: vec![NodeId::new(3)],
             }),
         ];
-        Plan::new(labels, verdicts, wanted(), settings())
+        Plan::new(
+            labels,
+            verdicts,
+            wanted(),
+            Attribution::default(),
+            settings(),
+        )
     }
 
     #[test]
@@ -386,6 +428,20 @@ mod tests {
         assert_eq!(plan.verdicts().len(), 5);
         assert_eq!(plan.wanted(), &wanted());
         assert_eq!(plan.settings(), &settings());
+        assert!(plan.attribution().is_empty());
+    }
+
+    #[test]
+    fn a_plan_names_the_discovery_targets_that_are_not_up_to_date() {
+        let plan = plan();
+        assert_eq!(plan.stale_discovery(), Vec::<Label>::new());
+        let plan = plan.with_stale_discovery(vec![label("//svc:pkgs")]);
+        assert_eq!(plan.stale_discovery(), [label("//svc:pkgs")]);
+        let json = canonical::to_string(&plan).unwrap();
+        assert!(
+            json.contains(r#""stale_discovery":["//svc:pkgs"]"#),
+            "{json}"
+        );
     }
 
     #[test]
@@ -403,14 +459,21 @@ mod tests {
             write: BTreeSet::new(),
             network: BTreeSet::new(),
         };
-        let plan = Plan::new(Vec::new(), Vec::new(), empty, BTreeMap::new());
+        let plan = Plan::new(
+            Vec::new(),
+            Vec::new(),
+            empty,
+            Attribution::default(),
+            BTreeMap::new(),
+        );
         assert!(plan.is_empty());
         assert_eq!(plan.len(), 0);
         assert!(plan.settings().is_empty());
         assert_eq!(
             canonical::to_string(&plan).unwrap(),
             concat!(
-                r#"{"settings":{},"targets":{},"#,
+                r#"{"attribution":{"env":{},"network":{},"programs":{}},"#,
+                r#""settings":{},"stale_discovery":[],"targets":{},"#,
                 r#""wanted":{"env":[],"network":[],"programs":[],"write":[]}}"#
             )
         );
@@ -479,7 +542,8 @@ mod tests {
         let key_of = |output: &str| canonical::to_string(&key(output)).unwrap();
         let own_of = |output: &str| canonical::to_string(&own(output)).unwrap();
         let expected = [
-            r#"{"settings":{"mode":"release","test_filter":""},"targets":{"#,
+            r#"{"attribution":{"env":{},"network":{},"programs":{}},"#,
+            r#""settings":{"mode":"release","test_filter":""},"stale_discovery":[],"targets":{"#,
             r#""//:a":{"key":"#,
             &key_of("a"),
             r#","reason":null,"unfinished":null,"verdict":"Clean"},"#,
