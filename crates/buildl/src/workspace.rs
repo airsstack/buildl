@@ -184,7 +184,8 @@ impl Workspace {
     /// result of each, read from the build log and the store. Takes no lock and creates no
     /// state file, so it is stopped neither by a running build nor by a state directory that
     /// cannot be used; a log or a stored result that cannot be read is no result, never an
-    /// error.
+    /// error. Reading a result removes a stored blob whose bytes fail their digest, the one change
+    /// it makes to the state.
     ///
     /// # Errors
     ///
@@ -248,7 +249,7 @@ impl Workspace {
     ///
     /// Takes no lock, creates no state file and asks nothing: it reads discovery results as
     /// [`Workspace::check`] does, and under `interactive` the remembered approvals. It writes
-    /// nothing anywhere.
+    /// nothing but the store's own removal of a blob whose bytes fail their digest.
     ///
     /// # Errors
     ///

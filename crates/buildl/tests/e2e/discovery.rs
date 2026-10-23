@@ -7,6 +7,7 @@
 use std::fs;
 
 use buildl::buildl_core::{Label, OutcomeClass};
+use buildl::report::plan_text;
 
 use crate::common::{Fixture, ended};
 
@@ -97,4 +98,17 @@ fn check_works_with_a_damaged_log() {
 
     assert_eq!(loaded.declarations.len(), 1);
     assert_eq!(loaded.missing, labels(&discovery, &["//:pkgs"]));
+}
+
+#[test]
+fn plan_notes_a_discovery_target_that_is_not_up_to_date() {
+    let discovery = fresh();
+    let note = "//:pkgs is not up to date; targets declared from it may change\n";
+
+    let before = plan_text(&discovery.try_plan().unwrap());
+    assert!(before.contains(note), "{before}");
+
+    discovery.build();
+    let after = plan_text(&discovery.try_plan().unwrap());
+    assert!(!after.contains("not up to date"), "{after}");
 }

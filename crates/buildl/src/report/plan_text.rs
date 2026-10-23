@@ -670,25 +670,6 @@ mod tests {
     }
 
     #[test]
-    fn plan_text_notes_a_stale_discovery() {
-        let graph = resolve(vec![declared(target("//svc:pkgs", &["cc", "--list"]))]).unwrap();
-        let plan = planned(&graph, Rows::default())
-            .with_stale_discovery(vec![label("//svc:pkgs"), label("//svc:more")]);
-
-        assert_eq!(
-            plan_text(&plan),
-            concat!(
-                "run    //svc:pkgs: never built\n",
-                "  run programs: cc\n",
-                "  write into:   .buildl, out\n",
-                "//svc:pkgs is not up to date; targets declared from it may change\n",
-                "//svc:more is not up to date; targets declared from it may change\n",
-                "1 to run, 0 conditional, 0 clean\n",
-            )
-        );
-    }
-
-    #[test]
     fn a_plan_of_nothing_is_the_wants_of_every_build_and_the_counts() {
         let graph = resolve(Vec::new()).unwrap();
         assert_eq!(

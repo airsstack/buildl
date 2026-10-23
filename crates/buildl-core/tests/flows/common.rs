@@ -385,6 +385,7 @@ struct CasState {
     unplaceable: BTreeSet<OutputPath>,
     modes: BTreeMap<OutputPath, FileMode>,
     touches: Vec<Touch>,
+    unreadable: bool,
 }
 
 /// What the content store was asked to do to content, in the order it was asked.
@@ -451,6 +452,12 @@ impl FakeCas {
         self.state().blobs.insert(digest, bytes);
     }
 
+    /// Makes every later read of content report that nothing is held, as a store that lost its
+    /// blobs would; what is held and placed is unchanged.
+    pub fn lose_reads(&self) {
+        self.state().unreadable = true;
+    }
+
     /// Makes every later attempt to place content at `path` fail.
     pub fn fail_place(&self, path: OutputPath) {
         self.state().unplaceable.insert(path);
@@ -489,7 +496,11 @@ impl ContentStore for FakeCas {
     }
 
     fn get(&self, digest: &Digest) -> Result<Option<Vec<u8>>> {
-        Ok(self.state().blobs.get(digest).cloned())
+        let state = self.state();
+        if state.unreadable {
+            return Ok(None);
+        }
+        Ok(state.blobs.get(digest).cloned())
     }
 
     fn clear(&self, at: &OutputPath) -> Result<()> {

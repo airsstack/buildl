@@ -137,6 +137,7 @@ fn check_prints_the_not_run_note_on_stderr() {
         format!("ok: 1 declaration in 1 build file\n{NOT_RUN}")
     );
     assert_eq!(stdout(&output), "");
+    assert!(!root.join(".buildl").exists());
 }
 
 #[test]

@@ -32,8 +32,8 @@ use crate::ports::{
 ///     Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy,
 ///     FileMode, Found, GraphRecord, Host, InputStat, Label, LiveSink, LogLine, Manifest,
 ///     OutcomeEvent, OutputPath, Platform, PortName, Ports, Program, RawOutcome, ReadyAction,
-///     Reporter, Result, RunHistory, SourcePath, StatCache, StatEntry, Summary, TargetGraph, Timestamp, ToolResolver, Turn, WantedSet,
-///     Workspace,
+///     Reporter, Result, RunHistory, SourcePath, StatCache, StatEntry, Summary, TargetGraph,
+///     Timestamp, ToolResolver, Turn, WantedSet, Workspace,
 /// };
 ///
 /// /// Every port at once, each answering that there is nothing.

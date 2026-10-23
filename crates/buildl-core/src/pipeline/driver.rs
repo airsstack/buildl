@@ -18,7 +18,7 @@ use core::ops::ControlFlow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::discovery::{discovery_labels, load_twice, results, second_pass};
-use crate::error::{Error, Result};
+use crate::error::{Error, PortName, Result};
 use crate::execute::execute;
 use crate::grants::negotiate;
 use crate::load::{declaration_order, load};
@@ -28,9 +28,9 @@ use crate::ports::{
 };
 use crate::resolve::{narrow, reach, resolve};
 use crate::types::{
-    ActionOutcome, Declaration, Discovered, EntryName, Label, LiveOutput, Loaded, NodeId,
-    OnFailure, Plan, Purpose, Query, Rerun, Sample, Scope, SettingName, SettingValue, TargetGraph,
-    TargetRole, Verdict, Verification,
+    ActionOutcome, Declaration, Diagnostic, Discovered, EntryName, Label, LiveOutput, Loaded,
+    NodeId, OnFailure, Plan, Purpose, Query, Rerun, Sample, Scope, SettingName, SettingValue,
+    TargetGraph, TargetRole, Verdict, Verification,
 };
 use crate::verify::verify;
 
@@ -194,6 +194,9 @@ impl<P: Ports> Pipeline<P> {
     }
 
     /// The discovery targets of `whole` that a plan finds not clean, in label order.
+    ///
+    /// What a discovery target depends on is planned with it and is not listed: only a discovery
+    /// target's own result declares targets.
     fn stale_discovery(
         &mut self,
         whole: &TargetGraph,
@@ -208,13 +211,14 @@ impl<P: Ports> Pipeline<P> {
         if labels.is_empty() {
             return Ok(Vec::new());
         }
-        let graph = narrow(whole, &Scope::Targets(labels), Purpose::Build)?;
+        let graph = narrow(whole, &Scope::Targets(labels.clone()), Purpose::Build)?;
         let discovery = plan(&graph, overrides, Rerun::Off, &mut self.ports)?;
         Ok((0_u32..)
             .map(NodeId::new)
             .zip(discovery.verdicts())
             .filter(|(_, verdict)| !matches!(verdict, Verdict::Clean { .. }))
             .filter_map(|(id, _)| discovery.label(id).cloned())
+            .filter(|label| labels.contains(label))
             .collect())
     }
 
@@ -261,7 +265,10 @@ impl<P: Ports> Pipeline<P> {
         if outcomes.iter().any(|outcome| !outcome.class.succeeded()) {
             return Ok(ControlFlow::Break(outcomes));
         }
-        let (discovered, _) = results(&self.ports.log, &self.ports.cas, &labels);
+        let (discovered, unread) = results(&self.ports.log, &self.ports.cas, &labels);
+        if !unread.is_empty() {
+            return Err(self.unreadable_results(&unread));
+        }
         let declarations = second_pass(
             &self.ports.source,
             &mut self.ports.dispatcher,
@@ -272,6 +279,26 @@ impl<P: Ports> Pipeline<P> {
         let whole = resolve(declarations)?;
         self.ports.graph.record(&whole)?;
         Ok(ControlFlow::Continue(Prepared { whole, outcomes }))
+    }
+
+    /// The failure of a discovery target that succeeded and whose result cannot be read back.
+    ///
+    /// The log is named when it cannot be read at all, otherwise the store, which then does not
+    /// hold or cannot read what the target produced.
+    fn unreadable_results(&self, unread: &[Label]) -> Error {
+        let port = if self.ports.log.lines().is_err() {
+            PortName::RunHistory
+        } else {
+            PortName::ContentStore
+        };
+        let labels: Vec<String> = unread.iter().map(ToString::to_string).collect();
+        Error::Adapter {
+            port,
+            diagnostic: Diagnostic::new(format!(
+                "the result of {} cannot be read back after it ran",
+                labels.join(", ")
+            )),
+        }
     }
 
     /// Plans `graph`, puts what the plan wants to the approver, and executes it, as the part of
@@ -327,8 +354,9 @@ impl<P: Ports> Pipeline<P> {
     /// # Errors
     ///
     /// Returns the first of: whatever the load returns; [`Error::DiscoveryChanged`] when the
-    /// results of the discovery targets change which of them are declared; whatever [`resolve`]
-    /// returns; the graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope`
+    /// results of the discovery targets change which of them are declared; [`Error::Adapter`] of
+    /// the store or the log when the result of a discovery target that succeeded cannot be read
+    /// back; whatever [`resolve`] returns; the graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope`
     /// that names neither a target nor an alias; whatever [`plan`](fn@plan) returns, two outputs
     /// of the planned targets that would be written to one place included; [`Error::NotApproved`]
     /// when the approver does not approve what a plan wants, or the approver's own failure; and
@@ -382,15 +410,17 @@ impl<P: Ports> Pipeline<P> {
     /// loaded again with their results and the tests run. The outcomes are those of the discovery
     /// run followed by those of the test run, and a discovery target that did not succeed ends
     /// the command with the outcomes of the discovery run alone. The discovery run's summary
-    /// counts the discovery targets in [`Summary::all`](crate::Summary::all) and no test in [`Summary::tests`](crate::Summary::tests).
+    /// counts the discovery targets in [`Summary::all`](crate::Summary::all) and no test in
+    /// [`Summary::tests`](crate::Summary::tests).
     ///
     /// # Errors
     ///
     /// Returns the first of: whatever the load returns; [`Error::DiscoveryChanged`] when the
-    /// results of the discovery targets change which of them are declared; whatever [`resolve`]
-    /// returns; the graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope`
-    /// that names neither a target nor an alias; [`Error::NotATest`] for a label of `scope` that names a
-    /// target that is not a test; whatever [`plan`](fn@plan) returns, two outputs of the
+    /// results of the discovery targets change which of them are declared; [`Error::Adapter`] of
+    /// the store or the log when the result of a discovery target that succeeded cannot be read
+    /// back; whatever [`resolve`] returns; the graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope`
+    /// that names neither a target nor an alias; [`Error::NotATest`] for a label of `scope` that
+    /// names a target that is not a test; whatever [`plan`](fn@plan) returns, two outputs of the
     /// planned targets that would be written to one place included; [`Error::NotApproved`] when
     /// the approver does not approve what the plan wants, or the approver's own failure; and
     /// whatever [`execute`](fn@execute) returns: two outputs of the workspace that would be
@@ -437,8 +467,8 @@ impl<P: Ports> Pipeline<P> {
     /// Returns the first of: whatever the load returns; [`Error::DiscoveryChanged`] when reading
     /// discovery results changes which discovery targets are declared; whatever [`resolve`]
     /// returns; [`Error::UnknownTarget`] for a label of `scope` that names neither a target nor
-    /// an alias; whatever [`plan`](fn@plan) returns; [`Error::NotApproved`] when the approver does not
-    /// approve what the plan wants, or the approver's own failure; and whatever
+    /// an alias; whatever [`plan`](fn@plan) returns; [`Error::NotApproved`] when the approver does
+    /// not approve what the plan wants, or the approver's own failure; and whatever
     /// [`verify`](fn@verify) returns.
     pub fn verify(
         &mut self,
@@ -468,7 +498,8 @@ impl<P: Ports> Pipeline<P> {
 /// beside the declarations.
 ///
 /// A command that only evaluates build files reads no state a build keeps but the log and the
-/// store, and takes neither a lock nor a write to them.
+/// store, and takes no lock and writes nothing to them, but for a store's own removal of a blob
+/// whose bytes fail their digest.
 ///
 /// # Errors
 ///

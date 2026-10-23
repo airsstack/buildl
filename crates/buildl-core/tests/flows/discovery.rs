@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use buildl_core::{
     ActionOutcome, Argument, Command, ContentStore, Digest, Discovered, EntryName, Error, FileMode,
     Label, LiveOutput, LogLine, LoggedRun, OnFailure, OutcomeClass, OutputManifest, OutputName,
-    Pipeline, Produced, Rerun, Sample, Scope, StagedItem, StoredFile, Summary, Tally, TargetGraph,
-    TargetRole, Timestamp, Written, pipeline,
+    Pipeline, PortName, Produced, Rerun, Sample, Scope, StagedItem, StoredFile, Summary, Tally,
+    TargetGraph, TargetRole, Timestamp, Written, json, pipeline,
 };
 
 use crate::common::{
@@ -311,6 +311,32 @@ fn plan_lists_a_dirty_discovery_target_as_stale() {
 }
 
 #[test]
+fn plan_lists_the_discovery_target_and_not_what_it_depends_on() {
+    let gen_then_pkgs = |extra: Vec<StagedItem>| {
+        let mut items = vec![
+            target("gen", &[]),
+            target_with("pkgs", |target| {
+                target.role = TargetRole::Discovery;
+                target.deps = vec![Written::new("gen")];
+            }),
+        ];
+        items.extend(extra);
+        root(items)
+    };
+    let source = FakeSource::declaring_from_results(
+        gen_then_pkgs(Vec::new()),
+        gen_then_pkgs(vec![target("a", &[])]),
+    );
+    let mut pipeline = pipeline_over(source);
+
+    let planned = pipeline
+        .plan(&entry(), &Scope::Workspace, &BTreeMap::new())
+        .unwrap();
+
+    assert_eq!(planned.stale_discovery(), [label("//:pkgs")]);
+}
+
+#[test]
 fn doctor_wants_include_discovered_targets() {
     let declares_env = root(vec![
         discovery(),
@@ -534,6 +560,40 @@ fn test_runs_discovery_then_the_discovered_tests() {
     };
     assert_eq!(summaries(&pipeline), [discovery_run, test_run]);
     assert_eq!(pipeline.ports().approver.asked.len(), 2);
+}
+
+#[test]
+fn a_result_that_cannot_be_read_after_discovery_ran_is_an_error() {
+    let mut pipeline = pipeline_over(declaring());
+    pipeline.ports().cas.lose_reads();
+
+    let error = built(&mut pipeline, &Scope::Workspace).unwrap_err();
+
+    match error {
+        Error::Adapter { port, diagnostic } => {
+            assert_eq!(port, PortName::ContentStore);
+            assert!(diagnostic.to_string().contains("//:pkgs"), "{diagnostic}");
+        }
+        other => unreachable!("expected Adapter, got {other:?}"),
+    }
+    assert_eq!(pipeline.ports().approver.asked.len(), 1);
+    assert_eq!(pipeline.ports().source.root_loads(), [Discovered::empty()]);
+}
+
+#[test]
+fn the_graph_recorded_after_discovery_is_the_one_declared_from_its_results() {
+    let mut pipeline = pipeline_over(declaring());
+
+    built(&mut pipeline, &Scope::Workspace).unwrap();
+
+    let declared = pipeline.graph(&entry()).unwrap();
+    assert_eq!(labels_of(&declared), ["//:a", "//:b", "//:pkgs"]);
+    let recorded = &pipeline.ports().graph.recorded;
+    assert_eq!(recorded.len(), 2, "the graph before discovery, then after");
+    assert_eq!(
+        recorded.last().unwrap(),
+        &json::canonical::to_vec(&declared).unwrap()
+    );
 }
 
 #[test]
