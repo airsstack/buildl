@@ -24,6 +24,7 @@ use crate::module::{guarded, plugin_chunk_name};
 use crate::plugin::environment;
 use crate::plugin::manifest::read_manifest;
 use crate::refusal::Refusal;
+use crate::results::Results;
 use crate::sources::Sources;
 use crate::staging::Staging;
 use crate::values;
@@ -43,6 +44,7 @@ struct Shared {
     directories: BTreeMap<PluginName, PathBuf>,
     staging: Arc<Mutex<Staging>>,
     sources: Sources,
+    results: Results,
     instances: Mutex<BTreeMap<Vec<PluginName>, Value>>,
 }
 
@@ -73,13 +75,14 @@ impl Plugins {
     /// the directory holding that plugin's `extension.toml`.
     ///
     /// `root` is the workspace root, which names the files a plugin's errors point at. Every
-    /// declaration a plugin makes lands in `staging`, and `sources` is the walk its
-    /// `buildl.sources` shares with the build file.
+    /// declaration a plugin makes lands in `staging`, `sources` is the walk its `buildl.sources`
+    /// shares with the build file, and `results` is what its `buildl.discovered` reads.
     pub(crate) fn new(
         root: &Path,
         directories: BTreeMap<PluginName, PathBuf>,
         staging: &Arc<Mutex<Staging>>,
         sources: &Sources,
+        results: &Results,
     ) -> Self {
         Self {
             shared: Arc::new(Shared {
@@ -87,6 +90,7 @@ impl Plugins {
                 directories,
                 staging: Arc::clone(staging),
                 sources: sources.clone(),
+                results: results.clone(),
                 instances: Mutex::new(BTreeMap::new()),
             }),
         }
@@ -100,6 +104,11 @@ impl Plugins {
     /// The source walk the build file and its plugins share.
     pub(super) fn sources(&self) -> &Sources {
         &self.shared.sources
+    }
+
+    /// The discovery results the build file and its plugins read.
+    pub(super) fn results(&self) -> &Results {
+        &self.shared.results
     }
 
     /// Sets `use` on `table`, a primitives table whose caller is the last plugin of `chain`, or the
@@ -257,6 +266,7 @@ mod tests {
     use super::{Found, Plugins};
     use crate::limits::DeclarationLimits;
     use crate::refusal::Refusal;
+    use crate::results::Results;
     use crate::sources::Sources;
     use crate::staging::Staging;
 
@@ -280,7 +290,7 @@ mod tests {
             &[],
         );
         let directories = BTreeMap::from([(PluginName::parse("p").unwrap(), plugin.clone())]);
-        let plugins = Plugins::new(&root, directories, &staging, &sources);
+        let plugins = Plugins::new(&root, directories, &staging, &sources, &Results::none());
         (dir, plugin, plugins)
     }
 

@@ -19,7 +19,7 @@ use crate::history::logged_outputs;
 use crate::load::load;
 use crate::ports::{ActionCache, ContentStore, DeclarationSource, Dispatcher, RunHistory, Sweep};
 use crate::resolve::resolve;
-use crate::types::{CacheRow, Digest, EntryName, Label, OutputManifest};
+use crate::types::{CacheRow, Digest, Discovered, EntryName, Label, OutputManifest};
 
 /// What a [`gc`](fn@gc) removed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +71,7 @@ where
     W: Sweep,
     H: RunHistory,
 {
-    let graph = resolve(load(source, dispatcher, entry)?)?;
+    let graph = resolve(load(source, dispatcher, entry, &Discovered::empty())?)?;
     let declared: BTreeSet<&Label> = graph.nodes().iter().map(|node| &node.label).collect();
     let mut rows_dropped = 0;
     for label in cache.labels() {
@@ -144,10 +144,11 @@ mod tests {
     };
     use crate::types::{
         ActionKey, Argument, BuildFile, CacheRow, Command, DeclarationOrder, Diagnostic, Digest,
-        EntryName, Evaluated, FileMode, Freshness, KeyComponents, Label, LogLine, LoggedRun,
-        NetworkAccess, Origin, OutcomeClass, OutputManifest, OutputName, OutputPath, OwnComponents,
-        Platform, Provenance, StagedDeclaration, StagedFile, StagedItem, StagedTarget, StoredFile,
-        TargetName, TargetRole, Timestamp, Tree, TreeEntry, TreePath, Turn, Written,
+        Discovered, EntryName, Evaluated, FileMode, Freshness, KeyComponents, Label, LogLine,
+        LoggedRun, NetworkAccess, Origin, OutcomeClass, OutputManifest, OutputName, OutputPath,
+        OwnComponents, Platform, Provenance, StagedDeclaration, StagedFile, StagedItem,
+        StagedTarget, StoredFile, TargetName, TargetRole, Timestamp, Tree, TreeEntry, TreePath,
+        Turn, Written,
     };
 
     /// The calls the cache and the sweep received, in order, shared by both.
@@ -186,7 +187,7 @@ mod tests {
     struct Source(Option<Vec<&'static str>>);
 
     impl DeclarationSource for Source {
-        fn evaluate(&self, file: &BuildFile) -> Result<Evaluated> {
+        fn evaluate(&self, file: &BuildFile, _discovered: &Discovered) -> Result<Evaluated> {
             let names = self.0.as_ref().ok_or_else(|| Error::Evaluation {
                 provenance: Provenance::new(file.file().to_path_buf(), file.directory().clone()),
                 failure: EvaluationFailure::Runtime,

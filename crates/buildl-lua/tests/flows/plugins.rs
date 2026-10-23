@@ -8,8 +8,8 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
-    BuildFile, DeclarationSource, Diagnostic, Directory, Error, Evaluated, EvaluationFailure,
-    PluginName, Provenance, StagedFile, StagedItem, Written,
+    BuildFile, DeclarationSource, Diagnostic, Directory, Discovered, Error, Evaluated,
+    EvaluationFailure, PluginName, Provenance, StagedFile, StagedItem, Written,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -55,7 +55,7 @@ fn evaluate_file(
     names: &[&str],
     file: &BuildFile,
 ) -> Result<StagedFile, (EvaluationFailure, Diagnostic)> {
-    match source(root, names).evaluate(file) {
+    match source(root, names).evaluate(file, &Discovered::empty()) {
         Ok(Evaluated::Staged(staged)) => Ok(staged),
         Ok(Evaluated::Absent) => panic!("the build file exists"),
         Err(Error::Evaluation {

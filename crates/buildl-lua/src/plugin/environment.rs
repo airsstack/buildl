@@ -57,7 +57,13 @@ pub(super) fn build(
     let language: Table = lua.named_registry_value(LANGUAGE_REGISTRY_KEY)?;
     copy_tables(lua, &language, &environment)?;
 
-    let buildl = primitives_table(lua, plugins.staging(), plugins.sources(), &origin)?;
+    let buildl = primitives_table(
+        lua,
+        plugins.staging(),
+        plugins.sources(),
+        plugins.results(),
+        &origin,
+    )?;
     plugins.bind_use(lua, &buildl, chain)?;
 
     let airsstack = lua.create_table()?;
@@ -94,6 +100,7 @@ mod tests {
     use crate::limits::DeclarationLimits;
     use crate::module::{LANGUAGE_REGISTRY_KEY, record_language};
     use crate::plugin::loader::Plugins;
+    use crate::results::Results;
     use crate::sources::Sources;
     use crate::staging::Staging;
 
@@ -135,7 +142,13 @@ mod tests {
             DeclarationLimits::default().walk_entries(),
             &[],
         );
-        let plugins = Plugins::new(Path::new("."), BTreeMap::new(), &staging, &sources);
+        let plugins = Plugins::new(
+            Path::new("."),
+            BTreeMap::new(),
+            &staging,
+            &sources,
+            &Results::none(),
+        );
         build(
             lua,
             &plugins,

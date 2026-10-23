@@ -79,4 +79,16 @@ mod tests {
             Forcing::None
         );
     }
+
+    #[test]
+    fn discovery_is_forced_like_a_build_target() {
+        for freshness in [Freshness::Cached, Freshness::Always] {
+            for rerun in [Rerun::Off, Rerun::Tests] {
+                assert_eq!(
+                    Forcing::of(freshness, TargetRole::Discovery, rerun),
+                    Forcing::of(freshness, TargetRole::Build, rerun)
+                );
+            }
+        }
+    }
 }

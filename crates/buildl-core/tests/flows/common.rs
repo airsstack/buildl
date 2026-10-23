@@ -10,13 +10,13 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use buildl_core::{
     ActionCache, Approval, Approver, Attribution, BuildFile, CacheRow, Ceiling, Clock,
     ContentStore, DeclarationOrder, DeclarationSource, Diagnostic, Digest, Digester, Directory,
-    Dispatcher, EnvName, EnvValue, Error, Evaluated, EvaluationFailure, EventLog, ExecStrategy,
-    Exit, FileStat, Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest, NetworkAccess,
-    Origin, OutcomeEvent, OutputPath, Platform, PluginName, PluginRef, PluginVersion, PortName,
-    PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory, SourcePath, StagedAlias,
-    StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir,
-    StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver, WantedSet,
-    Workspace, Written,
+    Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EvaluationFailure, EventLog,
+    ExecStrategy, Exit, FileStat, Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest,
+    NetworkAccess, Origin, OutcomeEvent, OutputPath, Platform, PluginName, PluginRef,
+    PluginVersion, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory,
+    SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
+    StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver,
+    WantedSet, Workspace, Written,
 };
 use buildl_core::{ActionOutcome, Pipeline};
 use buildl_core::{
@@ -87,7 +87,7 @@ impl FakeSource {
 }
 
 impl DeclarationSource for FakeSource {
-    fn evaluate(&self, file: &BuildFile) -> Result<Evaluated> {
+    fn evaluate(&self, file: &BuildFile, _discovered: &Discovered) -> Result<Evaluated> {
         let directory = file.directory();
         if directory.is_root() {
             self.root_evaluations.fetch_add(1, Ordering::SeqCst);
@@ -1400,11 +1400,11 @@ mod tests {
 
     use buildl_core::{
         ActionCache, ActionKey, ActionOutcome, Argument, CacheRow, Captured, Channel, Clock,
-        Command, ContentStore, Digest, Directory, Dispatcher, EntryName, Error, EventLog,
-        ExecStrategy, Exit, GraphRecord, KeyComponents, Label, NetworkAccess, OutcomeClass,
-        OutcomeEvent, OutputName, OutputPath, OwnComponents, Platform, PortName, Provenance,
-        ReadyAction, Reporter, SourcePath, Summary, Tally, TargetGraph, TargetRole, Timestamp,
-        json, load, resolve,
+        Command, ContentStore, Digest, Directory, Discovered, Dispatcher, EntryName, Error,
+        EventLog, ExecStrategy, Exit, GraphRecord, KeyComponents, Label, NetworkAccess,
+        OutcomeClass, OutcomeEvent, OutputName, OutputPath, OwnComponents, Platform, PortName,
+        Provenance, ReadyAction, Reporter, SourcePath, Summary, Tally, TargetGraph, TargetRole,
+        Timestamp, json, load, resolve,
     };
 
     use super::{
@@ -1542,7 +1542,16 @@ mod tests {
         let targets = names.iter().map(|name| target(name, &[])).collect();
         let source = FakeSource::new(workspace(vec![("", file(targets, &[]))]));
         let entry = EntryName::parse("build.lua").unwrap();
-        resolve(load(&source, &mut FakeDispatcher::default(), &entry).unwrap()).unwrap()
+        resolve(
+            load(
+                &source,
+                &mut FakeDispatcher::default(),
+                &entry,
+                &Discovered::empty(),
+            )
+            .unwrap(),
+        )
+        .unwrap()
     }
 
     #[test]

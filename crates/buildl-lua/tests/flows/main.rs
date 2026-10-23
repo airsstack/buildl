@@ -11,6 +11,7 @@
 
 mod common;
 mod declarations;
+mod discovery;
 mod failures;
 mod load;
 mod plugins;

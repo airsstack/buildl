@@ -11,9 +11,13 @@
 //! This file holds only a trait definition, so it carries no logic to unit-test.
 
 use crate::error::Result;
-use crate::types::{BuildFile, Evaluated};
+use crate::types::{BuildFile, Discovered, Evaluated};
 
 /// Evaluates one build file and returns what it staged, exactly as written.
+///
+/// The [`Discovered`] map holds what discovery targets last produced; a build file that asks for
+/// one gets its bytes, or nothing when the map holds none. Load passes the same map to every file
+/// it evaluates.
 ///
 /// An implementation reports a missing file as [`Evaluated::Absent`] rather than as an error:
 /// what a missing file means depends on who asked for it, which only the caller knows.
@@ -28,15 +32,15 @@ use crate::types::{BuildFile, Evaluated};
 /// use std::path::PathBuf;
 ///
 /// use buildl_core::{
-///     BuildFile, DeclarationOrder, DeclarationSource, Directory, Evaluated, Provenance, Result,
-///     StagedFile, StagedSubdir, Written,
+///     BuildFile, DeclarationOrder, DeclarationSource, Directory, Discovered, Evaluated,
+///     Provenance, Result, StagedFile, StagedSubdir, Written,
 /// };
 ///
 /// /// A source in which only the workspace root has a build file, requesting `lib`.
 /// struct RootOnly;
 ///
 /// impl DeclarationSource for RootOnly {
-///     fn evaluate(&self, file: &BuildFile) -> Result<Evaluated> {
+///     fn evaluate(&self, file: &BuildFile, _discovered: &Discovered) -> Result<Evaluated> {
 ///         if !file.directory().is_root() {
 ///             return Ok(Evaluated::Absent);
 ///         }
@@ -54,15 +58,15 @@ use crate::types::{BuildFile, Evaluated};
 ///     PathBuf::from("lib/build.lua"),
 ///     Directory::parse("lib")?,
 /// ));
-/// assert_eq!(RootOnly.evaluate(&lib)?, Evaluated::Absent);
+/// assert_eq!(RootOnly.evaluate(&lib, &Discovered::empty())?, Evaluated::Absent);
 /// # Ok::<(), buildl_core::Error>(())
 /// ```
 pub trait DeclarationSource: Sync {
-    /// Evaluates `file`.
+    /// Evaluates `file`, giving it `discovered` to read discovery results from.
     ///
     /// # Errors
     ///
     /// Returns [`Error::Evaluation`](crate::Error::Evaluation) when the file exists but cannot be
     /// evaluated.
-    fn evaluate(&self, file: &BuildFile) -> Result<Evaluated>;
+    fn evaluate(&self, file: &BuildFile, discovered: &Discovered) -> Result<Evaluated>;
 }

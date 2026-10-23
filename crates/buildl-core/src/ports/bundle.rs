@@ -29,8 +29,8 @@ use crate::ports::{
 /// use buildl_core::{
 ///     ActionCache, Approval, Approver, Attribution, BuildFile, CacheRow, Captured, Ceiling,
 ///     Channel, Clock, ContentStore, DeclarationSource, Diagnostic, Digest, Digester, Directory,
-///     Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy, FileMode, Found,
-///     GraphRecord, Host, InputStat, Label, LiveSink, Manifest, OutcomeEvent, OutputPath,
+///     Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy,
+///     FileMode, Found, GraphRecord, Host, InputStat, Label, LiveSink, Manifest, OutcomeEvent, OutputPath,
 ///     Platform, PortName, Ports, Program, RawOutcome, ReadyAction, Reporter, Result, SourcePath,
 ///     StatCache, StatEntry, Summary, TargetGraph, Timestamp, ToolResolver, Turn, WantedSet,
 ///     Workspace,
@@ -48,7 +48,7 @@ use crate::ports::{
 /// }
 ///
 /// impl DeclarationSource for Nothing {
-///     fn evaluate(&self, _file: &BuildFile) -> Result<Evaluated> {
+///     fn evaluate(&self, _file: &BuildFile, _discovered: &Discovered) -> Result<Evaluated> {
 ///         Ok(Evaluated::Absent)
 ///     }
 /// }

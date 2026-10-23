@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::error::Error;
 use crate::ports::DeclarationSource;
-use crate::types::{Declaration, Directory, EntryName, Evaluated};
+use crate::types::{Declaration, Directory, Discovered, EntryName, Evaluated};
 
 use super::traversal::{build_file, convert, resolve_subdirs};
 
@@ -41,19 +41,20 @@ pub(crate) enum FileResult {
 ///
 /// Within the file the steps run in one fixed order, so a file that fails in more than one way
 /// always fails the same way: evaluate, then resolve the `subdir` requests, then convert each
-/// declaration in call order. Returns [`FileResult::Stopped`] without calling `source` when `stop`
-/// is already set.
+/// declaration in call order. `discovered` is handed to `source` as it is. Returns
+/// [`FileResult::Stopped`] without calling `source` when `stop` is already set.
 pub(crate) fn evaluate_file<S: DeclarationSource>(
     source: &S,
     entry: &EntryName,
     directory: &Directory,
+    discovered: &Discovered,
     stop: &AtomicBool,
 ) -> FileResult {
     if stop.load(Ordering::Acquire) {
         return FileResult::Stopped;
     }
     let file = build_file(directory, entry);
-    let staged = match source.evaluate(&file) {
+    let staged = match source.evaluate(&file, discovered) {
         Ok(Evaluated::Staged(staged)) => staged,
         Ok(Evaluated::Absent) => return FileResult::Absent,
         Err(error) => return FileResult::Failed(error),
@@ -83,6 +84,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::BTreeMap;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -90,9 +92,9 @@ mod tests {
     use crate::error::{DeclarationField, Error, EvaluationFailure, Result};
     use crate::ports::DeclarationSource;
     use crate::types::{
-        BuildFile, DeclarationOrder, Diagnostic, Directory, EntryName, Evaluated, Freshness,
-        NetworkAccess, Origin, StagedDeclaration, StagedFile, StagedItem, StagedSubdir,
-        StagedTarget, TargetRole, Written,
+        BuildFile, DeclarationOrder, Diagnostic, Directory, Discovered, EntryName, Evaluated,
+        Freshness, Label, NetworkAccess, Origin, StagedDeclaration, StagedFile, StagedItem,
+        StagedSubdir, StagedTarget, TargetRole, Written,
     };
 
     /// A source that answers every call with one canned reply and counts the calls.
@@ -119,7 +121,7 @@ mod tests {
     }
 
     impl DeclarationSource for Counting {
-        fn evaluate(&self, _file: &BuildFile) -> Result<Evaluated> {
+        fn evaluate(&self, _file: &BuildFile, _discovered: &Discovered) -> Result<Evaluated> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             self.reply.lock().unwrap().take().unwrap()
         }
@@ -134,6 +136,7 @@ mod tests {
             source,
             &entry(),
             &Directory::parse(directory).unwrap(),
+            &Discovered::empty(),
             &AtomicBool::new(false),
         )
     }
@@ -185,7 +188,13 @@ mod tests {
             subdirs: Vec::new(),
         });
         let stop = AtomicBool::new(true);
-        let result = evaluate_file(&source, &entry(), &Directory::root(), &stop);
+        let result = evaluate_file(
+            &source,
+            &entry(),
+            &Directory::root(),
+            &Discovered::empty(),
+            &stop,
+        );
         assert!(matches!(result, FileResult::Stopped), "{result:?}");
         assert_eq!(source.calls(), 0);
     }
@@ -263,5 +272,50 @@ mod tests {
         let names: Vec<&str> = declarations.iter().map(|d| d.item().name()).collect();
         assert_eq!(names, ["app", "lib"]);
         assert_eq!(source.calls(), 1);
+    }
+
+    /// A source that records the bytes the map holds for `//svc:pkgs` each time it is called.
+    struct Reading {
+        seen: Mutex<Vec<Option<Vec<u8>>>>,
+    }
+
+    impl DeclarationSource for Reading {
+        fn evaluate(&self, _file: &BuildFile, discovered: &Discovered) -> Result<Evaluated> {
+            let pkgs = Label::parse("//svc:pkgs").unwrap();
+            self.seen
+                .lock()
+                .unwrap()
+                .push(discovered.get(&pkgs).map(<[u8]>::to_vec));
+            Ok(Evaluated::Absent)
+        }
+    }
+
+    #[test]
+    fn the_discovered_map_reaches_the_source() {
+        let source = Reading {
+            seen: Mutex::new(Vec::new()),
+        };
+        let held = Discovered::new(BTreeMap::from([(
+            Label::parse("//svc:pkgs").unwrap(),
+            b"[]".to_vec(),
+        )]));
+        let directory = Directory::parse("svc").unwrap();
+
+        evaluate_file(
+            &source,
+            &entry(),
+            &directory,
+            &held,
+            &AtomicBool::new(false),
+        );
+        evaluate_file(
+            &source,
+            &entry(),
+            &directory,
+            &Discovered::empty(),
+            &AtomicBool::new(false),
+        );
+
+        assert_eq!(*source.seen.lock().unwrap(), [Some(b"[]".to_vec()), None]);
     }
 }

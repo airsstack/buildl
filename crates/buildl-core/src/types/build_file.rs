@@ -131,7 +131,7 @@ pub enum StagedItem {
 pub struct StagedTarget {
     /// The target's name, never a label: a declaration stays in its own directory.
     pub name: Written<TargetName>,
-    /// Whether it was declared with `b.target` or `b.test`.
+    /// Whether it was declared with `b.target`, `b.test` or `b.discover`.
     pub role: TargetRole,
     /// The `rule` field, if given.
     pub rule: Option<Written<Label>>,

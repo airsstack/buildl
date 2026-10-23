@@ -31,7 +31,7 @@ use std::path::PathBuf;
 use crate::types::{
     Ceiling, Declaration, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
     FieldName, InputKind, Label, Node, Origin, OutputPath, PluginName, PluginViolation, Program,
-    Provenance, SettingName, SourcePath, TreePath, Want, WantedSet, Written,
+    Provenance, SettingName, SourcePath, TargetRole, TreePath, Want, WantedSet, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -51,6 +51,12 @@ pub enum Error {
         /// The rejected input, as given.
         value: String,
         /// Why the grammar rejected it.
+        reason: &'static str,
+    },
+    /// A declaration holds a value its kind of target does not take.
+    #[error("{reason}")]
+    NotAccepted {
+        /// Why the declaration cannot hold the value.
         reason: &'static str,
     },
     /// A value could not be serialized as JSON at all.
@@ -330,13 +336,16 @@ pub enum Error {
     },
     /// A test run was asked for a target that is not a test.
     #[error(
-        "target {asked} was asked for as a test, but {} is declared with b.target in {}",
+        "target {asked} was asked for as a test, but {} is declared with {} in {}",
         .site.label,
+        .declared_with.declaring_function(),
         .site.located()
     )]
     NotATest {
         /// The label that was asked for.
         asked: Label,
+        /// The role the target it names was declared with, which says which function declared it.
+        declared_with: TargetRole,
         /// The target it names, which is the same label unless an alias was followed, and its
         /// build file.
         site: Box<DeclarationSite>,
@@ -859,6 +868,8 @@ pub enum DeclarationField {
     SettingName,
     /// A setting's default value.
     SettingValue,
+    /// A target's `always` flag.
+    Freshness,
     /// A `subdir` request.
     Subdir,
 }
@@ -877,6 +888,7 @@ impl fmt::Display for DeclarationField {
             Self::Target => "target",
             Self::SettingName => "setting name",
             Self::SettingValue => "setting value",
+            Self::Freshness => "freshness",
             Self::Subdir => "subdir",
         })
     }
@@ -1664,6 +1676,7 @@ mod tests {
     fn not_a_test_names_the_target_and_its_file() {
         let err = Error::NotATest {
             asked: label("//:default"),
+            declared_with: TargetRole::Build,
             site: Box::new(root_site("//:app")),
         };
         assert_eq!(
@@ -1673,9 +1686,23 @@ mod tests {
     }
 
     #[test]
+    fn not_a_test_names_the_function_that_declared_a_discovery_target() {
+        let err = Error::NotATest {
+            asked: label("//:pkgs"),
+            declared_with: TargetRole::Discovery,
+            site: Box::new(root_site("//:pkgs")),
+        };
+        assert_eq!(
+            err.to_string(),
+            "target //:pkgs was asked for as a test, but //:pkgs is declared with b.discover in build.lua"
+        );
+    }
+
+    #[test]
     fn not_a_test_names_the_plugin_chain_of_a_target_a_plugin_declared() {
         let err = Error::NotATest {
             asked: label("//:default"),
+            declared_with: TargetRole::Build,
             site: Box::new(DeclarationSite {
                 origin: ourgo_chain(),
                 ..root_site("//:app")
@@ -2114,6 +2141,14 @@ mod tests {
     }
 
     #[test]
+    fn not_accepted_states_why_the_declaration_cannot_hold_the_value() {
+        let err = Error::NotAccepted {
+            reason: "a discovery target is always cached",
+        };
+        assert_eq!(err.to_string(), "a discovery target is always cached");
+    }
+
+    #[test]
     fn invalid_declaration_names_the_plugin_chain_of_a_declaration_a_plugin_made() {
         let err = Error::InvalidDeclaration {
             provenance: lib_file(),
@@ -2144,6 +2179,7 @@ mod tests {
             (DeclarationField::Target, "target"),
             (DeclarationField::SettingName, "setting name"),
             (DeclarationField::SettingValue, "setting value"),
+            (DeclarationField::Freshness, "freshness"),
             (DeclarationField::Subdir, "subdir"),
         ];
         for (field, rendered) in cases {

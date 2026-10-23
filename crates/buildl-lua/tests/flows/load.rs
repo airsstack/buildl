@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use buildl_core::{
-    Action, Argument, Command, Declaration, Declared, Directory, EntryName, Freshness, Label,
-    NetworkAccess, Origin, OutputName, Provenance, SourcePath, Target, TargetRole, load,
+    Action, Argument, Command, Declaration, Declared, Directory, Discovered, EntryName, Freshness,
+    Label, NetworkAccess, Origin, OutputName, Provenance, SourcePath, Target, TargetRole, load,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -67,6 +67,7 @@ fn load_turns_a_real_workspace_into_declarations() {
         &source,
         &mut InlineDispatcher,
         &EntryName::parse("build.lua").unwrap(),
+        &Discovered::empty(),
     )
     .unwrap();
     let expected = vec![

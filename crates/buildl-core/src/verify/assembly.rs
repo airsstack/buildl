@@ -136,6 +136,7 @@ pub fn verify<P: Ports>(
         {
             tasks.push(Task {
                 node,
+                role: target.node.role,
                 key: restored.key.clone(),
                 action: target.action.clone(),
             });

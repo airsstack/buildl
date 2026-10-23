@@ -130,15 +130,15 @@ mod tests {
     use buildl_core::{
         Action, ActionCache, ActionKey, Approval, Approver, ApproverMode, Argument, Attribution,
         BuildFile, CacheRow, Ceiling, Clock, Command, ContentStore, Declaration, DeclarationSource,
-        Declared, DepProducts, Diagnostic, Digest, Digester, Directory, DirtyReason, Dispatcher,
-        EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy, Execution, FileMode, FileStat,
-        Found, Freshness, GraphRecord, Host, InputDigest, InputStat, KeyComponents, Label,
-        LiveSink, Manifest, NetworkAccess, Origin, OutcomeEvent, OutputName, OutputPath,
-        OwnComponents, Plan, PlannedKey, Platform, PluginCap, PluginName, PluginRef, PluginVersion,
-        PortName, PortSet, Ports, Produced, Program, Provenance, RawOutcome, ReadyAction, Rerun,
-        Result, Setting, SettingName, SettingValue, SourcePath, StatCache, StatEntry, Target,
-        TargetGraph, TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn, Verdict, WantedSet,
-        Workspace, plan, resolve,
+        Declared, DepProducts, Diagnostic, Digest, Digester, Directory, DirtyReason, Discovered,
+        Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy, Execution,
+        FileMode, FileStat, Found, Freshness, GraphRecord, Host, InputDigest, InputStat,
+        KeyComponents, Label, LiveSink, Manifest, NetworkAccess, Origin, OutcomeEvent, OutputName,
+        OutputPath, OwnComponents, Plan, PlannedKey, Platform, PluginCap, PluginName, PluginRef,
+        PluginVersion, PortName, PortSet, Ports, Produced, Program, Provenance, RawOutcome,
+        ReadyAction, Rerun, Result, Setting, SettingName, SettingValue, SourcePath, StatCache,
+        StatEntry, Target, TargetGraph, TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn,
+        Verdict, WantedSet, Workspace, plan, resolve,
     };
 
     use super::{plan_text, reason_text};
@@ -254,7 +254,7 @@ mod tests {
     }
 
     impl DeclarationSource for Unused {
-        fn evaluate(&self, _file: &BuildFile) -> Result<Evaluated> {
+        fn evaluate(&self, _file: &BuildFile, _discovered: &Discovered) -> Result<Evaluated> {
             Ok(Evaluated::Absent)
         }
     }

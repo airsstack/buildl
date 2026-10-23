@@ -5,15 +5,16 @@
 //! to right, then an option table is checked for unknown keys, then its accepted fields are read
 //! in the order each primitive lists them. A refusal after the name is known names it.
 //!
-//! Responsibilities: [`target`], [`rule`], [`alias`], [`option`], [`subdir`], [`pattern`].
+//! Responsibilities: [`target`], [`rule`], [`alias`], [`option`], [`subdir`], [`pattern`],
+//! [`discovered`].
 //!
 //! Non-responsibilities: staging the records and installing the functions, which the `buildl`
 //! module does.
 
 use airsl::mlua::Value;
 use buildl_core::{
-    Directory, Freshness, NetworkAccess, SettingName, StagedAlias, StagedRule, StagedSetting,
-    StagedTarget, TargetName, TargetRole, Written,
+    Directory, EvaluationFailure, Freshness, Label, NetworkAccess, SettingName, StagedAlias,
+    StagedRule, StagedSetting, StagedTarget, TargetName, TargetRole, Written,
 };
 
 use crate::refusal::Refusal;
@@ -23,12 +24,19 @@ use crate::values::{closed, field, flag, list, optional_list, optional_text, str
 const TARGET_FIELDS: [&str; 8] = [
     "rule", "run", "inputs", "deps", "outputs", "env", "network", "always",
 ];
+/// The fields `buildl.discover` accepts: those of a target, less the two a discovery target
+/// does not take. Its one output is placed by buildl, and it is never always-run.
+const DISCOVER_FIELDS: [&str; 6] = ["rule", "run", "inputs", "deps", "env", "network"];
 /// The fields `buildl.rule` accepts, in the order they are read.
 const RULE_FIELDS: [&str; 2] = ["run", "desc"];
 /// The fields `buildl.option` accepts.
 const OPTION_FIELDS: [&str; 1] = ["default"];
 
-/// `buildl.target(name, options)` and `buildl.test(name, options)`, told apart by `role`.
+/// `buildl.target(name, options)`, `buildl.test(name, options)` and `buildl.discover(name,
+/// options)`, told apart by `role`.
+///
+/// A discovery target's table is closed over [`DISCOVER_FIELDS`], so `outputs` and `always` are
+/// unknown fields to it.
 pub(crate) fn target(
     name: &Value,
     options: &Value,
@@ -45,7 +53,13 @@ fn target_fields(
     role: TargetRole,
 ) -> Result<StagedTarget, Refusal> {
     let options = table(options, "options")?;
-    closed(&options, &TARGET_FIELDS)?;
+    closed(
+        &options,
+        match role {
+            TargetRole::Build | TargetRole::Test => &TARGET_FIELDS[..],
+            TargetRole::Discovery => &DISCOVER_FIELDS[..],
+        },
+    )?;
     Ok(StagedTarget {
         name,
         role,
@@ -116,6 +130,17 @@ pub(crate) fn pattern(pattern: &Value) -> Result<String, Refusal> {
     string(pattern, "pattern")
 }
 
+/// The label argument of `buildl.discovered(label)`, resolved against `base` as a dependency is.
+pub(crate) fn discovered(label: &Value, base: &Directory) -> Result<Label, Refusal> {
+    let raw = string(label, "label")?;
+    Label::resolve(&raw, base).map_err(|error| {
+        Refusal::new(
+            EvaluationFailure::Refused,
+            format!("field 'label' must be a target label, found {raw:?}: {error}"),
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -125,11 +150,11 @@ mod tests {
 
     use airsl::mlua::{Lua, Value};
     use buildl_core::{
-        EvaluationFailure, Freshness, NetworkAccess, StagedAlias, StagedRule, StagedSetting,
-        StagedTarget, TargetRole, Written,
+        Directory, EvaluationFailure, Freshness, Label, NetworkAccess, StagedAlias, StagedRule,
+        StagedSetting, StagedTarget, TargetRole, Written,
     };
 
-    use super::{alias, option, pattern, rule, subdir, target};
+    use super::{alias, discovered, option, pattern, rule, subdir, target};
     use crate::refusal::CallSite;
 
     fn eval(lua: &Lua, source: &str) -> Value {
@@ -328,6 +353,69 @@ mod tests {
                 .diagnostic("sources", None)
                 .as_str(),
             "buildl.sources: field 'pattern' must be a string, found nil"
+        );
+    }
+
+    #[test]
+    fn a_discovery_target_takes_a_target_s_fields_less_outputs_and_always() {
+        let lua = Lua::new();
+        let staged = target(
+            &eval(&lua, "return 'pkgs'"),
+            &eval(&lua, "return { run = { 'go' }, network = true }"),
+            TargetRole::Discovery,
+        )
+        .unwrap();
+        assert_eq!(staged.role, TargetRole::Discovery);
+        assert_eq!(staged.outputs, None);
+        assert_eq!(staged.freshness, Freshness::Cached);
+        for (field, name) in [
+            ("outputs = { 'p' }", "outputs"),
+            ("always = true", "always"),
+        ] {
+            let refusal = target(
+                &eval(&lua, "return 'pkgs'"),
+                &eval(&lua, &format!("return {{ run = {{ 'go' }}, {field} }}")),
+                TargetRole::Discovery,
+            )
+            .unwrap_err();
+            assert_eq!(
+                refusal.failure(),
+                &EvaluationFailure::UnknownField {
+                    field: Written::new(name),
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn discovered_resolves_a_label_against_the_directory() {
+        let lua = Lua::new();
+        let base = Directory::parse("svc").unwrap();
+        for raw in [":pkgs", "pkgs", "//svc:pkgs"] {
+            assert_eq!(
+                discovered(&eval(&lua, &format!("return '{raw}'")), &base).unwrap(),
+                Label::parse("//svc:pkgs").unwrap(),
+                "{raw}"
+            );
+        }
+    }
+
+    #[test]
+    fn discovered_refuses_a_value_that_is_not_a_label() {
+        let lua = Lua::new();
+        let base = Directory::root();
+        let refusal = discovered(&Value::Nil, &base).unwrap_err();
+        assert_eq!(
+            refusal.diagnostic("discovered", None).as_str(),
+            "buildl.discovered: field 'label' must be a string, found nil"
+        );
+        let refusal = discovered(&eval(&lua, "return '//svc'"), &base).unwrap_err();
+        assert_eq!(refusal.failure(), &EvaluationFailure::Refused);
+        assert!(
+            refusal.diagnostic("discovered", None).as_str().starts_with(
+                "buildl.discovered: field 'label' must be a target label, found \"//svc\""
+            ),
+            "{refusal:?}"
         );
     }
 }
