@@ -1,6 +1,6 @@
 # buildl — design document
 
-**Status: the core pipeline is implemented; the rest is design.** Item 1 of the sequence in §13 is built: Load, Resolve, Plan, Execute and Record, the `check`, `graph`, `plan` and `build` commands, the local cache and the cas, with actions run in the input sandbox, isolation tier 2, by default and at tier 1 on request (§12.2). Of item 2, the `query`, `test`, `log`, `clean` and `gc` commands are built. Of item 3, the input sandbox and the `verify` command are built; the tiers above it are not. Everything else from item 2 on is described here and not built. Every design decision builds on the shipped `airsl` runtime [1][2]; sections note where buildl depends on airsl work that is itself still proposed (the extension system).
+**Status: the core pipeline is implemented; the rest is design.** Item 1 of the sequence in §13 is built: Load, Resolve, Plan, Execute and Record, the `check`, `graph`, `plan` and `build` commands, the local cache and the cas, with actions run in the input sandbox, isolation tier 2, by default and at tier 1 on request (§12.2). Of item 2, the `query`, `test`, `log`, `clean` and `gc` commands are built. Of item 3, the input sandbox and the `verify` command are built; the tiers above it are not. Item 4, grant negotiation with the approver and `doctor`, is built, and so is item 5: plugins, fetched by `buildl plugins fetch` and narrowed per plugin, and discovery targets (§10). Everything else from item 2 on is described here and not built. Every design decision builds on the shipped `airsl` runtime [1][2]; sections note where buildl depends on airsl work that is itself still proposed (the extension system).
 
 **Author:** rstlix0x0 · **Date:** 2026-08-23 · **Reviewers:** —
 
@@ -63,7 +63,8 @@ buildl is delivered as a Cargo workspace of four crates: `crates/buildl-core` (d
 
 ```text
 myproject/
-  buildl.toml          # workspace manifest: ceiling, limits, execution (§4)
+  buildl.toml          # workspace manifest: ceiling, limits, execution, plugins (§4)
+  buildl.lock          # what each plugin fetched from a repository was fetched as; committed (§4)
   build.lua            # root build file (declaration only)
   src/...
   lib/
@@ -78,6 +79,7 @@ myproject/
     cas/ab/cdef….x     # the same bytes as an executable file, kept for an output placed executable
     cas/tmp/           # staging for the store
     log.jsonl          # one JSON event per action
+    plugins/go/<commit>/  # the files of a plugin fetched from a repository (§4)
   out/                 # named outputs, out/<directory>/<name>: read-only links into the cas, copies where linking is not used
 ```
 
@@ -116,6 +118,15 @@ strategy = "sandbox"       # bare | sandbox | os-sandbox | container (§11)
 
 [approver]
 default = "interactive"    # manifest | interactive | deny
+
+[plugins.go]               # a plugin fetched from a repository (§10)
+git      = "https://github.com/acme/buildl-go"   # or github = "acme/buildl-go"
+rev      = "v1.2.0"        # a tag or a full commit
+proc.run = ["go"]          # the workspace's cap for this plugin
+env.read = ["HOME", "GOCACHE"]
+
+[plugins.ourgo]            # a plugin kept in the workspace
+path = "plugins/ourgo"     # workspace-relative
 ```
 
 Two rules carried over from airsl's extension design deliberately: variables and relative roots are expanded **host-side** (a build file that could expand them could widen its own grant), and the ceiling can never be exceeded by anything a build file or plugin requests — requests are intersected with it, never unioned.
@@ -135,6 +146,31 @@ The manifest is read strictly. A key this version of buildl does not read is an 
 None of the three is an action-key component (§8.3): they decide how an action is run, never which action it is.
 
 `proc.run` lists the programs of the host a build may run. A program a dependency built needs no entry: a command whose program, once expanded, is one of its target's dependency outputs or lies below one runs it because the graph declares that dependency (§6, §12.2). `[approver]` names who settles whether a build may run once its wants are inside the ceiling (§6). Its one key is `default`, exactly one of `manifest`, `interactive` and `deny`; a table or a key left out means `manifest`, and any other key or value makes the manifest invalid.
+
+`[plugins.<name>]` names one plugin: where its files come from, and the most the workspace lets its targets want. `<name>` is what a build file calls `buildl.use` with (§5), and follows the grammar of a target name, at most 246 bytes. Like the ceiling's, a plugin's list is empty when left out, and the table is read as strictly as the rest of the manifest: any other key is an error naming its line and column.
+
+|Key|Written as|When absent|
+|---|---|---|
+|`path`|a workspace-relative directory holding the plugin, like a ceiling directory; it may not be, hold or lie inside `out` or `.buildl`|—|
+|`git`|the URL of a git repository, anything the engineer's own `git` can reach; empty, starting with `-`, whitespace, a control character and a transport helper (`ext::…`) are refused|—|
+|`github`|`owner/repo`, which is `git = "https://github.com/owner/repo"`|—|
+|`rev`|a tag, or a full 40-digit lowercase commit; required with `git` and `github`, refused with `path`|—|
+|`proc.run`, `env.read`|lists: the programs and the environment variables the plugin's targets may want|empty: nothing|
+|`network`|`true` lets the plugin's targets declare `network = true`|`false`|
+
+Exactly one of `path`, `git` and `github` is written. A branch is no `rev`: it is read as a tag, and git finds no such tag when the plugin is fetched. The cap narrows and never widens: what a plugin's target wants is held to its plugins first and to the ceiling after (§10), so a cap that lists more than the ceiling grants adds nothing.
+
+**`buildl.lock`** sits beside `buildl.toml` and is committed. It is canonical JSON, one entry per plugin fetched from a repository, by name: `commit`, the full commit `rev` resolved to; `git`, the URL; `rev`, as `buildl.toml` wrote it; and `sha256`, the digest of the plugin's files, each by path with its bytes and whether it may be run, the way an output directory is digested (§3). A path plugin has no entry. Only `buildl plugins fetch` writes it (§7). The files themselves are kept in `.buildl/plugins/<name>/<commit>/`, outside git with the rest of `.buildl/`, so each engineer fetches into their own checkout.
+
+Every command that loads build files checks every plugin `buildl.toml` names, once, before the first build file is evaluated, against the lock and the store, and never reaches the network. A workspace that names a plugin must have it fetched even when no build file uses it:
+
+|State|Result|Exit|
+|---|---|---|
+|a path plugin's directory is missing|refused: the plugin is not fetched|5|
+|a git plugin has no lock entry, or the entry's `git` or `rev` differs from `buildl.toml`|refused: the plugin is not fetched, and the message names `buildl plugins fetch`|5|
+|the entry is there and its directory in the store is not|the same refusal|5|
+|the stored files digest to something other than `sha256`, or hold a link, a special file or no file|refused: the plugin was changed after it was fetched|6|
+|the digest matches|the plugin's directory is handed to the build files' `buildl.use`||
 
 ## 5. The Lua declaration API
 
@@ -175,6 +211,8 @@ The design decisions in those lines:
 - **`b.target` accepts a small closed table**: `rule` or inline `run`, `inputs`, `deps`, `outputs` (default: the target name), `env` (names checked against the ceiling), `network = true` (visible in `plan`, §11), and `always = true` for phony targets. Every field but `always` is an action-key component; the surface grows reluctantly. A `b.test` target takes the same table, and its `outputs` default to none: what it records is its exit status and what it printed, so a test that leaves nothing behind still passes and is cached. Naming `outputs` holds it to them, as it holds any target.
 - **A declared input is a regular file inside the workspace.** A symbolic link, a directory or a special file at an input's path is refused at plan as a mistake of the build file, like an input that does not exist: the error names the target that declares the input and what stands at the path.
 - **`b.option(name, { default })` declares a build setting** — an invocation-time parameter with an explicit default, referenced in argv as `$opt:name` and overridden with `--set name=value`. The settings a command names fold into its action key, so differently-parameterised runs cache separately and correctly (§10.2). A setting may also name the tool: a first argument that is a complete program name once its `$opt:` references are replaced is a host tool like one written out — held to `proc.run` at plan, looked up, and fingerprinted into the key (§9.6).
+- **`b.use(name)` loads a plugin and returns its module table** (§10). The name is one the workspace's `[plugins]` table lists (§4), and it is the only argument: what a plugin lets a build file choose is the arguments of the functions it returns. An unknown name, or a plugin already among those using it, is an error of the build file that names it. Every declaration the plugin's functions make is the plugin's, and carries its name.
+- **`b.discover(name, { … })` declares a discovery target and `b.discovered(label)` reads what it last produced** (§10). `b.discover` takes `b.target`'s table without `outputs` and `always`: its one output is `<name>.json`, placed by buildl, and the target runs when its key changes like any other. `b.discovered` takes a label, a relative one resolved against the declaring directory as `deps` are, and returns the output's bytes as a string, or `nil` when there is none yet; decoding it is the build file's, with `airsstack.json.decode`. A workspace that declares a discovery target has its build files evaluated twice, the first time with `nil` for every label and the second with the results (§7).
 - **`b.alias(name, target)` gives a target a second name.** An alias names a target, never another alias or a rule. A dependency may name an alias, and resolves to the target behind it.
 - **A list keeps the order it was written in.** `deps`, `inputs`, `outputs` and `env` reach the graph in written order with repeats dropped, so `$deps` and `$in` expand in that order. Reordering `deps`, `inputs` or `outputs` changes the action key. Reordering `env` does not: an environment is a set of variables, and the key holds each one by name.
 
@@ -211,7 +249,7 @@ this build wants to
 allow? [y/N]
 ```
 
-A line that would list nothing is left out. When stdin or stderr is not a terminal there is no one to ask, and the build is refused, never approved: the error says to run the build in a terminal once, or to write `default = "manifest"`. A yes is remembered in `<data>/buildl/approved/<workspace id>.json`, where `<data>` is `$XDG_DATA_HOME`, or `$HOME/.local/share` when that is not an absolute path, and `<workspace id>` names the workspace root as its sandbox directory does (§12.2). The file lies outside the workspace on purpose: a repository can ship its own `.buildl/`, and an approval kept there would come with the code. A refusal exits 4 (§8.7), as a want outside the ceiling does; a remembered file that is not what buildl writes exits 6, and one that cannot be read or written exits 3. Every failure is a refusal, and nothing runs.
+A line that would list nothing is left out. When plugins' targets are behind the new wants, one line for each plugin chain follows the list, as `  go: declared by plugin go@1.2.0 for //services/api:server` (§10). When stdin or stderr is not a terminal there is no one to ask, and the build is refused, never approved: the error says to run the build in a terminal once, or to write `default = "manifest"`. A yes is remembered in `<data>/buildl/approved/<workspace id>.json`, where `<data>` is `$XDG_DATA_HOME`, or `$HOME/.local/share` when that is not an absolute path, and `<workspace id>` names the workspace root as its sandbox directory does (§12.2). The file lies outside the workspace on purpose: a repository can ship its own `.buildl/`, and an approval kept there would come with the code. A refusal exits 4 (§8.7), as a want outside the ceiling does; a remembered file that is not what buildl writes exits 6, and one that cannot be read or written exits 3. Every failure is a refusal, and nothing runs.
 
 ## 7. The build workflow
 
@@ -240,8 +278,30 @@ flowchart TD
 |`buildl log <target> [--stdout \| --stderr]`|log + cas|show what a target printed when it last ran (§8.7)|
 |`buildl query <expr>`|Resolve|graph queries: `deps()`, `rdeps()` (§10.2, §10.3, §11.1)|
 |`buildl doctor`|Resolve|print the workspace root, the approver, the execution settings, the ceiling, and each want with whether the ceiling allows it and whether it is approved|
+|`buildl plugins fetch`|— (loads no build file)|pin each plugin that comes from a repository in `buildl.lock` and store its files; the only command that reaches the network|
 
-`check`, `graph`, `query`, `plan`, `build`, `test`, `log`, `verify`, `clean`, `gc` and `doctor` are built; each other command arrives with the item of §13 that names it. A command may run what a dependency built, with no `proc.run` entry for it (§6). `doctor` evaluates the build files once and takes no lock, writes nothing, plans nothing, hashes nothing and asks nothing; its wants are those of every target, tests included, at each setting's default, and it reports a want outside the ceiling or not approved and still exits 0. `plan` and `build` take any number of targets and, with none, every target but the tests (and the tests a target depends on); `plan` takes exactly what `build` takes, because it is that build's dry run. Both accept `--set name=value`, repeated, to give a build setting a value for the run (§10.2); `build` adds `--keep-going` (§8.4) and `--stream` (§8.7). `test` takes any number of targets and, with none, every test; it accepts `--set` like the others and adds `--stop` (§8.4), `--stream`, `--rerun` (§9.1) and `--verbose` (§8.7). It builds what the tests it runs depend on, as `build` would. Naming a target that is not a test is a usage error (exit code 2, §8.7). A command finds its workspace at the nearest `buildl.toml` at or above the current directory and prints paths relative to it. A target is written `//dir:name`, or `:name` and `name`, which are read against the current directory. `query` takes one expression, `deps(<target>)` or `rdeps(<target>)`, and prints the targets the named one depends on, or that depend on it, any number of steps away and without the target itself: one label a line in label order, or with `--json` as canonical JSON. Like `check` and `graph` it takes no lock and writes nothing. `log` takes exactly one target and at most one of `--stdout` and `--stderr`. It reads the log and the cas and nothing else: it takes no lock and loads no build file, so it answers while a build runs and whatever the build files now say, and it writes nothing but the cas's own removal of a blob whose bytes fail their digest. It looks the target up as the log names it, so it does not follow an alias. A target with no run that stored output is a usage error, which can offer the nearest label that has one; an output blob gone from the cas is an infrastructure failure. `verify` takes what `build` takes, the targets and `--set`, and with no target every target but the tests (and the tests a target depends on); it adds `--sample N`, a whole number of at least one. It plans as `build` does and checks only the targets the plan finds clean: it puts their outputs back under `out/` as a cache hit would, re-runs their actions in the input sandbox, and compares each output with the one the cache row records. Every other target in scope is counted as not cached, and so is a clean target whose stored content is gone or whose manifest does not hash to its digest. With no `--sample` every clean target is re-run; with `--sample N` the `N` whose key digests are lowest are, so the same keys check the same targets on every run and machine, and the rest are counted as not sampled. A target with a dependency that is not cached is skipped, because its re-run could not find that dependency's outputs. `verify` takes the state lock, since it writes to `out/`, and records nothing: no cache row is written or forgotten, no log line is appended, and a re-run's bytes never reach `out/`. What only a re-run stored in the cas is named by no row and no log, and the next `gc` removes it. It prints on stderr, in label order, one line for each target that was checked, skipped or could not be put back, and for a re-run that failed a block (a header, a FAILED line, the diagnostic and what the action printed), then a summary line, and nothing on stdout; a mismatch line names the target, the output and the first difference (§12.3).
+`check`, `graph`, `query`, `plan`, `build`, `test`, `log`, `verify`, `clean`, `gc`, `doctor` and `plugins fetch` are built; each other command arrives with the item of §13 that names it. A command may run what a dependency built, with no `proc.run` entry for it (§6). `doctor` evaluates the build files once (twice when the workspace declares a discovery target, below) and takes no lock, writes nothing, plans nothing, hashes nothing and asks nothing; its wants are those of every target, tests included, at each setting's default, and it reports a want outside the ceiling or not approved and still exits 0. `plan` and `build` take any number of targets and, with none, every target but the tests (and the tests a target depends on); `plan` takes exactly what `build` takes, because it is that build's dry run. Both accept `--set name=value`, repeated, to give a build setting a value for the run (§10.2); `build` adds `--keep-going` (§8.4) and `--stream` (§8.7). `test` takes any number of targets and, with none, every test; it accepts `--set` like the others and adds `--stop` (§8.4), `--stream`, `--rerun` (§9.1) and `--verbose` (§8.7). It builds what the tests it runs depend on, as `build` would. Naming a target that is not a test is a usage error (exit code 2, §8.7). A command finds its workspace at the nearest `buildl.toml` at or above the current directory and prints paths relative to it. A target is written `//dir:name`, or `:name` and `name`, which are read against the current directory. `query` takes one expression, `deps(<target>)` or `rdeps(<target>)`, and prints the targets the named one depends on, or that depend on it, any number of steps away and without the target itself: one label a line in label order, or with `--json` as canonical JSON. Like `check` and `graph` it takes no lock and writes nothing. `log` takes exactly one target and at most one of `--stdout` and `--stderr`. It reads the log and the cas and nothing else: it takes no lock and loads no build file, so it answers while a build runs and whatever the build files now say, and it writes nothing but the cas's own removal of a blob whose bytes fail their digest. It looks the target up as the log names it, so it does not follow an alias. A target with no run that stored output is a usage error, which can offer the nearest label that has one; an output blob gone from the cas is an infrastructure failure. `verify` takes what `build` takes, the targets and `--set`, and with no target every target but the tests (and the tests a target depends on); it adds `--sample N`, a whole number of at least one. It plans as `build` does and checks only the targets the plan finds clean: it puts their outputs back under `out/` as a cache hit would, re-runs their actions in the input sandbox, and compares each output with the one the cache row records. Every other target in scope is counted as not cached, and so is a clean target whose stored content is gone or whose manifest does not hash to its digest. With no `--sample` every clean target is re-run; with `--sample N` the `N` whose key digests are lowest are, so the same keys check the same targets on every run and machine, and the rest are counted as not sampled. A target with a dependency that is not cached is skipped, because its re-run could not find that dependency's outputs. `verify` takes the state lock, since it writes to `out/`, and records nothing: no cache row is written or forgotten, no log line is appended, and a re-run's bytes never reach `out/`. What only a re-run stored in the cas is named by no row and no log, and the next `gc` removes it. It prints on stderr, in label order, one line for each target that was checked, skipped or could not be put back, and for a re-run that failed a block (a header, a FAILED line, the diagnostic and what the action printed), then a summary line, and nothing on stdout; a mismatch line names the target, the output and the first difference (§12.3).
+
+`plugins fetch` loads no build file and asks no approver, and takes the state lock while it writes. For each plugin that comes from a repository, in name order, it does nothing, and runs no `git`, when the lock holds an entry for the `git` and `rev` `buildl.toml` names and the stored files digest to that entry's `sha256`. Otherwise it runs the engineer's own `git`, with its credentials and configuration and with its repository-locating variables cleared: it fetches the one commit the tag or the commit names, at depth 1, into a staging directory under `.buildl/plugins/`, drops `.git`, digests the files, and moves them to `.buildl/plugins/<name>/<commit>/`. When the lock already holds an entry for that `git` and `rev` and the fetch brings another commit or other files, the tag has moved or the content changed, and the fetch is refused (exit 6) rather than re-pin silently; changing `rev` in `buildl.toml` is how a plugin is moved on. The lock is written once at the end, and only when an entry changed, and what no entry names is removed from the store. On stderr it prints, for each plugin in name order, `fetched <name> <commit>` or `unchanged <name> <commit>`. A `git` that is not on `PATH`, cannot be started, or refuses the repository or the revision is an infrastructure failure (exit 3) naming the plugin and what `git` printed; a fetched tree that holds a symbolic link, a special file, a name that is not Unicode, or no file at all is refused (exit 5), as an output that holds one is (§8.7). A `rev` that is a commit needs the server to serve a bare commit; a tag never does, and a host that will not serve a commit says so in `git`'s own words.
+
+**Discovery.** A workspace that declares no discovery target (§10) loads its build files once, and every command is as above. One that does has them evaluated twice: the first time with no discovery results, to find the discovery targets, and the second with the last result of each, so the targets declared from a result exist. Only `build` and `test` run discovery targets; every other command declares from the last result this checkout recorded, so that commands which run nothing never run anything.
+
+```mermaid
+%% build and test when the workspace declares discovery targets
+flowchart TD
+    L1["Load<br/>no discovery results"] --> R1["Resolve, narrow<br/>the discovery targets and what they need"]
+    R1 --> X1["Plan, approve, Execute, Record<br/>the discovery targets only"]
+    X1 --> L2["Load again<br/>with the results just recorded"]
+    L2 --> X2["The command as before<br/>Resolve, narrow, Plan, approve, Execute, Record"]
+```
+
+|Command|What it does with discovery targets|
+|---|---|
+|`build`, `test`|the flow above. Two approvals: `interactive` asks the second time only about wants the first yes did not cover. A discovery target that does not succeed ends the command with that failure, and nothing is declared from it. A result that cannot be read back right after its target succeeded is an infrastructure failure (exit 3) naming the target. Their default scope leaves discovery targets out; `buildl build //svc:pkgs` builds one. `buildl test //svc:pkgs` is a usage error, after discovery has run, since a label may exist only once the second load has declared it|
+|`plan`, `verify`, `gc`|load, read the last results, load again, then as before; nothing is run to get them. `plan` also lists each discovery target that is not up to date, as `//svc:pkgs is not up to date; targets declared from it may change`, since what it declares may differ once it has run. `gc` therefore keeps the rows of targets declared from a result|
+|`check`, `graph`, `query`, `doctor`|the same, without the state lock and without writing anything. `check` evaluates the build files once without results and twice with them, and compares those two as it compares any two evaluations. A discovery target with no result prints `//svc:pkgs has not run; run buildl build` on stderr, never stdout|
+
+A result is the one output of the newest logged run of that discovery target that succeeded, built or cached, read from the cas; the log and the cas are what `log` reads (§8.7). One that cannot be read counts as none, so a damaged log never stops `check`. The second evaluation must declare the discovery targets the first did, field for field: one added, removed or changed is refused, naming the target and its build file (exit 5), since discovery may not depend on discovery. The graph is then a function of the sources, the plugins, the settings and the results; a fresh clone has no results until its first `build`, and the commands that run nothing show the graph without the targets discovery adds, and say so.
 
 Three workflow rules adopted deliberately:
 
@@ -361,11 +421,11 @@ Events invalidate stat-cache entries for the touched paths. A changed build defi
 
 |Class|Meaning|Examples|
 |---|---|---|
-|Action failure|the build did its job by revealing it|compile error, test failure, a command ended by a signal, a declared output left missing or left as something that cannot be kept|
+|Action failure|the build did its job by revealing it|compile error, test failure, a command ended by a signal, a declared output left missing or left as something that cannot be kept, a discovery target's output left as a directory (§10)|
 |Infrastructure failure|the builder is sick|missing tool, sandbox error, timeout|
-|Policy refusal|the build wants more than the ceiling, or more than was approved|ungranted program or path, a program a command names through `$in` or `$out`, or an approver's no (§6); never a program a dependency built|
+|Policy refusal|the build wants more than the ceiling, more than a plugin allows, or more than was approved|ungranted program or path, a program a command names through `$in` or `$out`, a want outside what the plugin whose target wants it allows (§10), or an approver's no (§6); never a program a dependency built|
 
-A policy refusal precedes execution in every case. Plan expands every command, so a program is refused at plan however the command names it — written out, through a build setting, or through `$in`, `$out` or `$deps` — and a program a dependency built is never refused (§6). Execute holds each program to the same rule again before the first action starts, as the last guard. Either way a refusal is an error of the whole build and never the result of one action.
+A policy refusal precedes execution in every case. Plan expands every command, so a program is refused at plan however the command names it — written out, through a build setting, or through `$in`, `$out` or `$deps` — and a program a dependency built is never refused (§6). The wants of a plugin's targets are held to what their plugins allow before they are held to the ceiling (§10). Execute holds each program to the same rule again before the first action starts, as the last guard. Either way a refusal is an error of the whole build and never the result of one action.
 
 An action that exits zero has still failed when an output it declares is not there, or is something buildl cannot keep. An output holds regular files only (§3), because only those can be put back exactly by placing files. So four things are refused, and the failure report names which one and where:
 
@@ -383,12 +443,12 @@ Each class maps to a distinct process exit code, so CI distinguishes "fix your c
 |Code|Means|Given for|
 |---|---|---|
 |0|done|a command that did what it was asked; for `build`, every target built or served from the cache|
-|1|fix your code|an action failure: a non-zero exit, a command ended by a signal, an output missing or refused; for `verify`, a re-run whose output differs from the cached one|
+|1|fix your code|an action failure: a non-zero exit, a command ended by a signal, an output missing or refused, a discovery target's output left as a directory; for `verify`, a re-run whose output differs from the cached one|
 |2|fix the command line|a flag or argument that is wrong, a target nothing declares, a target `test` is given that is not a test, `--set` on a setting nothing declares, `log` of a target with no run that stored output|
-|3|fix your builder, or run again|an infrastructure failure: a missing tool, a command that cannot be started or runs past the timeout, an output that cannot be stored, an output `log` finds gone from the store, a file of the store or the state that cannot be read or written, a remembered approvals file that cannot be read or written or no data directory to keep it in (§6), a workspace another buildl is using; for `verify`, a target skipped or not put back because the content the cache names is not held or could not be placed|
-|4|the build wants more than the ceiling, or than was approved|a policy refusal: a want outside the ceiling, or an approver's no (§6)|
-|5|fix your build files or `buildl.toml`|a build file that fails, is missing or declares differently twice; a duplicate, an unknown reference or a cycle; an input that is missing or is not a regular file; two outputs at one path; a command that names no program; a target that declares a variable the sandbox sets itself (§12.3); no `buildl.toml`, an invalid one, or a strategy this version cannot run (§4), `bare` for `verify` included|
-|6|a state file is not what buildl writes|`cache.json`, or a line of its journal, that is damaged or was edited (§3); the remembered approvals file (§6)|
+|3|fix your builder, or run again|an infrastructure failure: a missing tool, a command that cannot be started or runs past the timeout, an output that cannot be stored, an output `log` finds gone from the store, a file of the store or the state that cannot be read or written, a remembered approvals file that cannot be read or written or no data directory to keep it in (§6), a workspace another buildl is using, a plugin's store or `buildl.lock` that cannot be written, a `git` that cannot be run or refuses the repository or the revision (`plugins fetch`), a discovery result that cannot be read back after its target ran (§7); for `verify`, a target skipped or not put back because the content the cache names is not held or could not be placed|
+|4|the build wants more than the ceiling, than a plugin allows, or than was approved|a policy refusal: a want outside the ceiling, a want outside what a plugin allows (§10), or an approver's no (§6)|
+|5|fix your build files or `buildl.toml`|a build file that fails, is missing or declares differently twice; a duplicate, an unknown reference or a cycle; an input that is missing or is not a regular file; two outputs at one path; a command that names no program; a target that declares a variable the sandbox sets itself (§12.3); a plugin `buildl.toml` names that is not fetched (§4); a plugin that cannot be used: an `extension.toml` that is invalid, asks for more than `proc.run` and `env.read` or names another plugin than the table does, an unknown plugin name, plugins that use each other in a cycle, a `require` that leaves the plugin's directory, or plugin Lua that fails (§10); discovery targets that differ once their results are read (§7); a plugin that `plugins fetch` finds holding a link or a special file; no `buildl.toml`, an invalid one, or a strategy this version cannot run (§4), `bare` for `verify` included|
+|6|a state file is not what buildl writes|`cache.json`, or a line of its journal, that is damaged or was edited (§3); the remembered approvals file (§6); `buildl.lock`; a plugin whose stored files are not the ones `buildl.lock` pins, or that `plugins fetch` finds fetching as another commit or other files than the lock pins (§4)|
 |7|buildl is at fault|an internal error|
 
 When a build has both, an infrastructure failure decides the code over an action failure: a sick builder means the run says nothing reliable about the code. `verify` exits 0 only when no target mismatched, failed, was skipped or could not be put back; a re-run that fails exits with the code its class gives a build, and when several apply the most severe is given. For `build` and `test`, a skipped target never decides it; the failure that caused the skip does. For `verify` there is no such failure, since a skip comes from content missing from the store, so a skipped target alone gives exit code 3. The codes stay clear of 126, 127 and 128+n, to which a shell gives meanings of its own, and an action's own exit status is never buildl's: it is in the failure report.
@@ -504,11 +564,11 @@ b.target("server", {
 
 `b.fetch` is the one primitive that needs network (a declared, plan-visible exception), and the checksum makes it deterministic despite the network: the download matches the pinned hash or the action fails. Content-addressing turns an impure operation into a pure one — the `http_archive` + `sha256` pattern [5].
 
-Core buildl ships level 1 (zero-configuration day-one experience); plugins deliver level 3 as one line: `b.use("go", { toolchain = "1.22.5" })` makes the plugin declare the fetch, wire the dep, and rewrite the argv for every generated target.
+Core buildl ships level 1 (zero-configuration day-one experience); plugins deliver level 3 as one line: with `local go = buildl.use("go")`, a call such as `go.toolchain("1.22.5")` makes the plugin declare the fetch, wire the dep, and rewrite the argv for every generated target. The plugin mechanism (§10) is built; `b.fetch` and the toolchain idiom on top of it are not.
 
 ## 10. Plugins
 
-A buildl plugin is Lua that runs in the declaration phase — it cannot execute anything, so its entire power is generating primitives from intent. Structurally it is an airsl extension: manifest plus confined multi-file Lua [1].
+A buildl plugin is Lua that runs in the declaration phase — it cannot execute anything, so its entire power is generating primitives from intent. Structurally it is an airsl extension: manifest plus confined multi-file Lua [1]. The manifest is airsl's own `extension.toml`, read by airsl, so buildl keeps no manifest grammar of its own.
 
 ```lua
 -- usage
@@ -517,10 +577,12 @@ go.binary("server", { main = "./cmd/server", deps = { "//proto:go" } })
 ```
 
 ```toml
-# plugins/go/plugin.toml
-[plugin]
-name = "go"
-api  = 1
+# plugins/go/extension.toml
+[extension]
+name    = "go"          # the same name as the workspace's [plugins.go] (§4)
+version = "1.2.0"
+entry   = "main.lua"    # the file buildl.use runs
+api     = 1
 [capabilities]          # what my generated targets will want
 proc.run = ["go"]
 env.read = ["HOME", "PATH", "GOCACHE"]
@@ -534,9 +596,67 @@ graph LR
     CALL --> T3["server_vet<br/>go vet, same inputs"]
 ```
 
-The manifest's capability block provides **attribution** (`plan` reports "wants go — declared by plugin <go@1.x> for //services/api:server") and **per-plugin narrowing** (a workspace may cap what each plugin can request; a compromised plugin update wanting `curl` is caught). Request ∩ plugin capability ∩ workspace ceiling — the extension host's intersection applied twice. Plugins need the manifest/ceiling/approver side of the airsl extension work but not the `ext.on` dispatcher.
+**Where a plugin comes from.** The workspace names every plugin in `buildl.toml` (§4), as a directory of the workspace or as a tag or commit of a git repository on any host, and a build file only says `buildl.use("go")`. A plugin from a repository is fetched by `buildl plugins fetch` and by nothing else; every command that loads build files checks it, before the first file is evaluated, against `buildl.lock` and the store, and never reaches the network. Fetching pins the commit and the digest of its files, so a tag that moves or a store that is edited is refused, not trusted (§4, §7).
 
-**The one hard problem, decided now:** plugins must not execute tools at declaration time (`go list`, etc.) — that would run programs before any plan is shown. Declaration capability stays fs-read only. Genuine dynamic discovery uses a _discovery target_: an ordinary cached action whose JSON output a plugin consumes on the next declaration pass. Everything executed stays inside the granted, planned, cached world.
+**The manifest.** buildl reads `name`, `version` (text for display, never compared), `entry` and `api` from `[extension]`, and `proc.run` and `env.read` from `[capabilities]`. airsl refuses an `api` it does not support before any code runs, and an `entry` that is not a file inside the plugin's directory. buildl refuses, naming `<plugin directory>/extension.toml`, what airsl accepts and buildl would otherwise ignore, because a request silently ignored reads as one granted: `fs.read`, `fs.write`, a module flag, a `[capabilities.optional]` block and a `[limits]` value. A `name` that is not the one the workspace's `[plugins.<name>]` uses is refused too.
+
+**What a plugin sees.** Each instance of a plugin runs in a new environment, never a read-through to the build file's globals, because a plugin that reached the file's `buildl` — directly or as `airsstack.buildl`, the same table (§5) — would declare without its name and skip its cap. It holds, and holds only:
+
+|Name|Value|
+|---|---|
+|`buildl`|a new table of the declaration primitives whose declarations carry this instance's origin, with its own `use`|
+|`airsstack`|a new table holding a copy of each curated module (`json`, `path`, `regex`, `hash`, `glob`) and, as `buildl`, the table above|
+|`require`|loads `<plugin directory>/a/b.lua` for `require("a.b")`, and nothing outside the plugin directory|
+|`_G`|the environment itself|
+|`string`, `table`, `math`, `utf8`, `pairs`, `tostring` and the other language globals|copies, one level deep, of the file's, with buildl's replacements (`tostring`, `string.format`) and withholdings (`print`, `math.random`)|
+
+The library and module tables are copies made when the file's engine was built, so a plugin that assigns into `string`, `table` or `airsstack.json` changes only its own, and cannot change what the build file or another instance calls. airsl's own `require` comes only with a language surface that also exposes `os.time` and `os.clock`, which differ from run to run (§12.1), so the plugin's `require` is buildl's: a module name is names joined by dots, none empty and none holding a slash or `..`; the file must lie inside the plugin's directory, through a link or otherwise; a module that requires itself, directly or through others, is refused; a module runs under its instance's environment, once per instance. A build file may still hand its own `buildl` table to a plugin's function as an argument; what the plugin declares through that table is the build file's, written in the build file. A plugin's Lua counts toward the calling build file's `[declaration]` limits, and an error in it fails that file's evaluation with a diagnostic naming the plugin's file and line.
+
+**Origin.** Every declaration carries its origin: the build file, or the chain of plugins that made it, outermost first, each as `name@version` with the capabilities its manifest states. The `buildl` table of a plugin instance stamps what is declared through it; the stamp is not read off the Lua call stack, where a tail call loses frames. An instance belongs to a chain, not to a name: `go` used by a build file is the instance `[go]`, and `go` used by `ourgo` is another, `[ourgo, go]`, with its own modules, each loaded once per evaluation. A plugin resolves names through the workspace's `[plugins]` only and may not use a plugin already in its chain. Origin is display and policy and is no component of the action key (§8.3): a target moved from a plugin to a hand-written `b.target` with the same fields stays cached. `buildl graph --json` shows each node's `origin`.
+
+**Narrowing.** Before the ceiling, every want of a plugin's target is held to **each** plugin in its chain, and to those in the chain of the rule it names, so a hand-written `b.target{ rule = … }` naming a plugin's rule is held to that plugin. A want is allowed by a plugin only when its manifest lists it and the workspace's cap for it (§4) lists it too:
+
+|Want|Allowed when|
+|---|---|
+|a program|every plugin's manifest `proc.run` and cap `proc.run` list it|
+|an environment variable|every plugin's manifest `env.read` and cap `env.read` list it|
+|`network = true`|every plugin's cap has `network = true`|
+
+A plugin the workspace gives no cap allows its targets nothing. Inputs and write directories are not narrowed per plugin, and a program a dependency built is no want (§6). A wrapper is held as well as what it wraps: `ourgo` calling `go.binary` needs both `ourgo` and `go` to allow what the target runs. The first want refused is an error of the whole build, before anything runs, in the class of a want outside the ceiling (exit 4, §8.7), and it names the target, the chain, and what the plugin allows:
+
+```text
+build.lua: //services/api:server (plugin go@1.3.0): program curl is outside plugin go@1.3.0 (proc.run allows: go)
+```
+
+A want that passes its plugins is then held to the ceiling as before: request ∩ plugin manifest ∩ the workspace's cap for the plugin ∩ workspace ceiling — the extension host's intersection applied twice, so a compromised plugin update wanting `curl` is caught. Plugins need the manifest/ceiling/approver side of the airsl extension work but not the `ext.on` dispatcher.
+
+**Attribution.** For each program, variable and network target the wanted set holds, `plan`, the approval prompt (§6) and `doctor` (§7) name every plugin chain whose targets want it, each with the lowest-labelled such target:
+
+```text
+run programs: go, protoc
+  go: declared by plugin go@1.2.0 for //services/api:server
+  protoc: declared by plugin ourgo@0.1.0 > go@1.2.0 for //proto:gen
+```
+
+`plan` prints them after the wanted set, the prompt after its list, and `doctor` under the want's own row. A network want is shown by its target's label. A write directory is the workspace's own and is never attributed, and a want only hand-written targets want has no line. `doctor` also ends with a `plugin violations` section listing each want a plugin does not allow, worded as the refusal of a build would word it; like the rest of `doctor` it refuses nothing and exits 0. Attribution is kept beside the wanted set and is display only, so the wanted set and the remembered approvals file keep their shape.
+
+**The one hard problem, decided now:** plugins must not execute tools at declaration time (`go list`, etc.) — that would run programs before any plan is shown. A plugin holds no authority a build file lacks. Genuine dynamic discovery uses a _discovery target_: an ordinary cached action whose JSON output the build files read on a second declaration pass. Everything executed stays inside the granted, planned, cached world.
+
+```lua
+b.discover("pkgs", { run = { "go", "list", "-json", "./..." }, inputs = { "go.mod" },
+                     network = true })
+local text = b.discovered("//svc:pkgs")           -- the output's bytes as a string, or nil
+local pkgs = text and airsstack.json.decode(text) or {}
+```
+
+|Rule|Detail|
+|---|---|
+|declaration|`b.discover` takes `b.target`'s table without `outputs` and `always`; naming either is an error. Its one output is `<name>.json`, placed by buildl as any output is, and must be a file: an action that leaves a directory there fails as an action failure (exit 1). It is a third role beside build and test targets|
+|a target like any other|keyed, cached, run in the input sandbox, held to the ceiling and to its plugins, and logged. A plugin declares and reads discovery targets through its own `buildl` table|
+|reading|`b.discovered(label)` returns the output of the target's newest logged run that succeeded, as text, or `nil` when there is none; relative labels resolve as `deps` do|
+|scope|`build` and `test` leave discovery targets out of their default scope, and `buildl build //svc:pkgs` builds one|
+|passes|a workspace with no discovery target is evaluated once. Otherwise the build files are evaluated without results, then with them; `build` and `test` run the discovery targets between the two, and every other command reads the last result its checkout recorded (§7)|
+|consistency|the second evaluation must declare the same discovery targets as the first, field for field; one added, removed or changed is refused (exit 5), since discovery may not depend on discovery|
 
 Downstream of any plugin, the system still speaks primitives: `buildl graph` shows exactly what a plugin declared, which is what makes third-party plugins inspectable.
 
@@ -564,10 +684,10 @@ b.target("fuzz_auth", {
 })
 ```
 
-**Wrapping and composing.** A plugin is a Lua module returning functions, so a team writes a repo-local plugin encoding house rules on top of a public one — composition is function calls, and the manifest/attribution machinery applies to the wrapper like any plugin:
+**Wrapping and composing.** A plugin is a Lua module returning functions, so a team writes a repo-local plugin encoding house rules on top of a public one — composition is function calls, and the manifest, attribution and narrowing machinery applies to the wrapper like any plugin; what the wrapper generates is held to the wrapper and to the plugin it wraps:
 
 ```lua
--- plugins/ourgo/plugin.lua
+-- plugins/ourgo/main.lua, the entry its extension.toml names
 local go = buildl.use("go")
 local M = {}
 function M.service(name)
@@ -773,7 +893,7 @@ Dependency-ordered, with the airsl extension work interleaved:
 2. **`query` (`deps()`, `rdeps()`)** — small work, transforms CI for large repos. With it the commands around a build: `test`, `log`, `clean` and `gc` (§7). Parallel loading of build files (§11.1) lands here; demand-driven loading does not (§11.1).
 3. **Local input sandbox (tier 2)** — the correctness discipline everything remote depends on. `verify` (§12.3) lands here, and is built.
 4. **Grant negotiation UX** — wanted set, ceiling intersection, approver, and `doctor`, which prints the result (§7). Follows airsl's model (intersect, never union; the approver only narrows; fail closed) with buildl's own `Approver` port rather than airsl's types, which are shaped for an extension manifest; the manifest parser and `ext.on` dispatcher are not needed. Per-target grant narrowing (§14) is settled here, as declined. Built.
-5. **Plugins** — manifest, attribution, `b.use()`. Consumes the extension manifest format. Discovery targets (§10) land here.
+5. **Plugins** — `[plugins]` in `buildl.toml`, `buildl.lock` and `buildl plugins fetch` (§4, §7), the airsl extension manifest as `extension.toml`, `buildl.use`, attribution and per-plugin narrowing, and discovery targets (§10). Built.
 6. **Remote cache via REAPI** — most of the remote value at a fraction of the complexity.
 7. **Watch mode** — full-reload variant first; persistent-engine dispatch (`ext.on`) only if profiling demands it.
 8. **Remote execution, toolchain containers** — when a repo has genuinely outgrown one machine.
@@ -781,10 +901,10 @@ Dependency-ordered, with the airsl extension work interleaved:
 ## 14. Open questions
 
 - **Label syntax details:** _resolved_ — `//dir:target` is adopted, and relative labels are too: a build file may write `:sibling` or a bare `name`, both resolved against the declaring directory, which is what §5's own `deps = { "main.o", "util.o", "//lib:text" }` already mixes. A directory-only `//dir` is rejected rather than read as `//dir:dir`. `subdir` is explicit only, never implicit via file discovery: a build file is evaluated because an evaluated build file named its directory, never because it exists on disk, so the evaluated set is exactly the root plus the closure of `subdir` requests.
-- **Discovery targets** (§10): _partially resolved_ — `b.fetch` (§9.6) settles the most important case: an impure operation made pure by a pinned checksum. The general contract for feeding an arbitrary cached action's JSON output back into declaration (one extra pass vs a fixpoint) remains open.
+- **Discovery targets** (§10): _resolved_ — `b.fetch` (§9.6) settles the case of an impure operation made pure by a pinned checksum, and the general contract is one extra pass, not a fixpoint. A discovery target is an ordinary cached action with one file output; the build files are evaluated once without results and once with the last result of each, and the second evaluation may not declare different discovery targets than the first. Only `build` and `test` run discovery targets; every other command declares from the last result its checkout recorded, so a fresh clone shows the graph without the targets discovery adds until its first `build` (§7). Still outside the contract: discovery repeated until nothing changes, and discovery in the middle of an action; either extends it if it is ever required.
 - **Per-target grant narrowing:** _declined_ — the wanted set stays workspace-granular. Each action already receives only its own declared variables (tiers 1 and 2) and, at tier 2, only its declared inputs (§12.2); a grant narrower per target matters only where an OS sandbox can enforce it (tier 3).
 - **`buildl.toml` vs declaration in Lua:** the ceiling must stay in inert TOML (it gates the Lua). How much of `[execution]` belongs there versus in the root build file is taste.
-- **API versioning for plugins:** same decision airsl's extension doc flags — additive-only within `api = 1`, or looser; must be decided before the first third-party plugin ships [1].
+- **API versioning for plugins:** _resolved_ — the `api` key of `extension.toml` is airsl's, and airsl refuses a plugin whose `api` it does not support before any of its code runs [1]. Within `api = 1` the `buildl` table a plugin sees only gains names, the rule airsl follows for its own; buildl has no second version number.
 
 ## References
 
