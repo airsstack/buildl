@@ -198,11 +198,13 @@ pub(crate) fn primitives_table(
     let staging_ref = Arc::clone(staging);
     let results = results.clone();
     let discovered = lua.create_function(move |lua, label: Value| {
-        let bytes = guarded(lua, &staging_ref, "discovered", |_| {
-            let label = primitives::discovered(&label, results.directory())?;
-            Ok(results.get(&label).map(<[u8]>::to_vec))
+        let label = guarded(lua, &staging_ref, "discovered", |_| {
+            primitives::discovered(&label, results.directory())
         })?;
-        bytes.map(|bytes| lua.create_string(bytes)).transpose()
+        results
+            .get(&label)
+            .map(|bytes| lua.create_string(bytes))
+            .transpose()
     })?;
     table.set("discovered", discovered)?;
 

@@ -9,16 +9,14 @@
 //! Non-responsibilities: producing the results, which running a discovery target does, and the
 //! shape of the `discovered` call, which `primitives` owns.
 
-use std::sync::Arc;
-
 use buildl_core::{Directory, Discovered, Label};
 
 /// The discovery results handed to one evaluation, and the build file's directory.
 ///
-/// Clones share the results.
+/// Clones share the results: [`Discovered`] holds them behind a shared pointer.
 #[derive(Debug, Clone)]
 pub(crate) struct Results {
-    discovered: Arc<Discovered>,
+    discovered: Discovered,
     directory: Directory,
 }
 
@@ -26,7 +24,7 @@ impl Results {
     /// The results `discovered`, read by the build file in `directory`.
     pub(crate) fn new(discovered: &Discovered, directory: &Directory) -> Self {
         Self {
-            discovered: Arc::new(discovered.clone()),
+            discovered: discovered.clone(),
             directory: directory.clone(),
         }
     }

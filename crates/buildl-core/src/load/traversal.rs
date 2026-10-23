@@ -34,9 +34,10 @@ use crate::types::{
 /// The walk starts at the workspace root and follows `subdir` requests, evaluating each directory
 /// once, with `dispatcher` deciding how many files are evaluated at a time. Nothing is discovered
 /// from the filesystem: the evaluated build files are exactly the root's and those a `subdir`
-/// call reaches. `discovered` is handed to every evaluation. The result is sorted by declaring directory, then declared name, then the whole
-/// declaration, and the error is the one a walk in breadth-first order would meet first, so
-/// neither depends on the order anything was evaluated or declared in.
+/// call reaches. `discovered` is handed to every evaluation. The result is sorted by declaring
+/// directory, then declared name, then the whole declaration, and the error is the one a walk in
+/// breadth-first order would meet first, so neither depends on the order anything was evaluated or
+/// declared in.
 ///
 /// # Errors
 ///
@@ -204,10 +205,8 @@ fn refuse_discovery_overrides(staged: &StagedTarget, site: &Site<'_>) -> Result<
     }
     if staged.freshness == Freshness::Always {
         return Err(site.invalid(DeclarationField::Freshness)(
-            Error::InvalidName {
-                kind: NameKind::Freshness,
-                value: "always".to_owned(),
-                reason: "a discovery target is always cached",
+            Error::NotAccepted {
+                reason: "a discovery target is always cached, so it cannot always run",
             },
         ));
     }

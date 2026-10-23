@@ -53,6 +53,12 @@ pub enum Error {
         /// Why the grammar rejected it.
         reason: &'static str,
     },
+    /// A declaration holds a value its kind of target does not take.
+    #[error("{reason}")]
+    NotAccepted {
+        /// Why the declaration cannot hold the value.
+        reason: &'static str,
+    },
     /// A value could not be serialized as JSON at all.
     #[error("value could not be serialized as canonical JSON")]
     CanonicalJson {
@@ -960,8 +966,6 @@ pub enum NameKind {
     TagName,
     /// The URL of a git repository.
     GitUrl,
-    /// Whether a target's result may be reused.
-    Freshness,
 }
 
 impl fmt::Display for NameKind {
@@ -995,7 +999,6 @@ impl fmt::Display for NameKind {
             Self::CommitId => "commit id",
             Self::TagName => "tag name",
             Self::GitUrl => "git URL",
-            Self::Freshness => "freshness",
         })
     }
 }
@@ -1939,7 +1942,6 @@ mod tests {
         assert_eq!(NameKind::PluginName.to_string(), "plugin name");
         assert_eq!(NameKind::PluginVersion.to_string(), "plugin version");
         assert_eq!(NameKind::PluginChain.to_string(), "plugin chain");
-        assert_eq!(NameKind::Freshness.to_string(), "freshness");
     }
 
     #[test]
@@ -2115,6 +2117,14 @@ mod tests {
             std::error::Error::source(&err).unwrap().to_string(),
             source_text
         );
+    }
+
+    #[test]
+    fn not_accepted_states_why_the_declaration_cannot_hold_the_value() {
+        let err = Error::NotAccepted {
+            reason: "a discovery target is always cached",
+        };
+        assert_eq!(err.to_string(), "a discovery target is always cached");
     }
 
     #[test]

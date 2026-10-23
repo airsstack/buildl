@@ -134,6 +134,7 @@ impl Exit {
             | Error::NonCanonicalJson { .. }
             | Error::PluginChanged { .. } => Self::CorruptState,
             Error::InvalidName { .. }
+            | Error::NotAccepted { .. }
             | Error::CanonicalJson { .. }
             | Error::FloatRejected { .. }
             | Error::ForeignPlan

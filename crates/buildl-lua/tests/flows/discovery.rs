@@ -169,10 +169,7 @@ fn discovered_resolves_bare_and_absolute_labels_like_deps() {
 #[test]
 fn an_unparseable_label_is_refused_naming_the_line() {
     let (failure, diagnostic) = failure_of("\n\nbuildl.discovered('//svc')");
-    assert!(
-        matches!(failure, EvaluationFailure::WrongFieldType { .. }),
-        "{failure:?}"
-    );
+    assert!(matches!(failure, EvaluationFailure::Refused), "{failure:?}");
     assert!(
         diagnostic
             .as_str()

@@ -577,7 +577,10 @@ fn a_staged_discovery_that_always_runs_is_refused() {
     .unwrap_err();
 
     match error {
-        Error::InvalidDeclaration { field, .. } => assert_eq!(field, DeclarationField::Freshness),
+        Error::InvalidDeclaration { field, source, .. } => {
+            assert_eq!(field, DeclarationField::Freshness);
+            assert!(matches!(*source, Error::NotAccepted { .. }), "{source:?}");
+        }
         other => unreachable!("expected InvalidDeclaration, got {other:?}"),
     }
 }

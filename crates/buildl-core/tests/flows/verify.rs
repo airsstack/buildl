@@ -11,8 +11,8 @@ use std::collections::BTreeMap;
 use buildl_core::{
     ActionOutcome, Check, Digest, EntryChange, EntryName, Error, FileChange, FileMode, FileStat,
     Freshness, Label, LiveOutput, OnFailure, OutcomeClass, OutputDifference, OutputManifest,
-    OutputName, OutputPath, Pipeline, Rerun, Sample, Scope, SourcePath, TargetRole, Timestamp,
-    TreePath, Verification, Written,
+    OutputName, OutputPath, OutputRefusal, Pipeline, Rerun, Sample, Scope, SourcePath, TargetRole,
+    Timestamp, TreePath, Verification, Written,
 };
 
 use crate::common::{
@@ -255,6 +255,37 @@ fn a_failed_rerun_carries_its_class_and_what_it_printed() {
         "the re-runs go on"
     );
     assert_eq!(check(&verification, "//:c"), &Check::Verified);
+}
+
+#[test]
+fn a_discovery_target_whose_rerun_leaves_a_directory_is_refused_as_not_a_file() {
+    let mut pipeline = root_only(vec![target_with("pkgs", |target| {
+        target.role = TargetRole::Discovery;
+    })]);
+    build_named(&mut pipeline, &["//:pkgs"]);
+    script(
+        &mut pipeline,
+        "//:pkgs",
+        leaving("//:pkgs", "pkgs.json", tree(&[("a.json", "{}")])),
+    );
+
+    let verification = verify_scope(
+        &mut pipeline,
+        &Scope::Targets([label("//:pkgs")].into()),
+        Sample::All,
+    )
+    .unwrap();
+
+    let Check::Failed { class, .. } = check(&verification, "//:pkgs") else {
+        unreachable!("expected a failed check, got {verification:?}");
+    };
+    assert_eq!(
+        class,
+        &OutcomeClass::OutputRefused {
+            name: OutputName::parse("pkgs.json").unwrap(),
+            refusal: OutputRefusal::NotAFile,
+        }
+    );
 }
 
 #[test]

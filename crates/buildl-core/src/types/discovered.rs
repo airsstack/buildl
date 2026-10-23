@@ -9,30 +9,34 @@
 //! reading them back from the stores that kept them.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use crate::types::Label;
 
 /// The result of each discovery target that has one: its label, and the bytes of its one output.
 ///
 /// Ordered by label, so two maps holding the same results are equal however they were built.
+/// Clones share the results, so handing the map to every evaluation copies no bytes.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Discovered {
-    results: BTreeMap<Label, Vec<u8>>,
+    results: Arc<BTreeMap<Label, Vec<u8>>>,
 }
 
 impl Discovered {
     /// A map holding no result: no discovery target has run.
     #[must_use]
-    pub const fn empty() -> Self {
+    pub fn empty() -> Self {
         Self {
-            results: BTreeMap::new(),
+            results: Arc::new(BTreeMap::new()),
         }
     }
 
     /// A map holding `results`.
     #[must_use]
-    pub const fn new(results: BTreeMap<Label, Vec<u8>>) -> Self {
-        Self { results }
+    pub fn new(results: BTreeMap<Label, Vec<u8>>) -> Self {
+        Self {
+            results: Arc::new(results),
+        }
     }
 
     /// The bytes the discovery target `label` produced, or `None` when the map holds none.
@@ -50,6 +54,7 @@ mod tests {
     )]
 
     use std::collections::BTreeMap;
+    use std::sync::Arc;
 
     use super::Discovered;
     use crate::types::Label;
@@ -62,6 +67,14 @@ mod tests {
     fn an_empty_map_holds_no_result() {
         assert_eq!(Discovered::empty().get(&label("//svc:pkgs")), None);
         assert_eq!(Discovered::empty(), Discovered::default());
+    }
+
+    #[test]
+    fn a_clone_shares_the_results_it_was_cloned_from() {
+        let discovered = Discovered::new(BTreeMap::from([(label("//svc:pkgs"), b"x".to_vec())]));
+        let clone = discovered.clone();
+        assert!(Arc::ptr_eq(&discovered.results, &clone.results));
+        assert_eq!(clone, discovered);
     }
 
     #[test]

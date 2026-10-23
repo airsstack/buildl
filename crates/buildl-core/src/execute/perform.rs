@@ -201,9 +201,9 @@ pub(crate) const NOT_STORED: OutcomeClass = OutcomeClass::InfraFailure {
 /// - a symbolic link, or something that is neither a file nor a directory, is
 ///   [`OutcomeClass::OutputRefused`];
 /// - a directory is [`OutputRefusal::NotAFile`] for a discovery target, whatever it holds;
-/// - otherwise a directory is examined entry by entry in path order, and is refused for the first entry
-///   that is not a regular file — an empty directory, a symbolic link, something else, or a
-///   name that is not text — as it is when it holds nothing at all;
+/// - otherwise a directory is examined entry by entry in path order, and is refused for the
+///   first entry that is not a regular file — an empty directory, a symbolic link, something
+///   else, or a name that is not text — as it is when it holds nothing at all;
 /// - a directory whose files do not make a tree — a path that is not below the directory, one
 ///   listed twice, a file where another needs a directory — was misreported, which is the
 ///   builder's failure.

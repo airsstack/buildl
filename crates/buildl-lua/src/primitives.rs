@@ -135,9 +135,7 @@ pub(crate) fn discovered(label: &Value, base: &Directory) -> Result<Label, Refus
     let raw = string(label, "label")?;
     Label::resolve(&raw, base).map_err(|error| {
         Refusal::new(
-            EvaluationFailure::WrongFieldType {
-                field: Written::new("label"),
-            },
+            EvaluationFailure::Refused,
             format!("field 'label' must be a target label, found {raw:?}: {error}"),
         )
     })
@@ -412,6 +410,7 @@ mod tests {
             "buildl.discovered: field 'label' must be a string, found nil"
         );
         let refusal = discovered(&eval(&lua, "return '//svc'"), &base).unwrap_err();
+        assert_eq!(refusal.failure(), &EvaluationFailure::Refused);
         assert!(
             refusal.diagnostic("discovered", None).as_str().starts_with(
                 "buildl.discovered: field 'label' must be a target label, found \"//svc\""
