@@ -443,8 +443,8 @@ pub enum Error {
         path: PathBuf,
     },
     /// A plugin `buildl.toml` names is not there to use: it is a directory that does not
-    /// exist, or a git plugin that `buildl.lock` does not pin as `buildl.toml` names it or whose
-    /// store is missing.
+    /// exist, a git plugin that `buildl.lock` does not pin as `buildl.toml` names it or whose
+    /// store is missing, or a git revision that holds no file.
     #[error("plugin {plugin} is not fetched: {reason}")]
     PluginNotFetched {
         /// The plugin.

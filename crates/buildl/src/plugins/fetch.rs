@@ -77,8 +77,8 @@ impl Fetched {
 ///
 /// Returns [`Error::PluginFetch`] when `git` is not on `search`, cannot be run, or refuses the
 /// repository or the revision. Returns [`Error::PluginTree`] when a fetched plugin holds a
-/// symbolic link, a special file or a name that is not Unicode, and [`Error::InvalidTree`] when
-/// it holds no file. Returns [`Error::PluginChanged`] when a plugin the lock pins now fetches as
+/// symbolic link, a special file or a name that is not Unicode, and [`Error::PluginNotFetched`]
+/// when it holds no file. Returns [`Error::PluginChanged`] when a plugin the lock pins now fetches as
 /// another commit, as when its tag has moved, or as other files. Returns an adapter error for
 /// [`PortName::PluginStore`] when the store or the lock cannot be written, and the error of
 /// [`Lock::read`] when the lock is damaged. The first failure ends the run: the lock is left as
@@ -159,7 +159,13 @@ fn bring_in(
     let commit = git.head_commit(staging)?;
     let dot_git = staging.join(".git");
     clear_path(&dot_git).map_err(|error| unwritten("removing", &dot_git, &error))?;
-    let sha256 = tree_digest(plugin, staging)?;
+    let sha256 = tree_digest(plugin, staging).map_err(|error| match error {
+        Error::InvalidTree { .. } => Error::PluginNotFetched {
+            plugin: plugin.clone(),
+            reason: format!("{rev} fetched as {commit}, which holds no file; a plugin needs one"),
+        },
+        other => other,
+    })?;
     if let Some(entry) = pinned {
         if entry.commit != commit {
             return Err(changed(

@@ -27,7 +27,6 @@ use crate::local_ports::Wiring;
 use crate::log::LocalLog;
 use crate::plugins::{Fetched, fetch};
 use crate::report::Silent;
-use crate::search_path::SearchPath;
 use crate::state::{Cleaned, clear_out};
 
 /// The choices a caller makes about one build or test run that are neither in the workspace nor
@@ -96,8 +95,7 @@ impl Doctor {
 /// Opening one reads its manifest and nothing else. The state directory is taken by
 /// [`Workspace::plan`], [`Workspace::build`], [`Workspace::test`], [`Workspace::verify`],
 /// [`Workspace::gc`], [`Workspace::clean`] and [`Workspace::fetch_plugins`] only, and only while
-/// one of them runs, so a
-/// workspace kept open holds nothing while it is idle.
+/// one of them runs, so a workspace kept open holds nothing while it is idle.
 /// [`Workspace::check`], [`Workspace::graph`], [`Workspace::query`], [`Workspace::doctor`] and
 /// [`Workspace::log`] hold nothing even while they run.
 #[derive(Debug)]
@@ -474,14 +472,16 @@ impl Workspace {
     /// outside what the workspace allows a build to write into, and
     /// [`Error::Adapter`](buildl_core::Error::Adapter), naming
     /// [`PortName::ActionCache`](buildl_core::PortName::ActionCache), when another process
-    /// holds the workspace. Otherwise returns whatever [`fetch`] returns.
+    /// holds the workspace, and naming
+    /// [`PortName::ExecStrategy`](buildl_core::PortName::ExecStrategy) when the scratch
+    /// directory cannot be removed. Otherwise returns whatever [`fetch`] returns.
     pub fn fetch_plugins(&self) -> Result<Fetched> {
         let lock = self.wiring.lock()?;
         fetch(
             self.wiring.root().as_path(),
             lock.layout(),
             self.wiring.manifest().plugins(),
-            &SearchPath::from_process(),
+            self.wiring.search(),
         )
     }
 

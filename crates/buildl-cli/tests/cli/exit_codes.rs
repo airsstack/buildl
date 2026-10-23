@@ -1082,35 +1082,37 @@ fn plugin_repository(name: &str) -> (tempfile::TempDir, String) {
             "return module\n",
         ),
     );
-    let git = |args: &[&str]| -> String {
-        let output = Command::new("git")
-            .args([
-                "-c",
-                "user.name=Test",
-                "-c",
-                "user.email=test@example.invalid",
-                "-c",
-                "commit.gpgsign=false",
-                "-c",
-                "tag.gpgsign=false",
-            ])
-            .args(args)
-            .current_dir(&path)
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8(output.stdout).unwrap().trim().to_owned()
-    };
-    git(&["init", "-q", "-b", "main"]);
-    git(&["add", "."]);
-    git(&["commit", "-q", "-m", "plugin"]);
-    git(&["tag", "v1.0.0"]);
-    let commit = git(&["rev-parse", "HEAD"]);
+    git_in(&path, &["init", "-q", "-b", "main"]);
+    git_in(&path, &["add", "."]);
+    git_in(&path, &["commit", "-q", "-m", "plugin"]);
+    git_in(&path, &["tag", "v1.0.0"]);
+    let commit = git_in(&path, &["rev-parse", "HEAD"]);
     (dir, commit)
+}
+
+/// Runs `git args` in the repository at `path` and returns what it printed to standard output.
+fn git_in(path: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .args([
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "tag.gpgsign=false",
+        ])
+        .args(args)
+        .current_dir(path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
 }
 
 /// The `file://` address of the repository `dir` holds.
@@ -1185,6 +1187,51 @@ fn plugins_fetch_with_no_git_exits_3() {
     assert!(text.starts_with("error: "), "{text}");
     assert!(text.contains("hello"), "{text}");
     assert!(!root.join("buildl.lock").exists());
+}
+
+#[test]
+fn plugins_fetch_of_a_plugin_holding_a_link_exits_5() {
+    let (repository, _commit) = plugin_repository("hello");
+    let path = fs::canonicalize(repository.path()).unwrap();
+    symlink("/etc/hosts", path.join("hosts")).unwrap();
+    git_in(&path, &["add", "hosts"]);
+    git_in(&path, &["commit", "-q", "-m", "link"]);
+    git_in(&path, &["tag", "-f", "v1.0.0"]);
+    let (_dir, root) = workspace_using(&[("hello", &repository)]);
+
+    let output = run(&root, &["plugins", "fetch"], &[]);
+
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 5, "{}", stderr(&output));
+    let text = stderr(&output);
+    assert!(text.starts_with("error: "), "{text}");
+    assert!(text.contains("hello") && text.contains("hosts"), "{text}");
+    assert!(!root.join("buildl.lock").exists());
+}
+
+#[test]
+fn plugins_fetch_of_a_tag_that_moved_exits_6() {
+    let (repository, locked) = plugin_repository("hello");
+    let path = fs::canonicalize(repository.path()).unwrap();
+    let (_dir, root) = workspace_using(&[("hello", &repository)]);
+    let fetched = run(&root, &["plugins", "fetch"], &[]);
+    assert_eq!(code(&fetched), 0, "{}", stderr(&fetched));
+    let lock = fs::read(root.join("buildl.lock")).unwrap();
+    // The store is gone, as in a fresh checkout of a workspace whose lock is committed.
+    fs::remove_dir_all(root.join(".buildl/plugins")).unwrap();
+    write(&path, "later.txt", "later");
+    git_in(&path, &["add", "later.txt"]);
+    git_in(&path, &["commit", "-q", "-m", "later"]);
+    git_in(&path, &["tag", "-f", "v1.0.0"]);
+
+    let output = run(&root, &["plugins", "fetch"], &[]);
+
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 6, "{}", stderr(&output));
+    let text = stderr(&output);
+    assert!(text.starts_with("error: "), "{text}");
+    assert!(text.contains("hello") && text.contains(&locked), "{text}");
+    assert_eq!(fs::read(root.join("buildl.lock")).unwrap(), lock);
 }
 
 #[test]

@@ -19,6 +19,28 @@ use crate::search_path::SearchPath;
 /// The name `git` is looked for by.
 const GIT: &str = "git";
 
+/// The environment variables `git` reads to find the repository it acts on: those
+/// `git rev-parse --local-env-vars` prints. They are removed from every `git` that is run, so
+/// it acts on the repository in the directory it is given, whatever process started buildl.
+const REPOSITORY_ENV: [&str; 16] = [
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_CONFIG",
+    "GIT_CONFIG_PARAMETERS",
+    "GIT_CONFIG_COUNT",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_IMPLICIT_WORK_TREE",
+    "GIT_GRAFT_FILE",
+    "GIT_INDEX_FILE",
+    "GIT_NO_REPLACE_OBJECTS",
+    "GIT_REPLACE_REF_BASE",
+    "GIT_PREFIX",
+    "GIT_INTERNAL_SUPER_PREFIX",
+    "GIT_SHALLOW_FILE",
+    "GIT_COMMON_DIR",
+];
+
 /// The system `git`, run to fetch one plugin.
 ///
 /// A value belongs to one plugin, which every error it returns names.
@@ -76,7 +98,15 @@ impl Git {
         };
         self.run(
             dir,
-            &["fetch", "-q", "--depth", "1", url.as_str(), &refspec],
+            &[
+                "fetch",
+                "-q",
+                "--depth",
+                "1",
+                "--end-of-options",
+                url.as_str(),
+                &refspec,
+            ],
         )
         .map(drop)
     }
@@ -118,13 +148,18 @@ impl Git {
 
     /// Runs `git args` in `dir` and returns what it printed to standard output.
     ///
-    /// The engineer's `git` configuration applies. The messages are fixed to the C locale so
-    /// the diagnostic does not vary with it, and a prompt for a password on the terminal is
-    /// turned into a failure, so a fetch never waits for input.
+    /// The engineer's `git` configuration applies, but the variables that point `git` at a
+    /// repository do not. The messages are fixed to the C locale so the diagnostic does not
+    /// vary with it. `GIT_TERMINAL_PROMPT=0` makes `git` fail rather than ask for a credential
+    /// on the terminal, and standard input is closed. A program `git` starts that opens the
+    /// terminal itself, such as `ssh` asking for a passphrase, may still ask.
     fn run(&self, dir: &Path, args: &[&str]) -> Result<String> {
-        let output = Command::new(&self.program)
-            .args(args)
-            .current_dir(dir)
+        let mut command = Command::new(&self.program);
+        command.args(args).current_dir(dir);
+        for name in REPOSITORY_ENV {
+            command.env_remove(name);
+        }
+        let output = command
             .env("LC_ALL", "C")
             .env("GIT_TERMINAL_PROMPT", "0")
             .stdin(Stdio::null())
@@ -162,7 +197,7 @@ mod tests {
     )]
 
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
 
     use buildl_core::{Error, GitUrl, PluginName, Rev};
@@ -322,6 +357,82 @@ mod tests {
         git.checkout_fetched(dir.path()).unwrap();
 
         assert_eq!(git.head_commit(dir.path()).unwrap().as_str(), tagged);
+    }
+
+    /// A `Git` that runs `env`, so that `run` prints the environment `git` would be given.
+    fn env_printer() -> Git {
+        Git {
+            program: PathBuf::from("/usr/bin/env"),
+            plugin: plugin(),
+        }
+    }
+
+    #[test]
+    fn git_is_run_in_the_c_locale_and_told_not_to_prompt() {
+        let dir = target();
+
+        let printed = env_printer().run(dir.path(), &[]).unwrap();
+
+        let lines: Vec<&str> = printed.lines().collect();
+        assert!(lines.contains(&"LC_ALL=C"), "{printed}");
+        assert!(lines.contains(&"GIT_TERMINAL_PROMPT=0"), "{printed}");
+    }
+
+    /// Set on the child process that runs `foreign_repository_in_the_environment_child`: the
+    /// directory to fetch into, a newline, then the url of the repository to fetch from.
+    const CHILD: &str = "BUILDL_TEST_FETCH_CHILD";
+
+    /// The body of the child process of
+    /// `a_repository_named_by_the_environment_is_not_the_one_fetched_into`. Run on its own, with
+    /// `CHILD` unset, it does nothing.
+    #[test]
+    fn foreign_repository_in_the_environment_child() {
+        let Ok(arguments) = std::env::var(CHILD) else {
+            return;
+        };
+        let (dir, source) = arguments.split_once('\n').unwrap();
+        let (dir, git) = (Path::new(dir), git());
+
+        git.init(dir).unwrap();
+        git.fetch_rev(dir, &GitUrl::parse(source).unwrap(), &rev("v1"))
+            .unwrap();
+        git.checkout_fetched(dir).unwrap();
+
+        assert!(dir.join("plugin.txt").is_file());
+    }
+
+    #[test]
+    fn a_repository_named_by_the_environment_is_not_the_one_fetched_into() {
+        let source = Source::new();
+        source.commit("plugin.txt", "one");
+        source.git(&["tag", "v1"]);
+        let foreign = Source::new();
+        foreign.commit("mine.txt", "mine");
+        let before = foreign.git(&["status", "--porcelain"]);
+        let dir = target();
+        // A process whose environment names the foreign repository, as a git hook's does.
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "plugins::git::tests::foreign_repository_in_the_environment_child",
+            ])
+            .env(CHILD, format!("{}\n{}", dir.path().display(), source.url()))
+            .env("GIT_DIR", foreign.path.join(".git"))
+            .env("GIT_WORK_TREE", &foreign.path)
+            .env("GIT_INDEX_FILE", foreign.path.join(".git/index"))
+            .output()
+            .unwrap();
+
+        assert!(
+            child.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&child.stdout),
+            String::from_utf8_lossy(&child.stderr)
+        );
+        assert!(dir.path().join(".git").is_dir());
+        assert!(!foreign.path.join("plugin.txt").exists());
+        assert!(!foreign.path.join(".git/FETCH_HEAD").exists());
+        assert_eq!(foreign.git(&["status", "--porcelain"]), before);
     }
 
     #[test]

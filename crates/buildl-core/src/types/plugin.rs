@@ -22,9 +22,14 @@ use crate::error::{DeclarationSite, Error, NameKind, Result, allowed_list, direc
 use crate::types::grammar;
 use crate::types::{EnvName, Program, Want};
 
+/// The longest plugin name, in bytes: a file name is at most 255 bytes, and the directory a
+/// plugin is staged in while it is fetched is its name after nine more.
+const PLUGIN_NAME_MAX_LEN: usize = 246;
+
 /// A plugin's name, as a workspace's `[plugins.<name>]` table writes it, such as `go`.
 ///
-/// Valid names follow the same grammar as a [`TargetName`](crate::TargetName).
+/// Valid names follow the same grammar as a [`TargetName`](crate::TargetName), and are at most
+/// 246 bytes, so that a directory can be named after a plugin on any filesystem.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(into = "String", try_from = "String")]
 pub struct PluginName(String);
@@ -34,11 +39,16 @@ impl PluginName {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidName`] when `raw` is empty, exceeds 256 bytes, is `.` or `..`, or
+    /// Returns [`Error::InvalidName`] when `raw` is empty, exceeds 246 bytes, is `.` or `..`, or
     /// holds a character outside ASCII alphanumerics, `.`, `-` and `_`.
     pub fn parse(raw: impl Into<String>) -> Result<Self> {
         let raw = raw.into();
-        match grammar::name(&raw) {
+        let checked = if raw.len() > PLUGIN_NAME_MAX_LEN {
+            Err("must be at most 246 bytes")
+        } else {
+            grammar::name(&raw)
+        };
+        match checked {
             Ok(()) => Ok(Self(raw)),
             Err(reason) => Err(Error::InvalidName {
                 kind: NameKind::PluginName,
@@ -334,7 +344,7 @@ mod tests {
     use super::{
         Origin, PluginChain, PluginName, PluginNetwork, PluginRef, PluginVersion, PluginViolation,
     };
-    use crate::error::DeclarationSite;
+    use crate::error::{DeclarationSite, Error, NameKind};
     use crate::types::{Directory, EnvName, Label, Program, Provenance, SourcePath, Want};
 
     fn plugin(name: &str, version: &str) -> PluginRef {
@@ -344,6 +354,17 @@ mod tests {
             run: BTreeSet::new(),
             env: BTreeSet::new(),
         }
+    }
+
+    #[test]
+    fn plugin_name_is_at_most_246_bytes() {
+        assert!(PluginName::parse("a".repeat(246)).is_ok());
+        let Err(Error::InvalidName { kind, reason, .. }) = PluginName::parse("a".repeat(247))
+        else {
+            unreachable!("a name of 247 bytes is refused");
+        };
+        assert_eq!(kind, NameKind::PluginName);
+        assert_eq!(reason, "must be at most 246 bytes");
     }
 
     #[test]

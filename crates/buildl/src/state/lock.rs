@@ -32,7 +32,8 @@ use crate::state::{Owner, Scratch, StateLayout, clear_path};
 /// nothing an action left there outlives the command that ran it.
 #[derive(Debug)]
 pub struct StateLock {
-    file: File,
+    /// Held for its drop, which lets the lock go after the scratch directory is removed.
+    _held: Held,
     layout: StateLayout,
     acquired: Timestamp,
     scratch: Scratch,
@@ -56,7 +57,7 @@ impl StateLock {
     pub fn acquire(layout: StateLayout, scratch: Scratch) -> Result<Self, LockError> {
         fs::create_dir_all(layout.dir()).map_err(|source| failed(layout.dir(), source))?;
         let path = layout.lock();
-        let mut file = OpenOptions::new()
+        let file = OpenOptions::new()
             .write(true)
             .create(true)
             .truncate(false)
@@ -67,16 +68,18 @@ impl StateLock {
             Err(TryLockError::WouldBlock) => return Err(LockError::Busy { path }),
             Err(TryLockError::Error(source)) => return Err(failed(&path, source)),
         }
-        let acquired = stamp(&mut file).map_err(|source| failed(&path, source))?;
+        // From here every way out lets the lock go, the failures below included.
+        let mut file = Held(file);
+        let acquired = stamp(&mut file.0).map_err(|source| failed(&path, source))?;
         sweep(layout.dir(), is_staged)?;
         sweep(&layout.blob_staging(), |_| true)?;
         scratch.remove().map_err(|source| LockError::Scratch {
             path: scratch.dir().to_path_buf(),
             source,
         })?;
-        let owner = Owner::of(&file.metadata().map_err(|source| failed(&path, source))?);
+        let owner = Owner::of(&file.0.metadata().map_err(|source| failed(&path, source))?);
         Ok(Self {
-            file,
+            _held: file,
             layout,
             acquired,
             scratch,
@@ -110,10 +113,22 @@ impl StateLock {
 impl Drop for StateLock {
     fn drop(&mut self) {
         // A scratch directory that stays is removed by the next command that takes the lock.
+        // The lock itself is let go when `file` is dropped, after this.
         let _ = self.scratch.remove();
-        // Closing the file frees the lock as well. Asking for it says so, and frees the directory
-        // even when a copy of the descriptor is still open somewhere.
-        let _ = self.file.unlock();
+    }
+}
+
+/// An open lock file whose lock is let go when it is dropped.
+///
+/// Closing the file frees the lock only when no copy of the descriptor is open anywhere else,
+/// and a process started while the lock is held can still have one. Asking for the lock to be
+/// freed frees it whatever copies exist.
+#[derive(Debug)]
+struct Held(File);
+
+impl Drop for Held {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
     }
 }
 
@@ -200,7 +215,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::fs::{self, Permissions};
+    use std::fs::{self, OpenOptions, Permissions};
     use std::io;
     use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
@@ -209,7 +224,7 @@ mod tests {
 
     use buildl_core::{Directory, Timestamp};
 
-    use super::{LockError, StateLock};
+    use super::{Held, LockError, StateLock};
     use crate::state::{Owner, Scratch, StateLayout};
 
     /// A temporary workspace root, the layout of its state directory, and a scratch directory
@@ -377,6 +392,29 @@ mod tests {
 
         let file = fs::metadata(layout.lock()).unwrap();
         assert_eq!(held.owner(), Owner::of(&file));
+    }
+
+    #[test]
+    fn dropping_a_held_file_frees_the_lock_while_a_copy_of_the_descriptor_is_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("lock");
+        let open = || {
+            OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)
+                .unwrap()
+        };
+        let file = open();
+        file.try_lock().unwrap();
+        // A process started while the lock is held has a copy like this one.
+        let inherited = file.try_clone().unwrap();
+
+        drop(Held(file));
+
+        open().try_lock().unwrap();
+        drop(inherited);
     }
 
     #[test]

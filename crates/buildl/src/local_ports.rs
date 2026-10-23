@@ -119,6 +119,13 @@ impl Wiring {
         &self.scratch
     }
 
+    /// The directories programs are looked for in: the one search path the tool lookup, the
+    /// strategies and plugin fetching share.
+    #[must_use]
+    pub const fn search(&self) -> &SearchPath {
+        &self.search
+    }
+
     /// The workspace root, and where the search for it began.
     #[must_use]
     pub const fn root(&self) -> &WorkspaceRoot {

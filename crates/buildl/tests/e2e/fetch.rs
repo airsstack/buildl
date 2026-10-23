@@ -412,3 +412,81 @@ fn after_fetch_check_finds_the_plugin() {
     );
     fixture.open().check().unwrap();
 }
+
+#[test]
+fn a_plugin_pinned_by_commit_is_fetched_and_locked() {
+    let source = Source::new();
+    let pinned = source.head();
+    source.commit("later.txt", "later");
+    let fixture = workspace(&source, &pinned);
+    let sources = named("go", &source, &pinned);
+
+    let fetched = run(&fixture, &sources).unwrap();
+
+    assert_eq!(
+        reported(&fetched),
+        [("go".to_owned(), pinned.clone(), FetchStatus::Fetched)]
+    );
+    let store = fixture.state().plugins().join("go").join(&pinned);
+    assert_eq!(names(&store), ["extension.toml", "lib"]);
+    let lock = Lock::read(fixture.root()).unwrap();
+    let entry = lock.get(&plugin("go")).unwrap();
+    assert_eq!(entry.commit.as_str(), pinned);
+    assert_eq!(entry.rev.to_string(), pinned);
+    let again = run(&fixture, &sources).unwrap();
+    assert_eq!(
+        reported(&again),
+        [("go".to_owned(), pinned, FetchStatus::Unchanged)]
+    );
+}
+
+#[test]
+fn a_leftover_staging_directory_is_not_part_of_the_plugin() {
+    let source = Source::new();
+    let commit = source.head();
+    let fixture = workspace(&source, "v1.0.0");
+    let leftover = fixture.state().plugins().join("fetching~go");
+    fs::create_dir_all(&leftover).unwrap();
+    fs::write(leftover.join("stray"), "left by an interrupted fetch").unwrap();
+
+    run(&fixture, &named("go", &source, "v1.0.0")).unwrap();
+
+    let store = fixture.state().plugins().join("go").join(&commit);
+    assert_eq!(names(&store), ["extension.toml", "lib"]);
+    assert_eq!(names(&fixture.state().plugins()), ["go"]);
+}
+
+#[test]
+fn a_plugin_that_holds_no_file_is_refused_naming_it() {
+    let source = Source::new();
+    source.git(&["rm", "-q", "-r", "lib", "extension.toml"]);
+    source.git(&["commit", "-q", "--allow-empty", "-m", "empty"]);
+    source.git(&["tag", "v2.0.0"]);
+    let fixture = workspace(&source, "v2.0.0");
+
+    let error = run(&fixture, &named("go", &source, "v2.0.0")).unwrap_err();
+
+    let Error::PluginNotFetched { plugin, reason } = error else {
+        unreachable!("a plugin with no file is not fetched, got {error:?}");
+    };
+    assert_eq!(plugin.to_string(), "go");
+    assert!(reason.contains("v2.0.0"), "{reason}");
+    assert!(reason.contains("no file"), "{reason}");
+    assert!(!lock_file(&fixture).exists());
+    assert!(
+        names(&fixture.state().plugins()).is_empty(),
+        "nothing is left in the store"
+    );
+}
+
+#[test]
+fn a_plugin_with_the_longest_name_is_fetched() {
+    let source = Source::new();
+    let name = "a".repeat(246);
+    let fixture = workspace(&source, "v1.0.0");
+
+    let fetched = run(&fixture, &named(&name, &source, "v1.0.0")).unwrap();
+
+    assert_eq!(fetched.iter().count(), 1);
+    assert_eq!(names(&fixture.state().plugins()), [name]);
+}
