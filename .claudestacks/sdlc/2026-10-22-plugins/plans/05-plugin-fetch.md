@@ -2,7 +2,7 @@
 status: approved
 created: 2026-10-22
 depends-on: [03, 04]
-built-on: 5fa60e343706
+built-on: 0f868841fc48
 ---
 
 # Plugin Fetch Implementation Plan

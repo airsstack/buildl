@@ -142,11 +142,14 @@ file's globals, because a plugin that reaches the file's `buildl` — directly o
 |Name|Value|
 |---|---|
 |`buildl`|a new `buildl` table stamped with this instance's origin|
-|`airsstack`|a new table holding the file's curated modules (`json`, `path`, `regex`, `hash`, `glob`) and, as `buildl`, the stamped table above|
+|`airsstack`|a new table holding a copy of each curated module (`json`, `path`, `regex`, `hash`, `glob`) as it stood when the file's engine was built, and, as `buildl`, the stamped table above|
 |`require`|loads `<plugin dir>/a/b.lua` for `require("a.b")`, plugin dir only|
 |`_G`|the environment itself|
-|the language's own globals (`string`, `table`, `math`, `utf8`, `pairs`, `tostring`, …)|the same values the file sees, with buildl's replacements (`tostring`, `string.format`) and withholdings (`print`, `math.random`)|
+|the language's own globals (`string`, `table`, `math`, `utf8`, `pairs`, `tostring`, …)|copies, one per instance, of the language globals as they stood when the file's engine was built (tables copied one level deep), with buildl's replacements (`tostring`, `string.format`) and withholdings (`print`, `math.random`)|
 |anything else|absent|
+
+Library tables are never shared: a plugin that assigns into `string`, `table` or a curated module
+changes only its own copy, so it cannot change what the build file or another instance calls.
 
 A build file may still pass its own `buildl` table to a plugin function as an argument; what
 the plugin then declares through it is the build file's, written in the build file.
