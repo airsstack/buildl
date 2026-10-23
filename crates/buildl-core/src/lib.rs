@@ -22,15 +22,15 @@
 //! | Module | Holds |
 //! |---|---|
 //! | [`error`] | the one error enum and the crate-wide `Result` alias |
-//! | [`types`] | the validated domain values — names, identities, instants, declarations, the target graph, action keys, cache rows, the ceiling, the plan, ready actions, outcomes, log events, what one run was asked for — and the as-written values a build file stages |
+//! | [`types`] | the validated domain values — names, identities, instants, declarations and the plugins, if any, whose code made each, the target graph, action keys, cache rows, the ceiling, the plugins a workspace names and what it lets each have, the plan, ready actions, outcomes, log events, what one run was asked for — and the as-written values a build file stages |
 //! | [`json`] | the one canonical serializer every byte of output goes through, and the one reader that takes such bytes back |
 //! | [`ports`] | every trait in the crate: the ports through which everything outside it is reached, and the bundle that names one implementation of each, with the set that holds one instance of each |
-//! | [`load`](mod@load) | Load, the first phase: build files to validated, sorted declarations |
+//! | [`load`](mod@load) | Load, the first phase: build files, and the last result of each discovery target, to validated, sorted declarations |
 //! | [`resolve`](mod@resolve) | Resolve, the second phase: declarations to the target graph, that graph cut down to the targets one run was asked for, and the targets a query reaches |
 //! | [`plan`](mod@plan) | Plan, the third phase: the target graph to a verdict per target, with what the build wants |
 //! | [`execute`](mod@execute) | Execute and Record, the last phase: a plan to one outcome per target, each result recorded as the last step of its action and reported once it is logged |
 //! | `placement` | where every output lives and what a command's placeholders stand for once they are placed; used by Plan, Execute and verify, and not a phase |
-//! | [`grants`] | the build's authority: which programs a build made, everything a build wants, and the approver's answer; not a phase |
+//! | [`grants`] | the build's authority: which programs a build made, everything a build wants, the wants a plugin's targets may not have, which plugins are behind each want, and the approver's answer; not a phase |
 //! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command, and the commands that need only some of the ports as functions over those ports alone: the three that reach only build files and the state that holds discovery results, `doctor`, and `log` |
 //! | [`history`] | the read side of the build log: the newest run of a target that left output |
 //! | [`verify`](mod@verify) | verify, which serves one command and is not a phase: cached targets put back in place, a sample of them re-run, and each re-run compared with what was cached |
@@ -87,6 +87,14 @@
 //! and [`Pipeline::test`] put the plan's wanted set to the [`Approver`] port after planning,
 //! and [`negotiate`](fn@negotiate) turns a denial into [`Error::NotApproved`]: a refusal runs
 //! nothing, even when every target is cached. [`Pipeline::plan`] never asks.
+//!
+//! A plugin's declarations carry an [`Origin`]: the chain of [`PluginRef`]s, outermost first,
+//! whose code made them, and a graph [`Node`] keeps it. [`plan`](fn@plan) holds every want of a
+//! node with plugins to each plugin in its chain, the plugin's manifest and the workspace's
+//! [`PluginCap`] for it, before it asks the [`Ceiling`]: a want outside either is
+//! [`Error::PluginRefused`], and so is a target that reaches the network when the cap does not
+//! allow it. An [`Attribution`] says which plugins' targets are behind each want; the plan, the
+//! [`Approver`] and a [`Checkup`] carry it for display, and it is no part of an [`ActionKey`].
 //!
 //! A run works on the whole workspace or on the targets a [`Scope`] names, with everything they
 //! depend on: [`narrow`](fn@narrow) cuts the graph down before Plan, so [`Pipeline::plan`] and
