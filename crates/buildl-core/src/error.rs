@@ -940,6 +940,12 @@ pub enum NameKind {
     PluginVersion,
     /// The chain of plugins that declared a target.
     PluginChain,
+    /// A full git commit id.
+    CommitId,
+    /// A git tag name.
+    TagName,
+    /// The URL of a git repository.
+    GitUrl,
 }
 
 impl fmt::Display for NameKind {
@@ -970,6 +976,9 @@ impl fmt::Display for NameKind {
             Self::PluginName => "plugin name",
             Self::PluginVersion => "plugin version",
             Self::PluginChain => "plugin chain",
+            Self::CommitId => "commit id",
+            Self::TagName => "tag name",
+            Self::GitUrl => "git URL",
         })
     }
 }
