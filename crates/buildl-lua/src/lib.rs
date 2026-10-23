@@ -39,6 +39,7 @@
 //! | `engine` | the airsl engine configuration |
 //! | `curated` | airsl's `path` module without `absolute` |
 //! | `module` | the `buildl` host module, which raises refusals |
+//! | `plugin` | a plugin's `extension.toml`, read with airsl |
 //! | `primitives` | each primitive's argument shape |
 //! | `values` | the Lua value readers every primitive shares |
 //! | `refusal` | why a primitive call was refused |
@@ -55,6 +56,14 @@ mod curated;
 mod engine;
 mod limits;
 mod module;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "no code loads a plugin yet, so only the module's tests read a manifest"
+    )
+)]
+mod plugin;
 mod primitives;
 mod refusal;
 mod source;
