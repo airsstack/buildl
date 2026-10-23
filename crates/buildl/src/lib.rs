@@ -128,7 +128,8 @@
 //!
 //! [`plugins`] serves no port and is in neither table: it holds `buildl.lock`, the digest of a
 //! plugin's files, the check that every plugin a workspace names is ready to use, and the fetch
-//! that pins a git plugin through the system `git`; it names only [`state`] and `buildl-core`.
+//! that pins a git plugin through the system `git`; it names only [`state`], [`search_path`] and
+//! `buildl-core`.
 //!
 //! The adapters meet in two modules and nowhere else. Neither is public: what they hold is
 //! exported from the crate root.
