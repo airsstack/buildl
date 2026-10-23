@@ -20,6 +20,7 @@ mod common;
 mod doctor;
 mod facade;
 mod failure;
+mod fetch;
 mod identical;
 mod incremental;
 mod log;

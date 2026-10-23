@@ -12,19 +12,23 @@
 //! - [`check`] and [`Checked`] — finding every named plugin ready to use, from the lock and the
 //!   store.
 //! - [`Git`] — running the system `git` to fetch one revision of a plugin.
+//! - [`fetch`], [`Fetched`], [`FetchedPlugin`] and [`FetchStatus`] — pinning every git plugin in
+//!   the lock and storing its files.
 //!
-//! Non-responsibilities: choosing which plugins to fetch, and deciding what a plugin may do,
-//! which are the callers'.
+//! Non-responsibilities: choosing which plugins a workspace names, and deciding what a plugin
+//! may do, which are the callers'.
 //!
 //! This file holds only module declarations and re-exports, so it carries no logic to
 //! unit-test.
 
 mod check;
+mod fetch;
 mod git;
 mod lock;
 mod tree_digest;
 
 pub use check::{Checked, check};
+pub use fetch::{FetchStatus, Fetched, FetchedPlugin, fetch};
 pub use git::Git;
 pub use lock::{Lock, LockEntry};
 pub use tree_digest::tree_digest;
