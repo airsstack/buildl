@@ -27,7 +27,7 @@ use crate::ports::{
 /// use std::sync::{Mutex, PoisonError};
 ///
 /// use buildl_core::{
-///     ActionCache, Approval, Approver, BuildFile, CacheRow, Captured, Ceiling, Channel, Clock,
+///     ActionCache, Approval, Approver, Attribution, BuildFile, CacheRow, Captured, Ceiling, Channel, Clock,
 ///     ContentStore, DeclarationSource, Diagnostic, Digest, Digester, Directory, Dispatcher,
 ///     EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy, FileMode, Found, GraphRecord,
 ///     Host, InputStat, Label, LiveSink, Manifest, OutcomeEvent, OutputPath, Platform, PortName,
@@ -225,7 +225,7 @@ use crate::ports::{
 /// }
 ///
 /// impl Approver for Nothing {
-///     fn approve(&mut self, _wanted: &WantedSet) -> Result<Approval> {
+///     fn approve(&mut self, _wanted: &WantedSet, _attribution: &Attribution) -> Result<Approval> {
 ///         Ok(Approval::Granted)
 ///     }
 /// }

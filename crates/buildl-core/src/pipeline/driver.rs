@@ -171,7 +171,7 @@ impl<P: Ports> Pipeline<P> {
         self.ports.graph.record(&whole)?;
         let graph = narrow(&whole, scope, Purpose::Build)?;
         let plan = plan(&graph, overrides, Rerun::Off, &mut self.ports)?;
-        negotiate(plan.wanted(), &mut self.ports.approver)?;
+        negotiate(plan.wanted(), plan.attribution(), &mut self.ports.approver)?;
         execute(
             &whole,
             &graph,
@@ -228,7 +228,7 @@ impl<P: Ports> Pipeline<P> {
         self.ports.graph.record(&whole)?;
         let graph = narrow(&whole, scope, Purpose::Test)?;
         let plan = plan(&graph, overrides, rerun, &mut self.ports)?;
-        negotiate(plan.wanted(), &mut self.ports.approver)?;
+        negotiate(plan.wanted(), plan.attribution(), &mut self.ports.approver)?;
         execute(
             &whole,
             &graph,
@@ -271,7 +271,7 @@ impl<P: Ports> Pipeline<P> {
         let whole = resolve(load(&self.ports.source, &mut self.ports.dispatcher, entry)?)?;
         let graph = narrow(&whole, scope, Purpose::Build)?;
         let plan = plan(&graph, overrides, Rerun::Off, &mut self.ports)?;
-        negotiate(plan.wanted(), &mut self.ports.approver)?;
+        negotiate(plan.wanted(), plan.attribution(), &mut self.ports.approver)?;
         verify(&whole, &graph, &plan, sample, &mut self.ports)
     }
 }

@@ -6,7 +6,7 @@
 //!
 //! Responsibilities: [`ManifestApprover`].
 
-use buildl_core::{Approval, Approver, Result, WantedSet};
+use buildl_core::{Approval, Approver, Attribution, Result, WantedSet};
 
 /// Approves every build.
 ///
@@ -16,7 +16,7 @@ use buildl_core::{Approval, Approver, Result, WantedSet};
 pub struct ManifestApprover;
 
 impl Approver for ManifestApprover {
-    fn approve(&mut self, _wanted: &WantedSet) -> Result<Approval> {
+    fn approve(&mut self, _wanted: &WantedSet, _attribution: &Attribution) -> Result<Approval> {
         Ok(Approval::Granted)
     }
 }
@@ -30,7 +30,9 @@ mod tests {
 
     use std::collections::BTreeSet;
 
-    use buildl_core::{Approval, Approver, Directory, EnvName, Label, Program, WantedSet};
+    use buildl_core::{
+        Approval, Approver, Attribution, Directory, EnvName, Label, Program, WantedSet,
+    };
 
     use super::ManifestApprover;
 
@@ -50,7 +52,13 @@ mod tests {
             network: BTreeSet::from([Label::parse("//:fetch").unwrap()]),
         };
 
-        assert_eq!(approver.approve(&empty).unwrap(), Approval::Granted);
-        assert_eq!(approver.approve(&full).unwrap(), Approval::Granted);
+        assert_eq!(
+            approver.approve(&empty, &Attribution::default()).unwrap(),
+            Approval::Granted
+        );
+        assert_eq!(
+            approver.approve(&full, &Attribution::default()).unwrap(),
+            Approval::Granted
+        );
     }
 }

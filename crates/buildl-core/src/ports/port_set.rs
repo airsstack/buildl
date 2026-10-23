@@ -108,10 +108,10 @@ mod tests {
         ToolResolver,
     };
     use crate::types::{
-        Approval, BuildFile, CacheRow, Captured, Ceiling, Channel, Digest, Directory, EnvName,
-        EnvValue, Evaluated, Exit, FileMode, Found, InputStat, Label, LiveSink, OutcomeEvent,
-        OutputPath, Platform, Program, RawOutcome, ReadyAction, SourcePath, StatEntry, Summary,
-        TargetGraph, Timestamp, Turn, WantedSet, Workspace,
+        Approval, Attribution, BuildFile, CacheRow, Captured, Ceiling, Channel, Digest, Directory,
+        EnvName, EnvValue, Evaluated, Exit, FileMode, Found, InputStat, Label, LiveSink,
+        OutcomeEvent, OutputPath, Platform, Program, RawOutcome, ReadyAction, SourcePath,
+        StatEntry, Summary, TargetGraph, Timestamp, Turn, WantedSet, Workspace,
     };
 
     /// One port type answering that there is nothing, standing in for every port.
@@ -288,7 +288,7 @@ mod tests {
     }
 
     impl Approver for Stub {
-        fn approve(&mut self, _wanted: &WantedSet) -> Result<Approval> {
+        fn approve(&mut self, _wanted: &WantedSet, _attribution: &Attribution) -> Result<Approval> {
             Ok(Approval::Granted)
         }
     }

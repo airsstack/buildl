@@ -8,7 +8,7 @@
 //! Non-responsibilities: choosing the variant, which the mode in the manifest does where the
 //! ports are assembled; and answering, which each variant does.
 
-use buildl_core::{Approval, Approver, Result, WantedSet};
+use buildl_core::{Approval, Approver, Attribution, Result, WantedSet};
 
 use crate::approver::console::Console;
 use crate::approver::deny::DenyApprover;
@@ -27,11 +27,11 @@ pub enum LocalApprover<C: Console> {
 }
 
 impl<C: Console> Approver for LocalApprover<C> {
-    fn approve(&mut self, wanted: &WantedSet) -> Result<Approval> {
+    fn approve(&mut self, wanted: &WantedSet, attribution: &Attribution) -> Result<Approval> {
         match self {
-            Self::Manifest(approver) => approver.approve(wanted),
-            Self::Deny(approver) => approver.approve(wanted),
-            Self::Interactive(approver) => approver.approve(wanted),
+            Self::Manifest(approver) => approver.approve(wanted, attribution),
+            Self::Deny(approver) => approver.approve(wanted, attribution),
+            Self::Interactive(approver) => approver.approve(wanted, attribution),
         }
     }
 }
@@ -46,7 +46,7 @@ mod tests {
     use std::collections::BTreeSet;
     use std::path::PathBuf;
 
-    use buildl_core::{Approval, Approver, Program, WantedSet};
+    use buildl_core::{Approval, Approver, Attribution, Program, WantedSet};
 
     use super::LocalApprover;
     use crate::approver::console::Scripted;
@@ -62,6 +62,7 @@ mod tests {
             programs: BTreeSet::from([Program::parse("cc").unwrap()]),
             ..WantedSet::default()
         };
+        let none = Attribution::default();
         let mut console = Scripted::answering(&["n"]);
 
         let mut manifest = LocalApprover::<Scripted>::Manifest(ManifestApprover);
@@ -72,13 +73,13 @@ mod tests {
             PathBuf::from("/work/one"),
         ));
 
-        assert_eq!(manifest.approve(&wanted).unwrap(), Approval::Granted);
+        assert_eq!(manifest.approve(&wanted, &none).unwrap(), Approval::Granted);
         assert_eq!(
-            deny.approve(&wanted).unwrap(),
-            DenyApprover.approve(&wanted).unwrap()
+            deny.approve(&wanted, &none).unwrap(),
+            DenyApprover.approve(&wanted, &none).unwrap()
         );
         assert!(matches!(
-            interactive.approve(&wanted).unwrap(),
+            interactive.approve(&wanted, &none).unwrap(),
             Approval::Denied { .. }
         ));
         assert_eq!(console.prompts.len(), 1);

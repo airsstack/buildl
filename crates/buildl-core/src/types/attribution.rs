@@ -7,14 +7,14 @@
 //! Responsibilities: [`Attribution`], its rendering and its serialized form.
 //!
 //! Non-responsibilities: deciding which targets want what, which needs the graph and belongs to
-//! `grants`; and the wanted set's own rendering, which is [`WantedSet`](crate::WantedSet)'s.
+//! `grants`; and the wanted set's own rendering, which is [`WantedSet`]'s.
 
 use core::fmt;
 use std::collections::BTreeMap;
 
 use serde::{Serialize, Serializer};
 
-use crate::types::{EnvName, Label, PluginChain, Program, Want};
+use crate::types::{EnvName, Label, PluginChain, Program, Want, WantedSet};
 
 /// What a want is called in a line of attribution.
 fn name_of(want: &Want) -> String {
@@ -41,12 +41,33 @@ impl Attribution {
     ///
     /// A chain already recorded for `want` keeps the label it has: the first one recorded stays,
     /// so a caller that records in label order keeps the lowest.
-    pub(crate) fn record(&mut self, want: Want, chain: &PluginChain, label: &Label) {
+    pub fn record(&mut self, want: Want, chain: &PluginChain, label: &Label) {
         self.0
             .entry(want)
             .or_default()
             .entry(chain.clone())
             .or_insert_with(|| label.clone());
+    }
+
+    /// What is attributed among the members of `wanted`: the entries of the wants it holds.
+    ///
+    /// A want the set does not hold is left out, so a caller that has narrowed the set to what
+    /// is new gets the attribution of exactly that.
+    #[must_use]
+    pub fn within(&self, wanted: &WantedSet) -> Self {
+        Self(
+            self.0
+                .iter()
+                .filter(|(want, _)| match want {
+                    Want::Program(program) => wanted.programs.contains(program),
+                    Want::Env(name) => wanted.env.contains(name),
+                    Want::Write(directory) => wanted.write.contains(directory),
+                    Want::Network(label) => wanted.network.contains(label),
+                    Want::Read(_) => false,
+                })
+                .map(|(want, chains)| (want.clone(), chains.clone()))
+                .collect(),
+        )
     }
 
     /// The chains whose targets want `want`, each with its lowest-labelled target; `None` when
@@ -157,7 +178,7 @@ mod tests {
     use super::Attribution;
     use crate::json::canonical;
     use crate::types::{
-        EnvName, Label, PluginChain, PluginName, PluginRef, PluginVersion, Program, Want,
+        EnvName, Label, PluginChain, PluginName, PluginRef, PluginVersion, Program, Want, WantedSet,
     };
 
     fn chain(plugins: &[(&str, &str)]) -> PluginChain {
@@ -229,6 +250,30 @@ mod tests {
         assert_eq!(chains.get(&go), Some(&label("//:a")));
         assert!(attribution.get(&program("cc")).is_none());
         assert!(!attribution.is_empty());
+    }
+
+    #[test]
+    fn within_keeps_only_the_wants_the_set_holds() {
+        let go = chain(&[("go", "1.2.0")]);
+        let mut attribution = Attribution::default();
+        attribution.record(program("go"), &go, &label("//:a"));
+        attribution.record(program("protoc"), &go, &label("//:a"));
+        attribution.record(env("GOPATH"), &go, &label("//:a"));
+        attribution.record(Want::Network(label("//:fetch")), &go, &label("//:fetch"));
+        let wanted = WantedSet {
+            programs: BTreeSet::from([Program::parse("protoc").unwrap()]),
+            network: BTreeSet::from([label("//:fetch")]),
+            ..WantedSet::default()
+        };
+
+        let kept = attribution.within(&wanted);
+
+        assert_eq!(
+            kept.to_string(),
+            "  protoc: declared by plugin go@1.2.0 for //:a\n  \
+             //:fetch: declared by plugin go@1.2.0 for //:fetch"
+        );
+        assert!(attribution.within(&WantedSet::default()).is_empty());
     }
 
     #[test]

@@ -8,12 +8,12 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use buildl_core::{
-    ActionCache, Approval, Approver, BuildFile, CacheRow, Ceiling, Clock, ContentStore,
-    DeclarationOrder, DeclarationSource, Diagnostic, Digest, Digester, Directory, Dispatcher,
-    EnvName, EnvValue, Error, Evaluated, EvaluationFailure, EventLog, ExecStrategy, Exit, FileStat,
-    Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest, NetworkAccess, Origin,
-    OutcomeEvent, OutputPath, Platform, PluginName, PluginRef, PluginVersion, PortName, PortSet,
-    Ports, Program, RawOutcome, ReadyAction, Result, RunHistory, SourcePath, StagedAlias,
+    ActionCache, Approval, Approver, Attribution, BuildFile, CacheRow, Ceiling, Clock,
+    ContentStore, DeclarationOrder, DeclarationSource, Diagnostic, Digest, Digester, Directory,
+    Dispatcher, EnvName, EnvValue, Error, Evaluated, EvaluationFailure, EventLog, ExecStrategy,
+    Exit, FileStat, Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest, NetworkAccess,
+    Origin, OutcomeEvent, OutputPath, Platform, PluginName, PluginRef, PluginVersion, PortName,
+    PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory, SourcePath, StagedAlias,
     StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir,
     StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver, WantedSet,
     Workspace, Written,
@@ -1067,7 +1067,7 @@ impl Default for FakeApprover {
 }
 
 impl Approver for FakeApprover {
-    fn approve(&mut self, wanted: &WantedSet) -> Result<Approval> {
+    fn approve(&mut self, wanted: &WantedSet, _attribution: &Attribution) -> Result<Approval> {
         self.asked.push(wanted.clone());
         match &self.answer {
             Answer::Grant => Ok(Approval::Granted),

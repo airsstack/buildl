@@ -116,16 +116,16 @@ mod tests {
     use std::path::PathBuf;
 
     use buildl_core::{
-        Action, ActionCache, ActionKey, Approval, Approver, ApproverMode, Argument, BuildFile,
-        CacheRow, Ceiling, Clock, Command, ContentStore, Declaration, DeclarationSource, Declared,
-        DepProducts, Diagnostic, Digest, Digester, Directory, DirtyReason, Dispatcher, EnvName,
-        EnvValue, Error, Evaluated, EventLog, ExecStrategy, Execution, FileMode, FileStat, Found,
-        Freshness, GraphRecord, Host, InputDigest, InputStat, KeyComponents, Label, LiveSink,
-        Manifest, NetworkAccess, Origin, OutcomeEvent, OutputName, OutputPath, OwnComponents, Plan,
-        PlannedKey, Platform, PortName, PortSet, Ports, Produced, Program, Provenance, RawOutcome,
-        ReadyAction, Rerun, Result, Setting, SettingName, SettingValue, SourcePath, StatCache,
-        StatEntry, Target, TargetGraph, TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn,
-        Verdict, WantedSet, Workspace, plan, resolve,
+        Action, ActionCache, ActionKey, Approval, Approver, ApproverMode, Argument, Attribution,
+        BuildFile, CacheRow, Ceiling, Clock, Command, ContentStore, Declaration, DeclarationSource,
+        Declared, DepProducts, Diagnostic, Digest, Digester, Directory, DirtyReason, Dispatcher,
+        EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy, Execution, FileMode, FileStat,
+        Found, Freshness, GraphRecord, Host, InputDigest, InputStat, KeyComponents, Label,
+        LiveSink, Manifest, NetworkAccess, Origin, OutcomeEvent, OutputName, OutputPath,
+        OwnComponents, Plan, PlannedKey, Platform, PortName, PortSet, Ports, Produced, Program,
+        Provenance, RawOutcome, ReadyAction, Rerun, Result, Setting, SettingName, SettingValue,
+        SourcePath, StatCache, StatEntry, Target, TargetGraph, TargetRole, Timestamp, ToolIdentity,
+        ToolResolver, Turn, Verdict, WantedSet, Workspace, plan, resolve,
     };
 
     use super::{plan_text, reason_text};
@@ -320,7 +320,7 @@ mod tests {
     }
 
     impl Approver for Unused {
-        fn approve(&mut self, _wanted: &WantedSet) -> Result<Approval> {
+        fn approve(&mut self, _wanted: &WantedSet, _attribution: &Attribution) -> Result<Approval> {
             Err(unused(PortName::Approver))
         }
     }

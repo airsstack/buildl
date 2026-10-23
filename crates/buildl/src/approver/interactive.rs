@@ -11,7 +11,7 @@
 use std::path::PathBuf;
 
 use buildl_core::{
-    Approval, Approver, DenialReason, Diagnostic, Error, PortName, Result, WantedSet,
+    Approval, Approver, Attribution, DenialReason, Diagnostic, Error, PortName, Result, WantedSet,
 };
 
 use crate::approver::approvals::Approvals;
@@ -26,6 +26,9 @@ const NO_TERMINAL: &str = "no terminal to ask on; run the build in a terminal on
 const NOT_APPROVED: &str = "not approved";
 
 /// Asks about what a build wants that has not been allowed before.
+///
+/// Under the new wants the question names the plugins whose targets are behind them; wants that
+/// were allowed before are neither asked about nor attributed again.
 #[derive(Debug)]
 pub struct InteractiveApprover<C: Console> {
     console: C,
@@ -62,7 +65,7 @@ fn is_yes(answer: &str) -> bool {
 }
 
 impl<C: Console> Approver for InteractiveApprover<C> {
-    fn approve(&mut self, wanted: &WantedSet) -> Result<Approval> {
+    fn approve(&mut self, wanted: &WantedSet, attribution: &Attribution) -> Result<Approval> {
         let data = self.data.resolve(|name| std::env::var_os(name))?;
         let approvals = Approvals::new(&data, &self.root);
         let remembered = approvals.read()?;
@@ -76,9 +79,17 @@ impl<C: Console> Approver for InteractiveApprover<C> {
                 reason: DenialReason::new(NO_TERMINAL),
             });
         }
+        let because = attribution.within(&new);
+        let attributed = if because.is_empty() {
+            String::new()
+        } else {
+            format!("\n{because}")
+        };
         let answer = self
             .console
-            .ask(&format!("this build wants to\n{new}\nallow? [y/N] "))
+            .ask(&format!(
+                "this build wants to\n{new}{attributed}\nallow? [y/N] "
+            ))
             .map_err(|error| unasked(&error))?;
         if !is_yes(&answer) {
             return Ok(Approval::Denied {
@@ -104,7 +115,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use buildl_core::{
-        Approval, Approver, DenialReason, Directory, EnvName, Error, PortName, Program, WantedSet,
+        Approval, Approver, Attribution, DenialReason, Directory, EnvName, Error, Label,
+        PluginChain, PluginName, PluginRef, PluginVersion, PortName, Program, Want, WantedSet,
     };
 
     use super::InteractiveApprover;
@@ -141,8 +153,33 @@ mod tests {
         )
     }
 
+    fn none() -> Attribution {
+        Attribution::default()
+    }
+
     fn remembered(data: &Path) -> WantedSet {
         Approvals::new(data, Path::new(ROOT)).read().unwrap()
+    }
+
+    /// Attribution saying `//:server` of plugin `go@1.2.0` wants each of `programs`.
+    fn by_go(programs: &[&str]) -> Attribution {
+        let chain = PluginChain::new(vec![PluginRef {
+            name: PluginName::parse("go").unwrap(),
+            version: PluginVersion::parse("1.2.0").unwrap(),
+            run: BTreeSet::new(),
+            env: BTreeSet::new(),
+        }])
+        .unwrap();
+        let label = Label::parse("//:server").unwrap();
+        let mut attribution = Attribution::default();
+        for &program in programs {
+            attribution.record(
+                Want::Program(Program::parse(program).unwrap()),
+                &chain,
+                &label,
+            );
+        }
+        attribution
     }
 
     fn denied(unapproved: WantedSet, reason: &str) -> Approval {
@@ -162,10 +199,10 @@ mod tests {
         let mut console = Scripted::answering(&[]);
 
         let asked = approver(&mut console, data.path())
-            .approve(&wants(&["cc"], &[], &[]))
+            .approve(&wants(&["cc"], &[], &[]), &none())
             .unwrap();
         let empty = approver(&mut console, data.path())
-            .approve(&WantedSet::default())
+            .approve(&WantedSet::default(), &none())
             .unwrap();
 
         assert_eq!(asked, Approval::Granted);
@@ -180,10 +217,10 @@ mod tests {
         let mut console = Scripted::answering(&["y"]);
 
         let first = approver(&mut console, data.path())
-            .approve(&wanted)
+            .approve(&wanted, &none())
             .unwrap();
         let second = approver(&mut console, data.path())
-            .approve(&wanted)
+            .approve(&wanted, &none())
             .unwrap();
 
         assert_eq!(first, Approval::Granted);
@@ -199,7 +236,7 @@ mod tests {
             let mut console = Scripted::answering(&[answer]);
 
             let approval = approver(&mut console, data.path())
-                .approve(&wants(&["cc"], &[], &[]))
+                .approve(&wants(&["cc"], &[], &[]), &none())
                 .unwrap();
 
             assert_eq!(approval, Approval::Granted, "{answer:?}");
@@ -214,7 +251,7 @@ mod tests {
             let mut console = Scripted::answering(&[answer]);
 
             let approval = approver(&mut console, data.path())
-                .approve(&wanted)
+                .approve(&wanted, &none())
                 .unwrap();
 
             assert_eq!(approval, denied(wanted, "not approved"), "{answer:?}");
@@ -231,7 +268,7 @@ mod tests {
         let mut console = Scripted::answering(&["n"]);
 
         let approval = approver(&mut console, data.path())
-            .approve(&wants(&["cc"], &["PATH", "HOME"], &["out"]))
+            .approve(&wants(&["cc"], &["PATH", "HOME"], &["out"]), &none())
             .unwrap();
 
         assert_eq!(
@@ -245,6 +282,44 @@ mod tests {
     }
 
     #[test]
+    fn the_prompt_names_the_plugin_of_a_new_want() {
+        let data = tempfile::tempdir().unwrap();
+        let mut console = Scripted::answering(&["n"]);
+
+        approver(&mut console, data.path())
+            .approve(&wants(&["go"], &[], &[]), &by_go(&["go"]))
+            .unwrap();
+
+        assert_eq!(
+            console.prompts,
+            ["this build wants to\n  run programs: go\n  \
+              go: declared by plugin go@1.2.0 for //:server\nallow? [y/N] "]
+        );
+    }
+
+    #[test]
+    fn remembered_wants_are_not_attributed_again() {
+        let data = tempfile::tempdir().unwrap();
+        Approvals::new(data.path(), Path::new(ROOT))
+            .write(&wants(&["go"], &[], &[]))
+            .unwrap();
+        let mut console = Scripted::answering(&["n"]);
+
+        approver(&mut console, data.path())
+            .approve(
+                &wants(&["go", "protoc"], &[], &[]),
+                &by_go(&["go", "protoc"]),
+            )
+            .unwrap();
+
+        assert_eq!(
+            console.prompts,
+            ["this build wants to\n  run programs: protoc\n  \
+              protoc: declared by plugin go@1.2.0 for //:server\nallow? [y/N] "]
+        );
+    }
+
+    #[test]
     fn the_prompt_is_the_same_text_every_time() {
         let wanted = wants(&["go", "protoc"], &["HOME", "PATH"], &["out"]);
         let mut seen = Vec::new();
@@ -252,7 +327,7 @@ mod tests {
             let data = tempfile::tempdir().unwrap();
             let mut console = Scripted::answering(&["n"]);
             approver(&mut console, data.path())
-                .approve(&wanted)
+                .approve(&wanted, &none())
                 .unwrap();
             seen.push(console.prompts);
         }
@@ -272,7 +347,7 @@ mod tests {
         let mut console = Scripted::not_a_terminal();
 
         let approval = approver(&mut console, data.path())
-            .approve(&wanted)
+            .approve(&wanted, &none())
             .unwrap();
 
         let Approval::Denied { unapproved, reason } = approval else {
@@ -297,7 +372,7 @@ mod tests {
         let mut console = Scripted::answering(&["y"]);
 
         let approval = approver(&mut console, data.path())
-            .approve(&wants(&["cc"], &["HOME"], &[]))
+            .approve(&wants(&["cc"], &["HOME"], &[]), &none())
             .unwrap();
 
         assert_eq!(approval, Approval::Granted);
@@ -321,7 +396,8 @@ mod tests {
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
         let mut console = Scripted::answering(&["y"]);
 
-        let result = approver(&mut console, data.path()).approve(&wants(&["cc"], &[], &[]));
+        let result =
+            approver(&mut console, data.path()).approve(&wants(&["cc"], &[], &[]), &none());
 
         // Let the temporary directory be removed whatever the assertions find.
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
@@ -352,7 +428,7 @@ mod tests {
         let mut console = Scripted::answering(&["y"]);
 
         let error = approver(&mut console, data.path())
-            .approve(&wants(&["cc"], &[], &[]))
+            .approve(&wants(&["cc"], &[], &[]), &none())
             .unwrap_err();
 
         assert!(matches!(error, Error::CorruptState { .. }), "{error:?}");

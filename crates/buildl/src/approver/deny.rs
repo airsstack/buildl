@@ -5,7 +5,7 @@
 //!
 //! Responsibilities: [`DenyApprover`].
 
-use buildl_core::{Approval, Approver, DenialReason, Result, WantedSet};
+use buildl_core::{Approval, Approver, Attribution, DenialReason, Result, WantedSet};
 
 /// Why every build is refused.
 const REASON: &str = "the workspace's approver is deny";
@@ -15,7 +15,7 @@ const REASON: &str = "the workspace's approver is deny";
 pub struct DenyApprover;
 
 impl Approver for DenyApprover {
-    fn approve(&mut self, wanted: &WantedSet) -> Result<Approval> {
+    fn approve(&mut self, wanted: &WantedSet, _attribution: &Attribution) -> Result<Approval> {
         Ok(Approval::Denied {
             unapproved: wanted.clone(),
             reason: DenialReason::new(REASON),
@@ -32,7 +32,7 @@ mod tests {
 
     use std::collections::BTreeSet;
 
-    use buildl_core::{Approval, Approver, Program, WantedSet};
+    use buildl_core::{Approval, Approver, Attribution, Program, WantedSet};
 
     use super::DenyApprover;
 
@@ -45,7 +45,7 @@ mod tests {
         };
 
         for set in [wanted, WantedSet::default()] {
-            let approval = approver.approve(&set).unwrap();
+            let approval = approver.approve(&set, &Attribution::default()).unwrap();
 
             assert!(
                 matches!(
