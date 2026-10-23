@@ -1,3 +1,7 @@
+discovery -> error
+discovery -> history
+discovery -> ports
+discovery -> types
 error -> types
 execute -> error
 execute -> grants
