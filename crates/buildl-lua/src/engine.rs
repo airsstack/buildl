@@ -4,7 +4,8 @@
 //! stated once, here. The language surface is airsl's minimal one (no `os`, no `coroutine`, no
 //! `require`), the engine holds no grant of any kind, and the host modules are a curated set:
 //! `json`, `path` without `absolute`, `regex`, `hash` and `glob`, then `buildl`. With no grant,
-//! `glob.walk` is refused; `buildl.sources` is the only filesystem read.
+//! `glob.walk` is refused; `buildl.sources` is the only filesystem read. Each curated module is
+//! recorded as it installs, for the plugins a build file uses.
 //!
 //! Responsibilities: [`build`].
 //!
@@ -13,7 +14,7 @@
 use airsl::modules::{Glob, Hash, Json, Regex};
 use airsl::{Engine, GrantSet, LanguageSurface, ModuleSet, Policy};
 
-use crate::curated::CuratedPath;
+use crate::curated::{CuratedPath, Recorded};
 use crate::limits::DeclarationLimits;
 use crate::module::BuildlModule;
 
@@ -25,11 +26,11 @@ use crate::module::BuildlModule;
 pub(crate) fn build(limits: &DeclarationLimits, buildl: BuildlModule) -> airsl::Result<Engine> {
     // dyn: `ModuleSet::insert` takes `Box<dyn HostModule>`; the set is airsl's extension seam.
     let mut modules = ModuleSet::new();
-    modules.insert(Box::new(Json::new()))?;
-    modules.insert(Box::new(CuratedPath::default()))?;
-    modules.insert(Box::new(Regex::new()))?;
-    modules.insert(Box::new(Hash::new()))?;
-    modules.insert(Box::new(Glob::new()))?;
+    modules.insert(Box::new(Recorded::new(Json::new())))?;
+    modules.insert(Box::new(Recorded::new(CuratedPath::default())))?;
+    modules.insert(Box::new(Recorded::new(Regex::new())))?;
+    modules.insert(Box::new(Recorded::new(Hash::new())))?;
+    modules.insert(Box::new(Recorded::new(Glob::new())))?;
     modules.insert(Box::new(buildl))?;
     let policy = Policy::confined()
         .with_language(LanguageSurface::Minimal)

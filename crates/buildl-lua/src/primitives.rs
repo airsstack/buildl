@@ -130,6 +130,7 @@ mod tests {
     };
 
     use super::{alias, option, pattern, rule, subdir, target};
+    use crate::refusal::CallSite;
 
     fn eval(lua: &Lua, source: &str) -> Value {
         lua.load(source).eval::<Value>().unwrap()
@@ -221,7 +222,9 @@ mod tests {
             }
         );
         assert_eq!(
-            refusal.diagnostic("target", Some(4)).as_str(),
+            refusal
+                .diagnostic("target", Some(&CallSite::BuildFile { line: 4 }))
+                .as_str(),
             "line 4: buildl.target 'app': unknown field 'srcs'"
         );
     }

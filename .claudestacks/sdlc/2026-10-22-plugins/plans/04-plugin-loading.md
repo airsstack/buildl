@@ -1,8 +1,9 @@
 ---
-status: executing
+status: done
 created: 2026-10-22
 depends-on: [01, 02, 03]
 built-on: 5fa60e343706
+disproves: 5fa60e343706
 ---
 
 # Plugin Loading Implementation Plan
@@ -42,7 +43,7 @@ crates/buildl-lua/src/source.rs              — [modify] LuaSource::new gains `
 crates/buildl-lua/src/lib.rs                 — [modify] `mod plugin`
 crates/buildl-lua/tests/flows/plugins.rs     — [create] flows over fixture plugins
 crates/buildl-lua/tests/flows/main.rs        — [modify] `mod plugins;`
-crates/buildl-lua/tests/fixtures/plugins/…   — [create] fixture plugins: ok, nested require, escape attempts, bad manifests, wrapper
+crates/buildl-lua/tests/fixtures/plugins/…   — [not created] fixture plugins are written into temp workspaces at test time (links need creating anyway)
 crates/buildl/src/local_ports.rs             — [modify] Wiring::source (:157) passes `Checked` dirs to LuaSource::new (:173); test calls (:525, :541, :551)
 crates/buildl/tests/e2e/plugins.rs           — [modify] a path plugin builds end to end
 crates/buildl/tests/fixtures/plugin_path/…   — [create] workspace with a path plugin
@@ -164,9 +165,10 @@ Commit `feat(buildl): load path plugins in every command`.
 ## Risks
 
 - Most risky: Task 3's environment. Any route from plugin code to the file's unstamped table
-  defeats narrowing; the named escape tests are the guard. A route not covered: a build file that
-  stores its `buildl` in a shared library table (`string`, `table`) — that is the build file's
-  explicit act, as passing it as an argument is (spec §4).
+  defeats narrowing; the named escape tests are the guard. (Amended 2026-10-23: sharing the
+  library tables by reference was itself such a route — a plugin could replace `table.insert` and
+  capture the file's `buildl` from an ordinary call. Each instance now gets its own one-level
+  copies of the language tables and curated modules, taken at install.)
 - Copying the curated modules into a new `airsstack` table assumes they are plain tables whose
   functions do not depend on the table they sit in; a probe in `execute` confirms
   `airsstack.json.decode` works from the copy.
@@ -175,3 +177,35 @@ Commit `feat(buildl): load path plugins in every command`.
 
 `cargo make dod`, `cargo deny check` green; a workspace with a path plugin builds, caches,
 plans with attribution, and refuses a plugin target outside its cap with exit 4.
+
+## Review findings
+
+All fixed in one round; verified `cargo make dod` → `Build Done in 18.52 seconds`, exit 0; `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`; `cargo test -p buildl-lua --test flows plugins` → `31 passed; 0 failed`.
+
+- correctness — a refusal raised in plugin code was filed under the build file with the plugin's line (`build.lua: … line 6` for a 2-line build.lua) — `module.rs` `call_site`/`guarded`, `refusal.rs` — fixed: `CallSite` names the plugin chunk (`plugins/p/main.lua:6: …`); build-file refusals unchanged; flows for a bad primitive in main and in a module, a bad `require`, a bad `use`
+- security — plugins shared the build file's mutable `string`/`table`/`math`/`utf8` and curated module tables, so a plugin could replace `table.insert`, capture the file's unstamped `buildl` and declare outside its cap with `BuildFile` origin — `plugin/environment.rs` — fixed: each instance gets one-level copies (`snapshot.rs` `copy_table`); repro flow now declares nothing as the build file; `string.x` / `airsstack.json.decode` assigned in a plugin reach neither the file nor another instance
+- spec-drift — curated modules were read from the live global `airsstack` at each `use` — fixed: `curated::Recorded<M>` stores a copy of each module at install (registry `buildl.curated`); the language snapshot is copied too; flow: a file clearing `airsstack.json.decode`, `airsstack.json` and `string.format` before `use` leaves the plugin the originals
+- unguarded — loader's entry `starts_with` check duplicated airsl — dropped: airsl 0.1.4 `src/extension/manifest.rs` `validate_entry` (fn :263) refuses an entry outside the canonical dir (`!is_within`, :289), run by `Manifest::from_dir`
+- static-dispatch — `&dyn Display` closure in `read_manifest` — generic `refuse(named, impl Display)`
+- consistency — manifest diagnostic gave the absolute path — now workspace-relative `plugins/go/extension.toml: …`
+- doc — `parts` doc's `..` claim false — corrected
+- correctness — `require('main')` from main.lua re-ran main before refusal — entry seeded in `loading`; refused at `plugins/p/main.lua:3` before re-running
+- portability — symlink imports without `#[cfg(unix)]` — gated
+- test-coverage — no plugin-cap refusal through the binary — `a_plugin_target_outside_its_cap_exits_4` (`plan` and `build` exit 4, nothing in `out`); passed on first run
+- spec — §4 environment row "the same values the file sees" read as shared tables is unsafe — recorded as `disproves` (spec fingerprint 5fa60e343706); spec amendment goes to the `design` skill
+- spec — §4 "errors in plugin code" row now met (first finding)
+- plan — fixtures written at test time, not checked in — plan amended (Files that change)
+- process — three CLI tests of Task 4 not seen failing — they fail if `Wiring::source` passes an empty map (`use` refused, exit 5)
+
+## Probe results
+
+- Curated modules from a copied table (plan Risk 2): probe engine with `Json`, `Path`, `Regex`, `Hash`, `Glob` on `LanguageSurface::Minimal`; Lua copies the five module tables into a local table, sets `airsstack = nil`, then calls them. Command: `cargo run -q --manifest-path <scratchpad>/probe/Cargo.toml`. Output: `glob{match,walk} hash{hash_file,hex,sha1,sha256} json{decode,encode,encode_pretty} path{absolute,basename,dirname,ext,is_absolute,join,normalize,relative_to,stem} regex{captures,compile,find,find_all,is_match,replace,replace_all,split}` / `json.decode=7` / `json.encode={"b":1}` / `path.join=a/b` / `hash.sha256=true:2d711642b726b044` / `glob.match=true:true` / `regex.is_match=true:true`. Holds.
+- airsl manifest API (Task 2): `Manifest::from_dir`, `Variables::default()`, `required()`/`optional()`/`limits()`, `optional().is_empty()` exist as planned in airsl 0.1.4; `[plugin]` table and `api = 2` refused by airsl itself (coder's red-green run of the Task 2 tests).
+- **Against the spec:** spec §4 environment row — plugins seeing "the same values the file sees" for library tables — reviewer's binary reproduction: a plugin wrapping `table.insert` captured the file's `buildl`; `graph --json` showed `"origin":"BuildFile","run":["sort","$in"]` and `plan` exited 0 with the hello cap `proc.run = ["cp"]`. Disproven; fixed by per-instance copies.
+
+## Deviations
+
+- 2026-10-23 — plugin instances get one-level copies of the language tables and curated modules, recorded at install, instead of the file's own tables (security; spec §4 amendment owed).
+- 2026-10-23 — `buildl-lua` plugin fixtures are written into temp workspaces at test time; only `crates/buildl/tests/fixtures/plugin_path/` is checked in.
+- 2026-10-23 — `BuildlModule::new` takes the root and the plugin map; `primitives_table`, `guarded`, `record_language` are `pub(crate)`.
+- 2026-10-23 — Task 1 ran beside plan 03 (it touched only `buildl-lua`, which plan 03 did not).

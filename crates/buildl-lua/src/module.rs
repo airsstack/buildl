@@ -8,7 +8,8 @@
 //!
 //! Responsibilities: [`BuildlModule`]; building a primitives table whose declarations carry a
 //! given origin; the snapshot of the language globals taken at install; turning a primitive call
-//! into a staged record or a sticky refusal that names the build file's line.
+//! into a staged record or a sticky refusal that names the line, in the build file or a plugin
+//! file, that made the call.
 //!
 //! Non-responsibilities: the argument shapes, which `primitives` owns, the walk behind
 //! `buildl.sources`, which `sources` owns, the replacement functions, which `stable_text` owns,
@@ -24,7 +25,8 @@ use buildl_core::{EvaluationFailure, EvaluationLimit, Origin, PluginName, Staged
 
 use crate::plugin::Plugins;
 use crate::primitives;
-use crate::refusal::Refusal;
+use crate::refusal::{CallSite, Refusal};
+use crate::snapshot::copy_tables;
 use crate::sources::Sources;
 use crate::stable_text;
 use crate::staging::{Exceeded, Staging};
@@ -182,19 +184,14 @@ pub(crate) fn primitives_table(
 /// Snapshots the language globals (every global name and value except [`NOT_LANGUAGE`]) into the
 /// registry, where a build file cannot reach it.
 ///
-/// A build file that reassigns `string` or `table` after this call changes its own globals and
-/// nothing the snapshot holds.
+/// A table among them, such as `string` or `table`, is snapshotted as a copy. A build file that
+/// reassigns `string`, or assigns into it, after this call changes its own globals and nothing the
+/// snapshot holds.
 pub(crate) fn record_language(lua: &Lua) -> mlua::Result<()> {
     let snapshot = lua.create_table()?;
-    for pair in lua.globals().pairs::<Value, Value>() {
-        let (name, value) = pair?;
-        let Value::String(text) = &name else {
-            continue;
-        };
-        if NOT_LANGUAGE.contains(&&*text.to_str()?) {
-            continue;
-        }
-        snapshot.set(name, value)?;
+    copy_tables(lua, &lua.globals(), &snapshot)?;
+    for name in NOT_LANGUAGE {
+        snapshot.set(name, Value::Nil)?;
     }
     lua.set_named_registry_value(LANGUAGE_REGISTRY_KEY, snapshot)
 }
@@ -216,7 +213,8 @@ fn declare(
 ///
 /// A file that already failed fails every later call with the same message. A new refusal is
 /// recorded — so a `pcall` that swallows it does not un-fail the file — and raised as a Lua error
-/// naming the line that made the call.
+/// naming the line that made the call: a line of the build file, or of the plugin file the call
+/// came from.
 ///
 /// The buffer stays locked while `work` runs, and `work` calls into Lua, which can run a
 /// finalizer that calls a primitive again. That re-entrant call finds the lock taken and fails with
@@ -227,7 +225,7 @@ pub(crate) fn guarded<T>(
     primitive: &'static str,
     work: impl FnOnce(&mut Staging) -> Result<T, Refusal>,
 ) -> mlua::Result<T> {
-    let line = call_site(lua);
+    let site = call_site(lua);
     let mut staging = match staging.try_lock() {
         Ok(staging) => staging,
         Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
@@ -241,7 +239,7 @@ pub(crate) fn guarded<T>(
     let outcome = recorded.map_or_else(
         || {
             work(&mut staging).map_err(|refusal| {
-                let diagnostic = refusal.diagnostic(primitive, line);
+                let diagnostic = refusal.diagnostic(primitive, site.as_ref());
                 let message = diagnostic.to_string();
                 staging.record(refusal.failure().clone(), diagnostic);
                 message
@@ -253,15 +251,34 @@ pub(crate) fn guarded<T>(
     outcome.map_err(mlua::Error::RuntimeError)
 }
 
-/// The line of the nearest Lua frame on the stack: the build-file line that made the call, even
-/// when it went through `pcall`.
-fn call_site(lua: &Lua) -> Option<usize> {
-    #[expect(
-        clippy::redundant_closure_for_method_calls,
-        reason = "`Debug::current_line` as a path is not general over `Debug`'s lifetime"
-    )]
+/// Marks a chunk name as a plugin's. Lua takes a name that starts with `=` as given, and airsl
+/// names the build file's chunk with a leading `@`, so the mark tells the two apart.
+const PLUGIN_CHUNK_MARK: char = '=';
+
+/// The name the plugin file `chunk`, as the workspace names it, is compiled under.
+pub(crate) fn plugin_chunk_name(chunk: &str) -> String {
+    format!("{PLUGIN_CHUNK_MARK}{chunk}")
+}
+
+/// Where the nearest Lua frame on the stack is: the line that made the call, even when it went
+/// through `pcall`, in the build file or in the plugin file the frame's chunk is named after.
+fn call_site(lua: &Lua) -> Option<CallSite> {
     (1..)
-        .map_while(|level| lua.inspect_stack(level, |debug| debug.current_line()))
+        .map_while(|level| {
+            lua.inspect_stack(level, |debug| {
+                let line = debug.current_line()?;
+                let source = debug.source().source;
+                let plugin_chunk = source
+                    .as_deref()
+                    .and_then(|name| name.strip_prefix(PLUGIN_CHUNK_MARK));
+                Some(
+                    plugin_chunk.map_or(CallSite::BuildFile { line }, |chunk| CallSite::Plugin {
+                        chunk: chunk.to_owned(),
+                        line,
+                    }),
+                )
+            })
+        })
         .flatten()
         .next()
 }
@@ -651,5 +668,13 @@ mod tests {
 
         globals.set("answer", "changed").unwrap();
         assert_eq!(snapshot.get::<i64>("answer").unwrap(), 42);
+
+        let math: Table = globals.get("math").unwrap();
+        math.set("floor", Value::Nil).unwrap();
+        let recorded: Table = snapshot.get("math").unwrap();
+        assert!(matches!(
+            recorded.get::<Value>("floor").unwrap(),
+            Value::Function(_)
+        ));
     }
 }

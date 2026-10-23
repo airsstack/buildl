@@ -2,7 +2,10 @@
 //!
 //! Its own file because the environment is the plugin's whole reach. It is a new table, never a
 //! read-through to the build file's globals: a plugin that could reach the file's `buildl`, as
-//! `buildl` or as `airsstack.buildl`, would declare without its origin and slip past its caps.
+//! `buildl` or as `airsstack.buildl`, would declare without its origin and slip past its caps. The
+//! library and module tables in it are copies for the same reason: a plugin that could assign into
+//! the build file's `table`, or into another instance's, would have the function it left there
+//! called with whatever that caller holds.
 //!
 //! Responsibilities: [`build`], which assembles the table.
 //!
@@ -14,24 +17,27 @@ use std::path::Path;
 use airsl::mlua::{self, Lua, Table, Value};
 use buildl_core::{Origin, PluginRef};
 
+use crate::curated::CURATED_REGISTRY_KEY;
 use crate::module::{LANGUAGE_REGISTRY_KEY, primitives_table};
 use crate::plugin::loader::Plugins;
 use crate::plugin::require;
-
-/// The curated host modules a plugin shares with the build file that used it.
-const CURATED: [&str; 5] = ["json", "path", "regex", "hash", "glob"];
+use crate::snapshot::copy_tables;
 
 /// The environment of the plugin instance reached through `chain`, whose files live under the
-/// canonical directory `dir`, which the workspace calls `label`.
+/// canonical directory `dir`, which the workspace calls `label`, and whose entry file is the
+/// canonical `entry`.
 ///
 /// It holds, and holds only:
 ///
 /// - `buildl`, a primitives table whose declarations carry the origin `chain`, with its own `use`;
-/// - `airsstack`, a new table holding the build file's curated modules and, as `buildl`, that same
-///   table;
+/// - `airsstack`, a new table holding the curated modules and, as `buildl`, that same table;
 /// - `require`, confined to `dir`;
 /// - `_G`, the environment itself;
-/// - the language globals as the build file saw them when the engine was built.
+/// - the language globals.
+///
+/// The curated modules and the language are as they were when the engine was built, and every
+/// library or module table among them is a copy of its own, so nothing the instance assigns into
+/// one reaches the build file or another instance.
 ///
 /// # Errors
 ///
@@ -42,35 +48,28 @@ pub(super) fn build(
     chain: &[PluginRef],
     dir: &Path,
     label: &str,
+    entry: &Path,
 ) -> mlua::Result<Table> {
     let origin = Origin::plugins(chain.to_vec())
         .map_err(|error| mlua::Error::RuntimeError(error.to_string()))?;
     let environment = lua.create_table()?;
 
     let language: Table = lua.named_registry_value(LANGUAGE_REGISTRY_KEY)?;
-    for pair in language.pairs::<Value, Value>() {
-        let (name, value) = pair?;
-        environment.set(name, value)?;
-    }
+    copy_tables(lua, &language, &environment)?;
 
     let buildl = primitives_table(lua, plugins.staging(), plugins.sources(), &origin)?;
     plugins.bind_use(lua, &buildl, chain)?;
 
     let airsstack = lua.create_table()?;
-    if let Value::Table(shared) = lua.globals().get::<Value>("airsstack")? {
-        for module in CURATED {
-            let value: Value = shared.get(module)?;
-            if !value.is_nil() {
-                airsstack.set(module, value)?;
-            }
-        }
+    if let Value::Table(curated) = lua.named_registry_value::<Value>(CURATED_REGISTRY_KEY)? {
+        copy_tables(lua, &curated, &airsstack)?;
     }
     airsstack.set("buildl", buildl.clone())?;
 
     environment.set("buildl", buildl)?;
     environment.set("airsstack", airsstack)?;
     environment.set("_G", environment.clone())?;
-    let require = require::function(lua, plugins.staging(), &environment, dir, label)?;
+    let require = require::function(lua, plugins.staging(), &environment, dir, label, entry)?;
     environment.set("require", require)?;
     Ok(environment)
 }
@@ -91,6 +90,7 @@ mod tests {
     use buildl_core::{Directory, PluginName, PluginRef, PluginVersion};
 
     use super::build;
+    use crate::curated::CURATED_REGISTRY_KEY;
     use crate::limits::DeclarationLimits;
     use crate::module::{LANGUAGE_REGISTRY_KEY, record_language};
     use crate::plugin::loader::Plugins;
@@ -106,13 +106,21 @@ mod tests {
         }
     }
 
-    /// A state with the build file's globals: `json` and `fs` under `airsstack`, and a `file_global`.
+    /// A state with the build file's globals: `json` and `fs` under `airsstack`, a `file_global`,
+    /// and `json` alone recorded as a curated module.
     fn lua_with_globals() -> Lua {
         let lua = Lua::new();
         let airsstack = lua.create_table().unwrap();
         for module in ["json", "fs"] {
             airsstack.set(module, lua.create_table().unwrap()).unwrap();
         }
+        let json: Table = airsstack.get("json").unwrap();
+        json.set("decode", lua.create_function(|_, ()| Ok(1)).unwrap())
+            .unwrap();
+        let curated = lua.create_table().unwrap();
+        curated.set("json", json).unwrap();
+        lua.set_named_registry_value(CURATED_REGISTRY_KEY, curated)
+            .unwrap();
         lua.globals().set("airsstack", airsstack).unwrap();
         lua.globals().set("file_global", 1).unwrap();
         record_language(&lua).unwrap();
@@ -128,7 +136,15 @@ mod tests {
             &[],
         );
         let plugins = Plugins::new(Path::new("."), BTreeMap::new(), &staging, &sources);
-        build(lua, &plugins, &[plugin("p")], Path::new("."), "plugins/p").unwrap()
+        build(
+            lua,
+            &plugins,
+            &[plugin("p")],
+            Path::new("."),
+            "plugins/p",
+            Path::new("./main.lua"),
+        )
+        .unwrap()
     }
 
     fn names(table: &Table) -> Vec<String> {
@@ -162,6 +178,34 @@ mod tests {
         let buildl: Table = environment.get("buildl").unwrap();
         let inner: Table = airsstack.get("buildl").unwrap();
         assert!(buildl.equals(&inner).unwrap());
+    }
+
+    #[test]
+    fn every_library_and_module_table_is_a_copy_of_its_own() {
+        let lua = lua_with_globals();
+        let first = environment(&lua);
+        let second = environment(&lua);
+        let globals = lua.globals();
+        let recorded: Table = lua.named_registry_value(LANGUAGE_REGISTRY_KEY).unwrap();
+
+        let library = |table: &Table| -> Table { table.get("string").unwrap() };
+        let module = |environment: &Table| -> Table {
+            let airsstack: Table = environment.get("airsstack").unwrap();
+            airsstack.get("json").unwrap()
+        };
+
+        let others = [library(&second), library(&recorded), library(&globals)];
+        for other in &others {
+            assert!(!library(&first).equals(other).unwrap());
+        }
+        assert!(!module(&first).equals(&module(&second)).unwrap());
+
+        library(&first).set("x", 1).unwrap();
+        module(&first).set("y", 1).unwrap();
+        for other in &others {
+            assert!(!other.contains_key("x").unwrap());
+        }
+        assert!(!module(&second).contains_key("y").unwrap());
     }
 
     #[test]

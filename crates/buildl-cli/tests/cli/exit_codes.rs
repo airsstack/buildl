@@ -314,6 +314,37 @@ fn a_program_outside_the_ceiling_is_refused() {
 }
 
 #[test]
+fn a_plugin_target_outside_its_cap_exits_4() {
+    let (_dir, root) = workspace(&[
+        (
+            "buildl.toml",
+            concat!(
+                "[ceiling]\nproc.run = [\"cp\", \"sort\"]\nfs.read = [\".\"]\n",
+                "fs.write = [\"out\", \".buildl\"]\n\n",
+                "[execution]\nworkers = 1\nstrategy = \"bare\"\n\n",
+                "[plugins.hello]\npath = \"plugins/hello\"\nproc.run = [\"cp\"]\n",
+            ),
+        ),
+        ("build.lua", "buildl.use(\"hello\").greet(\"greet\")\n"),
+        (
+            "plugins/hello/extension.toml",
+            "[extension]\nname = \"hello\"\nversion = \"0.1.0\"\nentry = \"main.lua\"\napi = 1\n\n[capabilities]\nproc.run = [\"cp\"]\n",
+        ),
+        (
+            "plugins/hello/main.lua",
+            "return { greet = function(name) buildl.target(name, { run = { \"sort\" } }) end }\n",
+        ),
+    ]);
+    for command in ["plan", "build"] {
+        let (status, said) = failed(&root, &[command]);
+        assert_eq!(status, 4, "{command}: {said}");
+        assert!(said.starts_with("error: "), "{command}: {said}");
+        assert!(said.contains("hello"), "{command}: {said}");
+    }
+    assert!(!root.join("out").exists());
+}
+
+#[test]
 fn a_state_directory_outside_the_ceiling_is_refused_before_it_is_made() {
     let (_dir, root) = workspace(&[
         (

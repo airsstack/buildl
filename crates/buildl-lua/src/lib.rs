@@ -39,6 +39,7 @@
 //! | `limits` | [`DeclarationLimits`] |
 //! | `engine` | the airsl engine configuration |
 //! | `curated` | airsl's `path` module without `absolute` |
+//! | `snapshot` | one-level copies of the library and module tables a plugin must not share |
 //! | `module` | the `buildl` host module, which raises refusals |
 //! | `plugin` | `buildl.use`: a plugin's manifest, environment, `require` and instances |
 //! | `primitives` | each primitive's argument shape |
@@ -60,6 +61,7 @@ mod module;
 mod plugin;
 mod primitives;
 mod refusal;
+mod snapshot;
 mod source;
 mod sources;
 mod stable_text;

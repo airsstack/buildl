@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use airsl::mlua::{self, Lua, Table, Value};
 use buildl_core::{EvaluationFailure, PluginName, PluginRef};
 
-use crate::module::guarded;
+use crate::module::{guarded, plugin_chunk_name};
 use crate::plugin::environment;
 use crate::plugin::manifest::read_manifest;
 use crate::refusal::Refusal;
@@ -59,6 +59,8 @@ struct Fresh {
     plugin: PluginRef,
     /// The plugin's canonical directory.
     directory: PathBuf,
+    /// The canonical path of the entry file.
+    entry_file: PathBuf,
     /// The plugin's directory as the workspace names it.
     label: String,
     /// The name the entry chunk goes by.
@@ -129,10 +131,17 @@ impl Plugins {
 
         let mut chain = chain.to_vec();
         chain.push(fresh.plugin);
-        let environment = environment::build(lua, self, &chain, &fresh.directory, &fresh.label)?;
+        let environment = environment::build(
+            lua,
+            self,
+            &chain,
+            &fresh.directory,
+            &fresh.label,
+            &fresh.entry_file,
+        )?;
         let module = lua
             .load(fresh.text)
-            .set_name(format!("={}", fresh.chunk))
+            .set_name(plugin_chunk_name(&fresh.chunk))
             .set_environment(environment)
             .eval::<Value>()?;
 
@@ -188,8 +197,6 @@ impl Plugins {
             return Ok(Found::Loaded(module.clone()));
         }
 
-        let (plugin, entry) =
-            read_manifest(directory, name).map_err(|diagnostic| refuse(diagnostic.to_string()))?;
         let canonical = fs::canonicalize(directory).map_err(|error| {
             Refusal::new(
                 EvaluationFailure::Runtime,
@@ -197,14 +204,12 @@ impl Plugins {
             )
             .about(&text)
         })?;
+        let label = self.label(&canonical);
+        let (plugin, entry) = read_manifest(&canonical, &label, name)
+            .map_err(|diagnostic| refuse(diagnostic.to_string()))?;
+        // The manifest read has already checked that the entry names a file inside the directory.
         let entry_file = fs::canonicalize(canonical.join(&entry))
             .map_err(|error| refuse(format!("{}: {error}", directory.join(&entry).display())))?;
-        if !entry_file.starts_with(&canonical) {
-            return Err(refuse(format!(
-                "the entry file {} resolves outside the plugin directory",
-                entry.display()
-            )));
-        }
         let source = fs::read_to_string(&entry_file).map_err(|error| {
             Refusal::new(
                 EvaluationFailure::Runtime,
@@ -213,12 +218,12 @@ impl Plugins {
             .about(&text)
         })?;
 
-        let label = self.label(&canonical);
         Ok(Found::Fresh(Box::new(Fresh {
             plugin,
             chunk: format!("{label}/{}", entry.display()),
             label,
             directory: canonical,
+            entry_file,
             text: source,
         })))
     }
@@ -355,6 +360,7 @@ mod tests {
         assert_eq!(fresh.chunk, "plugins/p/main.lua");
         assert_eq!(fresh.text, "return {}");
         assert_eq!(fresh.directory, plugin);
+        assert_eq!(fresh.entry_file, plugin.join("main.lua"));
     }
 
     #[test]
@@ -365,6 +371,6 @@ mod tests {
         fs::write(&manifest, text.replace("\"p\"", "\"q\"")).unwrap();
         let lua = Lua::new();
         let said = refused(plugins.find(&[], &name(&lua, "p")));
-        assert!(said.contains("extension.toml"), "{said}");
+        assert!(said.contains("plugins/p/extension.toml: "), "{said}");
     }
 }

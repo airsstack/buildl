@@ -20,69 +20,84 @@ use buildl_core::{Diagnostic, EnvName, PluginName, PluginRef, PluginVersion, Pro
 
 /// Reads `<dir>/extension.toml` and checks it describes the plugin `expected`.
 ///
+/// `label` is `dir` as the workspace names it; the diagnostics name the manifest as
+/// `<label>/extension.toml`, so they read the same on every machine.
+///
 /// Returns what the manifest asks for, as a [`PluginRef`], and the entry file relative to `dir`.
 ///
 /// # Errors
 ///
-/// Returns a diagnostic naming `<dir>/extension.toml` and the reason when airsl refuses the
+/// Returns a diagnostic naming `<label>/extension.toml` and the reason when airsl refuses the
 /// manifest (unreadable, malformed, an unknown key, an unsupported `api`, an entry that is not a
 /// file inside `dir`), when its `name` is not `expected`, when it holds a name or version buildl
 /// cannot use, or when it requests anything but `proc.run` and `env.read`: `fs.read`, `fs.write`,
 /// a module flag, a `[capabilities.optional]` entry, or a `[limits]` value.
 pub(crate) fn read_manifest(
     dir: &Path,
+    label: &str,
     expected: &PluginName,
 ) -> Result<(PluginRef, PathBuf), Diagnostic> {
-    let named = dir.join(MANIFEST_FILE);
-    let refuse = |reason: &dyn Display| Diagnostic::new(format!("{}: {reason}", named.display()));
+    let named = if label.is_empty() {
+        MANIFEST_FILE.to_owned()
+    } else {
+        format!("{label}/{MANIFEST_FILE}")
+    };
 
     let manifest = Manifest::from_dir(dir, &Variables::default()).map_err(|error| match error {
         // These two already name the manifest's path; the diagnostic leads with it, so only the
         // reason is kept.
-        airsl::Error::ManifestParse { reason, .. } => refuse(&reason),
-        airsl::Error::ManifestRead { source, .. } => refuse(&source),
-        other => refuse(&other),
+        airsl::Error::ManifestParse { reason, .. } => refuse(&named, reason),
+        airsl::Error::ManifestRead { source, .. } => refuse(&named, source),
+        other => refuse(&named, other),
     })?;
 
-    let name = PluginName::parse(manifest.name().as_str()).map_err(|error| refuse(&error))?;
+    let name =
+        PluginName::parse(manifest.name().as_str()).map_err(|error| refuse(&named, error))?;
     if &name != expected {
-        return Err(refuse(&format_args!(
-            "names the plugin `{name}`, but the workspace uses it as `{expected}`"
-        )));
+        return Err(refuse(
+            &named,
+            format_args!("names the plugin `{name}`, but the workspace uses it as `{expected}`"),
+        ));
     }
-    let version = PluginVersion::parse(manifest.version()).map_err(|error| refuse(&error))?;
+    let version =
+        PluginVersion::parse(manifest.version()).map_err(|error| refuse(&named, error))?;
 
     let required = manifest.required();
     if !required.fs_read().is_empty() {
-        return Err(refuse(&"requests fs.read, which a plugin may not"));
+        return Err(refuse(&named, "requests fs.read, which a plugin may not"));
     }
     if !required.fs_write().is_empty() {
-        return Err(refuse(&"requests fs.write, which a plugin may not"));
+        return Err(refuse(&named, "requests fs.write, which a plugin may not"));
     }
     if let Some(module) = required.modules().next() {
-        return Err(refuse(&format_args!(
-            "requests the module `{module}`, which a plugin may not"
-        )));
+        return Err(refuse(
+            &named,
+            format_args!("requests the module `{module}`, which a plugin may not"),
+        ));
     }
     if !manifest.optional().is_empty() {
         return Err(refuse(
-            &"holds a [capabilities.optional] block, which a plugin may not",
+            &named,
+            "holds a [capabilities.optional] block, which a plugin may not",
         ));
     }
     if manifest.limits().memory().is_some() {
-        return Err(refuse(&"sets limits.memory, which a plugin may not"));
+        return Err(refuse(&named, "sets limits.memory, which a plugin may not"));
     }
     if manifest.limits().instructions().is_some() {
-        return Err(refuse(&"sets limits.instructions, which a plugin may not"));
+        return Err(refuse(
+            &named,
+            "sets limits.instructions, which a plugin may not",
+        ));
     }
 
     let run = required
         .proc_run()
-        .map(|program| Program::parse(program).map_err(|error| refuse(&error)))
+        .map(|program| Program::parse(program).map_err(|error| refuse(&named, error)))
         .collect::<Result<_, _>>()?;
     let env = required
         .env_read()
-        .map(|variable| EnvName::parse(variable).map_err(|error| refuse(&error)))
+        .map(|variable| EnvName::parse(variable).map_err(|error| refuse(&named, error)))
         .collect::<Result<_, _>>()?;
 
     let plugin = PluginRef {
@@ -92,6 +107,11 @@ pub(crate) fn read_manifest(
         env,
     };
     Ok((plugin, manifest.entry().to_path_buf()))
+}
+
+/// A diagnostic leading with the manifest `named` and then the `reason`.
+fn refuse(named: &str, reason: impl Display) -> Diagnostic {
+    Diagnostic::new(format!("{named}: {reason}"))
 }
 
 #[cfg(test)]
@@ -108,6 +128,9 @@ mod tests {
     use buildl_core::{EnvName, PluginName, Program};
 
     use super::read_manifest;
+
+    /// The plugin directory as a workspace names it.
+    const LABEL: &str = "plugins/go";
 
     /// A plugin directory holding `extension.toml` with `text` and an entry file `main.lua`.
     fn plugin_dir(text: &str) -> tempfile::TempDir {
@@ -131,16 +154,24 @@ mod tests {
     /// The diagnostic `read_manifest` refuses the manifest `text` with.
     fn refusal(text: &str) -> String {
         let dir = plugin_dir(text);
-        let diagnostic = match read_manifest(dir.path(), &go()) {
+        let diagnostic = match read_manifest(dir.path(), LABEL, &go()) {
             Err(diagnostic) => diagnostic.to_string(),
             Ok(read) => panic!("expected a refusal, got {read:?}"),
         };
-        let named = dir.path().join("extension.toml");
         assert!(
-            diagnostic.starts_with(&format!("{}: ", named.display())),
+            diagnostic.starts_with("plugins/go/extension.toml: "),
             "{diagnostic}"
         );
         diagnostic
+    }
+
+    #[test]
+    fn a_plugin_at_the_workspace_root_names_the_bare_file() {
+        let dir = plugin_dir(&manifest("").replace("api = 1", "api = 2"));
+        let said = read_manifest(dir.path(), "", &go())
+            .unwrap_err()
+            .to_string();
+        assert!(said.starts_with("extension.toml: "), "{said}");
     }
 
     #[test]
@@ -148,7 +179,7 @@ mod tests {
         let dir = plugin_dir(&manifest(
             "[capabilities]\nproc.run = [\"go\", \"gofmt\"]\nenv.read = [\"GOCACHE\", \"HOME\"]\n",
         ));
-        let (plugin, entry) = read_manifest(dir.path(), &go()).unwrap();
+        let (plugin, entry) = read_manifest(dir.path(), LABEL, &go()).unwrap();
         assert_eq!(plugin.to_string(), "go@1.2.0");
         assert_eq!(
             plugin.run,
@@ -172,7 +203,7 @@ mod tests {
     #[test]
     fn a_manifest_without_capabilities_asks_for_nothing() {
         let dir = plugin_dir(&manifest(""));
-        let (plugin, _) = read_manifest(dir.path(), &go()).unwrap();
+        let (plugin, _) = read_manifest(dir.path(), LABEL, &go()).unwrap();
         assert!(plugin.run.is_empty() && plugin.env.is_empty());
     }
 
@@ -235,14 +266,18 @@ mod tests {
     fn a_missing_entry_is_refused() {
         let dir = plugin_dir(&manifest(""));
         fs::remove_file(dir.path().join("main.lua")).unwrap();
-        let said = read_manifest(dir.path(), &go()).unwrap_err().to_string();
+        let said = read_manifest(dir.path(), LABEL, &go())
+            .unwrap_err()
+            .to_string();
         assert!(said.contains("extension.entry"), "{said}");
     }
 
     #[test]
     fn a_missing_manifest_is_refused() {
         let dir = tempfile::tempdir().unwrap();
-        let said = read_manifest(dir.path(), &go()).unwrap_err().to_string();
+        let said = read_manifest(dir.path(), LABEL, &go())
+            .unwrap_err()
+            .to_string();
         assert!(said.contains("extension.toml"), "{said}");
     }
 }

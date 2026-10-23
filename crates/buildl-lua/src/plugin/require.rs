@@ -20,7 +20,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use airsl::mlua::{Function, Lua, Table, Value};
 use buildl_core::EvaluationFailure;
 
-use crate::module::guarded;
+use crate::module::{guarded, plugin_chunk_name};
 use crate::refusal::Refusal;
 use crate::staging::Staging;
 use crate::values;
@@ -53,8 +53,9 @@ enum Found {
 ///
 /// `dir` is the plugin's canonical directory. `label` is that directory as the workspace names
 /// it, which prefixes the chunk name of every module so an error points at a workspace file.
-/// A refusal is recorded in `staging`, so it fails the build file even when the plugin catches
-/// the error.
+/// `entry` is the canonical path of the instance's entry file, which is already running and so is
+/// never a module to require. A refusal is recorded in `staging`, so it fails the build file even
+/// when the plugin catches the error.
 ///
 /// # Errors
 ///
@@ -65,6 +66,7 @@ pub(super) fn function(
     environment: &Table,
     dir: &Path,
     label: &str,
+    entry: &Path,
 ) -> airsl::mlua::Result<Function> {
     let loader = Loader {
         dir: dir.to_path_buf(),
@@ -72,7 +74,7 @@ pub(super) fn function(
         environment: environment.clone(),
         staging: Arc::clone(staging),
         loaded: Mutex::new(BTreeMap::new()),
-        loading: Mutex::new(BTreeSet::new()),
+        loading: Mutex::new(BTreeSet::from([entry.to_path_buf()])),
     };
     lua.create_function(move |lua, name: Value| loader.require(lua, &name))
 }
@@ -92,7 +94,7 @@ impl Loader {
             .insert(file.clone());
         let ran = lua
             .load(text)
-            .set_name(format!("={chunk}"))
+            .set_name(plugin_chunk_name(&chunk))
             .set_environment(self.environment.clone())
             .eval::<Value>();
         self.loading
@@ -155,7 +157,7 @@ impl Loader {
 
 /// The dot-separated parts of the module name `name`.
 ///
-/// Each part is non-empty and holds no `/` or `\`. A `..` is two empty parts, so it is refused as
+/// Each part is non-empty and holds no `/` or `\`. A `..` yields empty parts, so it is refused as
 /// one.
 fn parts(name: &str) -> Result<Vec<&str>, Refusal> {
     let parts: Vec<&str> = name.split('.').collect();
@@ -209,6 +211,7 @@ mod tests {
     )]
 
     use std::fs;
+    #[cfg(unix)]
     use std::os::unix::fs::symlink;
 
     use buildl_core::EvaluationFailure;
@@ -250,6 +253,7 @@ mod tests {
         assert_eq!(refusal.failure(), &EvaluationFailure::Refused);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_link_to_a_file_outside_the_directory_is_refused() {
         let dir = tempfile::tempdir().unwrap();
@@ -275,6 +279,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_link_that_stays_inside_the_directory_is_allowed() {
         let dir = tempfile::tempdir().unwrap();

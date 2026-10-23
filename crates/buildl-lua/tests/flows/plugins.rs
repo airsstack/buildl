@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
+#[cfg(unix)]
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 
@@ -175,6 +176,7 @@ fn require_of_a_module_that_does_not_exist_is_refused() {
     assert!(diagnostic.as_str().contains("missing"), "{diagnostic}");
 }
 
+#[cfg(unix)]
 #[test]
 fn require_through_a_link_out_is_refused() {
     let (_dir, root) = with_p(
@@ -382,6 +384,142 @@ fn a_plugin_module_error_names_the_module_file_and_line() {
         diagnostic
             .as_str()
             .contains("plugins/p/lib/m.lua:2: bad module"),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn a_refused_primitive_call_in_a_plugin_names_the_plugin_file_and_line() {
+    let (failure, diagnostic) =
+        refused_with("\n\nbuildl.target('t', { run = 42 })\nreturn {}", &[]);
+    assert!(matches!(failure, EvaluationFailure::WrongFieldType { .. }));
+    assert!(
+        diagnostic
+            .as_str()
+            .starts_with("plugins/p/main.lua:3: buildl.target 't': "),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn a_refused_primitive_call_in_a_plugin_module_names_the_module_file_and_line() {
+    let (_, diagnostic) = refused_with(
+        "return require('lib.m')",
+        &[("lib/m.lua", "local x = 1\nbuildl.alias(7, 'x')")],
+    );
+    assert!(
+        diagnostic
+            .as_str()
+            .starts_with("plugins/p/lib/m.lua:2: buildl.alias: "),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn a_refused_require_in_a_plugin_names_the_plugin_file_and_line() {
+    let (failure, diagnostic) = refused_with("local x = 1\nreturn require('missing')", &[]);
+    assert_eq!(failure, EvaluationFailure::Refused);
+    assert!(
+        diagnostic
+            .as_str()
+            .starts_with("plugins/p/main.lua:2: buildl.require 'missing': "),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn a_refused_use_in_a_plugin_names_the_plugin_file_and_line() {
+    let (_, diagnostic) = refused_with("\nbuildl.use('hidden')", &[]);
+    assert!(
+        diagnostic
+            .as_str()
+            .starts_with("plugins/p/main.lua:2: buildl.use 'hidden': "),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn a_refusal_in_the_build_file_still_names_only_its_line() {
+    let (_dir, root) = with_p("\nbuildl.use('p')\nbuildl.alias(7, 'x')", "return {}", &[]);
+    let (_, diagnostic) = staged(&root, &["p"]).unwrap_err();
+    assert!(
+        diagnostic.as_str().starts_with("line 3: buildl.alias: "),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn a_plugin_cannot_take_the_build_file_s_buildl_through_a_library_function() {
+    let (_dir, root) = with_p(
+        "local insert = table.insert\n\
+         local p = buildl.use('p')\n\
+         local apis = {}\n\
+         table.insert(apis, buildl)\n\
+         assert(table.insert == insert, 'the file s table.insert was replaced')\n\
+         pcall(p.steal)",
+        "local original = table.insert\n\
+         local stolen\n\
+         table.insert = function(t, v, ...)\n\
+         if type(v) == 'table' and v.target and v ~= buildl then stolen = v end\n\
+         return original(t, v, ...)\n\
+         end\n\
+         return { steal = function() stolen.target('stolen', { run = { 'sort' } }) end }",
+        &[],
+    );
+    let staged = staged(&root, &["p"]).unwrap();
+    assert!(
+        staged.declarations.is_empty(),
+        "a plugin declared as the build file: {:?}",
+        origins(&staged)
+    );
+}
+
+#[test]
+fn what_a_plugin_assigns_into_a_library_table_reaches_neither_the_file_nor_another_instance() {
+    let (_dir, root) = with_p(
+        "buildl.use('p')\n\
+         buildl.use('q')\n\
+         assert(string.x == nil and airsstack.json.decode('[1]')[1] == 1, 'reached the file')",
+        "assert(string.x == nil, 'reached another instance')\n\
+         assert(airsstack.json.decode('[1]')[1] == 1, 'reached another instance')\n\
+         string.x = 1\n\
+         airsstack.json.decode = function() return 'changed' end\n\
+         assert(string.x == 1 and airsstack.json.decode('[1]') == 'changed')\n\
+         return {}",
+        &[],
+    );
+    plugin(&root, "q", "return buildl.use('p')", &[]);
+    staged(&root, &["p", "q"]).unwrap();
+}
+
+#[test]
+fn a_build_file_reassigning_a_curated_module_before_use_does_not_change_what_a_plugin_gets() {
+    let (_dir, root) = with_p(
+        "airsstack.json.decode = nil\n\
+         airsstack.json = {}\n\
+         string.format = nil\n\
+         buildl.use('p')",
+        "assert(airsstack.json.decode('[1]')[1] == 1)\n\
+         assert(string.format('%s', 'a') == 'a')\n\
+         return {}",
+        &[],
+    );
+    staged(&root, &["p"]).unwrap();
+}
+
+#[test]
+fn an_entry_file_requiring_itself_is_refused_before_it_runs_again() {
+    let (failure, diagnostic) = refused_with(
+        "runs = (runs or 0) + 1\n\
+         if runs > 1 then buildl.alias(7, 'x') end\n\
+         require('main')",
+        &[],
+    );
+    assert_eq!(failure, EvaluationFailure::Refused);
+    assert!(
+        diagnostic
+            .as_str()
+            .starts_with("plugins/p/main.lua:3: buildl.require 'main': "),
         "{diagnostic}"
     );
 }
