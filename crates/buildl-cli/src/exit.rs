@@ -100,7 +100,9 @@ impl Exit {
             | Error::InvalidQuery { .. }
             | Error::NoRun { .. }
             | Error::NotATest { .. } => Self::Usage,
-            Error::MissingTool { .. } | Error::MissingOutput { .. } => Self::Infrastructure,
+            Error::MissingTool { .. } | Error::MissingOutput { .. } | Error::PluginFetch { .. } => {
+                Self::Infrastructure
+            }
             // A manifest that is missing, refused, or asks for what this buildl cannot run is
             // fixed by editing it; every other port failing is the builder's trouble.
             Error::Adapter { port, .. } => match port {
@@ -254,6 +256,7 @@ mod tests {
             Error::MissingOutput {
                 label: label("//:app"),
             },
+            plugin_fetch(),
         ]
     }
 
@@ -390,6 +393,14 @@ mod tests {
         Error::PluginChanged {
             plugin: PluginName::parse("go").unwrap(),
             reason: "its files are not the ones that were locked".to_owned(),
+        }
+    }
+
+    /// A plugin `git` could not fetch.
+    fn plugin_fetch() -> Error {
+        Error::PluginFetch {
+            plugin: PluginName::parse("go").unwrap(),
+            diagnostic: Diagnostic::new("git was not found"),
         }
     }
 
@@ -592,6 +603,12 @@ mod tests {
     }
 
     #[test]
+    fn plugin_fetch_exits_3() {
+        assert_eq!(Exit::of_error(&plugin_fetch()), Exit::Infrastructure);
+        assert_eq!(Exit::Infrastructure as u8, 3);
+    }
+
+    #[test]
     fn plugin_tree_exits_5() {
         assert_eq!(Exit::of_error(&plugin_tree()), Exit::Definition);
         assert_eq!(Exit::Definition as u8, 5);
@@ -641,12 +658,12 @@ mod tests {
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [5, 3, 3, 19, 4, 7]);
+        assert_eq!(counts, [5, 4, 3, 19, 4, 7]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 41, "a variant is listed twice");
+        assert_eq!(variants.len(), 42, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");

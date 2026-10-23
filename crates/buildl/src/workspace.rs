@@ -25,7 +25,9 @@ use crate::cache::LocalCache;
 use crate::cas::LocalCas;
 use crate::local_ports::Wiring;
 use crate::log::LocalLog;
+use crate::plugins::{Fetched, fetch};
 use crate::report::Silent;
+use crate::search_path::SearchPath;
 use crate::state::{Cleaned, clear_out};
 
 /// The choices a caller makes about one build or test run that are neither in the workspace nor
@@ -93,7 +95,8 @@ impl Doctor {
 ///
 /// Opening one reads its manifest and nothing else. The state directory is taken by
 /// [`Workspace::plan`], [`Workspace::build`], [`Workspace::test`], [`Workspace::verify`],
-/// [`Workspace::gc`] and [`Workspace::clean`] only, and only while one of them runs, so a
+/// [`Workspace::gc`], [`Workspace::clean`] and [`Workspace::fetch_plugins`] only, and only while
+/// one of them runs, so a
 /// workspace kept open holds nothing while it is idle.
 /// [`Workspace::check`], [`Workspace::graph`], [`Workspace::query`], [`Workspace::doctor`] and
 /// [`Workspace::log`] hold nothing even while they run.
@@ -456,6 +459,32 @@ impl Workspace {
         concluded(collected, folded)
     }
 
+    /// Pins every git plugin `buildl.toml` names in `buildl.lock` and stores its files under the
+    /// state directory, so that a build afterwards needs no network, and drops from the lock and
+    /// the store what the manifest no longer names.
+    ///
+    /// Holds the state directory while it runs. Reads the manifest's plugin sources and no build
+    /// file, and asks no approver. It runs the `git` found on the process's search path, and
+    /// only when a plugin has to be fetched. The result lists the git plugins in name order,
+    /// each with the commit it is pinned to and whether anything was fetched for it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::Refused`](buildl_core::Error::Refused) when the state directory is
+    /// outside what the workspace allows a build to write into, and
+    /// [`Error::Adapter`](buildl_core::Error::Adapter), naming
+    /// [`PortName::ActionCache`](buildl_core::PortName::ActionCache), when another process
+    /// holds the workspace. Otherwise returns whatever [`fetch`] returns.
+    pub fn fetch_plugins(&self) -> Result<Fetched> {
+        let lock = self.wiring.lock()?;
+        fetch(
+            self.wiring.root().as_path(),
+            lock.layout(),
+            self.wiring.manifest().plugins(),
+            &SearchPath::from_process(),
+        )
+    }
+
     /// Runs the tests `scope` asks for, every test when it asks for the workspace, telling
     /// `reporter` how it goes.
     ///
@@ -791,6 +820,44 @@ mod tests {
         assert!(!root.join("out").exists());
         // The directory was let go when the plan returned.
         workspace.wiring.lock().unwrap();
+    }
+
+    #[test]
+    fn fetch_plugins_of_a_workspace_with_no_git_plugin_fetches_nothing_and_opens_no_build_file() {
+        // The build file does not evaluate: fetching never reads it.
+        let (_dir, root) = workspace(&[
+            ("buildl.toml", BARE),
+            ("build.lua", "buildl.target(\n"),
+            ("a.txt", "a\n"),
+        ]);
+        let workspace = Workspace::open(&root).unwrap();
+
+        let fetched = workspace.fetch_plugins().unwrap();
+
+        assert_eq!(fetched.iter().count(), 0);
+        assert!(!root.join("buildl.lock").exists());
+        // The directory was let go when the fetch returned.
+        workspace.wiring.lock().unwrap();
+    }
+
+    #[test]
+    fn fetch_plugins_is_refused_while_another_buildl_holds_the_workspace() {
+        let (_dir, root) = copying();
+        let workspace = Workspace::open(&root).unwrap();
+        let _held = workspace.wiring.lock().unwrap();
+
+        let error = workspace.fetch_plugins().unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                Error::Adapter {
+                    port: PortName::ActionCache,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
     }
 
     #[test]

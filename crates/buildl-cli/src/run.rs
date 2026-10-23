@@ -22,6 +22,7 @@ use std::path::{Path, PathBuf};
 use buildl::approver::Console;
 use buildl::buildl_core::json::canonical;
 use buildl::buildl_core::{Error, Scope};
+use buildl::plugins::FetchStatus;
 use buildl::report::{
     Mode, Paint, Report, TerminalReporter, check_line, clean_line, damage, error_text, gc_line,
     graph_dot, header, plan_text, query_text, verify_text,
@@ -31,8 +32,8 @@ use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 
 use crate::cli::{
-    BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, QueryArgs, Streams, TestArgs,
-    VerifyArgs, overrides,
+    BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, PluginsArgs, PluginsCommand, QueryArgs,
+    Streams, TestArgs, VerifyArgs, overrides,
 };
 use crate::doctor_text::doctor_text;
 use crate::exit::Exit;
@@ -118,6 +119,7 @@ where
         Command::Log(args) => log(&start, &args, stdout, stderr),
         Command::Clean => clean(&start, stderr),
         Command::Gc => gc(&start, stderr),
+        Command::Plugins(args) => plugins(&start, &args, stderr),
     };
     match ended {
         Ok(exit) => exit,
@@ -203,6 +205,28 @@ fn clean<E: Write>(start: &Path, stderr: &mut E) -> Result<Exit, Stop> {
 fn gc<E: Write>(start: &Path, stderr: &mut E) -> Result<Exit, Stop> {
     let collected = Workspace::open(start)?.gc()?;
     let _ = stderr.write_all(gc_line(&collected).as_bytes());
+    Ok(Exit::Success)
+}
+
+/// `plugins`: runs the command under it.
+fn plugins<E: Write>(start: &Path, args: &PluginsArgs, stderr: &mut E) -> Result<Exit, Stop> {
+    match args.command {
+        PluginsCommand::Fetch => fetch_plugins(start, stderr),
+    }
+}
+
+/// `plugins fetch`: pins every git plugin in `buildl.lock` and stores its files, and says on
+/// `stderr`, for each in name order, `fetched` or `unchanged`, its name and the commit it is
+/// pinned to.
+fn fetch_plugins<E: Write>(start: &Path, stderr: &mut E) -> Result<Exit, Stop> {
+    let fetched = Workspace::open(start)?.fetch_plugins()?;
+    for plugin in fetched.iter() {
+        let status = match plugin.status {
+            FetchStatus::Fetched => "fetched",
+            FetchStatus::Unchanged => "unchanged",
+        };
+        let _ = writeln!(stderr, "{status} {} {}", plugin.plugin, plugin.commit);
+    }
     Ok(Exit::Success)
 }
 

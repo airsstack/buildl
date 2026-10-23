@@ -20,6 +20,7 @@
 //! | `buildl log <TARGET> [--stdout \| --stderr]` | the stored stdout, or the one stream asked for | the header, a warning of damaged lines, and the stored stderr when no flag is given |
 //! | `buildl clean` | nothing | `clean: removed out` (naming the manifest's `out` directory), or `clean: out holds nothing` |
 //! | `buildl gc` | nothing | `gc: dropped 1 row, removed 5 blobs (2048 bytes)` |
+//! | `buildl plugins fetch` | nothing | a line for each git plugin, by name: `fetched NAME COMMIT` or `unchanged NAME COMMIT` |
 //!
 //! A target is written `//dir:name`, or `:name` and `name` for one in the directory the command
 //! was started in; naming none means every target but tests for `plan` and `build`, and every
@@ -44,6 +45,13 @@
 //! status that mistake has everywhere: 5 for a build file or an output two targets claim, 6 for
 //! a remembered approvals file that is not what buildl writes, and 3 when that file cannot be
 //! read or there is no data directory to find it in.
+//!
+//! `plugins fetch` pins every git plugin `buildl.toml` names in `buildl.lock` and stores its files
+//! under the state directory, so that a build afterwards needs no network. It holds the state
+//! directory while it runs, reads no build file and asks no approver. It runs the `git` on the
+//! `PATH`, and only for a plugin that has to be fetched; a `git` that is missing or refuses ends
+//! with 3. A plugin that fetches as other files than the lock pins, as when its tag has
+//! moved, ends with 6, and one whose files hold a link with 5.
 //!
 //! `log` takes no lock and loads no build file, and writes nothing but the store's own removal of
 //! a blob that fails its digest; it does not follow an alias.
