@@ -141,8 +141,10 @@ impl Plan {
         }
     }
 
-    /// This plan, naming `stale` as the discovery targets that are not up to date.
-    pub(crate) fn with_stale_discovery(mut self, stale: Vec<Label>) -> Self {
+    /// This plan, naming `stale` as the discovery targets that are not up to date. Nothing is
+    /// checked: the labels are taken as given.
+    #[must_use]
+    pub fn with_stale_discovery(mut self, stale: Vec<Label>) -> Self {
         self.stale_discovery = stale;
         self
     }

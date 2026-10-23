@@ -11,7 +11,7 @@ use crate::common::Fixture;
 /// What `raw` asks of `workspace`, one label a line.
 fn answer(workspace: &Workspace, raw: &str) -> String {
     let query = workspace.query_of(raw).unwrap();
-    query_text(&workspace.query(&query).unwrap())
+    query_text(&workspace.query(&query).unwrap().0)
 }
 
 #[test]
@@ -19,8 +19,8 @@ fn opening_a_workspace_writes_nothing() {
     let chain = Fixture::copy_of("chain", &["greet.sh"]);
 
     let workspace = Workspace::open(chain.root()).unwrap();
-    let declarations = workspace.check().unwrap();
-    let graph = workspace.graph().unwrap();
+    let declarations = workspace.check().unwrap().declarations;
+    let (graph, _) = workspace.graph().unwrap();
 
     assert_eq!(workspace.root(), chain.root());
     assert_eq!(declarations.len(), 9);
@@ -62,8 +62,8 @@ fn a_workspace_another_buildl_holds_is_refused() {
         );
     }
     let workspace = chain.open();
-    assert_eq!(workspace.check().unwrap().len(), 9);
-    assert_eq!(workspace.graph().unwrap().len(), 6);
+    assert_eq!(workspace.check().unwrap().declarations.len(), 9);
+    assert_eq!(workspace.graph().unwrap().0.len(), 6);
     assert!(!chain.root().join("out").exists());
 }
 

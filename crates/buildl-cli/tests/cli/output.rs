@@ -113,6 +113,50 @@ fn check_writes_nothing() {
     assert!(!shop.root.join(".buildl").exists());
 }
 
+/// A workspace whose one discovery target, `//:pkgs`, has never run.
+fn discovering() -> (tempfile::TempDir, PathBuf) {
+    workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        (
+            "build.lua",
+            "buildl.discover(\"pkgs\", { inputs = { \"list\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+        ),
+        ("list", "[]\n"),
+    ])
+}
+
+const NOT_RUN: &str = "//:pkgs has not run; run buildl build\n";
+
+#[test]
+fn check_prints_the_not_run_note_on_stderr() {
+    let (_dir, root) = discovering();
+    let output = run(&root, &["check"], &[]);
+    assert_eq!(code(&output), 0);
+    assert_eq!(
+        stderr(&output),
+        format!("ok: 1 declaration in 1 build file\n{NOT_RUN}")
+    );
+    assert_eq!(stdout(&output), "");
+}
+
+#[test]
+fn the_not_run_note_stays_off_standard_output_for_graph_query_and_doctor() {
+    let (_dir, root) = discovering();
+    for args in [
+        &["graph"][..],
+        &["graph", "--dot"][..],
+        &["query", "deps(//:pkgs)"][..],
+        &["query", "--json", "deps(//:pkgs)"][..],
+        &["doctor"][..],
+    ] {
+        let output = run(&root, args, &[]);
+        assert_eq!(code(&output), 0, "{args:?}");
+        assert_eq!(stderr(&output), NOT_RUN, "{args:?}");
+        assert!(!stdout(&output).contains("has not run"), "{args:?}");
+    }
+    assert!(!root.join(".buildl").exists());
+}
+
 #[test]
 fn graph_json_equals_the_graph_file() {
     let shop = Shop::new();

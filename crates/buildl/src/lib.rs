@@ -45,7 +45,7 @@
 //! fs::write(dir.path().join("a.txt"), "a\n")?;
 //!
 //! let workspace = Workspace::open(dir.path())?;
-//! assert_eq!(workspace.check()?.len(), 1);
+//! assert_eq!(workspace.check()?.declarations.len(), 1);
 //!
 //! let (everything, settings) = (Scope::Workspace, BTreeMap::new());
 //! let built = workspace.build(

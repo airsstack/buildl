@@ -124,6 +124,7 @@ fn log_shows_a_target_removed_from_the_build_files_since_it_ran() {
         workspace
             .graph()
             .unwrap()
+            .0
             .id_of(&label(&logged, "//:quiet"))
             .is_none()
     );

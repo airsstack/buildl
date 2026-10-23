@@ -79,6 +79,10 @@ fn labels(plan: &Plan, ids: &[NodeId]) -> String {
 /// them, as in `  run programs: go, protoc`. When plugins' targets are behind them, one line for
 /// each chain of each want follows, as in
 /// `  go: declared by plugin go@1.2.0 for //services/api:server`.
+///
+/// Each discovery target that is not up to date follows, as `<label> is not up to date; targets
+/// declared from it may change`: the targets declared from its last result may differ once it
+/// has run.
 #[must_use]
 pub fn plan_text(plan: &Plan) -> String {
     let mut lines = Vec::new();
@@ -110,6 +114,11 @@ pub fn plan_text(plan: &Plan) -> String {
     }
     if !plan.attribution().is_empty() {
         lines.push(format!("{}\n", plan.attribution()));
+    }
+    for label in plan.stale_discovery() {
+        lines.push(format!(
+            "{label} is not up to date; targets declared from it may change\n"
+        ));
     }
     lines.push(format!(
         "{run} to run, {maybe} conditional, {clean} clean\n"
@@ -656,6 +665,25 @@ mod tests {
                 "  write into:   .buildl, out\n",
                 "  cc: declared by plugin go@1.2.0 for //:app\n",
                 "2 to run, 0 conditional, 0 clean\n",
+            )
+        );
+    }
+
+    #[test]
+    fn plan_text_notes_a_stale_discovery() {
+        let graph = resolve(vec![declared(target("//svc:pkgs", &["cc", "--list"]))]).unwrap();
+        let plan = planned(&graph, Rows::default())
+            .with_stale_discovery(vec![label("//svc:pkgs"), label("//svc:more")]);
+
+        assert_eq!(
+            plan_text(&plan),
+            concat!(
+                "run    //svc:pkgs: never built\n",
+                "  run programs: cc\n",
+                "  write into:   .buildl, out\n",
+                "//svc:pkgs is not up to date; targets declared from it may change\n",
+                "//svc:more is not up to date; targets declared from it may change\n",
+                "1 to run, 0 conditional, 0 clean\n",
             )
         );
     }
