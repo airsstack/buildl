@@ -4,13 +4,16 @@
 //! them, and neither may import the other. Each part is parsed once, where a manifest names it,
 //! so no later phase re-checks a commit id or a tag.
 //!
-//! Responsibilities: [`PluginSource`], [`Rev`], [`GitUrl`], [`TagName`] and [`CommitId`].
+//! Responsibilities: [`PluginSource`], [`Rev`], [`GitUrl`], [`TagName`] and [`CommitId`], and the
+//! text each is written as in `buildl.lock`.
 //!
 //! Non-responsibilities: telling a tag from a branch, which only the repository can, and
 //! fetching anything.
 
 use core::fmt;
 use core::str::FromStr;
+
+use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, NameKind, Result};
 use crate::types::{Directory, grammar};
@@ -41,7 +44,8 @@ fn tag_fault(raw: &str) -> Option<&'static str> {
 }
 
 /// A full git commit id: exactly 40 lowercase hexadecimal characters.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
 pub struct CommitId(String);
 
 impl CommitId {
@@ -77,11 +81,25 @@ impl fmt::Display for CommitId {
     }
 }
 
+impl From<CommitId> for String {
+    fn from(value: CommitId) -> Self {
+        value.0
+    }
+}
+
+impl TryFrom<String> for CommitId {
+    type Error = Error;
+    fn try_from(raw: String) -> Result<Self> {
+        Self::parse(raw)
+    }
+}
+
 /// A git tag name, such as `v1.2.0`.
 ///
 /// Holds the parts of git's ref-name rules a manifest can get wrong; git refuses the rest when
 /// the tag is fetched.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
 pub struct TagName(String);
 
 impl TagName {
@@ -116,8 +134,22 @@ impl fmt::Display for TagName {
     }
 }
 
+impl From<TagName> for String {
+    fn from(value: TagName) -> Self {
+        value.0
+    }
+}
+
+impl TryFrom<String> for TagName {
+    type Error = Error;
+    fn try_from(raw: String) -> Result<Self> {
+        Self::parse(raw)
+    }
+}
+
 /// The URL of a git repository, as `git` is given it.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
 pub struct GitUrl(String);
 
 impl GitUrl {
@@ -185,8 +217,24 @@ impl fmt::Display for GitUrl {
     }
 }
 
+impl From<GitUrl> for String {
+    fn from(value: GitUrl) -> Self {
+        value.0
+    }
+}
+
+impl TryFrom<String> for GitUrl {
+    type Error = Error;
+    fn try_from(raw: String) -> Result<Self> {
+        Self::parse(raw)
+    }
+}
+
 /// The revision of a git repository a plugin is pinned to.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+///
+/// Serializes as the revision as written, so a tag stays a tag and a commit a commit.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(into = "String", try_from = "String")]
 pub enum Rev {
     /// A tag.
     Tag(TagName),
@@ -217,6 +265,19 @@ impl fmt::Display for Rev {
             Self::Tag(tag) => tag.fmt(f),
             Self::Commit(commit) => commit.fmt(f),
         }
+    }
+}
+
+impl From<Rev> for String {
+    fn from(value: Rev) -> Self {
+        value.to_string()
+    }
+}
+
+impl TryFrom<String> for Rev {
+    type Error = Error;
+    fn try_from(raw: String) -> Result<Self> {
+        Self::parse(&raw)
     }
 }
 
@@ -297,6 +358,24 @@ mod tests {
         assert!(GitUrl::parse("").is_err());
         assert!(GitUrl::parse("--upload-pack=x").is_err());
         assert!(GitUrl::parse("https://x/y z").is_err());
+    }
+
+    #[test]
+    fn the_values_serialize_as_their_text_and_read_back() {
+        use crate::json::canonical;
+
+        assert_eq!(
+            canonical::to_string(&Rev::parse("v1.2.0").unwrap()).unwrap(),
+            r#""v1.2.0""#
+        );
+        assert_eq!(
+            canonical::to_string(&GitUrl::github("acme/buildl-go").unwrap()).unwrap(),
+            r#""https://github.com/acme/buildl-go""#
+        );
+        let commit = Rev::parse(COMMIT).unwrap();
+        let bytes = canonical::to_vec(&commit).unwrap();
+        assert_eq!(canonical::from_slice::<Rev>(&bytes).unwrap(), commit);
+        assert!(canonical::from_slice::<CommitId>(br#""abc""#).is_err());
     }
 
     #[test]

@@ -126,7 +126,8 @@ impl Exit {
             | Error::InputNotAFile { .. }
             | Error::PinnedEnv { .. }
             | Error::OutputConflict { .. }
-            | Error::NoProgram { .. } => Self::Definition,
+            | Error::NoProgram { .. }
+            | Error::PluginTree { .. } => Self::Definition,
             Error::CorruptState { .. }
             | Error::UnreadableJson { .. }
             | Error::NonCanonicalJson { .. } => Self::CorruptState,
@@ -369,6 +370,19 @@ mod tests {
         ]
     }
 
+    /// A value of each variant that is a mistake in what a workspace's plugins hold.
+    fn plugin_errors() -> Vec<Error> {
+        vec![plugin_tree()]
+    }
+
+    /// A plugin whose directory holds a link.
+    fn plugin_tree() -> Error {
+        Error::PluginTree {
+            plugin: PluginName::parse("go").unwrap(),
+            path: PathBuf::from(".buildl/plugins/go/c0ffee/bin/link"),
+        }
+    }
+
     /// A value of each variant that is a mistake of a build file found while planning, or
     /// before anything runs.
     fn plan_errors() -> Vec<Error> {
@@ -560,6 +574,12 @@ mod tests {
     }
 
     #[test]
+    fn plugin_tree_exits_5() {
+        assert_eq!(Exit::of_error(&plugin_tree()), Exit::Definition);
+        assert_eq!(Exit::Definition as u8, 5);
+    }
+
+    #[test]
     fn missing_output_is_an_infrastructure_failure() {
         let error = Error::MissingOutput {
             label: label("//:app"),
@@ -575,21 +595,26 @@ mod tests {
             (Exit::Refused, refusals()),
             (
                 Exit::Definition,
-                [load_errors(), resolve_errors(), plan_errors()]
-                    .into_iter()
-                    .flatten()
-                    .collect(),
+                [
+                    load_errors(),
+                    resolve_errors(),
+                    plan_errors(),
+                    plugin_errors(),
+                ]
+                .into_iter()
+                .flatten()
+                .collect(),
             ),
             (Exit::CorruptState, state_errors()),
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [5, 3, 3, 17, 3, 7]);
+        assert_eq!(counts, [5, 3, 3, 18, 3, 7]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 38, "a variant is listed twice");
+        assert_eq!(variants.len(), 39, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");

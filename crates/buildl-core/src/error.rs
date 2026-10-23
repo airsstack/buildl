@@ -30,8 +30,8 @@ use std::path::PathBuf;
 
 use crate::types::{
     Ceiling, Declaration, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
-    FieldName, InputKind, Label, Node, Origin, OutputPath, PluginViolation, Program, Provenance,
-    SettingName, SourcePath, TreePath, Want, WantedSet, Written,
+    FieldName, InputKind, Label, Node, Origin, OutputPath, PluginName, PluginViolation, Program,
+    Provenance, SettingName, SourcePath, TreePath, Want, WantedSet, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -430,6 +430,17 @@ pub enum Error {
     InvalidTree {
         /// What is wrong with the list.
         fault: TreeFault,
+    },
+    /// A plugin's directory holds something other than regular files with Unicode names.
+    #[error(
+        "plugin {plugin}: {} is not a regular file with a Unicode name; a plugin holds regular files only",
+        .path.display()
+    )]
+    PluginTree {
+        /// The plugin.
+        plugin: PluginName,
+        /// The first such path found.
+        path: PathBuf,
     },
 }
 
@@ -1444,6 +1455,19 @@ mod tests {
                 allowed: allowed.iter().map(|text| (*text).to_owned()).collect(),
             }),
         }
+    }
+
+    #[test]
+    fn a_plugin_tree_names_the_plugin_and_the_path() {
+        let err = Error::PluginTree {
+            plugin: PluginName::parse("go").unwrap(),
+            path: PathBuf::from(".buildl/plugins/go/c0ffee/bin/link"),
+        };
+        assert_eq!(
+            err.to_string(),
+            "plugin go: .buildl/plugins/go/c0ffee/bin/link is not a regular file with a Unicode \
+             name; a plugin holds regular files only"
+        );
     }
 
     #[test]
