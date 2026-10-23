@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-22
 depends-on: [01, 02, 03, 04, 05, 06, 07]
 built-on: 0f868841fc48
@@ -92,3 +92,27 @@ command name (`grep -n "plugins fetch" README.md docs/design.md`).
 
 `cargo make dod` green; no document mentions `plugin.toml`; every new name in the docs exists in
 the code.
+
+## Review findings
+
+One review (the first spawn died on a lost API connection before writing anything; re-run); blocking set: the first two lines; all 13 fixed in one round (`d3b923a`), verified `cargo make dod` exit 0, `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`. The reviewer checked design §4, §5, §7, §8.7, §10, §13, §14, architecture §3.6, §3.7, §4, §6 and the building-blocks tables against the code: accurate; every `§` reference resolves; no `plugin.toml`/`[plugin]` left; no Mermaid block converted.
+
+- doc accuracy (blocking) — `buildl-cli/src/main.rs` command table said `graph`/`query`/`doctor` write nothing to stderr; `doctor` stdout omitted attribution and plugin violations — corrected
+- doc consistency (blocking) — `crates/buildl/README.md` said `plugins` names only `state` — now `state` and `search_path`
+- doc accuracy — `main.rs` `doctor` evaluates twice with a discovery target
+- doc accuracy — `buildl-core/README.md` `Pipeline::graph`/`plan`/`build` load twice with a discovery target
+- doc accuracy — `buildl-cli/README.md` exit 5 for a link only at fetch; a stored plugin with a link exits 6
+- consistency — README status list gains `plugins fetch`; fetch runs git also for a missing or damaged store; "every command that loads build files" checks plugins; the not-run note is `check`/`graph`/`query`/`doctor`, `plan` prints "is not up to date"
+- doc consistency — `architecture.md` no longer gives `gc` as a reason for the `Ports::Log` bound
+- doc accuracy — design: a path plugin may not be or lie inside the configured output or state directory; the read-only commands may remove a blob failing its digest; the refusal example starts with the workspace-relative build file path
+
+## Probe results
+
+None: a documentation plan. Each task's proof ran instead — `grep -n "plugin.toml\|\[plugin\]" docs/design.md README.md` finds nothing; `grep -c "plugins fetch"` → `docs/design.md:11`, `README.md:4`; design `§` references 29 distinct, all resolving; 28 new type/module names in the architecture docs each found in `crates/` by `git grep`; Mermaid blocks architecture.md 3 → 4, building-blocks 7 → 7.
+
+## Deviations
+
+- 2026-10-23 — the three tasks ran side by side (disjoint files) and were committed 3, 1, 2.
+- 2026-10-23 — the docs name `Node::narrowing` (the built field), not `Node::plugins`.
+- 2026-10-23 — design §3 layout, the status paragraph, §6 and §9.6 also changed, to stay consistent (`buildl.use` takes only a name; `b.fetch` and the toolchain idiom are not built).
+- 2026-10-23 — `crates/buildl/src/lib.rs` `plugins` note corrected to name `search_path` with Task 2's commit.
