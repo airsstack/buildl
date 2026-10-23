@@ -57,6 +57,7 @@ mod tests {
     use super::build;
     use crate::limits::DeclarationLimits;
     use crate::module::BuildlModule;
+    use crate::results::Results;
     use crate::sources::Sources;
     use crate::staging::Staging;
 
@@ -70,6 +71,7 @@ mod tests {
         let module = BuildlModule::new(
             Arc::new(Mutex::new(Staging::new(u64::MAX))),
             Sources::new(&root, &Directory::root(), limits.walk_entries(), &[]),
+            Results::none(),
             &root,
             BTreeMap::new(),
         )

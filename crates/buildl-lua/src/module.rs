@@ -9,7 +9,7 @@
 //! Responsibilities: [`BuildlModule`]; building a primitives table whose declarations carry a
 //! given origin; the snapshot of the language globals taken at install; turning a primitive call
 //! into a staged record or a sticky refusal that names the line, in the build file or a plugin
-//! file, that made the call.
+//! file, that made the call; answering `buildl.discovered` from the evaluation's results.
 //!
 //! Non-responsibilities: the argument shapes, which `primitives` owns, the walk behind
 //! `buildl.sources`, which `sources` owns, the replacement functions, which `stable_text` owns,
@@ -26,6 +26,7 @@ use buildl_core::{EvaluationFailure, EvaluationLimit, Origin, PluginName, Staged
 use crate::plugin::Plugins;
 use crate::primitives;
 use crate::refusal::{CallSite, Refusal};
+use crate::results::Results;
 use crate::snapshot::copy_tables;
 use crate::sources::Sources;
 use crate::stable_text;
@@ -37,12 +38,14 @@ pub(crate) struct BuildlModule {
     name: ModuleName,
     staging: Arc<Mutex<Staging>>,
     sources: Sources,
+    results: Results,
     plugins: Plugins,
 }
 
 impl BuildlModule {
-    /// A module staging into `staging`, whose `buildl.sources` walks `sources` and whose
-    /// `buildl.use` loads the plugins in `plugins`, each from the directory it maps to.
+    /// A module staging into `staging`, whose `buildl.sources` walks `sources`, whose
+    /// `buildl.discovered` reads `results`, and whose `buildl.use` loads the plugins in `plugins`,
+    /// each from the directory it maps to.
     ///
     /// `root` is the workspace root, which names the files a plugin's errors point at.
     ///
@@ -52,14 +55,16 @@ impl BuildlModule {
     pub(crate) fn new(
         staging: Arc<Mutex<Staging>>,
         sources: Sources,
+        results: Results,
         root: &Path,
         plugins: BTreeMap<PluginName, PathBuf>,
     ) -> airsl::Result<Self> {
-        let plugins = Plugins::new(root, plugins, &staging, &sources);
+        let plugins = Plugins::new(root, plugins, &staging, &sources, &results);
         Ok(Self {
             name: ModuleName::new("buildl")?,
             staging,
             sources,
+            results,
             plugins,
         })
     }
@@ -78,8 +83,14 @@ impl HostModule for BuildlModule {
     ) -> airsl::Result<()> {
         let fail = |error| airsl::Error::lua("buildl", error);
 
-        let primitives = primitives_table(lua, &self.staging, &self.sources, &Origin::BuildFile)
-            .map_err(fail)?;
+        let primitives = primitives_table(
+            lua,
+            &self.staging,
+            &self.sources,
+            &self.results,
+            &Origin::BuildFile,
+        )
+        .map_err(fail)?;
         // `table` is the module table airsl binds as `airsstack.buildl`, so the primitives are
         // copied into it rather than replacing it.
         for pair in primitives.pairs::<String, Value>() {
@@ -109,19 +120,25 @@ const NOT_LANGUAGE: [&str; 4] = ["buildl", "airsstack", "_G", "require"];
 
 /// Builds the table of declaration primitives whose declarations carry `origin`.
 ///
-/// Every table built for one evaluation shares its `staging` and `sources`, so the declarations
-/// of a build file and of the plugins it uses land in one numbered buffer under one byte budget,
-/// and `sources` walks the build file's directory whichever table asks.
+/// Every table built for one evaluation shares its `staging`, `sources` and `results`, so the
+/// declarations of a build file and of the plugins it uses land in one numbered buffer under one
+/// byte budget, `sources` walks the build file's directory whichever table asks, and
+/// `buildl.discovered` reads the same results, relative to the same directory.
 pub(crate) fn primitives_table(
     lua: &Lua,
     staging: &Arc<Mutex<Staging>>,
     sources: &Sources,
+    results: &Results,
     origin: &Origin,
 ) -> mlua::Result<Table> {
     let table = lua.create_table()?;
     let origin = Arc::new(origin.clone());
 
-    for (primitive, role) in [("target", TargetRole::Build), ("test", TargetRole::Test)] {
+    for (primitive, role) in [
+        ("target", TargetRole::Build),
+        ("test", TargetRole::Test),
+        ("discover", TargetRole::Discovery),
+    ] {
         let staging = Arc::clone(staging);
         let origin = Arc::clone(&origin);
         let function = lua.create_function(move |lua, (name, options): (Value, Value)| {
@@ -177,6 +194,17 @@ pub(crate) fn primitives_table(
         lua.create_sequence_from(found)
     })?;
     table.set("sources", found)?;
+
+    let staging_ref = Arc::clone(staging);
+    let results = results.clone();
+    let discovered = lua.create_function(move |lua, label: Value| {
+        let bytes = guarded(lua, &staging_ref, "discovered", |_| {
+            let label = primitives::discovered(&label, results.directory())?;
+            Ok(results.get(&label).map(<[u8]>::to_vec))
+        })?;
+        bytes.map(|bytes| lua.create_string(bytes)).transpose()
+    })?;
+    table.set("discovered", discovered)?;
 
     Ok(table)
 }
@@ -315,6 +343,7 @@ mod tests {
 
     use super::{BuildlModule, LANGUAGE_REGISTRY_KEY, primitives_table, record_language};
     use crate::limits::DeclarationLimits;
+    use crate::results::Results;
     use crate::sources::Sources;
     use crate::staging::Staging;
 
@@ -336,6 +365,7 @@ mod tests {
                         DeclarationLimits::default().walk_entries(),
                         &[],
                     ),
+                    Results::none(),
                     &root,
                     BTreeMap::new(),
                 )
@@ -608,7 +638,8 @@ mod tests {
         let outer = Origin::plugins(vec![plugin("outer")]).unwrap();
         let nested = Origin::plugins(vec![plugin("outer"), plugin("inner")]).unwrap();
         for (name, origin) in [("outer", &outer), ("nested", &nested)] {
-            let table = primitives_table(&lua, &staging, &sources, origin).unwrap();
+            let table =
+                primitives_table(&lua, &staging, &sources, &Results::none(), origin).unwrap();
             lua.globals().set(name, table).unwrap();
         }
         lua.load(

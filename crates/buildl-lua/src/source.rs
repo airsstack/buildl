@@ -26,6 +26,7 @@ use crate::classify::classify;
 use crate::engine;
 use crate::limits::DeclarationLimits;
 use crate::module::BuildlModule;
+use crate::results::Results;
 use crate::sources::Sources;
 use crate::staging::Staging;
 
@@ -38,6 +39,10 @@ use crate::staging::Staging;
 /// `buildl.use(name)` loads the plugin the source was built with a directory for under that name,
 /// and refuses any other name. A plugin runs under its own environment, narrowed from the build
 /// file's, and every declaration it makes carries the plugin as its origin.
+///
+/// `buildl.discover` declares a discovery target. `buildl.discovered(label)` returns, as a Lua
+/// string, the bytes the map handed to [`evaluate`](DeclarationSource::evaluate) holds for that
+/// target, or `nil`; a relative label resolves against the build file's directory.
 ///
 /// `buildl.sources` never lists a file under a directory the source was built to skip. A source
 /// built with the workspace's output and state directories therefore keeps a build file at the
@@ -108,7 +113,7 @@ impl LuaSource {
 }
 
 impl DeclarationSource for LuaSource {
-    /// Evaluates `file`; the discovery results are not read.
+    /// Evaluates `file`; `buildl.discovered` reads `discovered`.
     ///
     /// A file that does not exist is [`Evaluated::Absent`].
     ///
@@ -119,7 +124,7 @@ impl DeclarationSource for LuaSource {
     /// arguments it does not accept, or uses a plugin that is unknown, cyclic, malformed or
     /// raises. A refusal from a primitive is reported even when the build
     /// file caught it with `pcall` and carried on.
-    fn evaluate(&self, file: &BuildFile, _discovered: &Discovered) -> Result<Evaluated> {
+    fn evaluate(&self, file: &BuildFile, discovered: &Discovered) -> Result<Evaluated> {
         let path = self.root.join(file.file());
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
@@ -145,6 +150,7 @@ impl DeclarationSource for LuaSource {
                 self.limits.walk_entries(),
                 &self.skipped,
             ),
+            Results::new(discovered, file.directory()),
             &self.root,
             self.plugins.clone(),
         )
