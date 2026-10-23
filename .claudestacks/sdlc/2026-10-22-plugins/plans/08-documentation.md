@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-10-22
 depends-on: [01, 02, 03, 04, 05, 06, 07]
 built-on: 0f868841fc48
@@ -24,7 +24,7 @@ Every statement is checked against the code the earlier plans merged, not agains
 ```
 docs/design.md                       — [modify] §4, §5, §7, §8.7, §10, §13 item 5, §14
 docs/architecture.md                 — [modify] status line; origin and plugin check in Plan; discovery passes; the plugins adapter
-docs/architecture-building-blocks.md — [modify] adapter table (`plugins`), port change (`DeclarationSource`, `Approver`), types table, per-command wiring
+docs/architecture-building-blocks.md — [modify] adapter table (`plugins`), port change (`DeclarationSource`, `Approver`, the `Ports::Log` bound `EventLog + RunHistory`), types table, per-command wiring
 README.md                            — [modify] plugins, `plugins fetch`, discovery
 CLAUDE.md                            — [modify] Status paragraph: milestone 5 built
 .claudestacks/sdlc/roadmaps/buildl/05-plugins.md — [modify] goal wording: manifest is `extension.toml`

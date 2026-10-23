@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-22
 depends-on: [02, 06]
 built-on: 0f868841fc48
@@ -56,6 +56,13 @@ crates/buildl/tests/fixtures/discovery/…        — [create] workspace: a disc
 crates/buildl/tests/e2e/main.rs                 — [modify] `mod discovery;`
 crates/buildl-cli/tests/cli/output.rs           — [modify] the stderr note
 ```
+
+Amended 2026-10-23, as built: `local_ports.rs` is unchanged (the facade builds `LocalLog` and
+`LocalCas` directly). Also changed: `ports/bundle.rs` (`Ports::Log: EventLog + RunHistory`, so
+`plan`/`verify` read the pipeline's own log), `ports/port_set.rs`, `ports/reporter.rs` (prose),
+`buildl/src/report/{terminal,message,mod}.rs` (a test command's discovery run is summarised as a
+build; the not-run and stale notes), `buildl/src/lib.rs` (doctest), and
+`crates/expected-module-edges.txt` (`discovery -> load`, `pipeline -> discovery`).
 
 ## Order of work
 
@@ -178,3 +185,32 @@ Commit `feat(buildl): discovery results for every command`.
 `cargo make dod` and `cargo deny check` green; on the discovery fixture, `graph` on a fresh
 workspace notes the missing result, `build` builds discovery then the discovered targets, `graph`
 then shows them, `gc` keeps them cached, and `check` survives a damaged log.
+
+## Review findings
+
+One review; blocking set: the stale-discovery bug; every code finding fixed in one round (`0382f27`), verified `cargo make dod` exit 0 (2090 tests), `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`, `cargo make guard-adapter-isolation` → `OK (37 edges)`.
+
+- correctness (blocking) — `Pipeline::stale_discovery` kept every not-clean node of the narrowed graph, so `plan` printed `//:gen is not up to date; targets declared from it may change` for a dependency of `//:pkgs` (reproduced with the binary) — fixed: only discovery labels; flow `plan_lists_the_discovery_target_and_not_what_it_depends_on`
+- correctness — after a discovery run that succeeded, an unreadable result was dropped and `build` declared nothing from it, exit 0 — now an infrastructure error naming the label and the log or store port (exit 3); flow with `FakeCas::lose_reads()`
+- unguarded — the graph recorded after a discovery build had no test — flow checks it is the pass-2 graph
+- clarity — `terminal.rs` tells a discovery run from the counts — kept (an explicit signal needs `execute` to change); doc says why the counts cannot confuse the runs; tests for "no tests" and cached tests
+- doc — "writes nothing" claims for `check`/`doctor` — now say the store removes a blob whose bytes do not match its digest
+- API surface — `Plan::with_stale_discovery` back to `pub(crate)`; the note is tested end to end (`plan_notes_a_discovery_target_that_is_not_up_to_date`)
+- style — four lines past 100 columns wrapped
+- test-coverage — `check` leaving no `.buildl` on a fresh workspace asserted; two approval rounds through the real `InteractiveApprover` (round 2 asks only about the new want)
+- question — `buildl test //:pkgs` and unknown labels run discovery before being refused — kept: a label may exist only after pass 2 (spec §6 flow)
+- spec — the §6 `plan` row was not met (first finding); the spec text stands
+- plan — "Files that change" amended (above); `architecture-building-blocks.md`'s `type Log: EventLog;` added to plan 08 Task 2
+- process — Task 4's tests were not seen failing (they could not compile against the facade's empty log)
+
+## Probe results
+
+No separate probe: each task's named tests exercised what it asserted (log reading modelled on `history/last_run.rs`; `OutputManifest::File` read from the store). The reviewer's binary reproduction of the stale-discovery bug and of `DiscoveryChanged` exiting 5 is the end-to-end evidence; the Task 4 coder ran the binary on a copy of the fixture: fresh `graph` notes `//:pkgs has not run; run buildl build` and creates no `.buildl`; `build` prints `1 built` then `2 built`; `graph` then shows `//:alpha`, `//:beta`, `//:pkgs`; `gc` drops nothing; a second `build` prints `1 cached`, `2 cached`.
+
+## Deviations
+
+- 2026-10-23 — `Ports::Log` is `EventLog + RunHistory`, so `plan` and `verify` read results from the pipeline's own log.
+- 2026-10-23 — `discovery` may name the `load` phase; lib.rs rule 1 lists it beside `history` and `verify`.
+- 2026-10-23 — `build`/`test` return the discovery run's outcomes followed by the main run's; the reporter receives two summaries; a test command's discovery run is summarised as a build.
+- 2026-10-23 — a result unreadable right after a successful discovery run is an infrastructure error (exit 3); the spec leaves this case open.
+- 2026-10-23 — `local_ports.rs` unchanged; the facade builds `LocalLog`/`LocalCas` directly.
