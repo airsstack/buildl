@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-22
 depends-on: [04]
 built-on: 0f868841fc48
@@ -126,3 +126,26 @@ as the other refusals are (`perform.rs:236-266`): an action failure, exit 1, not
 `cargo make dod` and `cargo deny check` green; a discovery target builds when named, is skipped
 by a whole-workspace build, fails when it leaves a directory, and `buildl.discovered` returns what
 the map holds.
+
+## Review findings
+
+One review, no blocking findings; all code findings fixed in one round (`6a1cccf`), verified `cargo make dod` exit 0, `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`, `cargo make guard-adapter-isolation` → `OK (35 edges)`.
+
+- perf — `buildl-lua/src/results.rs` cloned the whole results map per evaluated build file — fixed: `Discovered` holds `Arc<BTreeMap<Label, Vec<u8>>>`; unit `a_clone_shares_the_results_it_was_cloned_from`
+- perf — `module.rs` `discovered` copied the bytes twice — one copy
+- design — `always` on a discovery target was refused as `InvalidName { kind: Freshness }` (a flag is not a name) — now `InvalidDeclaration { field: Freshness, source: NotAccepted }`; `NameKind::Freshness` removed
+- consistency — an unparseable `buildl.discovered` label was `WrongFieldType` — now `Refused`, as `buildl.use` classes it, still naming the line
+- test-coverage — `verify/assembly.rs` `role: target.node.role` untested — flow `a_discovery_target_whose_rerun_leaves_a_directory_is_refused_as_not_a_file` (fails with the role hard-coded to Build)
+- style — three doc/doctest lines past 100 columns wrapped
+- plan — the `NotATest` change below was not in the plan — recorded under Deviations
+
+## Probe results
+
+No claim needed a separate probe: each task's named tests exercised what it asserted (the port signature change caught by the compiler at every impl; `role_of` unchanged, proven by the workspace-build and test-run flows; `forcing` by `discovery_is_forced_like_a_build_target`). Task 1's tests were written after its implementation; the coder broke the traversal change and saw the three `load` flows fail.
+
+## Deviations
+
+- 2026-10-23 — `Error::NotATest` gained `declared_with: TargetRole` and names the declaring function (`b.target`, `b.test`, `b.discover`), so `buildl test //svc:pkgs` no longer says a discovery target was declared with `b.target`; Build wording unchanged.
+- 2026-10-23 — execute's `Task` carries the target's `role` (set in `execute/assembly.rs` and `verify/assembly.rs`) so `perform` can refuse a discovery tree; the reporter's `refusal_text` gained `NotAFile`.
+- 2026-10-23 — plugin instances receive the discovery results through `plugin/{loader,environment}.rs`; relative labels resolve against the using build file's directory.
+- 2026-10-23 — run in a second worktree beside plan 05, merged back.

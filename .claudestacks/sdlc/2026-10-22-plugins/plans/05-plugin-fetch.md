@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-22
 depends-on: [03, 04]
 built-on: 0f868841fc48
@@ -123,3 +123,35 @@ Commit `feat(buildl-cli): buildl plugins fetch`.
 `cargo make dod`, `cargo deny check` green; `buildl plugins fetch` against a local repo writes a
 canonical lock and store, a second run changes nothing, and `build` then works with the source
 repository gone.
+
+## Review findings
+
+One review; blocking set C1–C3; every finding fixed in one round (`a505fe6`), verified `cargo make dod` exit 0 (twice in the fix round, once after), `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`, `cargo make guard-adapter-isolation` → `OK (37 edges)`.
+
+- correctness (blocking) — `StateLock::acquire` dropped the file without `unlock()` on every error after `try_lock`, so a forked child holding a copy of the descriptor kept the flock: the flaky `a_scratch_that_cannot_be_removed_fails_the_lock` — `state/lock.rs` — fixed: a `Held(File)` guard unlocks on drop; unit test keeps a `try_clone()` of the fd and takes the lock again (fails with the unlock removed)
+- correctness (blocking) — git's repository-locating variables (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, …) reached every git child, so a fetch run from a hook could act on the engineer's repository — `plugins/git.rs` — fixed: the 16 names `git rev-parse --local-env-vars` prints (git 2.39.3) removed from each child; test re-runs the test binary with them set and checks the other repository is untouched
+- correctness (blocking) — a tag at an empty-tree commit gave `InvalidTree` (exit 7, no plugin named) — `plugins/fetch.rs` — now `PluginNotFetched` naming the plugin (exit 5); e2e with `commit --allow-empty`
+- unguarded — clearing a leftover staging dir had no test — e2e plants `fetching~<name>/stray`
+- doc — `run` claimed a fetch never waits for input — reworded (ssh may still ask on the terminal)
+- test-coverage — `LC_ALL=C`, `GIT_TERMINAL_PROMPT=0` untested — tested with `/usr/bin/env` as the git program; `stdin(Stdio::null())` has no observable effect under `output()` and is kept as intent
+- defence — `--end-of-options` added before `<url> <refspec>`
+- modularity — `fetch_plugins` built its own `SearchPath` — `Wiring::search()` is the one search path
+- doc — `fetch_plugins` `# Errors` and the `Workspace` doc reflow corrected
+- correctness — a 256-byte plugin name could not fit `fetching~<name>` in a 255-byte file name — `PluginName` capped at 246 bytes (boundary test; a 246-byte name fetches end to end)
+- spec §9 — no end-to-end commit-pinned fetch — e2e added
+- spec §9 — fetch exits 5 and 6 not run through the binary — two CLI tests added
+- plan — `fetch` takes `&SearchPath` and finds git only when something must be fetched — recorded under Deviations
+
+## Probe results
+
+- git behaviour (P22) settled by Task 1's own red-green tests on git 2.39.3: a tag and a commit both fetch at depth 1 over `file://`; a branch name is not found as a tag (`couldn't find remote ref refs/tags/main` → `PluginFetch`); an annotated tag resolves to its commit.
+- The lock flake reproduced once in a `cargo make dod` run after Task 2; the reviewer traced it to the acquire error path (above), not to the test.
+
+## Deviations
+
+- 2026-10-23 — `Error::PluginFetch` was added in Task 1 (Task 1's `Git` needs it), not Task 2.
+- 2026-10-23 — `fetch(root, state, sources, &SearchPath)`: git is located per plugin and only when something must be fetched (`a_fetch_that_has_nothing_to_fetch_needs_no_git`).
+- 2026-10-23 — a matching lock entry whose store dir is missing or damaged is re-fetched and must reproduce the entry, else `PluginChanged`; a moved tag is noticed only then (a matching, intact store runs no git).
+- 2026-10-23 — staging dir `<state>/plugins/fetching~<name>`; `PluginName` capped at 246 bytes so it fits.
+- 2026-10-23 — the fetch lines are printed by `buildl-cli/src/run.rs`, since `report` may not import `plugins`.
+- 2026-10-23 — `StateLock::acquire` releases the lock on every failure path (a pre-existing defect the new git tests exposed).
