@@ -31,7 +31,7 @@
 //! | [`execute`](mod@execute) | Execute and Record, the last phase: a plan to one outcome per target, each result recorded as the last step of its action and reported once it is logged |
 //! | `placement` | where every output lives and what a command's placeholders stand for once they are placed; used by Plan, Execute and verify, and not a phase |
 //! | [`grants`] | the build's authority: which programs a build made, everything a build wants, and the approver's answer; not a phase |
-//! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command, and the commands that need only some of the ports as functions over those ports alone: the three that reach only build files, `doctor`, and `log` |
+//! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command, and the commands that need only some of the ports as functions over those ports alone: the three that reach only build files and the state that holds discovery results, `doctor`, and `log` |
 //! | [`history`] | the read side of the build log: the newest run of a target that left output |
 //! | [`verify`](mod@verify) | verify, which serves one command and is not a phase: cached targets put back in place, a sample of them re-run, and each re-run compared with what was cached |
 //! | `discovery` | the last result of each discovery target, read back from the build log and the content store for a second load of the build files; several pipeline functions use it, and it is not a phase |
@@ -41,10 +41,10 @@
 //! navigable:
 //!
 //! 1. No phase module names another. Phases communicate through values, and [`pipeline`] owns
-//!    the sequence, so a phase that imported the next would be bypassing it. [`history`] and
-//!    [`verify`](mod@verify) are not phases: each serves a command, and may name a phase's
-//!    internals. `placement` and [`grants`] are neither: several phases name them, and they
-//!    name no phase.
+//!    the sequence, so a phase that imported the next would be bypassing it. [`history`],
+//!    [`verify`](mod@verify) and `discovery` are not phases: each serves a command, or several,
+//!    and may name a phase's internals. `placement` and [`grants`] are neither: several phases
+//!    name them, and they name no phase.
 //! 2. [`types`] holds no decisions between *different* concepts. A type there may decide things
 //!    about its own kind — [`Timestamp::duration_since`] decides whether two instants of the
 //!    same type went backwards, [`Label::resolve`] decides which of three reference forms it was
@@ -102,11 +102,17 @@
 //! target, asks which targets that target needs or which need it: [`reach`](fn@reach) answers it
 //! over a [`TargetGraph`], in the [`Direction`] it names. [`pipeline::check`], [`pipeline::graph`]
 //! and [`pipeline::query`] run the three commands that reach only build files for a caller that
-//! holds only a [`DeclarationSource`]. A [`LoggedRun`] reads back from the build log through
+//! holds a [`DeclarationSource`], a [`RunHistory`] and a [`ContentStore`]. A workspace that
+//! declares a discovery target is loaded again with the last result of each, read from those two
+//! ports, and the second load may not declare different discovery targets than the first
+//! ([`Error::DiscoveryChanged`]); [`Pipeline::plan`], [`Pipeline::verify`] and [`gc`](fn@gc) do
+//! the same, and [`Plan::stale_discovery`] names the discovery targets a plan finds not clean.
+//! A [`LoggedRun`] reads back from the build log through
 //! [`RunHistory`], and [`pipeline::log`](fn@pipeline::log) returns a target's last run with what it
 //! printed. [`pipeline::doctor`](fn@pipeline::doctor) reports what a workspace's build wants
 //! against its ceiling as a [`Checkup`], every want outside the ceiling listed and none refused,
-//! for a caller that holds only a [`DeclarationSource`] and a [`Manifest`].
+//! for a caller that holds a [`DeclarationSource`], a [`Manifest`], a [`RunHistory`] and a
+//! [`ContentStore`].
 //!
 //! A verify compares what cached targets produce when re-run with what was cached.
 //! [`Pipeline::verify`] plans as a build does, asks the [`Approver`] as a build does, then
@@ -121,11 +127,6 @@
 //! This file holds only module declarations and re-exports, so it carries no logic to
 //! unit-test.
 
-#[expect(
-    dead_code,
-    unused_imports,
-    reason = "no pipeline command reads discovery results yet"
-)]
 mod discovery;
 pub mod error;
 pub mod execute;
@@ -166,14 +167,14 @@ pub use types::{
     EnvName, EnvValue, Evaluated, Execution, Exit, ExpandedDescription, FieldName, FileChange,
     FileMode, FileStat, Found, FoundEntry, FoundKind, Freshness, GitUrl, Hasher, InfraKind,
     InputDigest, InputKind, InputStat, Isolation, KeyComponents, Label, LiveOutput, LiveSink,
-    LogLine, LoggedRun, NetworkAccess, Node, NodeId, OnFailure, Origin, OutcomeClass, OutcomeEvent,
-    OutputDifference, OutputManifest, OutputName, OutputPath, OutputRefusal, OwnComponents, Plan,
-    PlannedKey, Platform, PluginCap, PluginChain, PluginName, PluginNetwork, PluginRef,
-    PluginSource, PluginVersion, PluginViolation, Produced, Program, Provenance, Purpose, Query,
-    RawOutcome, ReadyAction, Rerun, Rev, Rule, Sample, Scope, Setting, SettingName, SettingValue,
-    SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
-    StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, TagName, Tally, Target,
-    TargetGraph, TargetName, TargetRole, Timeout, Timestamp, ToolIdentity, Tree, TreeEntry,
+    Loaded, LogLine, LoggedRun, NetworkAccess, Node, NodeId, OnFailure, Origin, OutcomeClass,
+    OutcomeEvent, OutputDifference, OutputManifest, OutputName, OutputPath, OutputRefusal,
+    OwnComponents, Plan, PlannedKey, Platform, PluginCap, PluginChain, PluginName, PluginNetwork,
+    PluginRef, PluginSource, PluginVersion, PluginViolation, Produced, Program, Provenance,
+    Purpose, Query, RawOutcome, ReadyAction, Rerun, Rev, Rule, Sample, Scope, Setting, SettingName,
+    SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
+    StagedSetting, StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, TagName, Tally,
+    Target, TargetGraph, TargetName, TargetRole, Timeout, Timestamp, ToolIdentity, Tree, TreeEntry,
     TreePath, Turn, Unfinished, Verdict, Verification, Want, WantedSet, Workers, Workspace,
     Written,
 };

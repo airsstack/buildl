@@ -39,13 +39,16 @@ pub enum FakeFile {
 /// Built with [`FakeSource::new`] it holds one set of files. Built with
 /// [`FakeSource::with_second_run`] it holds two, and switches from the first to the second when
 /// the root directory is evaluated a second time, so every directory evaluated after that point
-/// reads from the second set. A directory it holds no file for evaluates to
-/// [`Evaluated::Absent`].
+/// reads from the second set. Built with [`FakeSource::declaring_from_results`] it holds two, and
+/// reads from the second whenever it is handed a discovery result. A directory it holds no file
+/// for evaluates to [`Evaluated::Absent`].
 #[derive(Debug)]
 pub struct FakeSource {
     first: BTreeMap<Directory, FakeFile>,
     second: Option<BTreeMap<Directory, FakeFile>>,
+    from_results: Option<BTreeMap<Directory, FakeFile>>,
     root_evaluations: AtomicU32,
+    root_loads: Mutex<Vec<Discovered>>,
     evaluated: Mutex<Vec<Directory>>,
 }
 
@@ -56,7 +59,26 @@ impl FakeSource {
         Self {
             first: files,
             second: None,
+            from_results: None,
             root_evaluations: AtomicU32::new(0),
+            root_loads: Mutex::new(Vec::new()),
+            evaluated: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// A source returning `without` while it is handed no discovery result, and `with` once it
+    /// is handed one: a workspace whose discovery targets declare more targets.
+    #[must_use]
+    pub const fn declaring_from_results(
+        without: BTreeMap<Directory, FakeFile>,
+        with: BTreeMap<Directory, FakeFile>,
+    ) -> Self {
+        Self {
+            first: without,
+            second: None,
+            from_results: Some(with),
+            root_evaluations: AtomicU32::new(0),
+            root_loads: Mutex::new(Vec::new()),
             evaluated: Mutex::new(Vec::new()),
         }
     }
@@ -71,9 +93,21 @@ impl FakeSource {
         Self {
             first,
             second: Some(second),
+            from_results: None,
             root_evaluations: AtomicU32::new(0),
+            root_loads: Mutex::new(Vec::new()),
             evaluated: Mutex::new(Vec::new()),
         }
+    }
+
+    /// What each evaluation of the root build file was handed, in evaluation order: one entry per
+    /// load of the workspace.
+    #[must_use]
+    pub fn root_loads(&self) -> Vec<Discovered> {
+        self.root_loads
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Every directory evaluated so far, in evaluation order.
@@ -87,17 +121,22 @@ impl FakeSource {
 }
 
 impl DeclarationSource for FakeSource {
-    fn evaluate(&self, file: &BuildFile, _discovered: &Discovered) -> Result<Evaluated> {
+    fn evaluate(&self, file: &BuildFile, discovered: &Discovered) -> Result<Evaluated> {
         let directory = file.directory();
         if directory.is_root() {
             self.root_evaluations.fetch_add(1, Ordering::SeqCst);
+            self.root_loads
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .push(discovered.clone());
         }
         self.evaluated
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .push(directory.clone());
-        let files = match &self.second {
-            Some(second) if self.root_evaluations.load(Ordering::SeqCst) > 1 => second,
+        let files = match (&self.second, &self.from_results) {
+            (Some(second), _) if self.root_evaluations.load(Ordering::SeqCst) > 1 => second,
+            (_, Some(with)) if *discovered != Discovered::empty() => with,
             _ => &self.first,
         };
         match files.get(directory) {
@@ -519,6 +558,18 @@ impl EventLog for FakeLog {
         }
         self.events.push(event.clone());
         Ok(())
+    }
+}
+
+impl RunHistory for FakeLog {
+    /// Every event appended, read back as its canonical JSON would read it from a file.
+    fn lines(&self) -> Result<Vec<LogLine>> {
+        let mut lines = Vec::new();
+        for event in &self.events {
+            let run = json::canonical::from_slice(&json::canonical::to_vec(event)?)?;
+            lines.push(LogLine::Event(run));
+        }
+        Ok(lines)
     }
 }
 

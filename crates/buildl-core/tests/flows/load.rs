@@ -16,8 +16,8 @@ use buildl_core::{
 };
 
 use crate::common::{
-    FakeDispatcher, FakeFile, FakeHistory, FakePorts, FakeSource, Loss, Order, Pace, dir, file,
-    file_by, plugin, root_only, setting, target, target_with, workspace,
+    FakeCas, FakeDispatcher, FakeFile, FakeHistory, FakePorts, FakeSource, Loss, Order, Pace, dir,
+    file, file_by, plugin, root_only, setting, target, target_with, workspace,
 };
 
 fn entry() -> EntryName {
@@ -480,31 +480,50 @@ fn check_graph_query_and_gc_load_in_any_order() {
     };
     let source = || FakeSource::new(wide());
 
-    let checked = pipeline::check(&source(), &mut FakeDispatcher::default(), &entry()).unwrap();
-    assert_eq!(
-        checked,
-        pipeline::check(&source(), &mut jumbled, &entry()).unwrap()
-    );
-
-    let canonical = |graph| json::canonical::to_vec(&graph).unwrap();
-    let graphed = pipeline::graph(&source(), &mut FakeDispatcher::default(), &entry()).unwrap();
-    assert_eq!(
-        canonical(graphed),
-        canonical(pipeline::graph(&source(), &mut jumbled, &entry()).unwrap())
-    );
-
-    let question = Query::new(Direction::Rdeps, Label::parse("//lib/core:base").unwrap());
-    let queried = pipeline::query(
+    let (history, cas) = (FakeHistory::default(), FakeCas::default());
+    let checked = pipeline::check(
         &source(),
         &mut FakeDispatcher::default(),
         &entry(),
+        &history,
+        &cas,
+    )
+    .unwrap();
+    assert_eq!(
+        checked,
+        pipeline::check(&source(), &mut jumbled, &entry(), &history, &cas).unwrap()
+    );
+
+    let canonical = |(graph, _)| json::canonical::to_vec(&graph).unwrap();
+    let graphed = pipeline::graph(
+        &source(),
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &history,
+        &cas,
+    )
+    .unwrap();
+    assert_eq!(
+        canonical(graphed),
+        canonical(pipeline::graph(&source(), &mut jumbled, &entry(), &history, &cas).unwrap())
+    );
+
+    let question = Query::new(Direction::Rdeps, Label::parse("//lib/core:base").unwrap());
+    let (queried, _) = pipeline::query(
+        &source(),
+        &mut FakeDispatcher::default(),
+        &entry(),
+        &history,
+        &cas,
         &question,
     )
     .unwrap();
     assert!(!queried.is_empty());
     assert_eq!(
         queried,
-        pipeline::query(&source(), &mut jumbled, &entry(), &question).unwrap()
+        pipeline::query(&source(), &mut jumbled, &entry(), &history, &cas, &question)
+            .unwrap()
+            .0
     );
 
     let collected = |dispatcher: &mut FakeDispatcher| {

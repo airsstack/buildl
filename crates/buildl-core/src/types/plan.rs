@@ -104,8 +104,10 @@ pub enum Verdict {
     Conditional(Unfinished),
 }
 
-/// What a build of a workspace would do: one verdict per target, what the build wants, which
-/// plugins' targets are behind each want, and the value every build setting has for it.
+/// What a build of a workspace would do: one verdict per target, and what the build wants.
+///
+/// It also holds which plugins' targets are behind each want, the value every build setting has
+/// for it, and the discovery targets that are not clean.
 ///
 /// A plan is obtained from [`plan`](fn@crate::plan). Its verdicts are addressed by the
 /// [`NodeId`]s of the graph it was made from.
@@ -116,6 +118,7 @@ pub struct Plan {
     wanted: WantedSet,
     attribution: Attribution,
     settings: BTreeMap<SettingName, SettingValue>,
+    stale_discovery: Vec<Label>,
 }
 
 impl Plan {
@@ -134,7 +137,14 @@ impl Plan {
             wanted,
             attribution,
             settings,
+            stale_discovery: Vec::new(),
         }
+    }
+
+    /// This plan, naming `stale` as the discovery targets that are not up to date.
+    pub(crate) fn with_stale_discovery(mut self, stale: Vec<Label>) -> Self {
+        self.stale_discovery = stale;
+        self
     }
 
     /// The number of targets.
@@ -189,6 +199,16 @@ impl Plan {
     pub const fn settings(&self) -> &BTreeMap<SettingName, SettingValue> {
         &self.settings
     }
+
+    /// The discovery targets that are not clean, in label order: the targets declared from their
+    /// last results may change once they have run.
+    ///
+    /// Empty unless the plan was made by [`Pipeline::plan`](crate::Pipeline::plan), and empty
+    /// when no discovery target is declared.
+    #[must_use]
+    pub fn stale_discovery(&self) -> &[Label] {
+        &self.stale_discovery
+    }
 }
 
 /// An unfinished key as it is written to JSON: the dependencies it waits on as labels.
@@ -208,11 +228,12 @@ struct TargetView<'a> {
 }
 
 /// A plan as it is written to JSON: every setting under its name, every target under its label,
-/// no id anywhere.
+/// the discovery targets that are not up to date, no id anywhere.
 #[derive(Serialize)]
 struct PlanView<'a> {
     attribution: &'a Attribution,
     settings: &'a BTreeMap<SettingName, SettingValue>,
+    stale_discovery: &'a [Label],
     targets: BTreeMap<&'a Label, TargetView<'a>>,
     wanted: &'a WantedSet,
 }
@@ -278,6 +299,7 @@ impl Serialize for Plan {
         PlanView {
             attribution: &self.attribution,
             settings: &self.settings,
+            stale_discovery: &self.stale_discovery,
             targets,
             wanted: &self.wanted,
         }
@@ -408,6 +430,19 @@ mod tests {
     }
 
     #[test]
+    fn a_plan_names_the_discovery_targets_that_are_not_up_to_date() {
+        let plan = plan();
+        assert_eq!(plan.stale_discovery(), Vec::<Label>::new());
+        let plan = plan.with_stale_discovery(vec![label("//svc:pkgs")]);
+        assert_eq!(plan.stale_discovery(), [label("//svc:pkgs")]);
+        let json = canonical::to_string(&plan).unwrap();
+        assert!(
+            json.contains(r#""stale_discovery":["//svc:pkgs"]"#),
+            "{json}"
+        );
+    }
+
+    #[test]
     fn an_id_the_plans_graph_did_not_issue_answers_none() {
         let plan = plan();
         assert!(plan.label(NodeId::new(5)).is_none());
@@ -436,7 +471,7 @@ mod tests {
             canonical::to_string(&plan).unwrap(),
             concat!(
                 r#"{"attribution":{"env":{},"network":{},"programs":{}},"#,
-                r#""settings":{},"targets":{},"#,
+                r#""settings":{},"stale_discovery":[],"targets":{},"#,
                 r#""wanted":{"env":[],"network":[],"programs":[],"write":[]}}"#
             )
         );
@@ -506,7 +541,7 @@ mod tests {
         let own_of = |output: &str| canonical::to_string(&own(output)).unwrap();
         let expected = [
             r#"{"attribution":{"env":{},"network":{},"programs":{}},"#,
-            r#""settings":{"mode":"release","test_filter":""},"targets":{"#,
+            r#""settings":{"mode":"release","test_filter":""},"stale_discovery":[],"targets":{"#,
             r#""//:a":{"key":"#,
             &key_of("a"),
             r#","reason":null,"unfinished":null,"verdict":"Clean"},"#,

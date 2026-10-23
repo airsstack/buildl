@@ -852,7 +852,7 @@ fn a_plan_holds_every_declared_setting_with_its_override_or_else_its_default() {
     );
     let json = json::canonical::to_string(&plan).unwrap();
     assert!(
-        json.contains(r#""settings":{"level":"1","mode":"release","unused":"busy"},"targets":{"#),
+        json.contains(r#""settings":{"level":"1","mode":"release","unused":"busy"},"stale_discovery":[],"targets":{"#),
         "{json}"
     );
 }

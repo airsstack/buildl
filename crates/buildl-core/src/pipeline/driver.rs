@@ -7,8 +7,8 @@
 //! Responsibilities: [`Pipeline`], its ports, [`Pipeline::check`], [`Pipeline::graph`],
 //! [`Pipeline::query`], [`Pipeline::plan`], [`Pipeline::build`], [`Pipeline::test`] and
 //! [`Pipeline::verify`]; and
-//! [`check`], [`graph`] and [`query`], the three commands that reach only build files, for a
-//! caller that holds only a source of them.
+//! [`check`], [`graph`] and [`query`], the three commands that reach only build files and the
+//! state that holds discovery results, for a caller that holds only those ports.
 //!
 //! Non-responsibilities: the phases' own logic, which each phase's module holds.
 
@@ -16,16 +16,20 @@ use core::cmp::min_by;
 use core::fmt;
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::discovery::{discovery_labels, load_twice, results, second_pass};
 use crate::error::{Error, Result};
 use crate::execute::execute;
 use crate::grants::negotiate;
 use crate::load::{declaration_order, load};
 use crate::plan::plan;
-use crate::ports::{DeclarationSource, Dispatcher, GraphRecord, PortSet, Ports};
+use crate::ports::{
+    ContentStore, DeclarationSource, Dispatcher, GraphRecord, PortSet, Ports, RunHistory,
+};
 use crate::resolve::{narrow, reach, resolve};
 use crate::types::{
-    ActionOutcome, Declaration, Discovered, EntryName, Label, LiveOutput, OnFailure, Plan, Purpose,
-    Query, Rerun, Sample, Scope, SettingName, SettingValue, TargetGraph, Verification,
+    ActionOutcome, Declaration, Discovered, EntryName, Label, LiveOutput, Loaded, NodeId,
+    OnFailure, Plan, Purpose, Query, Rerun, Sample, Scope, SettingName, SettingValue, TargetGraph,
+    TargetRole, Verdict, Verification,
 };
 use crate::verify::verify;
 
@@ -64,47 +68,74 @@ impl<P: Ports> Pipeline<P> {
         &mut self.ports
     }
 
-    /// Loads the workspace twice and returns its declarations when both loads agree.
+    /// Loads the workspace and returns its declarations when two evaluations agree.
     ///
     /// Declaration is deterministic by construction only if every build file is; evaluating twice
     /// and comparing is how a nondeterministic one is caught. A `pairs` loop is not
-    /// nondeterminism here: the declarations are sorted before they are compared.
+    /// nondeterminism here: the declarations are sorted before they are compared. A workspace
+    /// that declares a discovery target is evaluated once without discovery results and twice
+    /// with the last ones; see [`check`](fn@check).
     ///
     /// # Errors
     ///
-    /// Returns whatever either load returns, and [`Error::Nondeterministic`] when the two loads
-    /// declare different things.
+    /// Returns whatever either load returns, [`Error::Nondeterministic`] when the two loads
+    /// declare different things, and [`Error::DiscoveryChanged`] when reading discovery results
+    /// changes which discovery targets are declared.
     pub fn check(&mut self, entry: &EntryName) -> Result<Vec<Declaration>> {
-        check(&self.ports.source, &mut self.ports.dispatcher, entry)
+        check(
+            &self.ports.source,
+            &mut self.ports.dispatcher,
+            entry,
+            &self.ports.log,
+            &self.ports.cas,
+        )
+        .map(|loaded| loaded.declarations)
     }
 
-    /// Loads the workspace once and resolves its declarations into the target graph.
+    /// Loads the workspace, with the last discovery results, and resolves its declarations into
+    /// the target graph.
     ///
     /// The double evaluation that catches a nondeterministic build file is [`Pipeline::check`]'s;
-    /// this command loads once.
+    /// this command evaluates a workspace without a discovery target once.
     ///
     /// # Errors
     ///
-    /// Returns whatever the load returns, and otherwise whatever [`resolve`] returns: a name
-    /// declared more than once, a reference that names nothing or the wrong kind of thing, or a
-    /// dependency cycle.
+    /// Returns whatever the load returns, [`Error::DiscoveryChanged`] when reading discovery
+    /// results changes which discovery targets are declared, and otherwise whatever [`resolve`]
+    /// returns: a name declared more than once, a reference that names nothing or the wrong kind
+    /// of thing, or a dependency cycle.
     pub fn graph(&mut self, entry: &EntryName) -> Result<TargetGraph> {
-        graph(&self.ports.source, &mut self.ports.dispatcher, entry)
+        graph(
+            &self.ports.source,
+            &mut self.ports.dispatcher,
+            entry,
+            &self.ports.log,
+            &self.ports.cas,
+        )
+        .map(|(graph, _)| graph)
     }
 
-    /// Loads the workspace once, resolves it, and answers `asked`: the targets it reaches, in
-    /// label order, without the target it names.
+    /// Loads the workspace as [`Pipeline::graph`] does, resolves it, and answers `asked`: the
+    /// targets it reaches, in label order, without the target it names.
     ///
     /// # Errors
     ///
     /// Returns whatever [`Pipeline::graph`] returns, and [`Error::UnknownTarget`] when the target
     /// `asked` names is neither a target nor an alias.
     pub fn query(&mut self, entry: &EntryName, asked: &Query) -> Result<BTreeSet<Label>> {
-        query(&self.ports.source, &mut self.ports.dispatcher, entry, asked)
+        query(
+            &self.ports.source,
+            &mut self.ports.dispatcher,
+            entry,
+            &self.ports.log,
+            &self.ports.cas,
+            asked,
+        )
+        .map(|(answer, _)| answer)
     }
 
-    /// Loads the workspace once, resolves it, and plans a build of the part of the graph `scope`
-    /// asks for.
+    /// Loads the workspace, with the last discovery results, resolves it, and plans a build of
+    /// the part of the graph `scope` asks for.
     ///
     /// `overrides` gives values to build settings for this run. A whole workspace means every
     /// target but tests, and a test is planned when it is named or a planned target depends on it.
@@ -112,12 +143,17 @@ impl<P: Ports> Pipeline<P> {
     /// because a plan records the digest of every file it had to hash. The approver is not asked:
     /// a plan runs nothing.
     ///
+    /// The discovery targets are planned as well, whatever `scope` is, and each one that is not
+    /// clean is named by [`Plan::stale_discovery`]: the targets declared from it may change once
+    /// it has run.
+    ///
     /// # Errors
     ///
-    /// Returns whatever the load returns, then whatever [`resolve`] returns, then
-    /// [`Error::UnknownTarget`] for a label of `scope` that names neither a target nor an alias,
-    /// and otherwise whatever [`plan`](fn@plan) returns: an override naming no setting, two
-    /// outputs of the planned targets that would be written to one place, a want outside the
+    /// Returns whatever the load returns, [`Error::DiscoveryChanged`] when reading discovery
+    /// results changes which discovery targets are declared, then whatever [`resolve`] returns,
+    /// then [`Error::UnknownTarget`] for a label of `scope` that names neither a target nor an
+    /// alias, and otherwise whatever [`plan`](fn@plan) returns: an override naming no setting,
+    /// two outputs of the planned targets that would be written to one place, a want outside the
     /// workspace's ceiling, a program that cannot be found, an input that is missing or is not a
     /// regular file, or a port's own failure.
     pub fn plan(
@@ -126,14 +162,51 @@ impl<P: Ports> Pipeline<P> {
         scope: &Scope,
         overrides: &BTreeMap<SettingName, SettingValue>,
     ) -> Result<Plan> {
-        let whole = resolve(load(
-            &self.ports.source,
-            &mut self.ports.dispatcher,
-            entry,
-            &Discovered::empty(),
-        )?)?;
+        let whole = resolve(self.declared(entry)?.declarations)?;
         let graph = narrow(&whole, scope, Purpose::Build)?;
-        plan(&graph, overrides, Rerun::Off, &mut self.ports)
+        let planned = plan(&graph, overrides, Rerun::Off, &mut self.ports)?;
+        let stale = self.stale_discovery(&whole, overrides)?;
+        Ok(planned.with_stale_discovery(stale))
+    }
+
+    /// The workspace's declarations, from two loads when it declares a discovery target, with the
+    /// last result of each discovery target read through this pipeline's log and store.
+    fn declared(&mut self, entry: &EntryName) -> Result<Loaded> {
+        let PortSet {
+            source,
+            dispatcher,
+            log,
+            cas,
+            ..
+        } = &mut self.ports;
+        load_twice(source, dispatcher, entry, |labels| {
+            results(log, cas, labels)
+        })
+    }
+
+    /// The discovery targets of `whole` that a plan finds not clean, in label order.
+    fn stale_discovery(
+        &mut self,
+        whole: &TargetGraph,
+        overrides: &BTreeMap<SettingName, SettingValue>,
+    ) -> Result<Vec<Label>> {
+        let labels: BTreeSet<Label> = whole
+            .nodes()
+            .iter()
+            .filter(|node| node.role == TargetRole::Discovery)
+            .map(|node| node.label.clone())
+            .collect();
+        if labels.is_empty() {
+            return Ok(Vec::new());
+        }
+        let graph = narrow(whole, &Scope::Targets(labels), Purpose::Build)?;
+        let discovery = plan(&graph, overrides, Rerun::Off, &mut self.ports)?;
+        Ok((0_u32..)
+            .map(NodeId::new)
+            .zip(discovery.verdicts())
+            .filter(|(_, verdict)| !matches!(verdict, Verdict::Clean { .. }))
+            .filter_map(|(id, _)| discovery.label(id).cloned())
+            .collect())
     }
 
     /// Loads the workspace once, resolves it, records the graph of the whole workspace, plans a
@@ -255,9 +328,9 @@ impl<P: Ports> Pipeline<P> {
         )
     }
 
-    /// Loads the workspace once, resolves it, plans a build of the part of the graph `scope` asks
-    /// for, and re-runs the cached targets of that part to see whether they reproduce what was
-    /// cached.
+    /// Loads the workspace, with the last discovery results, resolves it, plans a build of the
+    /// part of the graph `scope` asks for, and re-runs the cached targets of that part to see
+    /// whether they reproduce what was cached.
     ///
     /// Planned as [`Pipeline::build`] plans: `overrides` gives values to build settings for this
     /// run, and a whole workspace means every target but tests, with a test checked when it is
@@ -271,9 +344,10 @@ impl<P: Ports> Pipeline<P> {
     ///
     /// # Errors
     ///
-    /// Returns the first of: whatever the load returns; whatever [`resolve`] returns;
-    /// [`Error::UnknownTarget`] for a label of `scope` that names neither a target nor an alias;
-    /// whatever [`plan`](fn@plan) returns; [`Error::NotApproved`] when the approver does not
+    /// Returns the first of: whatever the load returns; [`Error::DiscoveryChanged`] when reading
+    /// discovery results changes which discovery targets are declared; whatever [`resolve`]
+    /// returns; [`Error::UnknownTarget`] for a label of `scope` that names neither a target nor
+    /// an alias; whatever [`plan`](fn@plan) returns; [`Error::NotApproved`] when the approver does not
     /// approve what the plan wants, or the approver's own failure; and whatever
     /// [`verify`](fn@verify) returns.
     pub fn verify(
@@ -283,12 +357,7 @@ impl<P: Ports> Pipeline<P> {
         overrides: &BTreeMap<SettingName, SettingValue>,
         sample: Sample,
     ) -> Result<Verification> {
-        let whole = resolve(load(
-            &self.ports.source,
-            &mut self.ports.dispatcher,
-            entry,
-            &Discovered::empty(),
-        )?)?;
+        let whole = resolve(self.declared(entry)?.declarations)?;
         let graph = narrow(&whole, scope, Purpose::Build)?;
         let plan = plan(&graph, overrides, Rerun::Off, &mut self.ports)?;
         negotiate(plan.wanted(), plan.attribution(), &mut self.ports.approver)?;
@@ -296,58 +365,120 @@ impl<P: Ports> Pipeline<P> {
     }
 }
 
-/// Loads the workspace twice through `source` and returns its declarations when both loads
-/// agree: what [`Pipeline::check`] does, for a caller that holds a source and a dispatcher and no
-/// other port.
+/// Loads the workspace through `source` and returns its declarations when two evaluations agree.
 ///
-/// A command that only evaluates build files reads no state a build keeps, so it needs none of
-/// the ports that hold it.
+/// What [`Pipeline::check`] does, for a caller that holds a source, a dispatcher, and the log and
+/// store that hold discovery results, and no other port.
+///
+/// A workspace that declares no discovery target is evaluated twice without discovery results,
+/// and the two must agree. One that does is evaluated once without them, then twice with the last
+/// result of each discovery target as `history` and `cas` hold it; the last two must agree, and
+/// declare the discovery targets of the first. A result that cannot be read counts as none, so a
+/// damaged log never stops a check. The labels of the discovery targets with no result come back
+/// beside the declarations.
+///
+/// A command that only evaluates build files reads no state a build keeps but the log and the
+/// store, and takes neither a lock nor a write to them.
 ///
 /// # Errors
 ///
-/// Returns whatever either load returns, and [`Error::Nondeterministic`] when the two loads
-/// declare different things.
-pub fn check<S: DeclarationSource, D: Dispatcher>(
+/// Returns whatever any load returns, [`Error::Nondeterministic`] when two loads declare
+/// different things, and [`Error::DiscoveryChanged`] when the loads with results declare
+/// different discovery targets than the load without.
+pub fn check<S, D, H, C>(
     source: &S,
     dispatcher: &mut D,
     entry: &EntryName,
-) -> Result<Vec<Declaration>> {
+    history: &H,
+    cas: &C,
+) -> Result<Loaded>
+where
+    S: DeclarationSource,
+    D: Dispatcher,
+    H: RunHistory,
+    C: ContentStore,
+{
     let first = load(source, dispatcher, entry, &Discovered::empty())?;
-    let second = load(source, dispatcher, entry, &Discovered::empty())?;
-    first_difference(&first, &second).map_or(Ok(first), Err)
+    let labels = discovery_labels(&first);
+    if labels.is_empty() {
+        let second = load(source, dispatcher, entry, &Discovered::empty())?;
+        return first_difference(&first, &second).map_or(
+            Ok(Loaded {
+                declarations: first,
+                missing: Vec::new(),
+            }),
+            Err,
+        );
+    }
+    let (discovered, missing) = results(history, cas, &labels);
+    let second = second_pass(source, dispatcher, entry, &first, &discovered)?;
+    let third = load(source, dispatcher, entry, &discovered)?;
+    first_difference(&second, &third).map_or(
+        Ok(Loaded {
+            declarations: second,
+            missing,
+        }),
+        Err,
+    )
 }
 
-/// Loads the workspace once through `source` and resolves its declarations into the target
-/// graph: what [`Pipeline::graph`] does, for a caller that holds a source and a dispatcher and no
-/// other port.
+/// Loads the workspace through `source` and resolves its declarations into the target graph.
+///
+/// What [`Pipeline::graph`] does, for a caller that holds a source, a dispatcher, and the log and
+/// store that hold discovery results, and no other port.
+///
+/// A workspace that declares a discovery target is loaded again with the last result of each,
+/// read without a lock; the labels of the ones with no result come back beside the graph.
 ///
 /// # Errors
 ///
-/// Returns whatever the load returns, and otherwise whatever [`resolve`] returns.
-pub fn graph<S: DeclarationSource, D: Dispatcher>(
+/// Returns whatever the load returns, [`Error::DiscoveryChanged`] when the second load declares
+/// different discovery targets than the first, and otherwise whatever [`resolve`] returns.
+pub fn graph<S, D, H, C>(
     source: &S,
     dispatcher: &mut D,
     entry: &EntryName,
-) -> Result<TargetGraph> {
-    resolve(load(source, dispatcher, entry, &Discovered::empty())?)
+    history: &H,
+    cas: &C,
+) -> Result<(TargetGraph, Vec<Label>)>
+where
+    S: DeclarationSource,
+    D: Dispatcher,
+    H: RunHistory,
+    C: ContentStore,
+{
+    let loaded = load_twice(source, dispatcher, entry, |labels| {
+        results(history, cas, labels)
+    })?;
+    Ok((resolve(loaded.declarations)?, loaded.missing))
 }
 
-/// Loads the workspace once through `source`, resolves it, and answers `asked`: what
-/// [`Pipeline::query`] does, for a caller that holds a source and a dispatcher and no other port.
+/// Loads the workspace as [`graph`] does, resolves it, and answers `asked`: what
+/// [`Pipeline::query`] does, for a caller that holds the ports [`graph`] takes.
 ///
-/// The answer is in label order and does not hold the target `asked` names.
+/// The answer is in label order and does not hold the target `asked` names. The labels of the
+/// discovery targets with no result come back beside it.
 ///
 /// # Errors
 ///
 /// Returns whatever [`graph`] returns, and [`Error::UnknownTarget`] when the target `asked` names
 /// is neither a target nor an alias.
-pub fn query<S: DeclarationSource, D: Dispatcher>(
+pub fn query<S, D, H, C>(
     source: &S,
     dispatcher: &mut D,
     entry: &EntryName,
+    history: &H,
+    cas: &C,
     asked: &Query,
-) -> Result<BTreeSet<Label>> {
-    reach(&graph(source, dispatcher, entry)?, asked)
+) -> Result<(BTreeSet<Label>, Vec<Label>)>
+where
+    S: DeclarationSource,
+    D: Dispatcher,
+    H: RunHistory,
+    C: ContentStore,
+{
+    let (graph, missing) = graph(source, dispatcher, entry, history, cas)?;
+    Ok((reach(&graph, asked)?, missing))
 }
 
 /// The error naming the first place two sorted declaration lists differ, if they do.

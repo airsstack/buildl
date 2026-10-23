@@ -29,6 +29,7 @@
 //! - [`Declaration`] and its parts — what a build file declared, validated.
 //! - [`BuildFile`], [`Evaluated`] and the staged values — what crosses the build-file port;
 //!   [`Discovered`] — what discovery targets last produced, handed to the build file that asks.
+//! - [`Loaded`] — the declarations a command loaded and the discovery targets that had no result.
 //! - [`TargetGraph`] and [`Node`] — the runnable targets and the dependencies between them.
 //! - [`ActionKey`], [`KeyComponents`] and their parts — what decides a target's output, and the
 //!   digest that stands for it.
@@ -116,6 +117,7 @@ pub mod isolation;
 pub mod label;
 pub mod live_output;
 pub mod live_sink;
+pub mod loaded;
 pub mod log_line;
 pub mod logged_run;
 pub mod node_id;
@@ -191,6 +193,7 @@ pub use isolation::Isolation;
 pub use label::Label;
 pub use live_output::LiveOutput;
 pub use live_sink::LiveSink;
+pub use loaded::Loaded;
 pub use log_line::LogLine;
 pub use logged_run::LoggedRun;
 pub use node_id::NodeId;

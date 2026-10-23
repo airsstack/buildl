@@ -255,7 +255,8 @@ fn plan_json_is_one_canonical_line() {
     assert!(
         text.starts_with(concat!(
             "{\"attribution\":{\"env\":{},\"network\":{},\"programs\":{}},",
-            "\"settings\":{\"mode\":\"debug\"},\"targets\":{\"//:app\":{"
+            "\"settings\":{\"mode\":\"debug\"},\"stale_discovery\":[],",
+            "\"targets\":{\"//:app\":{"
         )),
         "{text}"
     );

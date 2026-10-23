@@ -117,6 +117,7 @@ impl Exit {
             | Error::InvalidDeclaration { .. }
             | Error::ActionConflict { .. }
             | Error::Nondeterministic { .. }
+            | Error::DiscoveryChanged { .. }
             | Error::DuplicateLabel { .. }
             | Error::DuplicateSetting { .. }
             | Error::UnknownReference { .. }
@@ -339,7 +340,16 @@ mod tests {
                 first_run: None,
                 second_run: None,
             },
+            discovery_changed(),
         ]
+    }
+
+    /// A discovery target the build files declared differently once its result was read.
+    fn discovery_changed() -> Error {
+        Error::DiscoveryChanged {
+            label: label("//:pkgs"),
+            provenance: root_file(),
+        }
     }
 
     /// A value of each variant that is a mistake of a build file found while resolving the
@@ -618,6 +628,12 @@ mod tests {
     }
 
     #[test]
+    fn discovery_changed_exits_5() {
+        assert_eq!(Exit::of_error(&discovery_changed()), Exit::Definition);
+        assert_eq!(Exit::Definition as u8, 5);
+    }
+
+    #[test]
     fn plugin_not_fetched_exits_5_and_changed_exits_6() {
         assert_eq!(Exit::of_error(&plugin_not_fetched()), Exit::Definition);
         assert_eq!(Exit::of_error(&plugin_changed()), Exit::CorruptState);
@@ -661,12 +677,12 @@ mod tests {
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [5, 4, 3, 19, 4, 7]);
+        assert_eq!(counts, [5, 4, 3, 20, 4, 7]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 42, "a variant is listed twice");
+        assert_eq!(variants.len(), 43, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");

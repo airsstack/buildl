@@ -14,8 +14,8 @@ use buildl_core::{
 };
 
 use crate::common::{
-    FakeDispatcher, FakeManifest, FakeSource, dir, file, file_by, label, open_workspace, plugin,
-    program, target, target_with, workspace,
+    FakeCas, FakeDispatcher, FakeHistory, FakeManifest, FakeSource, dir, file, file_by, label,
+    open_workspace, plugin, program, target, target_with, workspace,
 };
 
 fn entry() -> EntryName {
@@ -28,7 +28,20 @@ fn checked(items: Vec<StagedItem>) -> Result<Checkup> {
     let manifest = FakeManifest {
         workspace: open_workspace(),
     };
-    doctor(&source, &mut FakeDispatcher::default(), &manifest, &entry())
+    checked_by(&source, &manifest)
+}
+
+/// The checkup of `source` under `manifest`, with no run recorded.
+fn checked_by(source: &FakeSource, manifest: &FakeManifest) -> Result<Checkup> {
+    doctor(
+        source,
+        &mut FakeDispatcher::default(),
+        manifest,
+        &entry(),
+        &FakeHistory::default(),
+        &FakeCas::default(),
+    )
+    .map(|(checkup, _)| checkup)
 }
 
 fn env_name(raw: &str) -> EnvName {
@@ -142,7 +155,7 @@ fn doctor_hashes_nothing_and_looks_up_no_tool() {
         workspace: open_workspace(),
     };
 
-    doctor(&source, &mut FakeDispatcher::default(), &manifest, &entry()).unwrap();
+    checked_by(&source, &manifest).unwrap();
 
     assert_eq!(source.evaluated(), [Directory::root()]);
 }
@@ -165,7 +178,7 @@ fn doctor_reports_every_plugin_violation_and_refuses_nothing() {
         workspace: open_workspace(),
     };
 
-    let checkup = doctor(&source, &mut FakeDispatcher::default(), &manifest, &entry()).unwrap();
+    let checkup = checked_by(&source, &manifest).unwrap();
 
     let found: Vec<(String, Want)> = checkup
         .plugin_violations()

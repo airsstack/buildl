@@ -1,5 +1,6 @@
 discovery -> error
 discovery -> history
+discovery -> load
 discovery -> ports
 discovery -> types
 error -> types
@@ -19,6 +20,7 @@ json -> error
 load -> error
 load -> ports
 load -> types
+pipeline -> discovery
 pipeline -> error
 pipeline -> execute
 pipeline -> grants

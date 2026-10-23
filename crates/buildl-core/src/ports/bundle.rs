@@ -13,7 +13,7 @@
 
 use crate::ports::{
     ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
-    ExecStrategy, GraphRecord, Host, Manifest, Reporter, StatCache, ToolResolver,
+    ExecStrategy, GraphRecord, Host, Manifest, Reporter, RunHistory, StatCache, ToolResolver,
 };
 
 /// One implementation of each port, chosen together.
@@ -30,9 +30,9 @@ use crate::ports::{
 ///     ActionCache, Approval, Approver, Attribution, BuildFile, CacheRow, Captured, Ceiling,
 ///     Channel, Clock, ContentStore, DeclarationSource, Diagnostic, Digest, Digester, Directory,
 ///     Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy,
-///     FileMode, Found, GraphRecord, Host, InputStat, Label, LiveSink, Manifest, OutcomeEvent, OutputPath,
-///     Platform, PortName, Ports, Program, RawOutcome, ReadyAction, Reporter, Result, SourcePath,
-///     StatCache, StatEntry, Summary, TargetGraph, Timestamp, ToolResolver, Turn, WantedSet,
+///     FileMode, Found, GraphRecord, Host, InputStat, Label, LiveSink, LogLine, Manifest,
+///     OutcomeEvent, OutputPath, Platform, PortName, Ports, Program, RawOutcome, ReadyAction,
+///     Reporter, Result, RunHistory, SourcePath, StatCache, StatEntry, Summary, TargetGraph, Timestamp, ToolResolver, Turn, WantedSet,
 ///     Workspace,
 /// };
 ///
@@ -152,6 +152,12 @@ use crate::ports::{
 /// impl EventLog for Nothing {
 ///     fn append(&mut self, _event: &OutcomeEvent) -> Result<()> {
 ///         Err(nothing(PortName::EventLog))
+///     }
+/// }
+///
+/// impl RunHistory for Nothing {
+///     fn lines(&self) -> Result<Vec<LogLine>> {
+///         Err(nothing(PortName::RunHistory))
 ///     }
 /// }
 ///
@@ -275,8 +281,8 @@ pub trait Ports {
     type Cache: ActionCache;
     /// Where what actions produce is stored, by content.
     type Cas: ContentStore;
-    /// Where the record of how each target ended is written.
-    type Log: EventLog;
+    /// Where the record of how each target ended is written, and read back from.
+    type Log: EventLog + RunHistory;
     /// How one action is run.
     type Strategy: ExecStrategy;
     /// How several actions are run at once.

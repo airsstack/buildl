@@ -16,8 +16,9 @@ use std::path::{Path, PathBuf};
 
 use buildl_core::{
     ActionOutcome, ApproverMode, Checkup, Collected, Declaration, Diagnostic, Directory, Error,
-    Label, LiveOutput, OnFailure, Pipeline, Plan, PortName, Query, Reporter, Rerun, Result, Sample,
-    Scope, SettingName, SettingValue, Shown, TargetGraph, Verification, WantedSet, pipeline,
+    Label, LiveOutput, LogLine, OnFailure, Pipeline, Plan, PortName, Query, Reporter, Rerun,
+    Result, RunHistory, Sample, Scope, SettingName, SettingValue, Shown, TargetGraph, Verification,
+    WantedSet, pipeline,
 };
 
 use crate::approver::{Console, NoTerminal};
@@ -45,6 +46,15 @@ impl RunOptions {
     #[must_use]
     pub const fn new(on_failure: OnFailure, live: LiveOutput) -> Self {
         Self { on_failure, live }
+    }
+}
+
+/// A build log that holds no run, for the commands that evaluate build files and keep no state.
+struct NoHistory;
+
+impl RunHistory for NoHistory {
+    fn lines(&self) -> Result<Vec<LogLine>> {
+        Ok(Vec::new())
     }
 }
 
@@ -166,6 +176,11 @@ impl Workspace {
         Query::parse(raw, |target| self.label(target))
     }
 
+    /// The content store, which touches nothing on disk until a blob is read from it.
+    fn cas(&self) -> LocalCas {
+        LocalCas::new(self.wiring.root().as_path(), &self.wiring.layout())
+    }
+
     /// Evaluates every build file twice and returns the declarations when both runs agree.
     ///
     /// Takes no lock and opens no state file, so it is stopped neither by a running build nor
@@ -180,7 +195,10 @@ impl Workspace {
             &self.wiring.source()?,
             &mut self.wiring.dispatcher(),
             self.wiring.entry(),
+            &NoHistory,
+            &self.cas(),
         )
+        .map(|loaded| loaded.declarations)
     }
 
     /// Evaluates every build file once and resolves the declarations into the target graph.
@@ -196,7 +214,10 @@ impl Workspace {
             &self.wiring.source()?,
             &mut self.wiring.dispatcher(),
             self.wiring.entry(),
+            &NoHistory,
+            &self.cas(),
         )
+        .map(|(graph, _)| graph)
     }
 
     /// Evaluates every build file once and answers `query`: the targets it reaches, in label
@@ -213,8 +234,11 @@ impl Workspace {
             &self.wiring.source()?,
             &mut self.wiring.dispatcher(),
             self.wiring.entry(),
+            &NoHistory,
+            &self.cas(),
             query,
         )
+        .map(|(answer, _)| answer)
     }
 
     /// Evaluates every build file once and reports what the workspace allows, what its build
@@ -229,11 +253,13 @@ impl Workspace {
     /// use, then whatever [`pipeline::doctor`](fn@pipeline::doctor) returns, and under
     /// `interactive` whatever reading the remembered approvals returns.
     pub fn doctor(&self) -> Result<Doctor> {
-        let checkup = pipeline::doctor(
+        let (checkup, _) = pipeline::doctor(
             &self.wiring.source()?,
             &mut self.wiring.dispatcher(),
             self.wiring.manifest(),
             self.wiring.entry(),
+            &NoHistory,
+            &self.cas(),
         )?;
         let unapproved = match checkup.workspace().approver {
             ApproverMode::Manifest => WantedSet::default(),

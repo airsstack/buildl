@@ -165,6 +165,19 @@ pub enum Error {
         /// The second evaluation's declaration at the first difference; `None` past its end.
         second_run: Option<Box<Declaration>>,
     },
+    /// The build files, evaluated with the results of the discovery targets, declared different
+    /// discovery targets than they did without them.
+    #[error(
+        "{provenance}: discovery target {label} differs once discovery results are read; a \
+         discovery target may not depend on a discovery result"
+    )]
+    DiscoveryChanged {
+        /// The first discovery target, in declaration order, that one evaluation declared and
+        /// the other did not or declared differently.
+        label: Label,
+        /// The build file that declares it.
+        provenance: Provenance,
+    },
     /// A label was declared more than once, as any mix of target, rule and alias.
     #[error("{label} is declared more than once: {}", declaring_sites(.sites))]
     DuplicateLabel {
@@ -2236,6 +2249,19 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "lib/build.lua: declarations differ between two evaluations"
+        );
+    }
+
+    #[test]
+    fn discovery_changed_names_the_target_and_its_file() {
+        let err = Error::DiscoveryChanged {
+            label: Label::parse("//lib:pkgs").unwrap(),
+            provenance: lib_file(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "lib/build.lua: discovery target //lib:pkgs differs once discovery results are \
+             read; a discovery target may not depend on a discovery result"
         );
     }
 

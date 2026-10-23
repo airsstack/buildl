@@ -104,14 +104,14 @@ mod tests {
     use crate::error::Result;
     use crate::ports::{
         ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher,
-        EventLog, ExecStrategy, GraphRecord, Host, Manifest, Ports, Reporter, StatCache,
-        ToolResolver,
+        EventLog, ExecStrategy, GraphRecord, Host, Manifest, Ports, Reporter, RunHistory,
+        StatCache, ToolResolver,
     };
     use crate::types::{
         Approval, Attribution, BuildFile, CacheRow, Captured, Ceiling, Channel, Digest, Directory,
         Discovered, EnvName, EnvValue, Evaluated, Exit, FileMode, Found, InputStat, Label,
-        LiveSink, OutcomeEvent, OutputPath, Platform, Program, RawOutcome, ReadyAction, SourcePath,
-        StatEntry, Summary, TargetGraph, Timestamp, Turn, WantedSet, Workspace,
+        LiveSink, LogLine, OutcomeEvent, OutputPath, Platform, Program, RawOutcome, ReadyAction,
+        SourcePath, StatEntry, Summary, TargetGraph, Timestamp, Turn, WantedSet, Workspace,
     };
 
     /// One port type answering that there is nothing, standing in for every port.
@@ -223,6 +223,12 @@ mod tests {
     impl EventLog for Stub {
         fn append(&mut self, _event: &OutcomeEvent) -> Result<()> {
             Ok(())
+        }
+    }
+
+    impl RunHistory for Stub {
+        fn lines(&self) -> Result<Vec<LogLine>> {
+            Ok(Vec::new())
         }
     }
 

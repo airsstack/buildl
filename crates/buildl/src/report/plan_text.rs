@@ -133,12 +133,12 @@ mod tests {
         Declared, DepProducts, Diagnostic, Digest, Digester, Directory, DirtyReason, Discovered,
         Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy, Execution,
         FileMode, FileStat, Found, Freshness, GraphRecord, Host, InputDigest, InputStat,
-        KeyComponents, Label, LiveSink, Manifest, NetworkAccess, Origin, OutcomeEvent, OutputName,
-        OutputPath, OwnComponents, Plan, PlannedKey, Platform, PluginCap, PluginName, PluginRef,
-        PluginVersion, PortName, PortSet, Ports, Produced, Program, Provenance, RawOutcome,
-        ReadyAction, Rerun, Result, Setting, SettingName, SettingValue, SourcePath, StatCache,
-        StatEntry, Target, TargetGraph, TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn,
-        Verdict, WantedSet, Workspace, plan, resolve,
+        KeyComponents, Label, LiveSink, LogLine, Manifest, NetworkAccess, Origin, OutcomeEvent,
+        OutputName, OutputPath, OwnComponents, Plan, PlannedKey, Platform, PluginCap, PluginName,
+        PluginRef, PluginVersion, PortName, PortSet, Ports, Produced, Program, Provenance,
+        RawOutcome, ReadyAction, Rerun, Result, RunHistory, Setting, SettingName, SettingValue,
+        SourcePath, StatCache, StatEntry, Target, TargetGraph, TargetRole, Timestamp, ToolIdentity,
+        ToolResolver, Turn, Verdict, WantedSet, Workspace, plan, resolve,
     };
 
     use super::{plan_text, reason_text};
@@ -284,6 +284,12 @@ mod tests {
     impl EventLog for Unused {
         fn append(&mut self, _event: &OutcomeEvent) -> Result<()> {
             Err(unused(PortName::EventLog))
+        }
+    }
+
+    impl RunHistory for Unused {
+        fn lines(&self) -> Result<Vec<LogLine>> {
+            Err(unused(PortName::RunHistory))
         }
     }
 
