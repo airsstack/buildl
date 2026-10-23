@@ -461,6 +461,15 @@ pub enum Error {
         /// How the files differ from the lock.
         reason: String,
     },
+    /// `git` could not fetch a plugin: it is not installed, or it refused the repository, the
+    /// revision or the checkout.
+    #[error("plugin {plugin} could not be fetched: {diagnostic}")]
+    PluginFetch {
+        /// The plugin.
+        plugin: PluginName,
+        /// What `git` printed, or why it could not be run, for display only.
+        diagnostic: Diagnostic,
+    },
 }
 
 /// A lost load as one sentence naming the port at fault and the directories whose build file it
@@ -1488,6 +1497,18 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "plugin go was changed after it was fetched: its files differ from buildl.lock"
+        );
+    }
+
+    #[test]
+    fn a_plugin_fetch_names_the_plugin_and_what_git_said() {
+        let err = Error::PluginFetch {
+            plugin: PluginName::parse("go").unwrap(),
+            diagnostic: Diagnostic::new("fatal: couldn't find remote ref refs/tags/v9"),
+        };
+        assert_eq!(
+            err.to_string(),
+            "plugin go could not be fetched: fatal: couldn't find remote ref refs/tags/v9"
         );
     }
 
