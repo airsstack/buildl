@@ -27,6 +27,14 @@ fn name_of(want: &Want) -> String {
     }
 }
 
+/// One chain behind a want, as `declared by plugin go@1.2.0 for //services/api:server`.
+///
+/// A chain of several plugins reads outermost first, as in `ourgo@0.1.0 > go@1.2.0`.
+fn declared_by(chain: &PluginChain, label: &Label) -> String {
+    let plugins: Vec<String> = chain.as_slice().iter().map(ToString::to_string).collect();
+    format!("declared by plugin {} for {label}", plugins.join(" > "))
+}
+
 /// For each want, the plugin chains whose targets want it, each with the lowest-labelled such
 /// target.
 ///
@@ -77,6 +85,21 @@ impl Attribution {
         self.0.get(want)
     }
 
+    /// One line for each chain behind `want`, in chain order, as `declared by plugin go@1.2.0 for
+    /// //services/api:server`; none when no plugin's target wants it.
+    ///
+    /// The lines leave out the want's name and any indent, for a caller that shows them under
+    /// the want.
+    #[must_use]
+    pub fn lines(&self, want: &Want) -> Vec<String> {
+        self.0.get(want).map_or_else(Vec::new, |chains| {
+            chains
+                .iter()
+                .map(|(chain, label)| declared_by(chain, label))
+                .collect()
+        })
+    }
+
     /// Every attributed want with its chains, in the order they are shown.
     pub fn iter(&self) -> impl Iterator<Item = (&Want, &BTreeMap<PluginChain, Label>)> {
         self.0.iter()
@@ -105,14 +128,7 @@ impl fmt::Display for Attribution {
                     f.write_str("\n")?;
                 }
                 first = false;
-                write!(f, "  {}: declared by plugin ", name_of(want))?;
-                for (index, plugin) in chain.as_slice().iter().enumerate() {
-                    if index > 0 {
-                        f.write_str(" > ")?;
-                    }
-                    write!(f, "{plugin}")?;
-                }
-                write!(f, " for {label}")?;
+                write!(f, "  {}: {}", name_of(want), declared_by(chain, label))?;
             }
         }
         Ok(())
@@ -223,6 +239,24 @@ mod tests {
              GOPATH: declared by plugin go@1.2.0 for //:b\n  \
              //:fetch: declared by plugin go@1.2.0 for //:fetch"
         );
+    }
+
+    #[test]
+    fn lines_of_a_want_leave_out_its_name() {
+        let ourgo = chain(&[("ourgo", "0.1.0"), ("go", "1.2.0")]);
+        let go = chain(&[("go", "1.2.0")]);
+        let mut attribution = Attribution::default();
+        attribution.record(program("go"), &ourgo, &label("//:b"));
+        attribution.record(program("go"), &go, &label("//:a"));
+        attribution.record(program("protoc"), &go, &label("//:a"));
+        assert_eq!(
+            attribution.lines(&program("go")),
+            [
+                "declared by plugin go@1.2.0 for //:a",
+                "declared by plugin ourgo@0.1.0 > go@1.2.0 for //:b",
+            ]
+        );
+        assert_eq!(attribution.lines(&program("cc")), [] as [String; 0]);
     }
 
     #[test]

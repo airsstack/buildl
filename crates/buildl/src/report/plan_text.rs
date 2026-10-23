@@ -4,8 +4,8 @@
 //! both keys of every target, for a program to compare; this holds one line a target, saying in
 //! words what the comparison found.
 //!
-//! Responsibilities: [`plan_text`], and the words for each verdict, each reason and each
-//! difference between two keys.
+//! Responsibilities: [`plan_text`], and the words for each verdict, each reason, each
+//! difference between two keys, and the plugins behind the plan's wants.
 //!
 //! Non-responsibilities: reaching a verdict, which the phase that plans does; and writing the
 //! text anywhere.
@@ -73,6 +73,10 @@ fn labels(plan: &Plan, ids: &[NodeId]) -> String {
 /// runs only if a dependency it waits on produces something else reads
 /// `maybe  <label>: runs only if <those dependencies> produces something else`. The last line
 /// counts the three: `1 to run, 1 conditional, 2 clean`.
+///
+/// When the plan's wants are attributed to plugins, one line for each chain of each want comes
+/// between the targets and the counts, as in
+/// `  go: declared by plugin go@1.2.0 for //services/api:server`.
 #[must_use]
 pub fn plan_text(plan: &Plan) -> String {
     let mut lines = Vec::new();
@@ -99,6 +103,9 @@ pub fn plan_text(plan: &Plan) -> String {
             }
         }
     }
+    if !plan.attribution().is_empty() {
+        lines.push(format!("{}\n", plan.attribution()));
+    }
     lines.push(format!(
         "{run} to run, {maybe} conditional, {clean} clean\n"
     ));
@@ -122,10 +129,11 @@ mod tests {
         EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy, Execution, FileMode, FileStat,
         Found, Freshness, GraphRecord, Host, InputDigest, InputStat, KeyComponents, Label,
         LiveSink, Manifest, NetworkAccess, Origin, OutcomeEvent, OutputName, OutputPath,
-        OwnComponents, Plan, PlannedKey, Platform, PortName, PortSet, Ports, Produced, Program,
-        Provenance, RawOutcome, ReadyAction, Rerun, Result, Setting, SettingName, SettingValue,
-        SourcePath, StatCache, StatEntry, Target, TargetGraph, TargetRole, Timestamp, ToolIdentity,
-        ToolResolver, Turn, Verdict, WantedSet, Workspace, plan, resolve,
+        OwnComponents, Plan, PlannedKey, Platform, PluginCap, PluginName, PluginRef, PluginVersion,
+        PortName, PortSet, Ports, Produced, Program, Provenance, RawOutcome, ReadyAction, Rerun,
+        Result, Setting, SettingName, SettingValue, SourcePath, StatCache, StatEntry, Target,
+        TargetGraph, TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn, Verdict, WantedSet,
+        Workspace, plan, resolve,
     };
 
     use super::{plan_text, reason_text};
@@ -149,7 +157,13 @@ mod tests {
                 },
                 execution: Execution::default(),
                 approver: ApproverMode::Manifest,
-                plugins: std::collections::BTreeMap::new(),
+                plugins: BTreeMap::from([(
+                    PluginName::parse("go")?,
+                    PluginCap {
+                        run: BTreeSet::from([Program::parse("cc")?]),
+                        ..PluginCap::default()
+                    },
+                )]),
             })
         }
     }
@@ -599,6 +613,35 @@ mod tests {
             unreachable!("with nothing recorded every target is dirty");
         };
         assert_eq!(reason_text(&DirtyReason::Rerun, key), "asked to run again");
+    }
+
+    #[test]
+    fn plan_text_lists_attribution_under_the_wanted_set() {
+        let go = PluginRef {
+            name: PluginName::parse("go").unwrap(),
+            version: PluginVersion::parse("1.2.0").unwrap(),
+            run: BTreeSet::from([Program::parse("cc").unwrap()]),
+            env: BTreeSet::new(),
+        };
+        let graph = resolve(vec![
+            declared(target("//:docs", &["cc", "--doc"])),
+            Declaration::new(
+                root_file(),
+                Origin::plugins(vec![go]).unwrap(),
+                Declared::Target(target("//:app", &["cc", "-c"])),
+            ),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            plan_text(&planned(&graph, Rows::default())),
+            concat!(
+                "run    //:app: never built\n",
+                "run    //:docs: never built\n",
+                "  cc: declared by plugin go@1.2.0 for //:app\n",
+                "2 to run, 0 conditional, 0 clean\n",
+            )
+        );
     }
 
     #[test]

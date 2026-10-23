@@ -1,5 +1,6 @@
-//! The text `doctor` prints: the workspace, its approver, its run settings, its ceiling, and
-//! one row per want saying whether the ceiling allows it and whether it is approved.
+//! The text `doctor` prints: the workspace, its approver, its run settings, its ceiling, one row
+//! per want saying whether the ceiling allows it and whether it is approved, each row followed
+//! by the plugins behind it, and every want a plugin does not allow.
 //!
 //! Its own file because it is the one command whose output is a report laid out in columns,
 //! read by a person deciding what to allow.
@@ -13,7 +14,7 @@ use core::fmt::Display;
 use std::collections::BTreeSet;
 
 use buildl::Doctor;
-use buildl::buildl_core::{Directory, Execution, WantedSet, Workers};
+use buildl::buildl_core::{Attribution, Directory, Error, Execution, Want, WantedSet, Workers};
 
 /// The spaces after the longest cell of a column.
 const GAP: usize = 2;
@@ -23,6 +24,11 @@ const GAP: usize = 2;
 /// Every path is relative to the workspace root but the root itself. Each column of the wants
 /// table is as wide as its longest cell, its head included, and two spaces, so the text is the
 /// same on every run.
+///
+/// Under a want that plugins' targets are behind, one line for each chain reads
+/// `    declared by plugin go@1.2.0 for //services/api:server`. When a plugin does not allow a want
+/// of its targets, a `plugin violations` section ends the report with one line for each, worded
+/// as the refusal of a build would word it; the command still succeeds.
 pub(crate) fn doctor_text(doctor: &Doctor) -> String {
     let checkup = doctor.checkup();
     let workspace = checkup.workspace();
@@ -46,7 +52,13 @@ pub(crate) fn doctor_text(doctor: &Doctor) -> String {
             .map(|(key, value)| format!("  {key:<width$}{value}")),
     );
 
-    let rows = wants(checkup.wanted(), checkup.outside(), doctor.unapproved());
+    let wants = wants(
+        checkup.wanted(),
+        checkup.outside(),
+        doctor.unapproved(),
+        checkup.attribution(),
+    );
+    let rows: Vec<Row> = wants.iter().map(|(row, _)| row.clone()).collect();
     let head = [
         "wants".to_owned(),
         "ceiling".to_owned(),
@@ -54,11 +66,22 @@ pub(crate) fn doctor_text(doctor: &Doctor) -> String {
     ];
     let first = column_width(column(&head, &rows, 0));
     let second = column_width(column(&head, &rows, 1));
-    lines.extend(
-        std::iter::once(&head)
-            .chain(&rows)
-            .map(|[want, allowed, approved]| format!("{want:<first$}{allowed:<second$}{approved}")),
-    );
+    let table =
+        |[want, allowed, approved]: &Row| format!("{want:<first$}{allowed:<second$}{approved}");
+    lines.push(table(&head));
+    for (row, attributed) in &wants {
+        lines.push(table(row));
+        lines.extend(attributed.iter().map(|line| format!("    {line}")));
+    }
+    if !checkup.plugin_violations().is_empty() {
+        lines.push("plugin violations".to_owned());
+        lines.extend(checkup.plugin_violations().iter().map(|violation| {
+            let refusal = Error::PluginRefused {
+                violation: Box::new(violation.clone()),
+            };
+            format!("  {refusal}")
+        }));
+    }
     let mut text = lines.join("\n");
     text.push('\n');
     text
@@ -68,9 +91,17 @@ pub(crate) fn doctor_text(doctor: &Doctor) -> String {
 /// approved.
 type Row = [String; 3];
 
+/// A row of the wants table and the lines saying which plugins are behind its want.
+type Wanted = (Row, Vec<String>);
+
 /// The rows of the wants table, in the order of `wanted`: programs, variables, directories,
-/// then the network.
-fn wants(wanted: &WantedSet, outside: &WantedSet, unapproved: &WantedSet) -> Vec<Row> {
+/// then the network, each with its attribution lines.
+fn wants(
+    wanted: &WantedSet,
+    outside: &WantedSet,
+    unapproved: &WantedSet,
+    attribution: &Attribution,
+) -> Vec<Wanted> {
     let approved = |no: bool| if no { "no" } else { "yes" };
     let row = |want: String, refused: bool, no: bool| {
         if refused {
@@ -81,32 +112,44 @@ fn wants(wanted: &WantedSet, outside: &WantedSet, unapproved: &WantedSet) -> Vec
     };
     let mut rows = Vec::new();
     for program in &wanted.programs {
-        rows.push(row(
-            format!("  run {program}"),
-            outside.programs.contains(program),
-            unapproved.programs.contains(program),
+        rows.push((
+            row(
+                format!("  run {program}"),
+                outside.programs.contains(program),
+                unapproved.programs.contains(program),
+            ),
+            attribution.lines(&Want::Program(program.clone())),
         ));
     }
     for name in &wanted.env {
-        rows.push(row(
-            format!("  read {name}"),
-            outside.env.contains(name),
-            unapproved.env.contains(name),
+        rows.push((
+            row(
+                format!("  read {name}"),
+                outside.env.contains(name),
+                unapproved.env.contains(name),
+            ),
+            attribution.lines(&Want::Env(name.clone())),
         ));
     }
     for directory in &wanted.write {
-        rows.push(row(
-            format!("  write {}", path(directory)),
-            outside.write.contains(directory),
-            unapproved.write.contains(directory),
+        rows.push((
+            row(
+                format!("  write {}", path(directory)),
+                outside.write.contains(directory),
+                unapproved.write.contains(directory),
+            ),
+            Vec::new(),
         ));
     }
     for label in &wanted.network {
-        rows.push([
-            format!("  network {label}"),
-            "-".to_owned(),
-            approved(unapproved.network.contains(label)).to_owned(),
-        ]);
+        rows.push((
+            [
+                format!("  network {label}"),
+                "-".to_owned(),
+                approved(unapproved.network.contains(label)).to_owned(),
+            ],
+            attribution.lines(&Want::Network(label.clone())),
+        ));
     }
     rows
 }
@@ -172,8 +215,9 @@ mod tests {
 
     use buildl::Doctor;
     use buildl::buildl_core::{
-        ApproverMode, Ceiling, Checkup, Directory, EnvName, Execution, Isolation, Label, Program,
-        Timeout, WantedSet, Workers, Workspace,
+        ApproverMode, Attribution, Ceiling, Checkup, DeclarationSite, Directory, EnvName,
+        Execution, Isolation, Label, Origin, PluginChain, PluginName, PluginRef, PluginVersion,
+        PluginViolation, Program, Provenance, Timeout, Want, WantedSet, Workers, Workspace,
     };
 
     use super::doctor_text;
@@ -238,7 +282,13 @@ mod tests {
         unapproved: WantedSet,
     ) -> String {
         doctor_text(&Doctor::new(
-            Checkup::new(workspace, wanted, outside),
+            Checkup::new(
+                workspace,
+                wanted,
+                outside,
+                Attribution::default(),
+                Vec::new(),
+            ),
             PathBuf::from("/path/to/myapp"),
             unapproved,
         ))
@@ -288,6 +338,63 @@ mod tests {
                 "  write out         allowed  no\n",
                 "  network //:fetch  -        no\n",
             )
+        );
+    }
+
+    fn go() -> PluginRef {
+        PluginRef {
+            name: PluginName::parse("go").unwrap(),
+            version: PluginVersion::parse("1.2.0").unwrap(),
+            run: programs(&["go"]),
+            env: BTreeSet::new(),
+        }
+    }
+
+    #[test]
+    fn doctor_text_names_plugins_and_violations() {
+        let wanted = WantedSet {
+            programs: programs(&["curl", "go"]),
+            ..WantedSet::default()
+        };
+        let chain = PluginChain::new(vec![go()]).unwrap();
+        let app = Label::parse("//:app").unwrap();
+        let mut attribution = Attribution::default();
+        attribution.record(Want::Program(Program::parse("curl").unwrap()), &chain, &app);
+        let violation = PluginViolation {
+            want: Want::Program(Program::parse("curl").unwrap()),
+            site: DeclarationSite {
+                label: app,
+                provenance: Provenance::new(PathBuf::from("build.lua"), Directory::root()),
+                origin: Origin::plugins(vec![go()]).unwrap(),
+            },
+            plugin: go(),
+            allowed: BTreeSet::from(["go".to_owned()]),
+        };
+        let checkup = Checkup::new(
+            workspace(ApproverMode::Manifest, Workers::PerCore),
+            wanted,
+            WantedSet::default(),
+            attribution,
+            vec![violation],
+        );
+
+        let text = doctor_text(&Doctor::new(
+            checkup,
+            PathBuf::from("/path/to/myapp"),
+            WantedSet::default(),
+        ));
+
+        assert!(
+            text.ends_with(concat!(
+                "wants       ceiling  approved\n",
+                "  run curl  allowed  yes\n",
+                "    declared by plugin go@1.2.0 for //:app\n",
+                "  run go    allowed  yes\n",
+                "plugin violations\n",
+                "  build.lua: //:app (plugin go@1.2.0): program curl is outside plugin go@1.2.0 ",
+                "(proc.run allows: go)\n",
+            )),
+            "{text}"
         );
     }
 

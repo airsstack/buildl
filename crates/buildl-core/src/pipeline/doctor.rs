@@ -9,7 +9,9 @@
 //! build does; and showing the report, which the command line does.
 
 use crate::error::Result;
+use crate::grants::attribution::attribution;
 use crate::grants::outside::outside;
+use crate::grants::plugins::plugin_violations;
 use crate::grants::wanted::{sites, wanted};
 use crate::load::load;
 use crate::placement::layout::Layout;
@@ -22,8 +24,9 @@ use crate::types::{Checkup, EntryName};
 ///
 /// The wants are those of every target in the workspace, test targets included, with every
 /// build setting at its default: what a build of the whole workspace with no override would
-/// want. Unlike a plan, a want outside the ceiling is reported, not refused. Nothing is locked,
-/// written, hashed or looked up.
+/// want. Unlike a plan, a want outside the ceiling, or outside a plugin that holds it, is
+/// reported, not refused: the checkup lists every plugin violation, not the first. Nothing is
+/// locked, written, hashed or looked up.
 ///
 /// # Errors
 ///
@@ -42,5 +45,13 @@ pub fn doctor<S: DeclarationSource, D: Dispatcher, M: Manifest>(
     let sites = sites(&graph, graph.settings(), &layout);
     let wanted = wanted(&graph, &sites, &workspace);
     let outside = outside(&wanted, &workspace);
-    Ok(Checkup::new(workspace, wanted, outside))
+    let attribution = attribution(&graph, graph.settings(), &layout);
+    let violations = plugin_violations(&graph, graph.settings(), &layout, &workspace);
+    Ok(Checkup::new(
+        workspace,
+        wanted,
+        outside,
+        attribution,
+        violations,
+    ))
 }
