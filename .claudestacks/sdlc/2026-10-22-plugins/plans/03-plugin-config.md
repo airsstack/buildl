@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-22
 depends-on: [01]
 built-on: 5fa60e343706
@@ -154,3 +154,34 @@ therefore check; `log` and `clean` do not call `source`.
 
 `cargo make dod`, `cargo deny check` and `cargo make guard-adapter-isolation` green; a workspace
 naming an unfetched git plugin is refused by `check` with exit 5; an edited store with exit 6.
+
+## Review findings
+
+Reviewer verdict: no blocking finding. All fixed in one round, verified `cargo make dod` → `Build Done in 25.13 seconds` (p03) and, after merging into the plugins branch, `Build Done in 15.40 seconds`, exit 0.
+
+- correctness — a failed `buildl.lock` write exited 5 as a manifest error; spec §7 gives a store failure exit 3 — `plugins/lock.rs` — fixed: `PortName::PluginStore` (infrastructure, exit 3) for writes; reads stay `Manifest`; test `a_lock_that_cannot_be_written_is_a_plugin_store_failure`
+- doc — `plugins/mod.rs` claimed it names no other module; it uses `state` — fixed
+- test-coverage — refusing a non-Unicode file name was untested — added `#[cfg(target_os = "linux")]` test `a_name_that_is_not_unicode_is_refused_as_plugin_tree` (runs on CI Linux only; unexecuted on macOS)
+- security — a `git` URL could name a transport helper (`ext::…`) — fixed: `GitUrl` refuses a `<word>::` prefix; `ssh://[::1]/repo` and `https://host/a::b` still accepted
+- format — doc lines re-wrapped in `tree_digest.rs`
+- duplication — the `0o111` executable rule lived in two places — `FileMode::of_unix_bits` shared by `tree_digest` and `exec/outputs.rs`
+- consistency — tree-walk read failures named the content store — now `PluginStore` (exit 3 unchanged)
+- strong-types — `plugin_directory` returned a `String` error — typed `PathFault`, text unchanged
+- fixture — e2e `extension.toml` fixture made a valid manifest shape
+- lint — `strip_suffix(".lock").is_some()` kept: clippy `case_sensitive_file_extension_comparisons` refuses `ends_with`
+- no change — `[workspace]` read before `[plugins]` (plugin paths need the out/state paths); a damaged committed lock failing every loading command (exit 6) is intended; documented order of checks needs no test
+- spec/plan — deviations below recorded here
+
+## Probe results
+
+- Structural: `git grep -n -e "pub fn from_slice" -e "pub fn to_vec" -e "fn source(" -e "guard-adapter-isolation" -- crates Makefile.toml` → `json/canonical.rs:129`, `json/canonical.rs:74`, `local_ports.rs:157`, `Makefile.toml:209`. No behavioural premise outside the plan's own tests.
+
+## Deviations
+
+- 2026-10-23 — `check(root, state, sources, lock)`: takes the workspace root first, since a path plugin is relative to it and `StateLayout` does not hold it.
+- 2026-10-23 — `Wiring::source` runs `check` and drops `Checked` (it has nowhere to keep it yet); plan 04 Task 4 hands its directories to `LuaSource::new`. Until then every loading command digests each git store once and discards the result.
+- 2026-10-23 — `CommitId`, `TagName`, `GitUrl`, `Rev` serialize as strings (serde in core) so `LockEntry` can derive serde.
+- 2026-10-23 — `GitUrl` also refuses a leading `-` (git would read it as an option) and a `<word>::` transport prefix.
+- 2026-10-23 — a plugin `path` is refused when it is, holds or lies inside the configured output or state directory (not the literal `out`).
+- 2026-10-23 — a store directory with no files, or one now holding a link or special file, is `PluginChanged`.
+- 2026-10-23 — executed in a second worktree (`worktree-m5-plugins-03`) beside plan 02, merged into the plugins branch; one export-list conflict in `buildl-core/src/lib.rs`.
