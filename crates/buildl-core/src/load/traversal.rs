@@ -24,9 +24,9 @@ use crate::error::{ActionFound, DeclarationField, Error, Result};
 use crate::ports::{DeclarationSource, Dispatcher};
 use crate::types::{
     Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
-    Directory, EntryName, Label, OutputName, Provenance, Rule, Setting, SourcePath, StagedAlias,
-    StagedDeclaration, StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target,
-    TargetName, TargetRole, Turn, Written,
+    Directory, EntryName, Label, Origin, OutputName, Provenance, Rule, Setting, SourcePath,
+    StagedAlias, StagedDeclaration, StagedItem, StagedRule, StagedSetting, StagedSubdir,
+    StagedTarget, Target, TargetName, TargetRole, Turn, Written,
 };
 
 /// Evaluates the workspace's build files and returns their declarations, validated and sorted.
@@ -82,9 +82,11 @@ pub(super) fn build_file(directory: &Directory, entry: &EntryName) -> BuildFile 
     BuildFile::new(Provenance::new(path, directory.clone()))
 }
 
-/// Where a staged value was written: the build file, and the call's position in it.
+/// Where a staged value was written: the build file, whose code made the call, and the call's
+/// position in the file.
 struct Site<'a> {
     provenance: &'a Provenance,
+    origin: &'a Origin,
     order: DeclarationOrder,
 }
 
@@ -98,6 +100,7 @@ impl Site<'_> {
     fn invalid(&self, field: DeclarationField) -> impl FnOnce(Error) -> Error + '_ {
         move |source| Error::InvalidDeclaration {
             provenance: self.provenance.clone(),
+            origin: self.origin.clone(),
             order: self.order,
             field,
             source: Box::new(source),
@@ -108,6 +111,7 @@ impl Site<'_> {
     fn conflict(&self, found: ActionFound) -> Error {
         Error::ActionConflict {
             provenance: self.provenance.clone(),
+            origin: self.origin.clone(),
             order: self.order,
             found,
         }
@@ -125,6 +129,7 @@ pub(super) fn resolve_subdirs(
     for subdir in subdirs {
         let site = Site {
             provenance,
+            origin: &Origin::BuildFile,
             order: subdir.order,
         };
         let directory = subdir
@@ -142,6 +147,7 @@ pub(super) fn resolve_subdirs(
 pub(super) fn convert(staged: StagedDeclaration, provenance: &Provenance) -> Result<Declaration> {
     let site = Site {
         provenance,
+        origin: &staged.origin,
         order: staged.order,
     };
     let item = match staged.item {
@@ -303,14 +309,16 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     use super::{build_file, convert, declaration_order, resolve_subdirs};
     use crate::error::{ActionFound, DeclarationField, Error};
     use crate::types::{
         Action, Declaration, DeclarationOrder, Declared, Directory, EntryName, Freshness, Label,
-        NetworkAccess, Origin, OutputName, Provenance, StagedAlias, StagedDeclaration, StagedItem,
-        StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target, TargetRole, Written,
+        NetworkAccess, Origin, OutputName, PluginName, PluginRef, PluginVersion, Provenance,
+        StagedAlias, StagedDeclaration, StagedItem, StagedRule, StagedSetting, StagedSubdir,
+        StagedTarget, Target, TargetRole, Written,
     };
 
     fn file_in(directory: &str) -> Provenance {
@@ -500,6 +508,31 @@ mod tests {
                 }
                 other => unreachable!("expected ActionConflict, got {other:?}"),
             }
+        }
+    }
+
+    #[test]
+    fn a_refused_declaration_of_a_plugin_carries_the_plugins_origin() {
+        let go = PluginRef {
+            name: PluginName::parse("go").unwrap(),
+            version: PluginVersion::parse("1.2.0").unwrap(),
+            run: BTreeSet::new(),
+            env: BTreeSet::new(),
+        };
+        let origin = Origin::plugins(vec![go]).unwrap();
+        let by_plugin = |target: StagedTarget| StagedDeclaration {
+            origin: origin.clone(),
+            ..declare(StagedItem::Target(target))
+        };
+        let mut neither = staged_target("app");
+        neither.run = None;
+        match convert(by_plugin(neither), &file_in("")).unwrap_err() {
+            Error::ActionConflict { origin: found, .. } => assert_eq!(found, origin),
+            other => unreachable!("expected ActionConflict, got {other:?}"),
+        }
+        match convert(by_plugin(staged_target("a/b")), &file_in("")).unwrap_err() {
+            Error::InvalidDeclaration { origin: found, .. } => assert_eq!(found, origin),
+            other => unreachable!("expected InvalidDeclaration, got {other:?}"),
         }
     }
 

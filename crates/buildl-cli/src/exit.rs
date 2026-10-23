@@ -234,8 +234,7 @@ mod tests {
             },
             Error::NotATest {
                 asked: label("//:app"),
-                target: label("//:app"),
-                provenance: Box::new(root_file()),
+                site: Box::new(site()),
             },
         ]
     }
@@ -316,12 +315,14 @@ mod tests {
             },
             Error::InvalidDeclaration {
                 provenance: root_file(),
+                origin: Origin::BuildFile,
                 order: DeclarationOrder::new(1),
                 field: DeclarationField::Name,
                 source: Box::new(Label::parse("app").unwrap_err()),
             },
             Error::ActionConflict {
                 provenance: root_file(),
+                origin: Origin::BuildFile,
                 order: DeclarationOrder::new(1),
                 found: ActionFound::Neither,
             },
@@ -339,7 +340,7 @@ mod tests {
         vec![
             Error::DuplicateLabel {
                 label: label("//:app"),
-                sites: vec![root_file(), root_file()],
+                sites: vec![site(), site()],
             },
             Error::DuplicateSetting {
                 name: SettingName::parse("mode").unwrap(),
@@ -529,8 +530,7 @@ mod tests {
     fn not_a_test_is_a_usage_error() {
         let error = Error::NotATest {
             asked: label("//:default"),
-            target: label("//:app"),
-            provenance: Box::new(root_file()),
+            site: Box::new(site()),
         };
         assert_eq!(Exit::of_error(&error), Exit::Usage);
     }

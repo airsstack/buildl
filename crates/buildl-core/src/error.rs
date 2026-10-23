@@ -15,7 +15,8 @@
 //! - [`ActionFound`] — what an [`Error::ActionConflict`] found instead of one action.
 //! - [`DeclaredKind`] — what a label an [`Error::WrongReferenceKind`] is about was declared as.
 //! - [`DeclarationSite`] — a declared label, its build file and whose code declared it: the
-//!   declaration holding a bad reference, or one target on a dependency cycle.
+//!   declaration holding a bad reference, one target on a dependency cycle, one declaration of a
+//!   duplicated label, or the target a test run named that is not a test.
 //! - [`PortName`] — which port an [`Error::Adapter`] came through.
 //! - [`TreeFault`] — why a list of files an [`Error::InvalidTree`] is about is not a tree.
 //! - [`Result`] — the crate-wide alias.
@@ -116,10 +117,15 @@ pub enum Error {
         requested_by: Option<Provenance>,
     },
     /// A value in a declaration did not satisfy its grammar.
-    #[error("{provenance}: declaration {order}: invalid {field}: {source}")]
+    #[error(
+        "{provenance}{}: declaration {order}: invalid {field}: {source}",
+        plugin_suffix(.origin)
+    )]
     InvalidDeclaration {
         /// The build file.
         provenance: Provenance,
+        /// Whose code made the declaration.
+        origin: Origin,
         /// The call's position in the file.
         order: DeclarationOrder,
         /// The field holding the value.
@@ -129,10 +135,15 @@ pub enum Error {
         source: Box<Self>,
     },
     /// A target named both or neither of `rule` and `run`.
-    #[error("{provenance}: declaration {order}: a target names {found}")]
+    #[error(
+        "{provenance}{}: declaration {order}: a target names {found}",
+        plugin_suffix(.origin)
+    )]
     ActionConflict {
         /// The build file.
         provenance: Provenance,
+        /// Whose code made the declaration.
+        origin: Origin,
         /// The call's position in the file.
         order: DeclarationOrder,
         /// What was found instead of exactly one.
@@ -149,12 +160,13 @@ pub enum Error {
         second_run: Option<Box<Declaration>>,
     },
     /// A label was declared more than once, as any mix of target, rule and alias.
-    #[error("{label} is declared more than once: {}", sites_list(.sites))]
+    #[error("{label} is declared more than once: {}", declaring_sites(.sites))]
     DuplicateLabel {
         /// The label.
         label: Label,
-        /// The build file of every declaration of it, in the declarations' own order.
-        sites: Vec<Provenance>,
+        /// Every declaration of it, with its build file and whose code made it, in the
+        /// declarations' own order.
+        sites: Vec<DeclarationSite>,
     },
     /// A build setting was declared more than once.
     #[error("setting {name} is declared more than once: {}", sites_list(.sites))]
@@ -318,15 +330,16 @@ pub enum Error {
     },
     /// A test run was asked for a target that is not a test.
     #[error(
-        "target {asked} was asked for as a test, but {target} is declared with b.target in {provenance}"
+        "target {asked} was asked for as a test, but {} is declared with b.target in {}",
+        .site.label,
+        .site.located()
     )]
     NotATest {
         /// The label that was asked for.
         asked: Label,
-        /// The target it names: the same label unless an alias was followed.
-        target: Label,
-        /// The build file that declares the target.
-        provenance: Box<Provenance>,
+        /// The target it names, which is the same label unless an alias was followed, and its
+        /// build file.
+        site: Box<DeclarationSite>,
     },
     /// A query was written in neither of the two forms a query takes.
     #[error("query `{expression}` is not deps(<target>) or rdeps(<target>)")]
@@ -456,6 +469,24 @@ fn sites_list(sites: &[Provenance]) -> String {
     rendered.join(", ")
 }
 
+/// The build file of every declaration of a duplicated label, separated by commas, each followed
+/// by the plugin chain when a plugin made it.
+fn declaring_sites(sites: &[DeclarationSite]) -> String {
+    let rendered: Vec<String> = sites
+        .iter()
+        .map(|site| format!("{}{}", site.provenance, plugin_suffix(&site.origin)))
+        .collect();
+    rendered.join(", ")
+}
+
+/// ` (plugin <chain>)` when a plugin made the declaration; nothing for a build file.
+fn plugin_suffix(origin: &Origin) -> String {
+    match origin {
+        Origin::BuildFile => String::new(),
+        chain @ Origin::Plugins(_) => format!(" (plugin {chain})"),
+    }
+}
+
 /// The suffix offering the nearest declared name, when there is one.
 fn suggestion_suffix<T: fmt::Display>(suggestion: Option<&T>) -> String {
     suggestion.map_or_else(String::new, |nearest| format!(" (did you mean {nearest}?)"))
@@ -520,7 +551,11 @@ fn refusal(want: &Want, site: Option<&DeclarationSite>, ceiling: &Ceiling) -> St
             "fs.write",
             allowed_list(ceiling.write.iter().map(directory_text)),
         ),
-        Want::Network(_) => ("network".to_owned(), "network", "nothing".to_owned()),
+        Want::Network(label) => (
+            format!("network of {label}"),
+            "network",
+            "nothing".to_owned(),
+        ),
     };
     let holder = site.map_or_else(String::new, |site| format!("{site}: "));
     format!("{holder}{wanted} is outside the ceiling ({list} allows: {allowed})")
@@ -605,8 +640,9 @@ impl fmt::Display for DeclaredKind {
 
 /// A declared label, the build file that declared it, and whose code made the declaration.
 ///
-/// Names the declaration an error is about: the one holding a bad reference, or one target on
-/// a dependency cycle. Displays as `<file>: <label>`, followed by `(plugin <chain>)` when a
+/// Names the declaration an error is about: the one holding a bad reference, one target on a
+/// dependency cycle, one declaration of a duplicated label, or the target a test run named that
+/// is not a test. Displays as `<file>: <label>`, followed by `(plugin <chain>)` when a
 /// plugin made the declaration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DeclarationSite {
@@ -631,11 +667,13 @@ impl DeclarationSite {
 
 impl fmt::Display for DeclarationSite {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}: {}", self.provenance, self.label)?;
-        match &self.origin {
-            Origin::BuildFile => Ok(()),
-            chain @ Origin::Plugins(_) => write!(f, " (plugin {chain})"),
-        }
+        write!(
+            f,
+            "{}: {}{}",
+            self.provenance,
+            self.label,
+            plugin_suffix(&self.origin)
+        )
     }
 }
 
@@ -1017,11 +1055,29 @@ mod tests {
     fn duplicate_label_names_every_site() {
         let err = Error::DuplicateLabel {
             label: label("//:a"),
-            sites: vec![root_file(), root_file()],
+            sites: vec![root_site("//:a"), root_site("//:a")],
         };
         assert_eq!(
             err.to_string(),
             "//:a is declared more than once: build.lua, build.lua"
+        );
+    }
+
+    #[test]
+    fn duplicate_label_names_the_plugin_chain_of_the_declaration_a_plugin_made() {
+        let err = Error::DuplicateLabel {
+            label: label("//:a"),
+            sites: vec![
+                root_site("//:a"),
+                DeclarationSite {
+                    origin: ourgo_chain(),
+                    ..root_site("//:a")
+                },
+            ],
+        };
+        assert_eq!(
+            err.to_string(),
+            "//:a is declared more than once: build.lua, build.lua (plugin ourgo@0.1.0 > go@1.2.0)"
         );
     }
 
@@ -1465,7 +1521,7 @@ mod tests {
         };
         assert_eq!(
             err.to_string(),
-            "network is outside the ceiling (network allows: nothing)"
+            "network of //:fetch is outside the ceiling (network allows: nothing)"
         );
     }
 
@@ -1533,12 +1589,27 @@ mod tests {
     fn not_a_test_names_the_target_and_its_file() {
         let err = Error::NotATest {
             asked: label("//:default"),
-            target: label("//:app"),
-            provenance: Box::new(root_file()),
+            site: Box::new(root_site("//:app")),
         };
         assert_eq!(
             err.to_string(),
             "target //:default was asked for as a test, but //:app is declared with b.target in build.lua"
+        );
+    }
+
+    #[test]
+    fn not_a_test_names_the_plugin_chain_of_a_target_a_plugin_declared() {
+        let err = Error::NotATest {
+            asked: label("//:default"),
+            site: Box::new(DeclarationSite {
+                origin: ourgo_chain(),
+                ..root_site("//:app")
+            }),
+        };
+        assert_eq!(
+            err.to_string(),
+            "target //:default was asked for as a test, but //:app is declared with b.target in \
+             build.lua, plugin ourgo@0.1.0 > go@1.2.0"
         );
     }
 
@@ -1635,6 +1706,27 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "out/lib: //:lib (build.lua) and //lib:text (lib/build.lua) cannot both write here"
+        );
+    }
+
+    #[test]
+    fn an_output_conflict_names_the_plugin_chain_of_a_target_a_plugin_declared() {
+        let err = Error::OutputConflict {
+            path: OutputPath::of(
+                &Directory::parse("out").unwrap(),
+                &label("//:lib"),
+                &OutputName::parse("lib").unwrap(),
+            ),
+            first: Box::new(DeclarationSite {
+                origin: ourgo_chain(),
+                ..root_site("//:lib")
+            }),
+            second: Box::new(root_site("//:other")),
+        };
+        assert_eq!(
+            err.to_string(),
+            "out/lib: //:lib (build.lua, plugin ourgo@0.1.0 > go@1.2.0) and //:other (build.lua) \
+             cannot both write here"
         );
     }
 
@@ -1930,6 +2022,7 @@ mod tests {
         let source_text = source.to_string();
         let err = Error::InvalidDeclaration {
             provenance: lib_file(),
+            origin: Origin::BuildFile,
             order: DeclarationOrder::new(2),
             field: DeclarationField::Dep,
             source: Box::new(source),
@@ -1941,6 +2034,23 @@ mod tests {
         assert_eq!(
             std::error::Error::source(&err).unwrap().to_string(),
             source_text
+        );
+    }
+
+    #[test]
+    fn invalid_declaration_names_the_plugin_chain_of_a_declaration_a_plugin_made() {
+        let err = Error::InvalidDeclaration {
+            provenance: lib_file(),
+            origin: ourgo_chain(),
+            order: DeclarationOrder::new(2),
+            field: DeclarationField::Dep,
+            source: Box::new(TargetName::parse("a/b").unwrap_err()),
+        };
+        assert!(
+            err.to_string().starts_with(
+                "lib/build.lua (plugin ourgo@0.1.0 > go@1.2.0): declaration #2: invalid dep: "
+            ),
+            "{err}"
         );
     }
 
@@ -1969,6 +2079,7 @@ mod tests {
     fn action_conflict_states_what_was_found() {
         let both = Error::ActionConflict {
             provenance: lib_file(),
+            origin: Origin::BuildFile,
             order: DeclarationOrder::new(0),
             found: ActionFound::Both,
         };
@@ -1978,12 +2089,28 @@ mod tests {
         );
         let neither = Error::ActionConflict {
             provenance: lib_file(),
+            origin: Origin::BuildFile,
             order: DeclarationOrder::new(1),
             found: ActionFound::Neither,
         };
         assert_eq!(
             neither.to_string(),
             "lib/build.lua: declaration #1: a target names neither 'rule' nor 'run'"
+        );
+    }
+
+    #[test]
+    fn action_conflict_names_the_plugin_chain_of_a_declaration_a_plugin_made() {
+        let err = Error::ActionConflict {
+            provenance: lib_file(),
+            origin: ourgo_chain(),
+            order: DeclarationOrder::new(0),
+            found: ActionFound::Both,
+        };
+        assert_eq!(
+            err.to_string(),
+            "lib/build.lua (plugin ourgo@0.1.0 > go@1.2.0): declaration #0: a target names both \
+             'rule' and 'run'"
         );
     }
 

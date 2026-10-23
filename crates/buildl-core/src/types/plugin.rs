@@ -6,7 +6,7 @@
 //! plan holds a plugin's targets to the caps recorded here.
 //!
 //! Responsibilities: [`PluginName`], [`PluginVersion`], [`PluginRef`], [`PluginCap`],
-//! [`PluginNetwork`], [`Origin`] and [`PluginViolation`].
+//! [`PluginNetwork`], [`PluginChain`], [`Origin`] and [`PluginViolation`].
 //!
 //! Non-responsibilities: reading a plugin or a manifest, which an adapter does; and the check
 //! that a want is inside a plugin's caps, which needs the graph and belongs to the phase that
@@ -165,7 +165,7 @@ pub struct PluginCap {
     pub network: PluginNetwork,
 }
 
-/// One plugin in an [`Origin`] chain: who it is and what its own manifest asks for.
+/// One plugin in a [`PluginChain`]: who it is and what its own manifest asks for.
 ///
 /// Displays as `<name>@<version>`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -186,6 +186,52 @@ impl fmt::Display for PluginRef {
     }
 }
 
+/// The plugins that made a declaration, outermost first: the one a build file used, then each
+/// plugin that one used, down to the one that made the declaration.
+///
+/// Never empty: [`PluginChain::new`] and reading one from JSON both refuse an empty list. Written
+/// as the plain list of its plugins.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(try_from = "Vec<PluginRef>", into = "Vec<PluginRef>")]
+pub struct PluginChain(Vec<PluginRef>);
+
+impl PluginChain {
+    /// Wraps `plugins`, outermost first.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidName`] when `plugins` is empty.
+    pub fn new(plugins: Vec<PluginRef>) -> Result<Self> {
+        if plugins.is_empty() {
+            return Err(Error::InvalidName {
+                kind: NameKind::PluginChain,
+                value: String::new(),
+                reason: "must name at least one plugin",
+            });
+        }
+        Ok(Self(plugins))
+    }
+
+    /// The plugins, outermost first. Never empty.
+    #[must_use]
+    pub fn as_slice(&self) -> &[PluginRef] {
+        &self.0
+    }
+}
+
+impl From<PluginChain> for Vec<PluginRef> {
+    fn from(value: PluginChain) -> Self {
+        value.0
+    }
+}
+
+impl TryFrom<Vec<PluginRef>> for PluginChain {
+    type Error = Error;
+    fn try_from(plugins: Vec<PluginRef>) -> Result<Self> {
+        Self::new(plugins)
+    }
+}
+
 /// Whose code declared a target.
 ///
 /// Shown and checked, never part of an action key: the same declaration built the same way has
@@ -194,10 +240,9 @@ impl fmt::Display for PluginRef {
 pub enum Origin {
     /// A build file the workspace itself wrote.
     BuildFile,
-    /// Plugin code, outermost first: the chain of plugins from the one a build file used to the
-    /// one that made the declaration. Build it with [`Origin::plugins`], which refuses an empty
-    /// chain.
-    Plugins(Vec<PluginRef>),
+    /// Plugin code: the chain of plugins from the one a build file used to the one that made the
+    /// declaration.
+    Plugins(PluginChain),
 }
 
 impl Origin {
@@ -208,14 +253,7 @@ impl Origin {
     ///
     /// Returns [`Error::InvalidName`] when `chain` is empty.
     pub fn plugins(chain: Vec<PluginRef>) -> Result<Self> {
-        if chain.is_empty() {
-            return Err(Error::InvalidName {
-                kind: NameKind::PluginChain,
-                value: String::new(),
-                reason: "must name at least one plugin",
-            });
-        }
-        Ok(Self::Plugins(chain))
+        PluginChain::new(chain).map(Self::Plugins)
     }
 }
 
@@ -225,7 +263,7 @@ impl fmt::Display for Origin {
         match self {
             Self::BuildFile => f.write_str("build file"),
             Self::Plugins(chain) => {
-                for (index, plugin) in chain.iter().enumerate() {
+                for (index, plugin) in chain.as_slice().iter().enumerate() {
                     if index > 0 {
                         f.write_str(" > ")?;
                     }
@@ -259,7 +297,7 @@ mod tests {
 
     use std::collections::BTreeSet;
 
-    use super::{Origin, PluginName, PluginNetwork, PluginRef, PluginVersion};
+    use super::{Origin, PluginChain, PluginName, PluginNetwork, PluginRef, PluginVersion};
 
     fn plugin(name: &str, version: &str) -> PluginRef {
         PluginRef {
@@ -295,6 +333,28 @@ mod tests {
     fn origin_refuses_an_empty_chain() {
         assert!(Origin::plugins(Vec::new()).is_err());
         assert!(Origin::plugins(vec![plugin("go", "1.2.0")]).is_ok());
+    }
+
+    #[test]
+    fn a_chain_refuses_to_be_empty() {
+        assert!(PluginChain::new(Vec::new()).is_err());
+        let chain = PluginChain::new(vec![plugin("go", "1.2.0")]).unwrap();
+        assert_eq!(chain.as_slice(), [plugin("go", "1.2.0")]);
+    }
+
+    #[test]
+    fn an_empty_chain_is_refused_when_read_from_json() {
+        let err = serde_json::from_str::<Origin>(r#"{"Plugins":[]}"#).unwrap_err();
+        assert!(err.to_string().contains("plugin chain"), "{err}");
+        assert!(serde_json::from_str::<PluginChain>("[]").is_err());
+    }
+
+    #[test]
+    fn a_chain_is_written_as_the_plain_list_of_its_plugins() {
+        let origin = Origin::plugins(vec![plugin("go", "1.2.0")]).unwrap();
+        let json = serde_json::to_string(&origin).unwrap();
+        assert!(json.starts_with(r#"{"Plugins":[{"name":"go""#), "{json}");
+        assert_eq!(serde_json::from_str::<Origin>(&json).unwrap(), origin);
     }
 
     #[test]

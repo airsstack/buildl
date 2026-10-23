@@ -12,7 +12,7 @@
 use std::borrow::Cow;
 use std::collections::BTreeMap;
 
-use crate::error::{Error, Result};
+use crate::error::{DeclarationSite, Error, Result};
 use crate::resolve::reach::{closure, unknown_target};
 use crate::types::{Label, NodeId, Purpose, Scope, TargetGraph, TargetRole};
 
@@ -108,8 +108,7 @@ fn named(graph: &TargetGraph, label: &Label, purpose: Purpose) -> Result<NodeId>
     match (purpose, graph.node(id)) {
         (Purpose::Test, Some(node)) if node.role != TargetRole::Test => Err(Error::NotATest {
             asked: label.clone(),
-            target: node.label.clone(),
-            provenance: Box::new(node.provenance.clone()),
+            site: Box::new(DeclarationSite::from(node)),
         }),
         // `id_of` gave `id`, so the node is there; a build takes any target named.
         _ => Ok(id),
@@ -128,8 +127,10 @@ mod tests {
     use super::narrow;
     use crate::error::Error;
     use crate::resolve::assembly::resolve;
-    use crate::resolve::fixtures::{alias, file, label, setting, target, target_with};
-    use crate::types::{NodeId, Purpose, Scope, TargetGraph, TargetRole};
+    use crate::resolve::fixtures::{
+        alias, file, label, made_by, plugin, setting, target, target_with,
+    };
+    use crate::types::{NodeId, Origin, Purpose, Scope, TargetGraph, TargetRole};
 
     /// `//:a` depends on `//:b`, `//:b` on `//:c`; `//:z` stands alone; `//:all` names `//:a`.
     fn graph() -> TargetGraph {
@@ -289,17 +290,22 @@ mod tests {
         let graph = tested();
         let error = narrow(&graph, &only(&["//:default"]), Purpose::Test).unwrap_err();
         match error {
-            Error::NotATest {
-                asked,
-                target,
-                provenance,
-            } => {
+            Error::NotATest { asked, site } => {
                 assert_eq!(asked, label("//:default"));
-                assert_eq!(target, label("//:app"));
-                assert_eq!(*provenance, file(""));
+                assert_eq!(site.label, label("//:app"));
+                assert_eq!(site.provenance, file(""));
+                assert_eq!(site.origin, Origin::BuildFile);
             }
             other => unreachable!("expected NotATest, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_target_that_is_not_a_test_names_the_plugin_that_declared_it() {
+        let graph = resolve(vec![made_by(vec![plugin("go")], target("//:app", &[]))]).unwrap();
+        let error = narrow(&graph, &only(&["//:app"]), Purpose::Test).unwrap_err();
+        let text = error.to_string();
+        assert!(text.ends_with("in build.lua, plugin go@1.0.0"), "{text}");
     }
 
     #[test]

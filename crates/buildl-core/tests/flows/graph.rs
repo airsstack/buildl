@@ -102,7 +102,7 @@ fn a_label_declared_twice_in_one_file_names_that_file_twice() {
     match graph(source).unwrap_err() {
         Error::DuplicateLabel { label, sites } => {
             assert_eq!(label.to_string(), "//:a");
-            let files: Vec<&Path> = sites.iter().map(Provenance::file).collect();
+            let files: Vec<&Path> = sites.iter().map(|site| site.provenance.file()).collect();
             assert_eq!(files, [Path::new("build.lua"), Path::new("build.lua")]);
         }
         other => unreachable!("expected DuplicateLabel, got {other:?}"),

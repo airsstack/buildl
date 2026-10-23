@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-22
 built-on: 5fa60e343706
 ---
@@ -44,8 +44,9 @@ crates/buildl-core/src/resolve/index.rs       — [modify] Entry keeps the origi
 crates/buildl-core/src/resolve/references.rs  — [modify] `rule` (:87-99) returns the rule with its origin
 crates/buildl-core/src/resolve/assembly.rs    — [modify] Node (:150) gets origin and narrowing
 crates/buildl-core/src/error.rs               — [modify] DeclarationSite (:589) gains origin, rendered beside file and label; From<&Node> (:596); PluginRefused; Want::Network arm in `refusal` (:503)
-crates/buildl-core/src/grants/plugins.rs      — [create] plugin_violations, plugin_check
+crates/buildl-core/src/grants/plugins.rs      — [create] plugin_violations
 crates/buildl-core/src/grants/mod.rs          — [modify] declare `plugins`
+crates/buildl-core/src/plan/authority.rs      — [modify] plugin_check beside `check` (refusing stays in plan, listing in grants)
 crates/buildl-core/src/plan/assembly.rs       — [modify] call `plugin_check` before `authority::check`
 crates/buildl-cli/src/exit.rs                 — [modify] `of_error` (:96) maps PluginRefused to 4
 crates/buildl/src/manifest/interpret.rs       — [modify] `workspace` (:60) sets `plugins` empty
@@ -196,3 +197,26 @@ Commit `feat(buildl-core): hold plugin targets to their plugins' caps`.
 `cargo make dod` and `cargo deny check` green; `buildl graph` on the `chain` fixture shows
 `"origin":"BuildFile"`-shaped values on every node; a plugin target outside its cap is refused
 before the ceiling check with exit 4, naming its chain.
+
+## Review findings
+
+- correctness — `DuplicateLabel`, `NotATest`, `InvalidDeclaration`, `ActionConflict` dropped the plugin chain — `error.rs` — fixed: each carries its origin (`DuplicateLabel.sites: Vec<DeclarationSite>`, `NotATest.site`, `origin` on the two load errors); verified `cargo make dod` → `Build Done in 15.70 seconds`, exit 0
+- strong-types — public `Origin::Plugins(Vec<PluginRef>)` plus derived `Deserialize` allowed an empty chain — `types/plugin.rs` — fixed: `PluginChain` newtype (private field, serde `try_from`), `{"Plugins":[]}` refused by test; verified same run
+- test-coverage — no plugin-origin test for `OutputConflict` or `Holder::site` — `error.rs`, `resolve/references.rs` — fixed: tests added; verified same run
+- correctness — ceiling refusal for `Want::Network` dropped the label — `error.rs` — fixed: `network of //:fetch is outside the ceiling …`; verified same run
+- test-coverage — `plugin_check` had no unit test — `plan/authority.rs` — fixed: two unit tests; verified same run
+- spec-drift — `every_narrowing_member_is_checked` tested the reverse case — `grants/plugins.rs` — fixed: test matches the plan wording, reverse kept as `the_innermost_member_is_checked_too`
+- amendment — `plugin_check` placed in `plan/authority.rs`, not `grants/plugins.rs` — plan amended (Files that change)
+- nit — `PluginViolation.allowed` is `BTreeSet<String>` — no change: the plan asks for it (one list type for programs and env names)
+
+## Probe results
+
+- Structural: `git grep -n -e "pub struct TargetName" -e "pub struct Program" -e "pub struct EnvName" -e "pub enum Want" -e "pub struct DeclarationSite" -e "pub struct Workspace" -e "pub struct StagedDeclaration" -e "fn of_error" -e "The network is never outside" -- crates` → all found (`types/target_name.rs:26`, `types/program.rs:39`, `types/env_name.rs:43`, `types/authority.rs:148`, `error.rs:589`, `types/workspace.rs:18`, `types/build_file.rs:107`, `buildl-cli/src/exit.rs:96`, `grants/outside.rs:19`). No behavioural premise outside the plan's own tests.
+
+## Deviations
+
+- 2026-10-23 — `plugin_check` lives in `plan/authority.rs` beside `check` (refusing in plan, listing in `grants`, the split `outside`/`check` already use). Plan amended.
+- 2026-10-23 — `Declaration` serializes its origin, so the `Nondeterministic` error text shows `"origin":"BuildFile"` inside each declaration JSON; pinned strings in `buildl` tests updated.
+- 2026-10-23 — `DependencyCycle` and `OutputConflict` put the chain inside their existing parentheses: `//a (build.lua, plugin ourgo@0.1.0 > go@1.2.0)`.
+- 2026-10-23 — `Origin::Plugins` holds a `PluginChain` (non-empty by construction), not a bare `Vec<PluginRef>`; JSON shape unchanged.
+- 2026-10-23 — two flow tests give their plugins `run = {cc}` plus a cap, since a plugin with an empty manifest is now refused before the ceiling.

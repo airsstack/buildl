@@ -38,7 +38,8 @@
 //! - [`Checkup`] — what a workspace allows and wants, as `doctor` reports it.
 //! - [`Workspace`] — what a workspace's manifest tells the pipeline.
 //! - [`PluginName`], [`PluginVersion`], [`PluginRef`], [`PluginCap`] and [`PluginNetwork`] — a
-//!   plugin, what its manifest asks for, and what the workspace lets it have; [`Origin`] — whose
+//!   plugin, what its manifest asks for, and what the workspace lets it have; [`PluginChain`]
+//!   — the plugins that made a declaration; [`Origin`] — whose
 //!   code declared a target; [`PluginViolation`] — a want outside a plugin's caps.
 //! - [`Execution`], with [`Workers`], [`Timeout`] and [`Isolation`] — how a workspace wants its
 //!   actions run.
@@ -193,7 +194,8 @@ pub use output_path::OutputPath;
 pub use plan::{Difference, DirtyReason, Plan, PlannedKey, Unfinished, Verdict};
 pub use platform::Platform;
 pub use plugin::{
-    Origin, PluginCap, PluginName, PluginNetwork, PluginRef, PluginVersion, PluginViolation,
+    Origin, PluginCap, PluginChain, PluginName, PluginNetwork, PluginRef, PluginVersion,
+    PluginViolation,
 };
 pub use program::Program;
 pub use provenance::Provenance;

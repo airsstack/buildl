@@ -124,7 +124,7 @@ mod tests {
 
     use std::collections::{BTreeMap, BTreeSet};
 
-    use super::{check, holds};
+    use super::{check, holds, plugin_check};
     use crate::error::{DeclarationSite, Error};
     use crate::grants::fixtures::{
         command, dir, env_name, graph, label, node, path, program, settings,
@@ -133,8 +133,8 @@ mod tests {
     use crate::placement::layout::Layout;
     use crate::types::ApproverMode;
     use crate::types::{
-        Ceiling, Directory, Execution, NetworkAccess, Node, SettingName, SettingValue, TargetGraph,
-        Want, WantedSet, Workspace,
+        Ceiling, Directory, Execution, NetworkAccess, Node, Origin, PluginName, PluginRef,
+        PluginVersion, SettingName, SettingValue, TargetGraph, Want, WantedSet, Workspace,
     };
 
     /// A workspace writing to `out` and `.buildl`, whose ceiling allows `cc` and `ld`, `HOME`
@@ -411,5 +411,44 @@ mod tests {
             refusal(&graph, &workspace),
             (Want::Write(dir("build/out")), None)
         );
+    }
+
+    /// `//:app` running `curl`, declared by the plugin `go`.
+    fn by_go() -> Node {
+        let go = PluginRef {
+            name: PluginName::parse("go").unwrap(),
+            version: PluginVersion::parse("1.2.0").unwrap(),
+            run: BTreeSet::new(),
+            env: BTreeSet::new(),
+        };
+        node("//:app", |node| {
+            node.run = command(&["curl"]);
+            node.origin = Origin::plugins(vec![go.clone()]).unwrap();
+            node.narrowing = vec![go];
+        })
+    }
+
+    fn plugin_checked(graph: &TargetGraph, workspace: &Workspace) -> crate::error::Result<()> {
+        let layout = Layout::of(graph, &workspace.out).unwrap();
+        plugin_check(graph, &BTreeMap::new(), &layout, workspace)
+    }
+
+    #[test]
+    fn a_plugin_target_outside_its_plugins_caps_is_refused_with_the_first_violation() {
+        let graph = graph(vec![by_go()], &[&[]]);
+        match plugin_checked(&graph, &workspace()).unwrap_err() {
+            Error::PluginRefused { violation } => {
+                assert_eq!(violation.want, Want::Program(program("curl")));
+                assert_eq!(violation.site.label, label("//:app"));
+                assert_eq!(violation.plugin.name.as_str(), "go");
+            }
+            other => unreachable!("expected PluginRefused, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_graph_without_a_plugin_violation_passes_the_plugin_check() {
+        let build_file_only = graph(vec![app()], &[&[]]);
+        assert!(plugin_checked(&build_file_only, &workspace()).is_ok());
     }
 }

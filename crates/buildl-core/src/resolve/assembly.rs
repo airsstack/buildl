@@ -176,7 +176,7 @@ fn node(
 fn narrowing(origin: &Origin, rule_origin: Option<&Origin>) -> Vec<PluginRef> {
     let chain = |origin: &Origin| match origin {
         Origin::BuildFile => Vec::new(),
-        Origin::Plugins(chain) => chain.clone(),
+        Origin::Plugins(chain) => chain.as_slice().to_vec(),
     };
     let mut joined = chain(origin);
     for plugin in rule_origin.map(chain).unwrap_or_default() {

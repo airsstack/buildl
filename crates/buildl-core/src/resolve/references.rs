@@ -236,7 +236,9 @@ mod tests {
 
     use super::{Holder, alias_target, dependency, description_settings, rule, settings};
     use crate::error::{DeclarationField, DeclaredKind, Error};
-    use crate::resolve::fixtures::{alias, command, file, label, rule as a_rule, setting, target};
+    use crate::resolve::fixtures::{
+        alias, command, file, label, plugin, rule as a_rule, setting, target,
+    };
     use crate::resolve::index::{Index, index};
     use crate::types::{Description, Label, Origin, Provenance};
 
@@ -346,6 +348,26 @@ mod tests {
         // A rule is near, but a dependency cannot name one, so it is not offered.
         let error = dependency(&index, holder, &label("//tools:c")).unwrap_err();
         assert_eq!(unknown(error, DeclarationField::Dep), None);
+    }
+
+    #[test]
+    fn an_error_names_the_origin_of_the_declaration_holding_the_reference() {
+        let index = workspace();
+        let (holder, root) = (label("//:holder"), file(""));
+        let origin = Origin::plugins(vec![plugin("go")]).unwrap();
+        let held = Holder {
+            label: &holder,
+            provenance: &root,
+            origin: &origin,
+        };
+        match dependency(&index, held, &label("//:ap")).unwrap_err() {
+            Error::UnknownReference { site, .. } => assert_eq!(site.origin, origin),
+            other => unreachable!("expected UnknownReference, got {other:?}"),
+        }
+        match rule(&index, held, &label("//lib:text")).unwrap_err() {
+            Error::WrongReferenceKind { site, .. } => assert_eq!(site.origin, origin),
+            other => unreachable!("expected WrongReferenceKind, got {other:?}"),
+        }
     }
 
     #[test]

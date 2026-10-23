@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::error::{DeclaredKind, Error, Result};
+use crate::error::{DeclarationSite, DeclaredKind, Error, Result};
 use crate::types::{
     Alias, Declaration, Declared, Label, Origin, Provenance, Rule, SettingName, SettingValue,
     Target,
@@ -76,7 +76,7 @@ pub(crate) struct Index {
 /// Returns [`Error::DuplicateLabel`] for the lowest label declared more than once, in any mix
 /// of target, rule and alias. With no such label, returns [`Error::DuplicateSetting`] for the
 /// lowest setting name declared more than once. Either names the build file of every
-/// declaration of that name.
+/// declaration of that name, and a duplicate label also whose code made each.
 pub(crate) fn index(mut declarations: Vec<Declaration>) -> Result<Index> {
     declarations.sort();
 
@@ -106,12 +106,16 @@ pub(crate) fn index(mut declarations: Vec<Declaration>) -> Result<Index> {
     Ok(Index {
         labels: unique(
             labels,
-            |entry| &entry.provenance,
+            |label, entry| DeclarationSite {
+                label: label.clone(),
+                provenance: entry.provenance.clone(),
+                origin: entry.origin.clone(),
+            },
             |label, sites| Error::DuplicateLabel { label, sites },
         )?,
         settings: unique(
             settings,
-            |(provenance, _)| provenance,
+            |_, (provenance, _)| provenance.clone(),
             |name, sites| Error::DuplicateSetting { name, sites },
         )?
         .into_iter()
@@ -121,15 +125,15 @@ pub(crate) fn index(mut declarations: Vec<Declaration>) -> Result<Index> {
 }
 
 /// Keeps the one declaration of each name, or fails on the lowest name declared more than once.
-fn unique<K: Ord, V>(
+fn unique<K: Ord, V, S>(
     grouped: BTreeMap<K, Vec<V>>,
-    site: impl Fn(&V) -> &Provenance,
-    duplicate: impl FnOnce(K, Vec<Provenance>) -> Error,
+    site: impl Fn(&K, &V) -> S,
+    duplicate: impl FnOnce(K, Vec<S>) -> Error,
 ) -> Result<BTreeMap<K, V>> {
     let mut single = BTreeMap::new();
     for (name, mut declared) in grouped {
         if declared.len() > 1 {
-            let sites = declared.iter().map(|entry| site(entry).clone()).collect();
+            let sites = declared.iter().map(|entry| site(&name, entry)).collect();
             return Err(duplicate(name, sites));
         }
         if let Some(only) = declared.pop() {
@@ -149,14 +153,20 @@ mod tests {
     use std::path::Path;
 
     use super::{Item, index};
+    use crate::error::DeclarationSite;
     use crate::error::{DeclaredKind, Error};
     use crate::resolve::fixtures::{
-        alias, declared_in, label, rule, setting, setting_item, target, target_item,
+        alias, declared_in, label, made_by, plugin, rule, setting, setting_item, target,
+        target_item,
     };
-    use crate::types::{Provenance, SettingName};
+    use crate::types::{Origin, Provenance, SettingName};
 
     fn files(sites: &[Provenance]) -> Vec<&Path> {
         sites.iter().map(Provenance::file).collect()
+    }
+
+    fn declaring_files(sites: &[DeclarationSite]) -> Vec<&Path> {
+        sites.iter().map(|site| site.provenance.file()).collect()
     }
 
     #[test]
@@ -210,9 +220,27 @@ mod tests {
             } => {
                 assert_eq!(found, label("//:a"));
                 assert_eq!(
-                    files(&sites),
+                    declaring_files(&sites),
                     [Path::new("build.lua"), Path::new("build.lua")]
                 );
+            }
+            other => unreachable!("expected DuplicateLabel, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn each_site_of_a_duplicate_carries_its_own_origin() {
+        let err = index(vec![
+            target("//:a", &[]),
+            made_by(vec![plugin("go")], target("//:a", &[])),
+        ])
+        .unwrap_err();
+        match err {
+            Error::DuplicateLabel { sites, .. } => {
+                let origins: Vec<&Origin> = sites.iter().map(|site| &site.origin).collect();
+                assert_eq!(origins.len(), 2);
+                assert!(origins.contains(&&Origin::BuildFile));
+                assert!(origins.iter().any(|origin| **origin != Origin::BuildFile));
             }
             other => unreachable!("expected DuplicateLabel, got {other:?}"),
         }
@@ -238,7 +266,7 @@ mod tests {
         .unwrap_err();
         match err {
             Error::DuplicateLabel { sites, .. } => assert_eq!(
-                files(&sites),
+                declaring_files(&sites),
                 [
                     Path::new("app/build.lua"),
                     Path::new("build.lua"),

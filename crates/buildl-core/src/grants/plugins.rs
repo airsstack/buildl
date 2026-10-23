@@ -234,6 +234,27 @@ mod tests {
 
     #[test]
     fn every_narrowing_member_is_checked() {
+        let ourgo = plugin("ourgo", &["go"], &[]);
+        let go = plugin("go", &["go", "gofmt"], &[]);
+        let graph = graph(vec![by("//:app", &["gofmt"], &[ourgo, go], |_| {})], &[&[]]);
+        let workspace = workspace(vec![
+            ("ourgo", cap(&["go", "gofmt"], &[], PluginNetwork::Sealed)),
+            ("go", cap(&["go", "gofmt"], &[], PluginNetwork::Sealed)),
+        ]);
+        let found = violations(&graph, &workspace);
+        assert_eq!(
+            found.iter().map(summary).collect::<Vec<_>>(),
+            [(
+                Want::Program(program("gofmt")),
+                "//:app".to_owned(),
+                "ourgo".to_owned(),
+                texts(&["go"])
+            )]
+        );
+    }
+
+    #[test]
+    fn the_innermost_member_is_checked_too() {
         let ourgo = plugin("ourgo", &["go", "gofmt"], &[]);
         let go = plugin("go", &["go"], &[]);
         let graph = graph(vec![by("//:app", &["gofmt"], &[ourgo, go], |_| {})], &[&[]]);
