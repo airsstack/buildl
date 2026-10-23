@@ -29,8 +29,8 @@ use std::path::PathBuf;
 
 use crate::types::{
     Ceiling, Declaration, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
-    FieldName, InputKind, Label, Node, Origin, OutputPath, Program, Provenance, SettingName,
-    SourcePath, TreePath, Want, WantedSet, Written,
+    FieldName, InputKind, Label, Node, Origin, OutputPath, PluginViolation, Program, Provenance,
+    SettingName, SourcePath, TreePath, Want, WantedSet, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -236,6 +236,12 @@ pub enum Error {
         site: Option<Box<DeclarationSite>>,
         /// What the workspace allows.
         ceiling: Box<Ceiling>,
+    },
+    /// A plugin's target wants something its plugin does not allow.
+    #[error("{}", plugin_refusal(.violation))]
+    PluginRefused {
+        /// The want, the target that made it, and the plugin that does not allow it.
+        violation: Box<PluginViolation>,
     },
     /// The approver did not approve what a build wants.
     #[error("{}", denial(.reason, .unapproved))]
@@ -518,6 +524,31 @@ fn refusal(want: &Want, site: Option<&DeclarationSite>, ceiling: &Ceiling) -> St
     };
     let holder = site.map_or_else(String::new, |site| format!("{site}: "));
     format!("{holder}{wanted} is outside the ceiling ({list} allows: {allowed})")
+}
+
+/// A plugin's refusal as one sentence: who wanted what, which plugin does not allow it, and what
+/// that plugin allows of that kind.
+fn plugin_refusal(violation: &PluginViolation) -> String {
+    let PluginViolation {
+        want,
+        site,
+        plugin,
+        allowed,
+    } = violation;
+    let (wanted, list) = match want {
+        Want::Program(program) => (format!("program {program}"), "proc.run"),
+        Want::Env(name) => (format!("environment variable {name}"), "env.read"),
+        Want::Read(path) => (format!("input {path}"), "fs.read"),
+        Want::Write(directory) => (
+            format!("directory {}", directory_text(directory)),
+            "fs.write",
+        ),
+        Want::Network(_) => {
+            return format!("{site}: network is outside plugin {plugin} (network not allowed)");
+        }
+    };
+    let allowed = allowed_list(allowed);
+    format!("{site}: {wanted} is outside plugin {plugin} ({list} allows: {allowed})")
 }
 
 /// The entries of one ceiling list, separated by commas; `nothing` for an empty list.
@@ -947,8 +978,8 @@ mod tests {
     use crate::types::{
         Argument, Ceiling, Command, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName,
         EnvValue, FieldName, Freshness, InputKind, Label, NetworkAccess, Node, Origin, OutputName,
-        OutputPath, PluginName, PluginRef, PluginVersion, Program, Provenance, SettingName,
-        SourcePath, TargetName, TargetRole, TreePath, Want, WantedSet, Written,
+        OutputPath, PluginName, PluginRef, PluginVersion, PluginViolation, Program, Provenance,
+        SettingName, SourcePath, TargetName, TargetRole, TreePath, Want, WantedSet, Written,
     };
 
     fn lib_file() -> Provenance {
@@ -1323,6 +1354,60 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "build.lua: //:image: program docker is outside the ceiling (proc.run allows: cc, ld)"
+        );
+    }
+
+    /// A violation of `go@1.3.0` by `//:app`, made by `ourgo@0.1.0 > go@1.3.0`, of `want`, with
+    /// `allowed` listed.
+    fn violation(want: Want, allowed: &[&str]) -> Error {
+        let plugin = |name: &str, version: &str| PluginRef {
+            name: PluginName::parse(name).unwrap(),
+            version: PluginVersion::parse(version).unwrap(),
+            run: BTreeSet::new(),
+            env: BTreeSet::new(),
+        };
+        let chain = vec![plugin("ourgo", "0.1.0"), plugin("go", "1.3.0")];
+        Error::PluginRefused {
+            violation: Box::new(PluginViolation {
+                want,
+                site: DeclarationSite {
+                    label: label("//:app"),
+                    provenance: root_file(),
+                    origin: Origin::plugins(chain.clone()).unwrap(),
+                },
+                plugin: chain[1].clone(),
+                allowed: allowed.iter().map(|text| (*text).to_owned()).collect(),
+            }),
+        }
+    }
+
+    #[test]
+    fn a_plugin_refused_program_names_the_site_the_plugin_and_what_it_allows() {
+        let err = violation(Want::Program(Program::parse("curl").unwrap()), &["go"]);
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app (plugin ourgo@0.1.0 > go@1.3.0): program curl is outside plugin \
+             go@1.3.0 (proc.run allows: go)"
+        );
+    }
+
+    #[test]
+    fn a_plugin_refused_variable_reads_like_a_refused_program() {
+        let err = violation(Want::Env(EnvName::parse("HOME").unwrap()), &[]);
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app (plugin ourgo@0.1.0 > go@1.3.0): environment variable HOME is \
+             outside plugin go@1.3.0 (env.read allows: nothing)"
+        );
+    }
+
+    #[test]
+    fn a_plugin_refused_network_says_the_network_is_not_allowed() {
+        let err = violation(Want::Network(label("//:app")), &[]);
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app (plugin ourgo@0.1.0 > go@1.3.0): network is outside plugin \
+             go@1.3.0 (network not allowed)"
         );
     }
 

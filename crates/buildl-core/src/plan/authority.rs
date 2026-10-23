@@ -1,17 +1,48 @@
-//! Authority: what a graph's targets want, and whether the workspace's ceiling allows it.
+//! Authority: what a graph's targets want, and whether the workspace's ceiling and the plugins
+//! that made them allow it.
 //!
-//! Its own file because this is the check that runs before anything else is asked of the
-//! machine: a build that wants more than its workspace allows is refused here, with nothing
-//! hashed, looked up or read.
+//! Its own file because these are the checks that run before anything else is asked of the
+//! machine: a build that wants more than its workspace or its plugins allow is refused here,
+//! with nothing hashed, looked up or read.
 //!
-//! Responsibilities: [`check`].
+//! Responsibilities: [`check`] and [`plugin_check`].
 //!
-//! Non-responsibilities: what a ceiling is, which is the manifest's to say; collecting what the
-//! targets want, which is Grants'; and finding the programs a build may run.
+//! Non-responsibilities: what a ceiling or a plugin's cap is, which is the manifest's to say;
+//! collecting what the targets want, which is Grants'; and finding the programs a build may run.
+
+use std::collections::BTreeMap;
 
 use crate::error::{DeclarationSite, Error, Result};
+use crate::grants::plugins::plugin_violations;
 use crate::grants::wanted::{Sites, wanted};
-use crate::types::{Directory, Node, SourcePath, TargetGraph, Want, WantedSet, Workspace};
+use crate::placement::layout::Layout;
+use crate::types::{
+    Directory, Node, SettingName, SettingValue, SourcePath, TargetGraph, Want, WantedSet, Workspace,
+};
+
+/// Checks every want of a plugin's targets against the plugins that hold them.
+///
+/// Runs before [`check`], so a plugin's target is refused by its plugin before the ceiling is
+/// asked.
+///
+/// # Errors
+///
+/// Returns [`Error::PluginRefused`] for the first violation, in label order, then chain order.
+pub(crate) fn plugin_check(
+    graph: &TargetGraph,
+    settings: &BTreeMap<SettingName, SettingValue>,
+    layout: &Layout,
+    workspace: &Workspace,
+) -> Result<()> {
+    plugin_violations(graph, settings, layout, workspace)
+        .into_iter()
+        .next()
+        .map_or(Ok(()), |violation| {
+            Err(Error::PluginRefused {
+                violation: Box::new(violation),
+            })
+        })
+}
 
 /// Checks every want against `workspace`'s ceiling and returns what the build wants.
 ///

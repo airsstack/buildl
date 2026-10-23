@@ -107,7 +107,9 @@ impl Exit {
                 PortName::Manifest => Self::Definition,
                 _ => Self::Infrastructure,
             },
-            Error::Refused { .. } | Error::NotApproved { .. } => Self::Refused,
+            Error::Refused { .. } | Error::PluginRefused { .. } | Error::NotApproved { .. } => {
+                Self::Refused
+            }
             Error::Evaluation { .. }
             | Error::MissingBuildFile { .. }
             | Error::InvalidDeclaration { .. }
@@ -169,8 +171,9 @@ mod tests {
         ActionFound, ActionOutcome, Ceiling, Check, DeclarationField, DeclarationOrder,
         DeclarationSite, DeclaredKind, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
         Error, EvaluationFailure, FileChange, InfraKind, InputKind, Label, Origin, OutcomeClass,
-        OutputDifference, OutputName, OutputPath, OutputRefusal, PortName, Program, Provenance,
-        SettingName, SourcePath, TargetRole, TreeFault, Verification, Want, WantedSet,
+        OutputDifference, OutputName, OutputPath, OutputRefusal, PluginName, PluginRef,
+        PluginVersion, PluginViolation, PortName, Program, Provenance, SettingName, SourcePath,
+        TargetRole, TreeFault, Verification, Want, WantedSet,
     };
 
     use super::Exit;
@@ -260,8 +263,30 @@ mod tests {
                 site: Some(Box::new(site())),
                 ceiling: Box::new(nothing()),
             },
+            plugin_refused(),
             not_approved(),
         ]
+    }
+
+    /// A plugin's refusal of a target that wants to run `curl`.
+    fn plugin_refused() -> Error {
+        let go = PluginRef {
+            name: PluginName::parse("go").unwrap(),
+            version: PluginVersion::parse("1.3.0").unwrap(),
+            run: BTreeSet::new(),
+            env: BTreeSet::new(),
+        };
+        Error::PluginRefused {
+            violation: Box::new(PluginViolation {
+                want: Want::Program(Program::parse("curl").unwrap()),
+                site: DeclarationSite {
+                    origin: Origin::plugins(vec![go.clone()]).unwrap(),
+                    ..site()
+                },
+                plugin: go,
+                allowed: BTreeSet::new(),
+            }),
+        }
     }
 
     /// The approver's refusal of a build that wants to run `cc`.
@@ -529,6 +554,12 @@ mod tests {
     }
 
     #[test]
+    fn plugin_refused_exits_4() {
+        assert_eq!(Exit::of_error(&plugin_refused()), Exit::Refused);
+        assert_eq!(Exit::Refused as u8, 4);
+    }
+
+    #[test]
     fn missing_output_is_an_infrastructure_failure() {
         let error = Error::MissingOutput {
             label: label("//:app"),
@@ -553,12 +584,12 @@ mod tests {
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [5, 3, 2, 17, 3, 7]);
+        assert_eq!(counts, [5, 3, 3, 17, 3, 7]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 37, "a variant is listed twice");
+        assert_eq!(variants.len(), 38, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");
