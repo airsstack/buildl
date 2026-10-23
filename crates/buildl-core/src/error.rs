@@ -752,6 +752,8 @@ pub enum PortName {
     Sweep,
     /// What settles whether a build may run.
     Approver,
+    /// Where plugins are fetched to and the lock that pins them.
+    PluginStore,
 }
 
 impl fmt::Display for PortName {
@@ -771,6 +773,7 @@ impl fmt::Display for PortName {
             Self::GraphRecord => "graph record",
             Self::Sweep => "sweep",
             Self::Approver => "approver",
+            Self::PluginStore => "plugin store",
         })
     }
 }
@@ -1903,6 +1906,7 @@ mod tests {
             (PortName::GraphRecord, "graph record"),
             (PortName::Sweep, "sweep"),
             (PortName::Approver, "approver"),
+            (PortName::PluginStore, "plugin store"),
         ];
         for (port, rendered) in cases {
             assert_eq!(port.to_string(), rendered);

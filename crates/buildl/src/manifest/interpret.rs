@@ -190,19 +190,51 @@ fn pinned(
     Ok(PluginSource::Git { url, rev })
 }
 
-/// The directory a path plugin names, as a message when it cannot be one.
-fn plugin_directory(raw: &str, workspace: &Workspace) -> core::result::Result<Directory, String> {
-    let path = Directory::parse(raw).map_err(|error| error.to_string())?;
+/// Why a path plugin's directory is refused.
+enum PathFault {
+    /// It is not a directory name.
+    Name(Error),
+    /// It is, holds or lies inside `directory`, which is the workspace's `what`.
+    Overlaps {
+        raw: String,
+        what: &'static str,
+        directory: Directory,
+    },
+}
+
+impl fmt::Display for PathFault {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Name(error) => error.fmt(f),
+            Self::Overlaps {
+                raw,
+                what,
+                directory,
+            } => f.write_str(&invalid(
+                "plugin directory",
+                raw,
+                &format!("must not be, hold or lie inside the {what} {directory}"),
+            )),
+        }
+    }
+}
+
+/// The directory a path plugin names, or why it cannot be one.
+fn plugin_directory(
+    raw: &str,
+    workspace: &Workspace,
+) -> core::result::Result<Directory, PathFault> {
+    let path = Directory::parse(raw).map_err(PathFault::Name)?;
     for (what, directory) in [
         ("output directory", &workspace.out),
         ("state directory", &workspace.state),
     ] {
         if path.contains(directory) || directory.contains(&path) {
-            return Err(invalid(
-                "plugin directory",
-                &raw,
-                &format!("must not be, hold or lie inside the {what} {directory}"),
-            ));
+            return Err(PathFault::Overlaps {
+                raw: raw.to_owned(),
+                what,
+                directory: directory.clone(),
+            });
         }
     }
     Ok(path)

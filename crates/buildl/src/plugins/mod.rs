@@ -3,7 +3,8 @@
 //! Its own module because the manifest adapter reads which plugins a workspace names and the
 //! checks that follow read the lock and the store, and no adapter may name another. What both
 //! sides share is the values in `buildl-core`; what the lock and the store hold is kept here.
-//! This module implements no port, and names no other module of this crate.
+//! This module implements no port, and names only [`state`](crate::state) of the other modules
+//! of this crate.
 //!
 //! Responsibilities:
 //! - [`Lock`] and [`LockEntry`] — reading and writing `buildl.lock`.

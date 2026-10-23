@@ -36,7 +36,11 @@ fn fetched(fixture: &Fixture, rev: &str) -> PathBuf {
     let store = fixture.state().dir().join("plugins/go").join(COMMIT);
     fs::create_dir_all(store.join("lib")).unwrap();
     fs::write(store.join("lib/go.lua"), b"return {}\n").unwrap();
-    fs::write(store.join("extension.toml"), b"name = \"go\"\n").unwrap();
+    fs::write(
+        store.join("extension.toml"),
+        b"[extension]\nname = \"go\"\n",
+    )
+    .unwrap();
     let mut lock = Lock::default();
     lock.insert(
         go(),

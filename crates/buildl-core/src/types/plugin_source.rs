@@ -43,6 +43,16 @@ fn tag_fault(raw: &str) -> Option<&'static str> {
     }
 }
 
+/// Whether `raw` begins `<word>::`, which `git` reads as a transport helper to run.
+fn is_helper(raw: &str) -> bool {
+    raw.split_once("::").is_some_and(|(word, _)| {
+        !word.is_empty()
+            && word
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'+' | b'-' | b'.'))
+    })
+}
+
 /// A full git commit id: exactly 40 lowercase hexadecimal characters.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(into = "String", try_from = "String")]
@@ -157,14 +167,17 @@ impl GitUrl {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::InvalidName`] when `raw` is empty, starts with `-` or holds whitespace
-    /// or a control character.
+    /// Returns [`Error::InvalidName`] when `raw` is empty, starts with `-`, names a git
+    /// transport helper (`<word>::<address>`, which can make `git` run a program), or holds
+    /// whitespace or a control character.
     pub fn parse(raw: impl Into<String>) -> Result<Self> {
         let raw = raw.into();
         let reason = if raw.is_empty() {
             Some("must not be empty")
         } else if raw.starts_with('-') {
             Some("must not start with '-'")
+        } else if is_helper(&raw) {
+            Some("must not name a transport helper ('<word>::')")
         } else if raw.chars().any(|c| c.is_whitespace() || c.is_control()) {
             Some("must not hold whitespace or a control character")
         } else {
@@ -357,6 +370,17 @@ mod tests {
         );
         assert!(GitUrl::parse("").is_err());
         assert!(GitUrl::parse("--upload-pack=x").is_err());
+        for helper in [
+            "ext::sh -c id",
+            "ext::sh%20-c%20id",
+            "fd::3",
+            "git-remote+x::y",
+        ] {
+            assert!(GitUrl::parse(helper).is_err(), "{helper:?}");
+        }
+        for plain in ["ssh://[::1]/repo", "git@[::1]:repo", "https://host/a::b"] {
+            assert!(GitUrl::parse(plain).is_ok(), "{plain:?}");
+        }
         assert!(GitUrl::parse("https://x/y z").is_err());
     }
 

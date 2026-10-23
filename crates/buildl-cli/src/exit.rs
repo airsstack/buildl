@@ -669,6 +669,7 @@ mod tests {
             PortName::Approver,
             PortName::GraphRecord,
             PortName::RunHistory,
+            PortName::PluginStore,
         ] {
             assert_eq!(
                 Exit::of_error(&adapter(port)),

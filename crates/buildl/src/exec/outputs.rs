@@ -132,11 +132,7 @@ fn stored<C: ContentStore>(
     cas: &C,
 ) -> Result<StoredFile, Unread> {
     let digest = cas.put(&fs::read(path)?).map_err(Unread::Store)?;
-    let mode = if metadata.permissions().mode() & 0o111 == 0 {
-        FileMode::Plain
-    } else {
-        FileMode::Executable
-    };
+    let mode = FileMode::of_unix_bits(metadata.permissions().mode());
     Ok(StoredFile { digest, mode })
 }
 

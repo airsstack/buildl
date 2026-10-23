@@ -25,16 +25,17 @@ const GIT_DIR: &str = ".git";
 
 /// The digest of the manifest of the regular files below `dir`.
 ///
-/// Files are digested by bytes, with the one fact about their
-/// permissions that is kept: whether any execute bit is set. The `.git` entry at the top level
-/// is skipped; one further down is digested like any other. A directory holds no entry of its
-/// own, so one with no file below it leaves no trace.
+/// Files are digested by bytes, with the one fact about their permissions that is kept:
+/// whether any execute bit is set. The `.git` entry at the top level is skipped; one further
+/// down is digested like any other. A directory holds no entry of its own, so one with no file
+/// below it leaves no trace.
 ///
 /// # Errors
 ///
 /// Returns [`Error::PluginTree`] for the first path, walking each directory in name order, that
-/// is a symbolic link, a special file, or has a name that is not Unicode; [`Error::InvalidTree`] when there is no
-/// file at all; and an adapter error when `dir`, or something in it, cannot be read.
+/// is a symbolic link, a special file, or has a name that is not Unicode;
+/// [`Error::InvalidTree`] when there is no file at all; and an adapter error for
+/// [`PortName::PluginStore`] when `dir`, or something in it, cannot be read.
 pub fn tree_digest(plugin: &PluginName, dir: &Path) -> Result<Digest> {
     let mut entries = Vec::new();
     collect(plugin, dir, dir, &mut entries)?;
@@ -82,15 +83,10 @@ fn entry(
         .and_then(|relative| TreePath::parse(relative).ok())
         .ok_or_else(|| refused(plugin, path))?;
     let bytes = fs::read(path).map_err(|error| unread(path, &error))?;
-    let mode = if metadata.permissions().mode() & 0o111 == 0 {
-        FileMode::Plain
-    } else {
-        FileMode::Executable
-    };
     Ok(TreeEntry {
         path: tree_path,
         digest: Digest::of(&bytes),
-        mode,
+        mode: FileMode::of_unix_bits(metadata.permissions().mode()),
     })
 }
 
@@ -105,7 +101,7 @@ fn refused(plugin: &PluginName, path: &Path) -> Error {
 /// The failure to read `path`.
 fn unread(path: &Path, error: &io::Error) -> Error {
     Error::Adapter {
-        port: PortName::ContentStore,
+        port: PortName::PluginStore,
         diagnostic: Diagnostic::new(format!("reading {}: {error}", path.display())),
     }
 }
@@ -199,6 +195,27 @@ mod tests {
         };
         assert_eq!(named, plugin());
         assert_eq!(path, dir.path().join("lib/link"));
+    }
+
+    /// Linux only: other filesystems, APFS among them, refuse to create a name that is not
+    /// Unicode.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_name_that_is_not_unicode_is_refused_as_plugin_tree() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let dir = checkout();
+        let odd = dir
+            .path()
+            .join("lib")
+            .join(OsStr::from_bytes(b"caf\xe9.lua"));
+        fs::write(&odd, b"x").unwrap();
+        let error = tree_digest(&plugin(), dir.path()).unwrap_err();
+        let Error::PluginTree { path, .. } = error else {
+            unreachable!("a name that is not Unicode is refused as a plugin tree, got {error:?}");
+        };
+        assert_eq!(path, odd);
     }
 
     #[test]

@@ -43,10 +43,10 @@ pub struct Lock {
     entries: BTreeMap<PluginName, LockEntry>,
 }
 
-/// The failure to do `what` to the lock at `file`.
-fn failed(what: &str, file: &Path, error: &io::Error) -> Error {
+/// The failure to do `what` to the lock at `file`, which came through `port`.
+fn failed(port: PortName, what: &str, file: &Path, error: &io::Error) -> Error {
     Error::Adapter {
-        port: PortName::Manifest,
+        port,
         diagnostic: Diagnostic::new(format!("{what} {}: {error}", file.display())),
     }
 }
@@ -57,14 +57,15 @@ impl Lock {
     /// # Errors
     ///
     /// Returns [`Error::CorruptState`], naming the file, when its bytes are not what
-    /// [`Lock::write`] writes, and an adapter error, naming the file, when it is there and
-    /// cannot be read.
+    /// [`Lock::write`] writes, and an adapter error for [`PortName::Manifest`], naming the
+    /// file, when it is there and cannot be read: it is a file of the workspace, as the
+    /// manifest is.
     pub fn read(root: &Path) -> Result<Self> {
         let file = Self::file(root);
         let bytes = match fs::read(&file) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Self::default()),
-            Err(error) => return Err(failed("reading", &file, &error)),
+            Err(error) => return Err(failed(PortName::Manifest, "reading", &file, &error)),
         };
         canonical::from_slice(&bytes).map_err(|source| Error::CorruptState {
             file,
@@ -78,12 +79,13 @@ impl Lock {
     /// # Errors
     ///
     /// Returns the error of [`canonical::to_vec`] when the lock cannot become canonical JSON,
-    /// and an adapter error, naming the file, when the file cannot be written.
+    /// and an adapter error for [`PortName::PluginStore`], naming the file, when the file
+    /// cannot be written.
     pub fn write(&self, root: &Path, staging: &Path) -> Result<()> {
         let file = Self::file(root);
         let bytes = canonical::to_vec(self)?;
         write_whole(staging, &file, &bytes, Access::Rewritable)
-            .map_err(|error| failed("writing", &file, &error))
+            .map_err(|error| failed(PortName::PluginStore, "writing", &file, &error))
     }
 
     /// The entry for `plugin`, if the lock has one.
@@ -113,7 +115,7 @@ mod tests {
     use std::fs;
 
     use buildl_core::json::canonical;
-    use buildl_core::{CommitId, Digest, Error, GitUrl, PluginName, Rev};
+    use buildl_core::{CommitId, Digest, Error, GitUrl, PluginName, PortName, Rev};
 
     use super::{Lock, LockEntry};
 
@@ -194,6 +196,36 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir(dir.path().join("buildl.lock")).unwrap();
         let error = Lock::read(dir.path()).unwrap_err();
-        assert!(matches!(error, Error::Adapter { .. }), "{error:?}");
+        assert!(
+            matches!(
+                error,
+                Error::Adapter {
+                    port: PortName::Manifest,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_lock_that_cannot_be_written_is_a_plugin_store_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("buildl.lock")).unwrap();
+        let mut lock = Lock::default();
+        lock.insert(name("go"), entry("v1.2.0"));
+        let error = lock
+            .write(dir.path(), &dir.path().join(".buildl"))
+            .unwrap_err();
+        assert!(
+            matches!(
+                error,
+                Error::Adapter {
+                    port: PortName::PluginStore,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
     }
 }
