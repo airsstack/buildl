@@ -522,6 +522,7 @@ fn refusal(want: &Want, site: Option<&DeclarationSite>, ceiling: &Ceiling) -> St
             "fs.write",
             allowed_list(ceiling.write.iter().map(directory_text)),
         ),
+        Want::Network(_) => ("network".to_owned(), "network", "nothing".to_owned()),
     };
     let holder = site.map_or_else(String::new, |site| {
         format!("{}: {}: ", site.provenance, site.label)
@@ -849,6 +850,12 @@ pub enum NameKind {
     Approver,
     /// The path of a file inside a directory an action left as an output.
     TreePath,
+    /// The name of a plugin.
+    PluginName,
+    /// The version text a plugin's manifest states.
+    PluginVersion,
+    /// The chain of plugins that declared a target.
+    PluginChain,
 }
 
 impl fmt::Display for NameKind {
@@ -876,6 +883,9 @@ impl fmt::Display for NameKind {
             Self::Isolation => "execution strategy",
             Self::Approver => "approver mode",
             Self::TreePath => "tree path",
+            Self::PluginName => "plugin name",
+            Self::PluginVersion => "plugin version",
+            Self::PluginChain => "plugin chain",
         })
     }
 }
@@ -1290,6 +1300,19 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_network_reads_as_network() {
+        let err = Error::Refused {
+            want: Want::Network(Label::parse("//:fetch").unwrap()),
+            site: None,
+            ceiling: Box::new(ceiling()),
+        };
+        assert_eq!(
+            err.to_string(),
+            "network is outside the ceiling (network allows: nothing)"
+        );
+    }
+
+    #[test]
     fn the_workspace_root_renders_as_a_dot_in_a_refusal() {
         let mut allows_root = ceiling();
         allows_root.read = BTreeSet::from([Directory::root(), Directory::parse("src").unwrap()]);
@@ -1584,6 +1607,9 @@ mod tests {
         assert_eq!(NameKind::Isolation.to_string(), "execution strategy");
         assert_eq!(NameKind::Approver.to_string(), "approver mode");
         assert_eq!(NameKind::TreePath.to_string(), "tree path");
+        assert_eq!(NameKind::PluginName.to_string(), "plugin name");
+        assert_eq!(NameKind::PluginVersion.to_string(), "plugin version");
+        assert_eq!(NameKind::PluginChain.to_string(), "plugin chain");
     }
 
     #[test]

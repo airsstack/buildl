@@ -14,7 +14,7 @@
 use core::fmt;
 use core::num::NonZeroU64;
 use core::ops::Range;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
     ApproverMode, Ceiling, Diagnostic, Directory, EntryName, EnvName, Error, Execution, Isolation,
@@ -56,7 +56,7 @@ pub(crate) fn entry(text: &str, table: &WorkspaceTable) -> Result<EntryName> {
 /// ceiling, how it wants its actions run, and which approver answers for what a build wants.
 ///
 /// Nothing is granted that the manifest does not write: neither the output directory nor the
-/// state directory is added to the ceiling.
+/// state directory is added to the ceiling. The manifest caps no plugin, so `plugins` is empty.
 pub(crate) fn workspace(text: &str, raw: &Raw) -> Result<Workspace> {
     unused(text, &raw.workspace)?;
     let state = Directory::parse(STATE)?;
@@ -66,6 +66,7 @@ pub(crate) fn workspace(text: &str, raw: &Raw) -> Result<Workspace> {
         ceiling: ceiling(text, &raw.ceiling)?,
         execution: execution(text, &raw.execution)?,
         approver: approver(text, &raw.approver)?,
+        plugins: BTreeMap::new(),
     })
 }
 

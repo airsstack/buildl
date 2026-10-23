@@ -154,6 +154,8 @@ pub enum Want {
     Read(SourcePath),
     /// To write into a directory.
     Write(Directory),
+    /// To reach the network, as the target with this label declared.
+    Network(Label),
 }
 
 #[cfg(test)]

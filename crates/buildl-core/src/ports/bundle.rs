@@ -65,6 +65,7 @@ use crate::ports::{
 ///             },
 ///             execution: buildl_core::Execution::default(),
 ///             approver: buildl_core::ApproverMode::Manifest,
+///             plugins: std::collections::BTreeMap::new(),
 ///         })
 ///     }
 /// }

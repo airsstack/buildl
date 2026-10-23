@@ -225,6 +225,7 @@ mod tests {
                 strategy: Isolation::Sandbox,
             },
             approver,
+            plugins: std::collections::BTreeMap::new(),
         }
     }
 
