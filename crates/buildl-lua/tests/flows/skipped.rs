@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use buildl_core::{BuildFile, DeclarationSource, Directory, Evaluated, Provenance, StagedItem};
+use buildl_core::{
+    BuildFile, DeclarationSource, Directory, Discovered, Evaluated, Provenance, StagedItem,
+};
 use buildl_lua::{DeclarationLimits, LuaSource};
 
 use crate::common::workspace;
@@ -47,7 +49,8 @@ fn listed(root: &Path, source: &LuaSource, file: &str, directory: &str) -> Vec<S
         PathBuf::from(file),
         Directory::parse(directory).unwrap(),
     ));
-    let Evaluated::Staged(staged) = source.evaluate(&build_file).unwrap() else {
+    let Evaluated::Staged(staged) = source.evaluate(&build_file, &Discovered::empty()).unwrap()
+    else {
         panic!("{} exists under {}", file, root.display());
     };
     let StagedItem::Target(target) = &staged.declarations[0].item else {

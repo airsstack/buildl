@@ -5,8 +5,8 @@
 //! in.
 //!
 //! Responsibilities: [`Declaration`], the four kinds in [`Declared`] — [`Target`], [`Rule`],
-//! [`Alias`] and [`Setting`] — a target's [`Action`], and the three two-state flags
-//! [`TargetRole`], [`NetworkAccess`] and [`Freshness`].
+//! [`Alias`] and [`Setting`] — a target's [`Action`], its [`TargetRole`], and the two two-state
+//! flags [`NetworkAccess`] and [`Freshness`].
 //!
 //! Non-responsibilities: relationships between declarations. Whether a label is declared twice,
 //! whether a dependency exists, and whether a rule reference names a rule all need every build
@@ -19,13 +19,16 @@ use crate::types::{
     SettingValue, SourcePath,
 };
 
-/// Whether a target is built for its outputs or run as a test.
+/// Whether a target is built for its outputs, run as a test, or run to discover what to declare.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum TargetRole {
     /// Declared with `b.target`.
     Build,
     /// Declared with `b.test`.
     Test,
+    /// Declared with `b.discover`: a cached action with one output, `<name>.json`, that a later
+    /// pass of the build files reads.
+    Discovery,
 }
 
 /// Whether a target's action may reach the network.
@@ -55,12 +58,12 @@ pub enum Action {
     Run(Command),
 }
 
-/// A buildable or testable target, declared with `b.target` or `b.test`.
+/// A target, declared with `b.target`, `b.test` or `b.discover`.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Target {
     /// The target's name, in the directory that declared it.
     pub label: Label,
-    /// Whether it builds or tests.
+    /// Whether it builds, tests or discovers.
     pub role: TargetRole,
     /// How it produces its outputs.
     pub action: Action,
@@ -320,6 +323,7 @@ mod tests {
     #[test]
     fn flags_order_their_default_first() {
         assert!(TargetRole::Build < TargetRole::Test);
+        assert!(TargetRole::Test < TargetRole::Discovery);
         assert!(NetworkAccess::Sealed < NetworkAccess::Declared);
         assert!(Freshness::Cached < Freshness::Always);
     }

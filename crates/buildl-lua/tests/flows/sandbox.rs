@@ -6,7 +6,8 @@ use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 
 use buildl_core::{
-    BuildFile, DeclarationSource, Directory, Error, Evaluated, EvaluationFailure, Provenance,
+    BuildFile, DeclarationSource, Directory, Discovered, Error, Evaluated, EvaluationFailure,
+    Provenance,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -48,7 +49,9 @@ fn sources_refuses_a_declaring_directory_that_resolves_outside_the_workspace() {
         PathBuf::from("lib/build.lua"),
         Directory::parse("lib").unwrap(),
     ));
-    match LuaSource::new(&root, DeclarationLimits::default(), [], BTreeMap::new()).evaluate(&lib) {
+    match LuaSource::new(&root, DeclarationLimits::default(), [], BTreeMap::new())
+        .evaluate(&lib, &Discovered::empty())
+    {
         Err(Error::Evaluation {
             failure,
             diagnostic,

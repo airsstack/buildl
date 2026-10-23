@@ -2362,3 +2362,45 @@ fn an_approver_error_stops_the_build() {
     );
     assert_nothing_ran(&pipeline);
 }
+
+/// `//:app`, and `//:pkgs`, a discovery target.
+fn discovering() -> Pipeline<FakePorts> {
+    root_only(vec![
+        target("app", &[]),
+        target_with("pkgs", |target| target.role = TargetRole::Discovery),
+    ])
+}
+
+#[test]
+fn a_workspace_build_skips_discovery_targets() {
+    let mut pipeline = discovering();
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[("//:app", OutcomeClass::Built)])
+    );
+    assert_eq!(pipeline.ports().strategy.ran(), [label("//:app")]);
+}
+
+#[test]
+fn a_named_discovery_target_builds() {
+    let mut pipeline = discovering();
+
+    let outcomes = build_named(&mut pipeline, &["//:pkgs"], OnFailure::Stop).unwrap();
+
+    assert_eq!(
+        classes(&outcomes),
+        expected(&[("//:pkgs", OutcomeClass::Built)])
+    );
+    let done = outcome(&outcomes, "//:pkgs");
+    assert_eq!(done.role, TargetRole::Discovery);
+    let names: Vec<&str> = done
+        .outputs
+        .iter()
+        .map(|produced| produced.name.as_str())
+        .collect();
+    assert_eq!(names, ["pkgs.json"]);
+    assert!(pipeline.ports().cache.rows.contains_key(&label("//:pkgs")));
+}

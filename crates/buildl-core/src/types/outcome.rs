@@ -115,7 +115,7 @@ impl OutcomeClass {
 pub struct ActionOutcome {
     /// The target.
     pub label: Label,
-    /// Whether the target was declared with `b.target` or `b.test`.
+    /// Whether the target was declared with `b.target`, `b.test` or `b.discover`.
     pub role: TargetRole,
     /// How its build ended.
     pub class: OutcomeClass,

@@ -850,6 +850,8 @@ pub enum DeclarationField {
     SettingName,
     /// A setting's default value.
     SettingValue,
+    /// A target's `always` flag.
+    Freshness,
     /// A `subdir` request.
     Subdir,
 }
@@ -868,6 +870,7 @@ impl fmt::Display for DeclarationField {
             Self::Target => "target",
             Self::SettingName => "setting name",
             Self::SettingValue => "setting value",
+            Self::Freshness => "freshness",
             Self::Subdir => "subdir",
         })
     }
@@ -954,6 +957,8 @@ pub enum NameKind {
     TagName,
     /// The URL of a git repository.
     GitUrl,
+    /// Whether a target's result may be reused.
+    Freshness,
 }
 
 impl fmt::Display for NameKind {
@@ -987,6 +992,7 @@ impl fmt::Display for NameKind {
             Self::CommitId => "commit id",
             Self::TagName => "tag name",
             Self::GitUrl => "git URL",
+            Self::Freshness => "freshness",
         })
     }
 }
@@ -1915,6 +1921,7 @@ mod tests {
         assert_eq!(NameKind::PluginName.to_string(), "plugin name");
         assert_eq!(NameKind::PluginVersion.to_string(), "plugin version");
         assert_eq!(NameKind::PluginChain.to_string(), "plugin chain");
+        assert_eq!(NameKind::Freshness.to_string(), "freshness");
     }
 
     #[test]
@@ -2123,6 +2130,7 @@ mod tests {
             (DeclarationField::Target, "target"),
             (DeclarationField::SettingName, "setting name"),
             (DeclarationField::SettingValue, "setting value"),
+            (DeclarationField::Freshness, "freshness"),
             (DeclarationField::Subdir, "subdir"),
         ];
         for (field, rendered) in cases {

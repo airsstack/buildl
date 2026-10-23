@@ -109,8 +109,8 @@ mod tests {
     };
     use crate::types::{
         Approval, Attribution, BuildFile, CacheRow, Captured, Ceiling, Channel, Digest, Directory,
-        EnvName, EnvValue, Evaluated, Exit, FileMode, Found, InputStat, Label, LiveSink,
-        OutcomeEvent, OutputPath, Platform, Program, RawOutcome, ReadyAction, SourcePath,
+        Discovered, EnvName, EnvValue, Evaluated, Exit, FileMode, Found, InputStat, Label,
+        LiveSink, OutcomeEvent, OutputPath, Platform, Program, RawOutcome, ReadyAction, SourcePath,
         StatEntry, Summary, TargetGraph, Timestamp, Turn, WantedSet, Workspace,
     };
 
@@ -119,7 +119,7 @@ mod tests {
     struct Stub;
 
     impl DeclarationSource for Stub {
-        fn evaluate(&self, _file: &BuildFile) -> Result<Evaluated> {
+        fn evaluate(&self, _file: &BuildFile, _discovered: &Discovered) -> Result<Evaluated> {
             Ok(Evaluated::Absent)
         }
     }

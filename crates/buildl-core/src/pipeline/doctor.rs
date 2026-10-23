@@ -17,7 +17,7 @@ use crate::load::load;
 use crate::placement::layout::Layout;
 use crate::ports::{DeclarationSource, Dispatcher, Manifest};
 use crate::resolve::resolve;
-use crate::types::{Checkup, EntryName};
+use crate::types::{Checkup, Discovered, EntryName};
 
 /// Loads the workspace once through `source`, resolves it, and reports what its build wants
 /// against the ceiling `manifest` describes.
@@ -39,7 +39,7 @@ pub fn doctor<S: DeclarationSource, D: Dispatcher, M: Manifest>(
     manifest: &M,
     entry: &EntryName,
 ) -> Result<Checkup> {
-    let graph = resolve(load(source, dispatcher, entry)?)?;
+    let graph = resolve(load(source, dispatcher, entry, &Discovered::empty())?)?;
     let workspace = manifest.workspace()?;
     let layout = Layout::of(&graph, &workspace.out)?;
     let sites = sites(&graph, graph.settings(), &layout);

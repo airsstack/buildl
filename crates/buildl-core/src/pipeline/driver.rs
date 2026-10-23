@@ -24,8 +24,8 @@ use crate::plan::plan;
 use crate::ports::{DeclarationSource, Dispatcher, GraphRecord, PortSet, Ports};
 use crate::resolve::{narrow, reach, resolve};
 use crate::types::{
-    ActionOutcome, Declaration, EntryName, Label, LiveOutput, OnFailure, Plan, Purpose, Query,
-    Rerun, Sample, Scope, SettingName, SettingValue, TargetGraph, Verification,
+    ActionOutcome, Declaration, Discovered, EntryName, Label, LiveOutput, OnFailure, Plan, Purpose,
+    Query, Rerun, Sample, Scope, SettingName, SettingValue, TargetGraph, Verification,
 };
 use crate::verify::verify;
 
@@ -126,7 +126,12 @@ impl<P: Ports> Pipeline<P> {
         scope: &Scope,
         overrides: &BTreeMap<SettingName, SettingValue>,
     ) -> Result<Plan> {
-        let whole = resolve(load(&self.ports.source, &mut self.ports.dispatcher, entry)?)?;
+        let whole = resolve(load(
+            &self.ports.source,
+            &mut self.ports.dispatcher,
+            entry,
+            &Discovered::empty(),
+        )?)?;
         let graph = narrow(&whole, scope, Purpose::Build)?;
         plan(&graph, overrides, Rerun::Off, &mut self.ports)
     }
@@ -167,7 +172,12 @@ impl<P: Ports> Pipeline<P> {
         on_failure: OnFailure,
         live: LiveOutput,
     ) -> Result<Vec<ActionOutcome>> {
-        let whole = resolve(load(&self.ports.source, &mut self.ports.dispatcher, entry)?)?;
+        let whole = resolve(load(
+            &self.ports.source,
+            &mut self.ports.dispatcher,
+            entry,
+            &Discovered::empty(),
+        )?)?;
         self.ports.graph.record(&whole)?;
         let graph = narrow(&whole, scope, Purpose::Build)?;
         let plan = plan(&graph, overrides, Rerun::Off, &mut self.ports)?;
@@ -224,7 +234,12 @@ impl<P: Ports> Pipeline<P> {
         live: LiveOutput,
         rerun: Rerun,
     ) -> Result<Vec<ActionOutcome>> {
-        let whole = resolve(load(&self.ports.source, &mut self.ports.dispatcher, entry)?)?;
+        let whole = resolve(load(
+            &self.ports.source,
+            &mut self.ports.dispatcher,
+            entry,
+            &Discovered::empty(),
+        )?)?;
         self.ports.graph.record(&whole)?;
         let graph = narrow(&whole, scope, Purpose::Test)?;
         let plan = plan(&graph, overrides, rerun, &mut self.ports)?;
@@ -268,7 +283,12 @@ impl<P: Ports> Pipeline<P> {
         overrides: &BTreeMap<SettingName, SettingValue>,
         sample: Sample,
     ) -> Result<Verification> {
-        let whole = resolve(load(&self.ports.source, &mut self.ports.dispatcher, entry)?)?;
+        let whole = resolve(load(
+            &self.ports.source,
+            &mut self.ports.dispatcher,
+            entry,
+            &Discovered::empty(),
+        )?)?;
         let graph = narrow(&whole, scope, Purpose::Build)?;
         let plan = plan(&graph, overrides, Rerun::Off, &mut self.ports)?;
         negotiate(plan.wanted(), plan.attribution(), &mut self.ports.approver)?;
@@ -292,8 +312,8 @@ pub fn check<S: DeclarationSource, D: Dispatcher>(
     dispatcher: &mut D,
     entry: &EntryName,
 ) -> Result<Vec<Declaration>> {
-    let first = load(source, dispatcher, entry)?;
-    let second = load(source, dispatcher, entry)?;
+    let first = load(source, dispatcher, entry, &Discovered::empty())?;
+    let second = load(source, dispatcher, entry, &Discovered::empty())?;
     first_difference(&first, &second).map_or(Ok(first), Err)
 }
 
@@ -309,7 +329,7 @@ pub fn graph<S: DeclarationSource, D: Dispatcher>(
     dispatcher: &mut D,
     entry: &EntryName,
 ) -> Result<TargetGraph> {
-    resolve(load(source, dispatcher, entry)?)
+    resolve(load(source, dispatcher, entry, &Discovered::empty())?)
 }
 
 /// Loads the workspace once through `source`, resolves it, and answers `asked`: what

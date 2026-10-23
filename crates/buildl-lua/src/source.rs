@@ -18,8 +18,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use airsl::Script;
 use buildl_core::{
-    BuildFile, DeclarationSource, Diagnostic, Directory, Error, Evaluated, EvaluationFailure,
-    PluginName, Result,
+    BuildFile, DeclarationSource, Diagnostic, Directory, Discovered, Error, Evaluated,
+    EvaluationFailure, PluginName, Result,
 };
 
 use crate::classify::classify;
@@ -50,7 +50,7 @@ use crate::staging::Staging;
 /// use std::fs;
 /// use std::path::PathBuf;
 ///
-/// use buildl_core::{BuildFile, DeclarationSource, Directory, Evaluated, Provenance};
+/// use buildl_core::{BuildFile, DeclarationSource, Directory, Discovered, Evaluated, Provenance};
 /// use buildl_lua::{DeclarationLimits, LuaSource};
 ///
 /// let workspace = tempfile::tempdir()?;
@@ -61,7 +61,7 @@ use crate::staging::Staging;
 /// let source = LuaSource::new(&root, DeclarationLimits::default(), skipped, BTreeMap::new());
 /// let file = BuildFile::new(Provenance::new(PathBuf::from("build.lua"), Directory::root()));
 /// assert!(matches!(
-///     source.evaluate(&file)?,
+///     source.evaluate(&file, &Discovered::empty())?,
 ///     Evaluated::Staged(staged) if staged.declarations.len() == 1
 /// ));
 /// # Ok::<(), Box<dyn std::error::Error>>(())
@@ -108,7 +108,7 @@ impl LuaSource {
 }
 
 impl DeclarationSource for LuaSource {
-    /// Evaluates `file`.
+    /// Evaluates `file`; the discovery results are not read.
     ///
     /// A file that does not exist is [`Evaluated::Absent`].
     ///
@@ -119,7 +119,7 @@ impl DeclarationSource for LuaSource {
     /// arguments it does not accept, or uses a plugin that is unknown, cyclic, malformed or
     /// raises. A refusal from a primitive is reported even when the build
     /// file caught it with `pcall` and carried on.
-    fn evaluate(&self, file: &BuildFile) -> Result<Evaluated> {
+    fn evaluate(&self, file: &BuildFile, _discovered: &Discovered) -> Result<Evaluated> {
         let path = self.root.join(file.file());
         let bytes = match fs::read(&path) {
             Ok(bytes) => bytes,
@@ -191,8 +191,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use buildl_core::{
-        BuildFile, DeclarationSource, Directory, Error, Evaluated, EvaluationFailure, Provenance,
-        StagedItem,
+        BuildFile, DeclarationSource, Directory, Discovered, Error, Evaluated, EvaluationFailure,
+        Provenance, StagedItem,
     };
 
     use super::LuaSource;
@@ -214,7 +214,7 @@ mod tests {
 
     fn failure(root: &Path) -> EvaluationFailure {
         match LuaSource::new(root, DeclarationLimits::default(), [], BTreeMap::new())
-            .evaluate(&root_file())
+            .evaluate(&root_file(), &Discovered::empty())
         {
             Err(Error::Evaluation { failure, .. }) => failure,
             other => panic!("expected an evaluation failure, got {other:?}"),
@@ -230,7 +230,10 @@ mod tests {
             [],
             BTreeMap::new(),
         );
-        assert_eq!(source.evaluate(&root_file()).unwrap(), Evaluated::Absent);
+        assert_eq!(
+            source.evaluate(&root_file(), &Discovered::empty()).unwrap(),
+            Evaluated::Absent
+        );
     }
 
     #[test]
@@ -285,7 +288,7 @@ mod tests {
     fn evaluation_failures_carry_the_file_s_provenance() {
         let (_dir, root) = workspace(b"return (");
         let error = LuaSource::new(&root, DeclarationLimits::default(), [], BTreeMap::new())
-            .evaluate(&root_file())
+            .evaluate(&root_file(), &Discovered::empty())
             .unwrap_err();
         assert!(
             error.to_string().starts_with("build.lua: syntax error: "),
@@ -326,7 +329,7 @@ mod tests {
             [Directory::parse("out").unwrap()],
             BTreeMap::new(),
         )
-        .evaluate(&root_file())
+        .evaluate(&root_file(), &Discovered::empty())
         .unwrap() else {
             panic!("the build file exists");
         };
@@ -342,7 +345,7 @@ mod tests {
         let (_dir, root) = workspace(b"buildl.subdir('lib')\nbuildl.alias('default', 'app')");
         let Evaluated::Staged(staged) =
             LuaSource::new(&root, DeclarationLimits::default(), [], BTreeMap::new())
-                .evaluate(&root_file())
+                .evaluate(&root_file(), &Discovered::empty())
                 .unwrap()
         else {
             panic!("the build file exists");

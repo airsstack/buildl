@@ -27,7 +27,8 @@
 //! - [`Diagnostic`] — an adapter's message for a failure, carried for display only.
 //! - [`Written`] — text exactly as a build file wrote it, typed by what it is meant to become.
 //! - [`Declaration`] and its parts — what a build file declared, validated.
-//! - [`BuildFile`], [`Evaluated`] and the staged values — what crosses the build-file port.
+//! - [`BuildFile`], [`Evaluated`] and the staged values — what crosses the build-file port;
+//!   [`Discovered`] — what discovery targets last produced, handed to the build file that asks.
 //! - [`TargetGraph`] and [`Node`] — the runnable targets and the dependencies between them.
 //! - [`ActionKey`], [`KeyComponents`] and their parts — what decides a target's output, and the
 //!   digest that stands for it.
@@ -102,6 +103,7 @@ pub mod description;
 pub mod diagnostic;
 pub mod digest;
 pub mod directory;
+pub mod discovered;
 pub mod entry_name;
 pub mod env_name;
 pub mod env_value;
@@ -176,6 +178,7 @@ pub use description::{Description, ExpandedDescription};
 pub use diagnostic::Diagnostic;
 pub use digest::{Digest, Hasher};
 pub use directory::Directory;
+pub use discovered::Discovered;
 pub use entry_name::EntryName;
 pub use env_name::EnvName;
 pub use env_value::EnvValue;
