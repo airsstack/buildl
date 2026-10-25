@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-10-25
 depends-on: [02, 06]
 built-on: 5ec007f25407

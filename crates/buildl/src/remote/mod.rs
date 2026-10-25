@@ -42,6 +42,14 @@ mod client;
 )]
 mod error;
 #[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "no code outside this module's own tests builds an input root yet"
+    )
+)]
+mod input_tree;
+#[cfg_attr(
     not(all(test, feature = "test-server")),
     allow(
         dead_code,
