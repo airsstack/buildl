@@ -12,7 +12,7 @@ use buildl_core::{
     ContentStore, DeclarationOrder, DeclarationSource, Diagnostic, Digest, Digester, Directory,
     Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EvaluationFailure, EventLog,
     ExecStrategy, Exit, FileStat, Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest,
-    NetworkAccess, Origin, OutcomeEvent, OutputPath, Platform, PluginName, PluginRef,
+    NetworkAccess, NoRemote, Origin, OutcomeEvent, OutputPath, Platform, PluginName, PluginRef,
     PluginVersion, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory,
     SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
     StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver,
@@ -1169,6 +1169,7 @@ impl Ports for FakePorts {
     type Graph = FakeGraphRecord;
     type Reporter = FakeReporter;
     type Approver = FakeApprover;
+    type Remote = NoRemote;
 }
 
 /// A workspace that writes to `out` and `.buildl`, under a ceiling allowing `cc` to run, any
@@ -1223,6 +1224,7 @@ pub fn ports(source: FakeSource) -> PortSet<FakePorts> {
         graph: FakeGraphRecord::default(),
         reporter: FakeReporter::default(),
         approver: FakeApprover::default(),
+        remote: NoRemote,
     }
 }
 

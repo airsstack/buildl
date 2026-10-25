@@ -48,6 +48,8 @@ pub struct PortSet<P: Ports> {
     pub reporter: P::Reporter,
     /// Says whether a build may do what it wants.
     pub approver: P::Approver,
+    /// Looks results up in, and stores them to, a cache shared between machines.
+    pub remote: P::Remote,
 }
 
 /// Written by hand because a derive would require the bundle type itself to be `Debug`, and a
@@ -69,6 +71,7 @@ where
     P::Graph: fmt::Debug,
     P::Reporter: fmt::Debug,
     P::Approver: fmt::Debug,
+    P::Remote: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PortSet")
@@ -87,6 +90,7 @@ where
             .field("graph", &self.graph)
             .field("reporter", &self.reporter)
             .field("approver", &self.approver)
+            .field("remote", &self.remote)
             .finish()
     }
 }
@@ -102,6 +106,7 @@ mod tests {
 
     use super::PortSet;
     use crate::error::Result;
+    use crate::ports::NoRemote;
     use crate::ports::{
         ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher,
         EventLog, ExecStrategy, GraphRecord, Host, Manifest, Ports, Reporter, RunHistory,
@@ -326,6 +331,7 @@ mod tests {
         type Graph = Stub;
         type Reporter = Stub;
         type Approver = Stub;
+        type Remote = NoRemote;
     }
 
     #[test]
@@ -346,6 +352,7 @@ mod tests {
             graph: Stub,
             reporter: Stub,
             approver: Stub,
+            remote: NoRemote,
         };
 
         let text = format!("{set:?}");
@@ -373,5 +380,9 @@ mod tests {
                 "field `{field}` missing from: {text}"
             );
         }
+        assert!(
+            text.contains("remote: NoRemote"),
+            "field `remote` missing from: {text}"
+        );
     }
 }

@@ -13,7 +13,8 @@
 
 use crate::ports::{
     ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
-    ExecStrategy, GraphRecord, Host, Manifest, Reporter, RunHistory, StatCache, ToolResolver,
+    ExecStrategy, GraphRecord, Host, Manifest, RemoteCache, Reporter, RunHistory, StatCache,
+    ToolResolver,
 };
 
 /// One implementation of each port, chosen together.
@@ -31,8 +32,8 @@ use crate::ports::{
 ///     Channel, Clock, ContentStore, DeclarationSource, Diagnostic, Digest, Digester, Directory,
 ///     Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy,
 ///     FileMode, Found, GraphRecord, Host, InputStat, Label, LiveSink, LogLine, Manifest,
-///     OutcomeEvent, OutputPath, Platform, PortName, Ports, Program, RawOutcome, ReadyAction,
-///     Reporter, Result, RunHistory, SourcePath, StatCache, StatEntry, Summary, TargetGraph,
+///     NoRemote, OutcomeEvent, OutputPath, Platform, PortName, Ports, Program, RawOutcome,
+///     ReadyAction, Reporter, Result, RunHistory, SourcePath, StatCache, StatEntry, Summary, TargetGraph,
 ///     Timestamp, ToolResolver, Turn, WantedSet, Workspace,
 /// };
 ///
@@ -263,6 +264,7 @@ use crate::ports::{
 ///     type Graph = Nothing;
 ///     type Reporter = Nothing;
 ///     type Approver = Nothing;
+///     type Remote = NoRemote;
 /// }
 /// ```
 pub trait Ports {
@@ -298,4 +300,7 @@ pub trait Ports {
     /// How a build is asked whether it may do what it wants. Called only from the thread that
     /// called the build.
     type Approver: Approver;
+    /// Where results shared between machines are looked up and stored. Called from the threads
+    /// that run actions.
+    type Remote: RemoteCache;
 }

@@ -15,8 +15,8 @@ use core::marker::PhantomData;
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
-    ApproverMode, Diagnostic, Directory, EntryName, Error, Isolation, Manifest, Pipeline, PortName,
-    PortSet, Ports, Reporter, Result, Want,
+    ApproverMode, Diagnostic, Directory, EntryName, Error, Isolation, Manifest, NoRemote, Pipeline,
+    PortName, PortSet, Ports, Reporter, Result, Want,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -63,6 +63,7 @@ impl<R: Reporter, C: Console> Ports for LocalPorts<R, C> {
     type Graph = GraphFile;
     type Reporter = R;
     type Approver = LocalApprover<C>;
+    type Remote = NoRemote;
 }
 
 /// The pipeline over the real adapters.
@@ -436,6 +437,7 @@ impl Wiring {
             graph: GraphFile::new(layout),
             reporter,
             approver: self.approver(console),
+            remote: NoRemote,
         })
     }
 }

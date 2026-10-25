@@ -766,6 +766,8 @@ pub enum PortName {
     Approver,
     /// Where plugins are fetched to and the lock that pins them.
     PluginStore,
+    /// The cache of results shared between machines.
+    RemoteCache,
 }
 
 impl fmt::Display for PortName {
@@ -786,6 +788,7 @@ impl fmt::Display for PortName {
             Self::Sweep => "sweep",
             Self::Approver => "approver",
             Self::PluginStore => "plugin store",
+            Self::RemoteCache => "remote cache",
         })
     }
 }
@@ -1962,10 +1965,21 @@ mod tests {
             (PortName::Sweep, "sweep"),
             (PortName::Approver, "approver"),
             (PortName::PluginStore, "plugin store"),
+            (PortName::RemoteCache, "remote cache"),
         ];
         for (port, rendered) in cases {
             assert_eq!(port.to_string(), rendered);
         }
+    }
+
+    #[test]
+    fn the_remote_cache_port_is_named_in_errors() {
+        let err = Error::Adapter {
+            port: PortName::RemoteCache,
+            diagnostic: Diagnostic::new("connection refused"),
+        };
+        assert_eq!(PortName::RemoteCache.to_string(), "remote cache");
+        assert_eq!(err.to_string(), "remote cache: connection refused");
     }
 
     #[test]

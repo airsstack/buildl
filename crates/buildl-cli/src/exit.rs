@@ -706,6 +706,7 @@ mod tests {
             PortName::GraphRecord,
             PortName::RunHistory,
             PortName::PluginStore,
+            PortName::RemoteCache,
         ] {
             assert_eq!(
                 Exit::of_error(&adapter(port)),
