@@ -31,7 +31,7 @@ use std::path::PathBuf;
 use crate::types::{
     Ceiling, Declaration, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
     FieldName, InputKind, Label, Node, Origin, OutputPath, PluginName, PluginViolation, Program,
-    Provenance, SettingName, SourcePath, TargetRole, TreePath, Want, WantedSet, Written,
+    Provenance, RemoteUrl, SettingName, SourcePath, TargetRole, TreePath, Want, WantedSet, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -52,6 +52,12 @@ pub enum Error {
         value: String,
         /// Why the grammar rejected it.
         reason: &'static str,
+    },
+    /// A remote cache is given a token but named by a `grpc://` URL, which sends it unencrypted.
+    #[error("a token would be sent in clear text to {url}; use a grpcs:// URL")]
+    InsecureToken {
+        /// The remote cache's URL.
+        url: RemoteUrl,
     },
     /// A declaration holds a value its kind of target does not take.
     #[error("{reason}")]
@@ -988,6 +994,14 @@ pub enum NameKind {
     TagName,
     /// The URL of a git repository.
     GitUrl,
+    /// The URL of a remote cache.
+    RemoteUrl,
+    /// The instance name a remote cache is addressed under.
+    InstanceName,
+    /// A path to a file the host reads, such as a certificate or a token.
+    HostPath,
+    /// The name of the request header a remote cache's token is sent in.
+    HeaderName,
 }
 
 impl fmt::Display for NameKind {
@@ -1021,6 +1035,10 @@ impl fmt::Display for NameKind {
             Self::CommitId => "commit id",
             Self::TagName => "tag name",
             Self::GitUrl => "git URL",
+            Self::RemoteUrl => "remote cache URL",
+            Self::InstanceName => "instance name",
+            Self::HostPath => "host path",
+            Self::HeaderName => "header name",
         })
     }
 }
@@ -1068,7 +1086,8 @@ mod tests {
         Argument, Ceiling, Command, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName,
         EnvValue, FieldName, Freshness, InputKind, Label, NetworkAccess, Node, Origin, OutputName,
         OutputPath, PluginName, PluginRef, PluginVersion, PluginViolation, Program, Provenance,
-        SettingName, SourcePath, TargetName, TargetRole, TreePath, Want, WantedSet, Written,
+        RemoteUrl, SettingName, SourcePath, TargetName, TargetRole, TreePath, Want, WantedSet,
+        Written,
     };
 
     fn lib_file() -> Provenance {
@@ -1976,6 +1995,19 @@ mod tests {
         assert_eq!(NameKind::PluginName.to_string(), "plugin name");
         assert_eq!(NameKind::PluginVersion.to_string(), "plugin version");
         assert_eq!(NameKind::PluginChain.to_string(), "plugin chain");
+        assert_eq!(NameKind::RemoteUrl.to_string(), "remote cache URL");
+        assert_eq!(NameKind::InstanceName.to_string(), "instance name");
+        assert_eq!(NameKind::HostPath.to_string(), "host path");
+        assert_eq!(NameKind::HeaderName.to_string(), "header name");
+    }
+
+    #[test]
+    fn an_insecure_token_names_the_url_and_the_fix() {
+        let url = RemoteUrl::parse("grpc://cache:50051").unwrap();
+        assert_eq!(
+            Error::InsecureToken { url }.to_string(),
+            "a token would be sent in clear text to grpc://cache:50051; use a grpcs:// URL"
+        );
     }
 
     #[test]

@@ -40,6 +40,8 @@
 //!   [`ApproverMode`] — which approver a workspace names.
 //! - [`Checkup`] — what a workspace allows and wants, as `doctor` reports it.
 //! - [`Workspace`] — what a workspace's manifest tells the pipeline.
+//! - [`RemoteSettings`] — the remote cache a workspace names, with its parts [`RemoteUrl`],
+//!   [`RemoteScheme`], [`InstanceName`], [`HostPath`], [`TokenSource`] and [`HeaderName`].
 //! - [`PluginName`], [`PluginVersion`], [`PluginRef`], [`PluginCap`] and [`PluginNetwork`] — a
 //!   plugin, what its manifest asks for, and what the workspace lets it have; [`PluginChain`]
 //!   — the plugins that made a declaration; [`Origin`] — whose
@@ -137,6 +139,7 @@ pub mod purpose;
 pub mod query;
 pub mod raw_outcome;
 pub mod ready_action;
+pub mod remote_settings;
 pub mod rerun;
 pub mod sample;
 pub mod scope;
@@ -216,6 +219,9 @@ pub use purpose::Purpose;
 pub use query::{Direction, Query};
 pub use raw_outcome::{Exit, RawOutcome};
 pub use ready_action::ReadyAction;
+pub use remote_settings::{
+    HeaderName, HostPath, InstanceName, RemoteScheme, RemoteSettings, RemoteUrl, TokenSource,
+};
 pub use rerun::Rerun;
 pub use sample::Sample;
 pub use scope::Scope;
