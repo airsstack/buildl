@@ -15,6 +15,7 @@
 
 use core::fmt;
 use core::marker::PhantomData;
+use core::ops::Range;
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
@@ -79,6 +80,9 @@ pub(crate) struct Raw {
     /// `[plugins.<name>]`, one table per plugin, each name with the place it was written at.
     #[serde(default, deserialize_with = "table")]
     pub(crate) plugins: BTreeMap<Spanned<String>, Tabular<PluginTable>>,
+    /// `[remote]`. The table as a whole keeps no place: the parser has none to give an implicit
+    /// parent, as in `[remote.token]`, so a refusal of the table is placed by its keys.
+    pub(crate) remote: Option<Tabular<RemoteTable>>,
 }
 
 /// `[workspace]`: what the workspace is called and where its files go.
@@ -172,6 +176,57 @@ pub(crate) struct ApproverTable {
     pub(crate) default: Option<Spanned<String>>,
 }
 
+/// `[remote]`: the remote cache the workspace shares results with.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RemoteTable {
+    /// The cache's address, `grpc://` or `grpcs://`.
+    pub(crate) url: Option<Spanned<String>>,
+    /// The instance name the cache's storage is addressed under.
+    pub(crate) instance: Option<Spanned<String>>,
+    /// A certificate authority file to trust.
+    pub(crate) ca: Option<Spanned<String>>,
+    /// Where the token sent with every request comes from.
+    pub(crate) token: Option<Tabular<TokenTable>>,
+    /// The header the token is sent in.
+    pub(crate) header: Option<Spanned<String>>,
+    /// How long one request may take, written with a unit.
+    pub(crate) timeout: Option<Spanned<String>>,
+}
+
+impl RemoteTable {
+    /// The span of the first value written in the table, which is where a refusal of the table
+    /// as a whole is placed; `None` when no key is written.
+    pub(crate) fn anchor(&self) -> Option<Range<usize>> {
+        let token = self
+            .token
+            .as_ref()
+            .into_iter()
+            .flat_map(|Tabular(token)| [&token.env, &token.file]);
+        [
+            &self.url,
+            &self.instance,
+            &self.ca,
+            &self.header,
+            &self.timeout,
+        ]
+        .into_iter()
+        .chain(token)
+        .filter_map(|value| value.as_ref().map(Spanned::span))
+        .min_by_key(|span| span.start)
+    }
+}
+
+/// `token` of `[remote]`: the environment variable or the file the token is read from.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TokenTable {
+    /// The environment variable holding the token.
+    pub(crate) env: Option<Spanned<String>>,
+    /// The file holding the token.
+    pub(crate) file: Option<Spanned<String>>,
+}
+
 /// `[plugins.<name>]`: where one plugin comes from, and what the workspace lets it have.
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -223,6 +278,7 @@ mod tests {
             assert!(raw.execution.strategy.is_none(), "{text:?}");
             assert!(raw.approver.default.is_none(), "{text:?}");
             assert!(raw.plugins.is_empty(), "{text:?}");
+            assert!(raw.remote.is_none(), "{text:?}");
         }
     }
 
@@ -273,6 +329,22 @@ mod tests {
                 "invalid type: string \"deny\", expected a table",
             ),
             (
+                "remote = \"grpcs://c\"\n",
+                "invalid type: string \"grpcs://c\", expected a table",
+            ),
+            (
+                "[remote]\ntoken = \"secret\"\n",
+                "invalid type: string \"secret\", expected a table",
+            ),
+            (
+                "[[remote]]\nurl = \"grpcs://c\"\n",
+                "invalid type: sequence, expected a table",
+            ),
+            (
+                "[remote]\ntoken = [\"T\", \"t\"]\n",
+                "invalid type: sequence, expected a table",
+            ),
+            (
                 "plugins = \"go\"\n",
                 "invalid type: string \"go\", expected a table",
             ),
@@ -318,6 +390,8 @@ mod tests {
             ("[plugins.go]\nbranch = \"main\"\n", "branch"),
             ("[plugins.go.proc]\nexec = []\n", "exec"),
             ("[plugins.go.env]\nwrite = []\n", "write"),
+            ("[remote]\nurll = \"grpcs://c\"\n", "urll"),
+            ("[remote.token]\nenvs = \"T\"\n", "envs"),
         ];
         for (text, key) in cases {
             let error = toml::from_str::<Raw>(text).unwrap_err();
