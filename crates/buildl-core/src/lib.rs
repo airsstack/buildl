@@ -170,7 +170,7 @@ pub use ports::{
 };
 pub use resolve::{narrow, reach, resolve};
 pub use types::{
-    Action, ActionKey, ActionOutcome, Alias, Approval, ApproverMode, Argument, Attribution,
+    Action, ActionKey, ActionOutcome, Alias, Approval, ApproverMode, Argument, Attribution, Blob,
     BuildFile, CacheRow, Captured, Ceiling, Channel, Check, Checkup, Command, CommitId,
     Declaration, DeclarationOrder, Declared, DenialReason, DepProducts, Description, Diagnostic,
     Difference, Digest, Direction, Directory, DirtyReason, Discovered, EntryChange, EntryName,
@@ -181,12 +181,15 @@ pub use types::{
     OnFailure, Origin, OutcomeClass, OutcomeEvent, OutputDifference, OutputManifest, OutputName,
     OutputPath, OutputRefusal, OwnComponents, Plan, PlannedKey, Platform, PluginCap, PluginChain,
     PluginName, PluginNetwork, PluginRef, PluginSource, PluginVersion, PluginViolation, Produced,
-    Program, Provenance, Purpose, Query, RawOutcome, ReadyAction, RemoteScheme, RemoteSettings,
-    RemoteSettingsBuilder, RemoteUrl, Rerun, Rev, Rule, Sample, Scope, Setting, SettingName,
-    SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
-    StagedSetting, StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, TagName, Tally,
-    Target, TargetGraph, TargetName, TargetRole, Timeout, Timestamp, TokenSource, ToolIdentity,
-    Tree, TreeEntry, TreePath, Turn, Unfinished, Verdict, Verification, Want, WantedSet, Workers,
-    Workspace, Written,
+    Program, Provenance, Purpose, Query, RawOutcome, ReadyAction, RemoteAction, RemoteCall,
+    RemoteContent, RemoteFailure, RemoteFile, RemoteHit, RemoteNotice, RemoteOutput,
+    RemoteOutputDirectory, RemoteOutputFile, RemotePlatform, RemotePolicy, RemoteScheme,
+    RemoteSettings, RemoteSettingsBuilder, RemoteTreeFile, RemoteUpload, RemoteUrl, RemoteUse,
+    Rerun, Rev, RootPath, Rule, Sample, Scope, Setting, SettingName, SettingValue, SourcePath,
+    StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
+    StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, TagName, Tally, Target,
+    TargetGraph, TargetName, TargetRole, Timeout, Timestamp, TokenSource, ToolIdentity, Tree,
+    TreeEntry, TreePath, Turn, Unfinished, Uploaded, Verdict, Verification, Want, WantedSet,
+    Workers, Workspace, Written,
 };
 pub use verify::verify;
