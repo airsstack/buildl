@@ -8,18 +8,21 @@
 //! Responsibilities: [`Task`], [`Told`], [`Shared`], [`RemoteRun`], [`Worked`], [`Performed`],
 //! [`Span`], [`Printed`], [`Kept`] and [`Ended`]; the decisions [`exited`], [`collected`] with
 //! [`Unkept`], and [`failed_to`]; what a failed call to the remote cache does to the worker that
-//! met it; and [`perform`], which takes one task through the ports in that fixed order and says
-//! what it is doing while it does.
+//! met it; and [`perform`], which takes one task through the ports in that fixed order, sends
+//! what it produced to the remote cache when the build writes there, and says what it is doing
+//! while it does.
 //!
 //! Non-responsibilities: how an action is run and where what it left is stored, which are the
-//! ports'; checking what the remote cache answers, which the fetch step does; and recording the
-//! result, which happens on the thread that schedules the build.
+//! ports'; checking what the remote cache answers, which the fetch step does; describing an
+//! upload and reading the answer to it, which the upload step does; and recording the result,
+//! which happens on the thread that schedules the build.
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::error::{Error, PortName, Result};
 use crate::execute::fetch::fetch;
 use crate::execute::remote_action::remote_action;
+use crate::execute::upload::{upload, upload_of};
 use crate::ports::{Clock, ContentStore, ExecStrategy, RemoteCache};
 use crate::types::{
     ActionKey, Channel, Diagnostic, Digest, Execution, Exit, Found, FoundEntry, FoundKind,
@@ -42,8 +45,10 @@ pub(crate) enum Told {
         /// What it wrote.
         bytes: Vec<u8>,
     },
-    /// A call to the remote cache failed and the worker went on without it. Said once per
-    /// command, by the one worker that turned the remote off.
+    /// Something about the remote cache the build should say, with the worker going on. A failed
+    /// call is said once per command, by the one worker that turned the remote off. An input
+    /// that changed after its digest was taken, so that the target was not uploaded, is said for
+    /// each target it happens to, and does not turn the remote off.
     Remote(RemoteNotice),
 }
 
@@ -76,6 +81,12 @@ impl<R> RemoteRun<'_, R> {
     /// from the remote and no failed call has turned it off.
     fn consulted(&self) -> bool {
         matches!(self.policy.use_, RemoteUse::Read | RemoteUse::ReadWrite) && !self.down.is_off()
+    }
+
+    /// Whether a worker sends what an action produced to the remote: the build writes to the
+    /// remote and no failed call has turned it off.
+    fn uploading(&self) -> bool {
+        self.policy.use_ == RemoteUse::ReadWrite && !self.down.is_off()
     }
 }
 
@@ -366,6 +377,14 @@ fn misreported(name: &OutputName, error: &Error) -> Unkept {
 /// [`RemoteFailure::Lenient`], goes on to run the action. Without `remote`, or with a policy
 /// that does not read, nothing is asked of any remote and the task goes as it always has.
 ///
+/// With `remote` writing, and not turned off, an action that ran and left every output is then
+/// sent to the remote cache, once it is all in `cas`. A failed call is handled as a failed lookup
+/// is: under [`RemoteFailure::Lenient`] the remote is turned off and the task still ends
+/// [`Ended::Produced`]; under [`RemoteFailure::Strict`] it ends [`Ended::RemoteFailed`]. An input
+/// that changed since its digest was taken is told to the build, and leaves the remote on. An
+/// action that failed, and one that was fetched, are not sent. The second clock reading is taken
+/// after the upload.
+///
 /// A worker that begins an action says so through `tell`. When an action may be shown live and
 /// no other is, this one takes that place: everything it writes is said through `tell` as it is
 /// written, and the result says the place was taken. The place is not given back here.
@@ -418,6 +437,10 @@ where
     };
     let started = asked.map_or_else(|| clock.now(), |(_, started)| started);
     let ended = run(&task, strategy, cas, live.then_some(printed));
+    let ended = match remote.filter(|remote| remote.uploading()) {
+        Some(remote) => sent(&task, ended, remote, cas, tell),
+        None => ended,
+    };
     let finished = clock.now();
     Worked::Performed(Box::new(Performed {
         node,
@@ -482,7 +505,15 @@ fn failed_call<R>(
         Error::Adapter { diagnostic, .. } => diagnostic.clone(),
         other => Diagnostic::new(other.to_string()),
     };
-    let notice = RemoteNotice::Failed { call, diagnostic };
+    failed_with(remote, RemoteNotice::Failed { call, diagnostic }, tell)
+}
+
+/// What a worker does when a call to the remote failed as `notice` says: as [`failed_call`].
+fn failed_with<R>(
+    remote: &RemoteRun<'_, R>,
+    notice: RemoteNotice,
+    tell: &(dyn Fn(Told) + Sync),
+) -> Option<Ended> {
     match remote.policy.failure {
         RemoteFailure::Strict => Some(Ended::RemoteFailed(notice)),
         RemoteFailure::Lenient => {
@@ -491,6 +522,38 @@ fn failed_call<R>(
             }
             None
         }
+    }
+}
+
+/// Sends what `task` produced to the remote cache, and says how the task ends: as `ended` says
+/// for anything but an action that left every output, which is all that is sent.
+///
+/// What cannot be described, because the content store does not hold what the upload names,
+/// ends the task as a failure to store; that is not the remote's fault.
+fn sent<C: ContentStore, R: RemoteCache>(
+    task: &Task,
+    ended: Ended,
+    remote: &RemoteRun<'_, R>,
+    cas: &C,
+    tell: &(dyn Fn(Told) + Sync),
+) -> Ended {
+    let Ended::Produced { outputs, printed } = &ended else {
+        return ended;
+    };
+    let printed = *printed;
+    let described = remote_action(task, remote.execution, cas)
+        .and_then(|action| Ok((action, upload_of(task, outputs, &printed, cas)?)));
+    let (action, produced) = match described {
+        Ok(described) => described,
+        Err(error) => return failed_to(InfraKind::Store, &error, Some(printed)),
+    };
+    match upload(remote.port, &task.action.label, &action, &produced, cas) {
+        Ok(None) => ended,
+        Ok(Some(notice)) => {
+            tell(Told::Remote(notice));
+            ended
+        }
+        Err(notice) => failed_with(remote, notice, tell).unwrap_or(ended),
     }
 }
 
@@ -696,6 +759,26 @@ mod tests {
             };
             assert_eq!(running(policy, &execution, &up).consulted(), expected);
             assert!(!running(policy, &execution, &down).consulted());
+        }
+    }
+
+    #[test]
+    fn a_remote_is_written_to_only_when_the_build_writes_and_it_is_not_down() {
+        let execution = Execution::default();
+        let up = RemoteSwitch::new();
+        let down = RemoteSwitch::new();
+        down.turn_off();
+        for (use_, expected) in [
+            (RemoteUse::Off, false),
+            (RemoteUse::Read, false),
+            (RemoteUse::ReadWrite, true),
+        ] {
+            let policy = RemotePolicy {
+                use_,
+                failure: RemoteFailure::Lenient,
+            };
+            assert_eq!(running(policy, &execution, &up).uploading(), expected);
+            assert!(!running(policy, &execution, &down).uploading());
         }
     }
 

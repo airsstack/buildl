@@ -100,7 +100,8 @@ impl Exit {
             | Error::UnknownTarget { .. }
             | Error::InvalidQuery { .. }
             | Error::NoRun { .. }
-            | Error::NotATest { .. } => Self::Usage,
+            | Error::NotATest { .. }
+            | Error::UploadUnsandboxed => Self::Usage,
             Error::MissingTool { .. } | Error::MissingOutput { .. } | Error::PluginFetch { .. } => {
                 Self::Infrastructure
             }
@@ -245,6 +246,7 @@ mod tests {
                 declared_with: TargetRole::Build,
                 site: Box::new(site()),
             },
+            Error::UploadUnsandboxed,
         ]
     }
 
@@ -679,12 +681,12 @@ mod tests {
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [5, 4, 3, 20, 4, 7]);
+        assert_eq!(counts, [6, 4, 3, 20, 4, 7]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 43, "a variant is listed twice");
+        assert_eq!(variants.len(), 44, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");

@@ -8,14 +8,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
-    ActionOutcome, Digest, EntryName, Error, InfraKind, LiveOutput, OnFailure, OutcomeClass,
-    OutputName, OutputPath, Pipeline, PortName, RemoteCall, RemoteFailure, RemoteNotice,
-    RemotePolicy, RemoteUse, Sample, Scope, TargetRole, json,
+    ActionOutcome, Digest, EntryName, Error, InfraKind, Isolation, LiveOutput, OnFailure,
+    OutcomeClass, OutputName, OutputPath, Pipeline, PortName, RemoteCall, RemoteFailure,
+    RemoteNotice, RemotePolicy, RemoteUse, RootPath, Sample, Scope, SourcePath, TargetRole, json,
 };
 
 use crate::common::{
-    Content, FakePorts, FakeSource, Held, Pace, Reported, Script, dir, file, label, ports, program,
-    root_only, script, target, target_with, workspace,
+    Content, Ends, FakePorts, FakeSource, Held, Pace, Reported, Script, Step, Trace, dir, ending,
+    file, label, ports, program, root_only, script, target, target_with, workspace,
 };
 
 fn entry() -> EntryName {
@@ -38,6 +38,18 @@ const LENIENT: RemotePolicy = RemotePolicy {
 /// Reading from the remote, and failing the build when it fails.
 const STRICT: RemotePolicy = RemotePolicy {
     use_: RemoteUse::Read,
+    failure: RemoteFailure::Strict,
+};
+
+/// Reading from and writing to the remote, and carrying on without it when it fails.
+const WRITING: RemotePolicy = RemotePolicy {
+    use_: RemoteUse::ReadWrite,
+    failure: RemoteFailure::Lenient,
+};
+
+/// Reading from and writing to the remote, and failing the build when it fails.
+const WRITING_STRICT: RemotePolicy = RemotePolicy {
+    use_: RemoteUse::ReadWrite,
     failure: RemoteFailure::Strict,
 };
 
@@ -514,4 +526,170 @@ fn verify_never_calls_the_remote() {
 
     assert_eq!(pipeline.ports().remote.lookups().len(), lookups);
     assert_eq!(pipeline.ports().remote.downloads().len(), downloads);
+}
+
+#[test]
+fn a_target_that_ran_is_uploaded_under_read_write() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+
+    let outcomes = build(&mut pipeline, WRITING).unwrap();
+
+    assert_eq!(class(&outcomes, "//:a"), OutcomeClass::Built);
+    let uploads = pipeline.ports().remote.uploads();
+    assert_eq!(uploads.len(), 1);
+    let (action, sent) = &uploads[0];
+    assert_eq!(action.outputs, [out("//:a")]);
+    let paths: Vec<&OutputPath> = sent.outputs.iter().map(|output| &output.path).collect();
+    assert_eq!(paths, [&out("//:a")]);
+    assert_eq!(notices(&pipeline), []);
+}
+
+#[test]
+fn nothing_is_uploaded_under_read() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+
+    build(&mut pipeline, LENIENT).unwrap();
+
+    assert_eq!(pipeline.ports().remote.uploads(), []);
+}
+
+#[test]
+fn a_failed_action_is_never_uploaded() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+    script(&mut pipeline, "//:a", ending(Ends::Exits(1)));
+
+    let outcomes = build(&mut pipeline, WRITING).unwrap();
+
+    assert!(matches!(
+        class(&outcomes, "//:a"),
+        OutcomeClass::ActionFailure { status: 1 }
+    ));
+    assert_eq!(pipeline.ports().remote.uploads(), []);
+}
+
+#[test]
+fn a_target_restored_from_the_local_cache_is_not_uploaded() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+    build(&mut pipeline, WRITING).unwrap();
+    assert_eq!(pipeline.ports().remote.uploads().len(), 1);
+
+    let outcomes = build(&mut pipeline, WRITING).unwrap();
+
+    assert_eq!(class(&outcomes, "//:a"), OutcomeClass::Cached);
+    assert_eq!(pipeline.ports().remote.uploads().len(), 1);
+}
+
+#[test]
+fn a_fetched_target_is_not_uploaded_again() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+    hold(&mut pipeline, "//:a", b"remote bytes");
+
+    let outcomes = build(&mut pipeline, WRITING).unwrap();
+
+    assert_eq!(class(&outcomes, "//:a"), OutcomeClass::Fetched);
+    assert_eq!(pipeline.ports().remote.uploads(), []);
+}
+
+#[test]
+fn the_upload_happens_before_the_row_is_recorded() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+    let trace = Trace::default();
+    pipeline.ports_mut().remote.trace = trace.clone();
+    pipeline.ports_mut().cache.trace = trace.clone();
+
+    build(&mut pipeline, WRITING).unwrap();
+
+    assert_eq!(
+        trace.steps(),
+        [Step::Uploaded(out("//:a")), Step::Recorded(label("//:a"))]
+    );
+}
+
+#[test]
+fn an_upload_failure_warns_and_keeps_the_target_built() {
+    let mut pipeline = root_only(vec![target("a", &[]), target("b", &[])]);
+    pipeline.ports_mut().remote.upload_fails = true;
+
+    let outcomes = build(&mut pipeline, WRITING).unwrap();
+
+    assert_eq!(class(&outcomes, "//:a"), OutcomeClass::Built);
+    assert_eq!(class(&outcomes, "//:b"), OutcomeClass::Built);
+    let ports = pipeline.ports();
+    assert_eq!(ports.remote.lookups().len(), 1, "then it is off");
+    assert_eq!(ports.remote.uploads().len(), 1, "and nothing more is sent");
+    assert!(ports.cache.rows.contains_key(&label("//:a")));
+    let told = notices(&pipeline);
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(matches!(
+        &told[0],
+        RemoteNotice::Failed { call: RemoteCall::Upload, diagnostic }
+            if diagnostic.to_string().contains("refused")
+    ));
+}
+
+#[test]
+fn a_strict_upload_failure_fails_the_build() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+    pipeline.ports_mut().remote.upload_fails = true;
+
+    let error = build(&mut pipeline, WRITING_STRICT).unwrap_err();
+
+    match error {
+        Error::Adapter { port, diagnostic } => {
+            assert_eq!(port, PortName::RemoteCache);
+            assert!(diagnostic.to_string().contains("upload"), "{diagnostic}");
+        }
+        other => unreachable!("expected an adapter error, got {other:?}"),
+    }
+}
+
+#[test]
+fn an_input_changed_during_the_build_is_not_uploaded_and_the_remote_stays_on() {
+    let mut pipeline = root_only(vec![target("a", &[]), target("b", &[])]);
+    let changed = RootPath::from(&SourcePath::parse("src/main.c").unwrap());
+    pipeline.ports_mut().remote.input_changed = Some(changed.clone());
+
+    let outcomes = build(&mut pipeline, WRITING).unwrap();
+
+    assert_eq!(class(&outcomes, "//:a"), OutcomeClass::Built);
+    assert_eq!(class(&outcomes, "//:b"), OutcomeClass::Built);
+    assert_eq!(
+        pipeline.ports().remote.lookups().len(),
+        2,
+        "the next target still looks up"
+    );
+    let told = notices(&pipeline);
+    assert_eq!(
+        told,
+        [
+            RemoteNotice::InputChanged {
+                label: label("//:a"),
+                path: changed.clone(),
+            },
+            RemoteNotice::InputChanged {
+                label: label("//:b"),
+                path: changed,
+            },
+        ]
+    );
+}
+
+#[test]
+fn uploading_under_the_bare_strategy_is_refused_before_anything_runs() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+    pipeline.ports_mut().manifest.workspace.execution.strategy = Isolation::Bare;
+
+    let error = build(&mut pipeline, WRITING).unwrap_err();
+
+    assert!(matches!(error, Error::UploadUnsandboxed), "{error:?}");
+    let ports = pipeline.ports();
+    assert_eq!(ports.strategy.handed(), []);
+    assert!(ports.remote.untouched());
+
+    let outcomes = build(&mut pipeline, LENIENT).unwrap();
+    assert_eq!(
+        class(&outcomes, "//:a"),
+        OutcomeClass::Built,
+        "reading alone is allowed"
+    );
 }

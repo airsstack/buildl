@@ -5,7 +5,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use buildl_core::{
     ActionCache, Approval, Approver, Attribution, BuildFile, CacheRow, Ceiling, Clock,
@@ -20,7 +20,7 @@ use buildl_core::{
 };
 use buildl_core::{
     ActionOutcome, Blob, BlobSource, Pipeline, RemoteAction, RemoteCache, RemoteHit, RemoteNotice,
-    RemoteOutputFile, RemoteTreeFile, RemoteUpload, Uploaded,
+    RemoteOutputFile, RemoteTreeFile, RemoteUpload, RootPath, Uploaded,
 };
 use buildl_core::{
     Captured, Channel, DenialReason, GraphRecord, LiveSink, OutcomeClass, Reporter, Summary,
@@ -325,6 +325,8 @@ pub struct FakeCache {
     pub failing: BTreeSet<Label>,
     /// The targets whose row it fails to forget.
     pub unforgettable: BTreeSet<Label>,
+    /// Where each recorded row is noted.
+    pub trace: Trace,
     recorded: Vec<Label>,
     forgotten: Vec<Label>,
 }
@@ -360,6 +362,7 @@ impl ActionCache for FakeCache {
             });
         }
         self.recorded.push(label.clone());
+        self.trace.note(Step::Recorded(label.clone()));
         self.rows.insert(label, row);
         Ok(())
     }
@@ -1121,12 +1124,43 @@ impl Held {
     }
 }
 
+/// One thing a build did that the order of matters for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    /// The remote cache was sent the result whose first output is at this path.
+    Uploaded(OutputPath),
+    /// The action cache recorded a row for this target.
+    Recorded(Label),
+}
+
+/// The steps of a build, in the order they happened, shared by the fakes that note them.
+#[derive(Debug, Default, Clone)]
+pub struct Trace(Arc<Mutex<Vec<Step>>>);
+
+impl Trace {
+    fn note(&self, step: Step) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(step);
+    }
+
+    /// Every step noted so far, in order.
+    #[must_use]
+    pub fn steps(&self) -> Vec<Step> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
 /// What a [`FakeRemote`] was asked, behind its lock.
 #[derive(Debug, Default)]
 struct RemoteCalls {
     lookups: Vec<RemoteAction>,
     downloads: Vec<Vec<Blob>>,
-    uploads: usize,
+    uploads: Vec<(RemoteAction, RemoteUpload)>,
 }
 
 /// A remote cache held in memory: it holds results by the first output path of the action it is
@@ -1143,6 +1177,12 @@ pub struct FakeRemote {
     pub download_fails: bool,
     /// Blobs it serves with other bytes than the ones they are named for, by digest.
     pub tampered: BTreeMap<Digest, Vec<u8>>,
+    /// Whether every upload fails.
+    pub upload_fails: bool,
+    /// The input file every upload answers has changed since its digest was taken, when set.
+    pub input_changed: Option<RootPath>,
+    /// Where each upload is noted.
+    pub trace: Trace,
     calls: Mutex<RemoteCalls>,
 }
 
@@ -1163,17 +1203,18 @@ impl FakeRemote {
         self.calls().downloads.clone()
     }
 
-    /// How many uploads it received.
+    /// Every upload it received, with the action it was for, in the order received. A failed
+    /// upload is among them.
     #[must_use]
-    pub fn uploads(&self) -> usize {
-        self.calls().uploads
+    pub fn uploads(&self) -> Vec<(RemoteAction, RemoteUpload)> {
+        self.calls().uploads.clone()
     }
 
     /// Whether it received no call at all.
     #[must_use]
     pub fn untouched(&self) -> bool {
         let calls = self.calls();
-        calls.lookups.is_empty() && calls.downloads.is_empty() && calls.uploads == 0
+        calls.lookups.is_empty() && calls.downloads.is_empty() && calls.uploads.is_empty()
     }
 
     /// The bytes it serves under `digest`.
@@ -1247,12 +1288,23 @@ impl RemoteCache for FakeRemote {
 
     fn upload(
         &self,
-        _action: &RemoteAction,
-        _produced: &RemoteUpload,
+        action: &RemoteAction,
+        produced: &RemoteUpload,
         _blobs: &dyn BlobSource,
     ) -> Result<Uploaded> {
-        self.calls().uploads += 1;
-        Ok(Uploaded::Done)
+        self.calls()
+            .uploads
+            .push((action.clone(), produced.clone()));
+        if let Some(at) = action.outputs.first() {
+            self.trace.note(Step::Uploaded(at.clone()));
+        }
+        if self.upload_fails {
+            return Err(remote_failure("the upload was refused"));
+        }
+        Ok(self
+            .input_changed
+            .clone()
+            .map_or(Uploaded::Done, Uploaded::InputChanged))
     }
 }
 

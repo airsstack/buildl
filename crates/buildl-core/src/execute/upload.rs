@@ -31,10 +31,6 @@ use crate::types::{
 /// Returns [`Error::Adapter`] naming [`PortName::ContentStore`] when `kept` does not hold one
 /// entry per declared output, or when a file or a log is not held, and whatever `cas` returns
 /// when it cannot read one.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the worker does not upload yet")
-)]
 pub(crate) fn upload_of<C: ContentStore>(
     task: &Task,
     kept: &[Kept],
@@ -105,10 +101,6 @@ fn blob_of<C: ContentStore>(digest: &Digest, cas: &C) -> Result<Blob> {
 
 /// The local content store, as a remote adapter reads the blobs of an upload.
 #[derive(Debug, Clone, Copy)]
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the worker does not upload yet")
-)]
 pub(crate) struct StoredBlobs<'a, C>(pub(crate) &'a C);
 
 impl<C: ContentStore> BlobSource for StoredBlobs<'_, C> {
@@ -125,10 +117,6 @@ impl<C: ContentStore> BlobSource for StoredBlobs<'_, C> {
 /// was stored: a [`RemoteNotice::InputChanged`], which is not a failure and leaves the remote
 /// on. A failed call is `Err` of a [`RemoteNotice::Failed`] for [`RemoteCall::Upload`], carrying
 /// the adapter's own message.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the worker does not upload yet")
-)]
 pub(crate) fn upload<R: RemoteCache, C: ContentStore>(
     remote: &R,
     label: &Label,

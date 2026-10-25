@@ -399,6 +399,15 @@ pub enum Error {
     /// A plan was handed over with a graph it was not made from.
     #[error("the plan was not made from this graph")]
     ForeignPlan,
+    /// Uploading to the remote cache was asked for, and actions run bare.
+    ///
+    /// A bare action can read files it did not declare, so a result it produced is not known to
+    /// depend only on its declared inputs, and no one else could trust it.
+    #[error(
+        "uploading to the remote cache needs actions to run in the input sandbox, \
+         but strategy is \"bare\""
+    )]
+    UploadUnsandboxed,
     /// Two outputs would be written to one place: the same path, or a path that another output
     /// needs as a directory.
     #[error(
@@ -1704,6 +1713,15 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "target //:nope was asked for but is not declared"
+        );
+    }
+
+    #[test]
+    fn an_unsandboxed_upload_says_which_setting_to_change() {
+        assert_eq!(
+            Error::UploadUnsandboxed.to_string(),
+            "uploading to the remote cache needs actions to run in the input sandbox, \
+             but strategy is \"bare\""
         );
     }
 

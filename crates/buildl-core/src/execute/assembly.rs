@@ -34,8 +34,9 @@ use crate::placement::layout::Layout;
 use crate::ports::{Dispatcher, Manifest, PortSet, Ports, Reporter};
 use crate::types::{
     ActionOutcome, Captured, Ceiling, Command, EnvName, EnvValue, ExpandedDescription, Forcing,
-    Label, LiveOutput, Node, NodeId, OutcomeEvent, OutputPath, OwnComponents, Plan, PlannedKey,
-    ReadyAction, RemoteSwitch, Rerun, RunChoices, Summary, TargetGraph, Turn, Verdict,
+    Isolation, Label, LiveOutput, Node, NodeId, OutcomeEvent, OutputPath, OwnComponents, Plan,
+    PlannedKey, ReadyAction, RemoteSwitch, RemoteUse, Rerun, RunChoices, Summary, TargetGraph,
+    Turn, Verdict,
 };
 
 /// Builds every target of `graph` as `plan` says, and returns one outcome per target, in id
@@ -84,6 +85,13 @@ use crate::types::{
 /// build. A target whose row stands is restored without asking the remote. With
 /// [`RemotePolicy::OFF`](crate::types::RemotePolicy::OFF) the remote is never called.
 ///
+/// When it also writes, a worker sends what an action it ran produced to the remote once that is
+/// in the content store, and before the target's row is recorded. A failed action, a target
+/// restored from its row and a target fetched from the remote send nothing. A failed upload is
+/// handled as a failed lookup is; an input file that changed after its digest was taken is
+/// reported through the reporter's `remote` call, sends nothing for that target, and leaves the
+/// remote on.
+///
 /// `remote_off` is the caller's, so that a remote turned off stays off, and is reported once,
 /// across every run of one command: a caller that runs twice for one command passes the same
 /// switch to both.
@@ -106,8 +114,10 @@ use crate::types::{
 ///
 /// 1. [`Error::ForeignPlan`] when `plan` was not made from `graph`;
 /// 2. whatever the manifest port returns;
-/// 3. [`Error::OutputConflict`] when two outputs of `whole` would be written to one place;
-/// 4. for the first target, in id order, whose expanded command cannot run:
+/// 3. [`Error::UploadUnsandboxed`] when `choices.remote` writes to the remote and the
+///    workspace's actions run bare;
+/// 4. [`Error::OutputConflict`] when two outputs of `whole` would be written to one place;
+/// 5. for the first target, in id order, whose expanded command cannot run:
 ///    [`Error::NoProgram`] when it names no program, and [`Error::Refused`] when the program
 ///    is outside the workspace's ceiling.
 ///
@@ -143,6 +153,9 @@ pub fn execute<P: Ports>(
         return Err(Error::ForeignPlan);
     }
     let workspace = ports.manifest.workspace()?;
+    if remote.use_ == RemoteUse::ReadWrite && workspace.execution.strategy == Isolation::Bare {
+        return Err(Error::UploadUnsandboxed);
+    }
     Layout::of(whole, &workspace.out)?;
     let layout = Layout::of(graph, &workspace.out)?;
     let targets = prepared(graph, plan, &layout, &workspace.ceiling)?;
