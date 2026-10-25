@@ -12,12 +12,18 @@ tempfile
 # buildl
 buildl_core
 buildl_lua
+prost
+prost_types
 rayon
 serde
 tempfile
 thiserror
+tokio
 toml
 toml_edit
+tonic
+tonic_prost
+uuid
 # buildl-cli
 buildl
 clap
