@@ -80,8 +80,8 @@ pub fn summary_line(tally: Tally) -> String {
 ///
 /// A test that was built, cached or fetched passed; the shares of those that were cached and
 /// fetched follow the passed count in parentheses. Each count that is zero is left out, and the
-/// line is `no tests` when every count is zero. Under [`Rerun::Tests`] the prefix is `tests (rerun): `. Ends with
-/// a newline.
+/// line is `no tests` when every count is zero. Under [`Rerun::Tests`] the prefix is
+/// `tests (rerun): `. Ends with a newline.
 #[must_use]
 pub fn test_line(tally: Tally, rerun: Rerun) -> String {
     let passed = tally.built + tally.cached + tally.fetched;
@@ -138,8 +138,8 @@ const fn refusal_text(refusal: OutputRefusal) -> &'static str {
 }
 
 /// How a failed target ended, in words; `None` for a target that did not fail: one that was
-/// built, cached, fetched or skipped. The [`trailer`] of a failed target and the header of a last run
-/// word a failure with it alike.
+/// built, cached, fetched or skipped. The [`trailer`] of a failed target and the header of a
+/// last run word a failure with it alike.
 pub(crate) fn failure_text(class: &OutcomeClass) -> Option<String> {
     match class {
         OutcomeClass::Cached

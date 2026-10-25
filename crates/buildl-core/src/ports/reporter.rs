@@ -23,10 +23,10 @@ use crate::types::{Captured, Channel, Label, OutcomeEvent, ReadyAction, RemoteNo
 /// stores or returns.
 ///
 /// One build makes its calls in this order: one [`begun`], any number of [`started`],
-/// [`printed`], [`finished`] and [`remote`], then one [`summary`]. A build that is refused before it runs
-/// anything makes no call, and one that ends in an error after that calls [`summary`] never.
-/// A command that builds discovery targets first makes that sequence for them, and again for
-/// the build or test run that follows.
+/// [`printed`], [`finished`] and [`remote`], then one [`summary`]. A build that is refused
+/// before it runs anything makes no call, and one that ends in an error after that calls
+/// [`summary`] never. A command that builds discovery targets first makes that sequence for
+/// them, and again for the build or test run that follows.
 ///
 /// From the first [`printed`] for a target until that target's [`finished`], no [`printed`] and
 /// no [`finished`] is about another target: what one action prints is never interleaved with
@@ -62,7 +62,7 @@ pub trait Reporter {
     fn finished(&mut self, event: &OutcomeEvent, printed: Captured<'_>);
 
     /// The build tells of the remote cache: a call to it failed and the build went on without
-    /// it. Called at most once per build for a failed call, and at any point between
+    /// it. Called at most once per command for a failed call, and at any point between
     /// [`begun`](Reporter::begun) and [`summary`](Reporter::summary).
     fn remote(&mut self, notice: &RemoteNotice);
 

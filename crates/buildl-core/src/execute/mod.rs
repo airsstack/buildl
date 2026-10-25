@@ -4,8 +4,8 @@
 //! Recording what an action produced is the last step of running it, so it lives here too.
 //!
 //! Responsibilities: [`execute`]; `remote_action`, which describes one task for a remote cache;
-//! `fetch`, which checks and stores a result the remote holds; and `upload`, which describes a
-//! run for the remote cache and sends it.
+//! `fetch`, which downloads and checks a result the remote holds, then keeps it in the store;
+//! and `upload`, which describes a run for the remote cache and sends it.
 //!
 //! Non-responsibilities: planning the build, which the phase before this one does; and running
 //! a command, storing content, keeping rows or writing the log, which are each a port's.

@@ -2,12 +2,13 @@
 //!
 //! Its own file because a remote answer is trusted for nothing: every path, size and hash in it
 //! was written by another machine, and only what passes every check here may reach the content
-//! store. Keeping the checks and the store writes together, checks first, is what stops an
-//! unchecked byte from being stored.
+//! store. The checks and the store writes are two steps with two different kinds of failure: a
+//! remote that answers wrongly, and a content store that cannot keep what it was given. The
+//! first step takes no content store, so an unchecked byte cannot be stored.
 //!
-//! Responsibilities: [`usable`], which decides whether an answer may stand for a task, and
-//! [`fetch`], which downloads what the answer names, checks it, stores it and returns what a
-//! run would have.
+//! Responsibilities: [`usable`], which decides whether an answer may stand for a task;
+//! [`fetch`], which downloads what the answer names and checks it, returning [`Checked`]; and
+//! [`Checked::keep`], which stores it and returns what a run would have.
 //!
 //! Non-responsibilities: asking the remote for the answer, deciding when to ask, and what a
 //! failure does to the build, which the worker does; and encoding anything for the wire, which
@@ -120,26 +121,60 @@ fn manifest_of(
         })
 }
 
-/// Downloads and checks everything `hit` names for `task`, stores it, and returns the outputs
-/// and the printed content a local run would have left.
+/// What a remote answer holds once every check has passed and nothing is stored yet.
+#[derive(Debug)]
+pub(crate) struct Checked {
+    /// The content of every file, each once.
+    contents: Vec<Vec<u8>>,
+    /// What the original run wrote to standard output.
+    stdout: Vec<u8>,
+    /// What the original run wrote to standard error.
+    stderr: Vec<u8>,
+    /// The manifest of each declared output, in declared order.
+    manifests: Vec<OutputManifest>,
+}
+
+impl Checked {
+    /// Stores everything, and returns the outputs and the printed content a local run would have
+    /// left.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever `cas` returns, and [`Error::CanonicalJson`] for a manifest that cannot
+    /// be serialized.
+    pub(crate) fn keep<C: ContentStore>(self, cas: &C) -> Result<(Vec<Kept>, Printed)> {
+        for bytes in &self.contents {
+            cas.put(bytes)?;
+        }
+        let printed = Printed {
+            stdout: cas.put(&self.stdout)?,
+            stderr: cas.put(&self.stderr)?,
+        };
+        let outputs = self
+            .manifests
+            .into_iter()
+            .map(|manifest| {
+                let digest = cas.put(&manifest.to_bytes()?)?;
+                Ok(Kept { digest, manifest })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        Ok((outputs, printed))
+    }
+}
+
+/// Downloads and checks everything `hit` names for `task`.
 ///
 /// The bytes come in two rounds: the logs and each directory's tree first, then, once each tree
-/// is checked and read, every file. A blob is checked against its length and its SHA-256 before
-/// anything is stored, and nothing is stored until every blob has passed. A hit without a
-/// standard output or error digest stands for empty content.
+/// is checked and read, every file. A blob is checked against its length and its SHA-256, and
+/// nothing is handed back until every blob has passed. A hit without a standard output or error
+/// digest stands for empty content. Nothing is stored here; see [`Checked::keep`].
 ///
 /// # Errors
 ///
-/// Returns [`Error::Adapter`] naming [`PortName::RemoteCache`] when `hit` is not
-/// [`usable`] for `task`, when a blob differs from the length or hash it was named with, when a
-/// tree holds what a build cannot place or is not a tree, and whatever `remote` and `cas`
-/// return.
-pub(crate) fn fetch<R: RemoteCache, C: ContentStore>(
-    hit: &RemoteHit,
-    task: &Task,
-    remote: &R,
-    cas: &C,
-) -> Result<(Vec<Kept>, Printed)> {
+/// Returns [`Error::Adapter`] naming [`PortName::RemoteCache`] when `hit` is not [`usable`] for
+/// `task`, when a blob differs from the length or hash it was named with, when a tree holds
+/// what a build cannot place or is not a tree, and whatever `remote` returns.
+pub(crate) fn fetch<R: RemoteCache>(hit: &RemoteHit, task: &Task, remote: &R) -> Result<Checked> {
     let declared = &task.action.outputs;
     if !usable(hit, declared, task.role) {
         return Err(refused(format!(
@@ -180,27 +215,16 @@ pub(crate) fn fetch<R: RemoteCache, C: ContentStore>(
     blobs.dedup();
     let contents = downloaded(remote, &blobs)?;
 
-    // Everything is checked; build the manifests before the store sees a byte.
     let manifests = declared
         .iter()
         .map(|at| manifest_of(at.as_str(), hit, &trees))
         .collect::<Result<Vec<_>>>()?;
-
-    for bytes in &contents {
-        cas.put(bytes)?;
-    }
-    let printed = Printed {
-        stdout: cas.put(&stdout)?,
-        stderr: cas.put(&stderr)?,
-    };
-    let outputs = manifests
-        .into_iter()
-        .map(|manifest| {
-            let digest = cas.put(&manifest.to_bytes()?)?;
-            Ok(Kept { digest, manifest })
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok((outputs, printed))
+    Ok(Checked {
+        contents,
+        stdout,
+        stderr,
+        manifests,
+    })
 }
 
 #[cfg(test)]
@@ -302,12 +326,6 @@ mod tests {
     /// A store that keeps what it is given.
     #[derive(Default)]
     struct Store(Mutex<BTreeMap<Digest, Vec<u8>>>);
-
-    impl Store {
-        fn held(&self) -> usize {
-            self.0.lock().unwrap().len()
-        }
-    }
 
     impl ContentStore for Store {
         fn put(&self, bytes: &[u8]) -> Result<Digest> {
@@ -473,7 +491,7 @@ mod tests {
     }
 
     #[test]
-    fn a_blob_whose_hash_differs_is_refused_before_anything_is_stored() {
+    fn a_blob_whose_hash_differs_is_refused() {
         let task = task(TargetRole::Build, &["bin", "log"]);
         let mut remote = Remote::default();
         let good = remote.serve(b"good bytes");
@@ -484,8 +502,7 @@ mod tests {
             vec![output_file("bin", good), output_file("log", named)],
             Vec::new(),
         );
-        let store = Store::default();
-        let refused = fetch(&hit, &task, &remote, &store).unwrap_err();
+        let refused = fetch(&hit, &task, &remote).unwrap_err();
         assert!(matches!(
             refused,
             Error::Adapter {
@@ -493,7 +510,6 @@ mod tests {
                 ..
             }
         ));
-        assert_eq!(store.held(), 0, "not even the good blob");
     }
 
     #[test]
@@ -503,10 +519,8 @@ mod tests {
         let named = Blob::of(b"bin");
         remote.served.insert(named.digest, b"bin and more".to_vec());
         let hit = hit(vec![output_file("bin", named)], Vec::new());
-        let store = Store::default();
-        let refused = fetch(&hit, &task, &remote, &store).unwrap_err();
+        let refused = fetch(&hit, &task, &remote).unwrap_err();
         assert!(refused.to_string().contains("length"), "{refused}");
-        assert_eq!(store.held(), 0);
     }
 
     #[test]
@@ -516,10 +530,8 @@ mod tests {
         let named = Blob::of(b"the tree");
         remote.served.insert(named.digest, b"THE TREE".to_vec());
         let hit = hit(Vec::new(), vec![output_directory("inc", named)]);
-        let store = Store::default();
-        assert!(fetch(&hit, &task, &remote, &store).is_err());
+        assert!(fetch(&hit, &task, &remote).is_err());
         assert_eq!(*remote.decoded.lock().unwrap(), 0, "decode_tree not called");
-        assert_eq!(store.held(), 0);
     }
 
     #[test]
@@ -528,10 +540,8 @@ mod tests {
         let mut remote = Remote::default();
         let tree = remote.serve_tree("tree with a link", None);
         let hit = hit(Vec::new(), vec![output_directory("inc", tree)]);
-        let store = Store::default();
-        let refused = fetch(&hit, &task, &remote, &store).unwrap_err();
+        let refused = fetch(&hit, &task, &remote).unwrap_err();
         assert!(refused.to_string().contains("inc"), "{refused}");
-        assert_eq!(store.held(), 0);
     }
 
     #[test]
@@ -554,8 +564,7 @@ mod tests {
             vec![output_directory("inc", tree)],
         );
         hit.stdout = Some(stdout);
-        let store = Store::default();
-        fetch(&hit, &task, &remote, &store).unwrap();
+        fetch(&hit, &task, &remote).unwrap();
 
         let rounds = remote.rounds();
         assert_eq!(rounds.len(), 2, "{rounds:?}");
@@ -582,7 +591,7 @@ mod tests {
         );
         hit.stderr = Some(stderr);
         let store = Store::default();
-        let (outputs, printed) = fetch(&hit, &task, &remote, &store).unwrap();
+        let (outputs, printed) = fetch(&hit, &task, &remote).unwrap().keep(&store).unwrap();
 
         let manifest = OutputManifest::File(StoredFile {
             digest: Digest::of(b"bin"),
@@ -614,7 +623,7 @@ mod tests {
         );
         let hit = hit(Vec::new(), vec![output_directory("inc", tree)]);
         let store = Store::default();
-        let (outputs, _printed) = fetch(&hit, &task, &remote, &store).unwrap();
+        let (outputs, _printed) = fetch(&hit, &task, &remote).unwrap().keep(&store).unwrap();
 
         let entry = |path: &str, content: &[u8], mode| FoundEntry {
             path: path.to_owned(),

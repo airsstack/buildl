@@ -29,6 +29,7 @@ mod named;
 mod parallel_load;
 mod plugins;
 mod recovery;
+mod remote_switch;
 mod sandbox;
 mod test;
 mod verify;

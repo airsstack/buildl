@@ -25,28 +25,28 @@ use crate::execute::perform::{
     Ended, Performed, RemoteRun, Shared, Task, Told, Worked, perform, remote_failure,
 };
 use crate::execute::record::{
-    Finished, Progress, append, failed, forget_contradicted, restore, shown, skipped, store,
+    Finished, Made, Progress, append, failed, forget_contradicted, restore, shown, skipped, store,
 };
 use crate::execute::schedule::{Finish, Schedule};
 use crate::execute::settle::{Settled, settle};
 use crate::placement::expand::{Lists, expand, expand_description};
 use crate::placement::layout::Layout;
 use crate::ports::{Dispatcher, Manifest, PortSet, Ports, Reporter};
-use crate::types::OutcomeClass;
 use crate::types::{
     ActionOutcome, Captured, Ceiling, Command, EnvName, EnvValue, ExpandedDescription, Forcing,
     Label, LiveOutput, Node, NodeId, OutcomeEvent, OutputPath, OwnComponents, Plan, PlannedKey,
-    ReadyAction, Rerun, RunChoices, Summary, TargetGraph, Turn, Verdict,
+    ReadyAction, RemoteSwitch, Rerun, RunChoices, Summary, TargetGraph, Turn, Verdict,
 };
 
 /// Builds every target of `graph` as `plan` says, and returns one outcome per target, in id
 /// order.
 ///
 /// `plan` must be the plan made from `graph`; the value of every build setting is the one
-/// `plan` holds. `choices` are the choices of the command that makes the run. A target starts once everything it depends on has succeeded. Its key is then
-/// finished from what those dependencies produced: when its last build recorded that key and
-/// everything it produced is still stored, the target is not run and its outputs are put back
-/// in place; otherwise its action runs. What an action produced is stored first, its row
+/// `plan` holds. `choices` are the choices of the command that makes the run. A target starts
+/// once everything it depends on has succeeded. Its key is then finished from what those
+/// dependencies produced: when its last build recorded that key and everything it produced is
+/// still stored, the target is not run and its outputs are put back in place; otherwise its
+/// action runs. What an action produced is stored first, its row
 /// recorded after, and its outcome logged whatever it is, so a row never names content that is
 /// not held and a failure is never recorded as a result.
 ///
@@ -57,8 +57,10 @@ use crate::types::{
 /// [`OutputRefusal`](crate::types::OutputRefusal), and the target fails.
 ///
 /// An action that fails is an outcome, not an error. What a failure does to the rest of the
-/// build is `choices.on_failure`'s to say: under [`OnFailure::Stop`](crate::types::OnFailure::Stop) nothing more is begun, and under
-/// [`OnFailure::KeepGoing`](crate::types::OnFailure::KeepGoing) only the targets that depend on the failed one are skipped.
+/// build is `choices.on_failure`'s to say: under
+/// [`OnFailure::Stop`](crate::types::OnFailure::Stop) nothing more is begun, and under
+/// [`OnFailure::KeepGoing`](crate::types::OnFailure::KeepGoing) only the targets that depend
+/// on the failed one are skipped.
 ///
 /// A target's description is expanded with its command, from the same paths and with the
 /// settings `plan` holds, and handed to the strategy with it; expanding one cannot fail, and it
@@ -68,17 +70,23 @@ use crate::types::{
 /// itself. A target of `whole` that `graph` leaves out is no part of the build: it has no
 /// outcome, no event and no row, and whatever it left in the workspace stays.
 ///
-/// Under `choices.rerun` of [`Rerun::Tests`] a test runs whatever its recorded result says, and its new result is
-/// recorded; any other target settles as before.
+/// Under `choices.rerun` of [`Rerun::Tests`] a test runs whatever its recorded result says, and
+/// its new result is recorded; any other target settles as before.
 ///
-/// `choices.remote` says how the remote cache is used. When it reads, a worker asks the remote for a
-/// target that must run before it runs it: a usable result the remote holds is stored as a run
-/// would store its own and the target ends [`OutcomeClass::Fetched`], without its action
-/// running and without being reported as started. A miss runs the action. A call that fails
-/// under [`RemoteFailure::Lenient`](crate::types::RemoteFailure::Lenient) is reported once through the reporter's `remote` call, turns
-/// the remote off for the rest of the build and runs the action; under
-/// [`RemoteFailure::Strict`](crate::types::RemoteFailure::Strict) it fails the build. A target whose row stands is restored without
-/// asking the remote. With [`RemotePolicy::OFF`](crate::types::RemotePolicy::OFF) the remote is never called.
+/// `choices.remote` says how the remote cache is used. When it reads, a worker asks the remote
+/// for a target that must run before it runs it: a usable result the remote holds is stored as
+/// a run would store its own and the target ends
+/// [`OutcomeClass::Fetched`](crate::types::OutcomeClass::Fetched), without its action running
+/// and without being reported as started. A miss runs the action. A call that fails under
+/// [`RemoteFailure::Lenient`](crate::types::RemoteFailure::Lenient) is reported once through
+/// the reporter's `remote` call, turns the remote off through `remote_off` and runs the
+/// action; under [`RemoteFailure::Strict`](crate::types::RemoteFailure::Strict) it fails the
+/// build. A target whose row stands is restored without asking the remote. With
+/// [`RemotePolicy::OFF`](crate::types::RemotePolicy::OFF) the remote is never called.
+///
+/// `remote_off` is the caller's, so that a remote turned off stays off, and is reported once,
+/// across every run of one command: a caller that runs twice for one command passes the same
+/// switch to both.
 ///
 /// The build is shown through the reporter port, always from the calling thread: that it begins,
 /// once nothing can refuse it any more; each action as a worker begins it; each target's outcome,
@@ -86,8 +94,9 @@ use crate::types::{
 /// error. An outcome is reported with what its action printed, read back from the content store,
 /// for a target that ran as for one that is cached.
 ///
-/// Under `choices.live` of [`LiveOutput::OneAction`] one running action at a time is shown as it prints: what it
-/// writes is reported while it runs, and its outcome is then reported with nothing left to show.
+/// Under `choices.live` of [`LiveOutput::OneAction`] one running action at a time is shown as it
+/// prints: what it writes is reported while it runs, and its outcome is then reported with
+/// nothing left to show.
 /// The outcome of a target that ends meanwhile is logged at once and reported after that
 /// action's. What is stored and what is returned are the same under either choice.
 ///
@@ -103,12 +112,13 @@ use crate::types::{
 ///    is outside the workspace's ceiling.
 ///
 /// Once the build is under way, returns the first of: [`Error::Adapter`], naming the remote
-/// cache and the call, for a failed call under [`RemoteFailure::Strict`](crate::types::RemoteFailure::Strict); the log port's
-/// failure to append an event; [`Error::CanonicalJson`] for a key that cannot be serialized; [`Error::Adapter`],
-/// naming the action cache, for a dependency that succeeded and has no row; the content
-/// store's failure to read the manifest of a recorded output; and its failure to read what a
-/// target printed, which is [`Error::Adapter`] naming the content store when that content is
-/// no longer held. After such an error no port is asked anything more, and no count is
+/// cache and the call, for a failed call under
+/// [`RemoteFailure::Strict`](crate::types::RemoteFailure::Strict); the log port's failure to
+/// append an event; [`Error::CanonicalJson`] for a key that cannot be serialized;
+/// [`Error::Adapter`], naming the action cache, for a dependency that succeeded and has no row;
+/// the content store's failure to read the manifest of a recorded output; and its failure to
+/// read what a target printed, which is [`Error::Adapter`] naming the content store when that
+/// content is no longer held. After such an error no port is asked anything more, and no count is
 /// reported. Otherwise returns whatever the dispatcher port itself returns.
 ///
 /// When the dispatcher returns success and a target has no outcome, returns
@@ -120,6 +130,7 @@ pub fn execute<P: Ports>(
     graph: &TargetGraph,
     plan: &Plan,
     choices: RunChoices,
+    remote_off: &RemoteSwitch,
     ports: &mut PortSet<P>,
 ) -> Result<Vec<ActionOutcome>> {
     let RunChoices {
@@ -148,12 +159,11 @@ pub fn execute<P: Ports>(
         ..
     } = ports;
     let (cas, strategy, clock) = (&*cas, &*strategy, &*clock);
-    let down = AtomicBool::new(false);
     let remote = RemoteRun {
         port: &*remote_cache,
         policy: remote,
         execution: &workspace.execution,
-        down: &down,
+        down: remote_off,
     };
     let stop = AtomicBool::new(false);
     let place = AtomicBool::new(false);
@@ -505,7 +515,7 @@ impl<P: Ports> Build<'_, P> {
                 target.node,
                 Finished {
                     key: performed.key,
-                    class: OutcomeClass::Built,
+                    made: Made::Built,
                     outputs,
                     printed,
                 },
@@ -517,7 +527,7 @@ impl<P: Ports> Build<'_, P> {
                 target.node,
                 Finished {
                     key: performed.key,
-                    class: OutcomeClass::Fetched,
+                    made: Made::Fetched,
                     outputs,
                     printed,
                 },

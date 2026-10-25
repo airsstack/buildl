@@ -5,16 +5,17 @@
     reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
-    ActionOutcome, Digest, EntryName, Error, LiveOutput, OnFailure, OutcomeClass, OutputName,
-    OutputPath, Pipeline, PortName, RemoteCall, RemoteFailure, RemoteNotice, RemotePolicy,
-    RemoteUse, Sample, Scope, json,
+    ActionOutcome, Digest, EntryName, Error, InfraKind, LiveOutput, OnFailure, OutcomeClass,
+    OutputName, OutputPath, Pipeline, PortName, RemoteCall, RemoteFailure, RemoteNotice,
+    RemotePolicy, RemoteUse, Sample, Scope, TargetRole, json,
 };
 
 use crate::common::{
-    Content, FakePorts, Held, Pace, Reported, Script, dir, label, root_only, script, target,
+    Content, FakePorts, FakeSource, Held, Pace, Reported, Script, dir, file, label, ports, program,
+    root_only, script, target, target_with, workspace,
 };
 
 fn entry() -> EntryName {
@@ -124,12 +125,67 @@ fn the_row_is_written_only_after_the_content() {
     let mut refused = root_only(vec![target("a", &[])]);
     hold(&mut refused, "//:a", b"remote bytes");
     refused.ports().cas.fail_put(b"remote bytes".to_vec());
-    let error = build(&mut refused, STRICT).unwrap_err();
+    let outcomes = build(&mut refused, STRICT).unwrap();
 
-    assert!(matches!(error, Error::Adapter { .. }), "{error:?}");
+    assert_eq!(stored_failure(&outcomes, "//:a"), Some(()));
     let ports = refused.ports();
     assert_eq!(ports.cache.recorded(), [], "no row names content not held");
     assert_eq!(ports.cas.placements(), []);
+}
+
+/// `Some(())` when the target `raw` names failed because the builder could not store.
+fn stored_failure(outcomes: &[ActionOutcome], raw: &str) -> Option<()> {
+    matches!(
+        class(outcomes, raw),
+        OutcomeClass::InfraFailure {
+            kind: InfraKind::Store
+        }
+    )
+    .then_some(())
+}
+
+#[test]
+fn a_content_store_that_cannot_keep_a_fetched_result_is_not_a_remote_failure() {
+    let mut pipeline = root_only(vec![target("a", &[]), target("b", &[])]);
+    hold(&mut pipeline, "//:a", b"first bytes");
+    hold(&mut pipeline, "//:b", b"second bytes");
+    pipeline.ports().cas.fail_put(b"first bytes".to_vec());
+
+    pipeline.set_remote(LENIENT);
+    let outcomes = pipeline
+        .build(
+            &entry(),
+            &Scope::Workspace,
+            &BTreeMap::new(),
+            OnFailure::KeepGoing,
+            LiveOutput::Off,
+        )
+        .unwrap();
+
+    assert_eq!(stored_failure(&outcomes, "//:a"), Some(()));
+    assert_eq!(
+        class(&outcomes, "//:b"),
+        OutcomeClass::Fetched,
+        "the remote is still on"
+    );
+    assert_eq!(
+        notices(&pipeline),
+        [],
+        "the remote has nothing to answer for"
+    );
+    assert_eq!(pipeline.ports().strategy.ran(), []);
+}
+
+#[test]
+fn a_content_store_that_cannot_keep_a_fetched_result_fails_a_strict_build_as_a_store_failure() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+    hold(&mut pipeline, "//:a", b"remote bytes");
+    pipeline.ports().cas.fail_put(b"remote bytes".to_vec());
+
+    let outcomes = build(&mut pipeline, STRICT).unwrap();
+
+    assert_eq!(stored_failure(&outcomes, "//:a"), Some(()));
+    assert_eq!(notices(&pipeline), []);
 }
 
 #[test]
@@ -201,6 +257,124 @@ fn a_lookup_failure_warns_once_and_turns_the_remote_off() {
         RemoteNotice::Failed { call: RemoteCall::Lookup, diagnostic }
             if diagnostic.to_string().contains("cannot be reached")
     ));
+}
+
+#[test]
+fn a_failed_download_warns_once_and_builds_locally() {
+    let mut pipeline = root_only(vec![target("a", &[]), target("b", &[])]);
+    hold(&mut pipeline, "//:a", b"first");
+    hold(&mut pipeline, "//:b", b"second");
+    pipeline.ports_mut().remote.download_fails = true;
+
+    let outcomes = build(&mut pipeline, LENIENT).unwrap();
+
+    assert_eq!(class(&outcomes, "//:a"), OutcomeClass::Built);
+    assert_eq!(class(&outcomes, "//:b"), OutcomeClass::Built);
+    assert_eq!(pipeline.ports().remote.lookups().len(), 1, "then it is off");
+    let told = notices(&pipeline);
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(matches!(
+        &told[0],
+        RemoteNotice::Failed { call: RemoteCall::Download, diagnostic }
+            if diagnostic.to_string().contains("cut off")
+    ));
+    assert_eq!(pipeline.ports().strategy.ran().len(), 2);
+}
+
+#[test]
+fn bytes_that_differ_from_their_digest_are_not_used() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+    hold(&mut pipeline, "//:a", b"remote bytes");
+    pipeline
+        .ports_mut()
+        .remote
+        .tampered
+        .insert(Digest::of(b"remote bytes"), b"REMOTE BYTES".to_vec());
+
+    let outcomes = build(&mut pipeline, LENIENT).unwrap();
+
+    assert_eq!(class(&outcomes, "//:a"), OutcomeClass::Built);
+    assert_eq!(pipeline.ports().strategy.runs(&label("//:a")), 1);
+    assert!(
+        pipeline
+            .ports()
+            .cas
+            .blob(&Digest::of(b"REMOTE BYTES"))
+            .is_none(),
+        "the tampered bytes were not stored"
+    );
+    let told = notices(&pipeline);
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(matches!(
+        &told[0],
+        RemoteNotice::Failed { call: RemoteCall::Download, diagnostic }
+            if diagnostic.to_string().contains("SHA-256")
+    ));
+}
+
+/// A workspace that declares `//:pkgs`, a discovery target, alone, and `//:a` and `//:b` too once
+/// it is handed the result of `//:pkgs`.
+fn discovering() -> Pipeline<FakePorts> {
+    let discovery = || target_with("pkgs", |target| target.role = TargetRole::Discovery);
+    let before = workspace(vec![("", file(vec![discovery()], &[]))]);
+    let after = workspace(vec![(
+        "",
+        file(vec![discovery(), target("a", &[]), target("b", &[])], &[]),
+    )]);
+    let mut pipeline = Pipeline::new(ports(FakeSource::declaring_from_results(before, after)));
+    pipeline
+        .ports_mut()
+        .tools
+        .fingerprints
+        .insert(program("cc"), Digest::of(b"cc 14.2"));
+    pipeline
+}
+
+#[test]
+fn a_remote_turned_off_by_the_discovery_run_stays_off_for_the_build_and_warns_once() {
+    let mut pipeline = discovering();
+    pipeline.ports_mut().remote.lookup_fails = true;
+
+    let outcomes = build(&mut pipeline, LENIENT).unwrap();
+
+    assert_eq!(
+        outcomes.len(),
+        3,
+        "the discovery target, then the two it declared"
+    );
+    assert!(
+        outcomes
+            .iter()
+            .all(|outcome| outcome.class == OutcomeClass::Built)
+    );
+    assert_eq!(
+        pipeline.ports().remote.lookups().len(),
+        1,
+        "the second run did not ask a remote that failed in the first"
+    );
+    assert_eq!(notices(&pipeline).len(), 1, "one warning for the command");
+}
+
+#[test]
+fn a_remote_that_failed_in_one_command_is_asked_again_by_the_next() {
+    let mut pipeline = root_only(vec![target("a", &[]), target("b", &[])]);
+    pipeline.ports_mut().remote.lookup_fails = true;
+    pipeline.set_remote(LENIENT);
+
+    for raw in ["//:a", "//:b"] {
+        pipeline
+            .build(
+                &entry(),
+                &Scope::Targets(BTreeSet::from([label(raw)])),
+                &BTreeMap::new(),
+                OnFailure::Stop,
+                LiveOutput::Off,
+            )
+            .unwrap();
+    }
+
+    assert_eq!(pipeline.ports().remote.lookups().len(), 2);
+    assert_eq!(notices(&pipeline).len(), 2, "one warning for each command");
 }
 
 #[test]

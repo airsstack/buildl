@@ -61,8 +61,8 @@ const fn civil_from_days(days: u64) -> (u64, u64, u64) {
     (year, month, day)
 }
 
-/// How a run ended, in words: `built`, `cached`, `fetched`, `skipped ({label} failed)` naming the target
-/// that failed, or a failure worded as a build's trailer words it.
+/// How a run ended, in words: `built`, `cached`, `fetched`, `skipped ({label} failed)` naming
+/// the target that failed, or a failure worded as a build's trailer words it.
 fn ended(class: &OutcomeClass) -> String {
     match class {
         OutcomeClass::Built => "built".to_owned(),

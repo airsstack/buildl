@@ -29,8 +29,8 @@ use crate::ports::{
 use crate::resolve::{narrow, reach, resolve};
 use crate::types::{
     ActionOutcome, Declaration, Diagnostic, Discovered, EntryName, Label, LiveOutput, Loaded,
-    NodeId, OnFailure, Plan, Purpose, Query, RemotePolicy, Rerun, RunChoices, Sample, Scope,
-    SettingName, SettingValue, TargetGraph, TargetRole, Verdict, Verification,
+    NodeId, OnFailure, Plan, Purpose, Query, RemotePolicy, RemoteSwitch, Rerun, RunChoices, Sample,
+    Scope, SettingName, SettingValue, TargetGraph, TargetRole, Verdict, Verification,
 };
 use crate::verify::verify;
 
@@ -72,9 +72,12 @@ impl<P: Ports> Pipeline<P> {
     }
 
     /// Sets how [`Pipeline::build`] and [`Pipeline::test`] use the remote cache, for the
-    /// discovery run and the run that follows it alike, until it is set again; see
-    /// [`execute`](fn@execute). The policy is [`RemotePolicy::OFF`] until then, and no other
-    /// command ever calls the remote.
+    /// discovery run and the run that follows it alike; see [`execute`](fn@execute). The policy
+    /// applies to every later build and test, not to the next one only, until it is set again.
+    /// It is [`RemotePolicy::OFF`] until then, and no other command ever calls the remote.
+    ///
+    /// A remote that a failed call turns off stays off for the rest of the command that met the
+    /// failure, and the next command consults it again.
     pub const fn set_remote(&mut self, remote: RemotePolicy) {
         self.remote = remote;
     }
@@ -250,8 +253,8 @@ impl<P: Ports> Pipeline<P> {
         &mut self,
         entry: &EntryName,
         overrides: &BTreeMap<SettingName, SettingValue>,
-        on_failure: OnFailure,
-        live: LiveOutput,
+        choices: RunChoices,
+        remote_off: &RemoteSwitch,
     ) -> Result<ControlFlow<Vec<ActionOutcome>, Prepared>> {
         let pass_one = load(
             &self.ports.source,
@@ -275,7 +278,11 @@ impl<P: Ports> Pipeline<P> {
             &Scope::Targets(labels.iter().cloned().collect()),
             Purpose::Build,
         )?;
-        let outcomes = self.run(&first, &discovery, overrides, Rerun::Off, on_failure, live)?;
+        let discovery_choices = RunChoices {
+            rerun: Rerun::Off,
+            ..choices
+        };
+        let outcomes = self.run(&first, &discovery, overrides, discovery_choices, remote_off)?;
         if outcomes.iter().any(|outcome| !outcome.class.succeeded()) {
             return Ok(ControlFlow::Break(outcomes));
         }
@@ -315,26 +322,31 @@ impl<P: Ports> Pipeline<P> {
         }
     }
 
-    /// Plans `graph`, puts what the plan wants to the approver, and executes it, as the part of
-    /// `whole` that one run of a command covers.
+    /// Plans `graph`, puts what the plan wants to the approver, and executes it under `choices`,
+    /// as the part of `whole` that one run of a command covers. `remote_off` is the one switch of
+    /// the command, which every run of it shares.
     fn run(
         &mut self,
         whole: &TargetGraph,
         graph: &TargetGraph,
         overrides: &BTreeMap<SettingName, SettingValue>,
-        rerun: Rerun,
-        on_failure: OnFailure,
-        live: LiveOutput,
+        choices: RunChoices,
+        remote_off: &RemoteSwitch,
     ) -> Result<Vec<ActionOutcome>> {
-        let plan = plan(graph, overrides, rerun, &mut self.ports)?;
+        let plan = plan(graph, overrides, choices.rerun, &mut self.ports)?;
         negotiate(plan.wanted(), plan.attribution(), &mut self.ports.approver)?;
-        let choices = RunChoices {
+        execute(whole, graph, &plan, choices, remote_off, &mut self.ports)
+    }
+
+    /// The choices of a command that runs targets: what a failure does, whether one action is
+    /// shown live, whether tests run again, and how the remote cache is used.
+    const fn choices(&self, on_failure: OnFailure, live: LiveOutput, rerun: Rerun) -> RunChoices {
+        RunChoices {
             on_failure,
             live,
             rerun,
             remote: self.remote,
-        };
-        execute(whole, graph, &plan, choices, &mut self.ports)
+        }
     }
 
     /// Loads the workspace, builds its discovery targets first when it declares any, resolves it,
@@ -356,7 +368,8 @@ impl<P: Ports> Pipeline<P> {
     /// nothing runs if it does not approve, even when every target is cached.
     ///
     /// The remote cache is used as [`Pipeline::set_remote`] last said, by the discovery run and
-    /// the build alike.
+    /// the build alike. A failed call that turns it off turns it off for both, and is reported
+    /// once.
     ///
     /// A workspace that declares a discovery target is loaded without discovery results, its
     /// discovery targets are built as a build of just them is, then it is loaded again with their
@@ -387,15 +400,17 @@ impl<P: Ports> Pipeline<P> {
         on_failure: OnFailure,
         live: LiveOutput,
     ) -> Result<Vec<ActionOutcome>> {
+        let choices = self.choices(on_failure, live, Rerun::Off);
+        let remote_off = RemoteSwitch::new();
         let Prepared {
             whole,
             mut outcomes,
-        } = match self.prepare(entry, overrides, on_failure, live)? {
+        } = match self.prepare(entry, overrides, choices, &remote_off)? {
             ControlFlow::Break(stopped) => return Ok(stopped),
             ControlFlow::Continue(prepared) => prepared,
         };
         let graph = narrow(&whole, scope, Purpose::Build)?;
-        outcomes.extend(self.run(&whole, &graph, overrides, Rerun::Off, on_failure, live)?);
+        outcomes.extend(self.run(&whole, &graph, overrides, choices, &remote_off)?);
         Ok(outcomes)
     }
 
@@ -421,7 +436,8 @@ impl<P: Ports> Pipeline<P> {
     /// nothing runs if it does not approve, even when every target is cached.
     ///
     /// The remote cache is used as [`Pipeline::set_remote`] last said, by the discovery run and
-    /// the test run alike.
+    /// the test run alike. A failed call that turns it off turns it off for both, and is
+    /// reported once.
     ///
     /// A workspace that declares a discovery target is run as [`Pipeline::build`] runs it: its
     /// discovery targets are built first, as a build of just them is, then the workspace is
@@ -454,15 +470,17 @@ impl<P: Ports> Pipeline<P> {
         live: LiveOutput,
         rerun: Rerun,
     ) -> Result<Vec<ActionOutcome>> {
+        let choices = self.choices(on_failure, live, rerun);
+        let remote_off = RemoteSwitch::new();
         let Prepared {
             whole,
             mut outcomes,
-        } = match self.prepare(entry, overrides, on_failure, live)? {
+        } = match self.prepare(entry, overrides, choices, &remote_off)? {
             ControlFlow::Break(stopped) => return Ok(stopped),
             ControlFlow::Continue(prepared) => prepared,
         };
         let graph = narrow(&whole, scope, Purpose::Test)?;
-        outcomes.extend(self.run(&whole, &graph, overrides, rerun, on_failure, live)?);
+        outcomes.extend(self.run(&whole, &graph, overrides, choices, &remote_off)?);
         Ok(outcomes)
     }
 

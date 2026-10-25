@@ -48,8 +48,9 @@
 //!   [`RemoteOutput`], [`RemoteContent`] and [`RemoteTree`], and [`Uploaded`] — what a run stores
 //!   there and how that ended.
 //! - [`RemoteUse`], [`RemoteFailure`] and [`RemotePolicy`] — what a run does with the remote;
-//!   [`RemoteCall`] and [`RemoteNotice`] — what a build says about it; [`RunChoices`] — those
-//!   and the other choices a command makes about one run.
+//!   [`RemoteCall`] and [`RemoteNotice`] — what a build says about it; [`RemoteSwitch`] — whether
+//!   a failed call has turned it off; [`RunChoices`] — those and the other choices a command
+//!   makes about one run.
 //! - [`RemoteSettings`] — the remote cache a workspace names, built through
 //!   [`RemoteSettingsBuilder`], with its parts [`RemoteUrl`], [`RemoteScheme`], [`InstanceName`],
 //!   [`HostPath`], [`TokenSource`] and [`HeaderName`].
@@ -156,6 +157,7 @@ pub mod remote_hit;
 pub mod remote_notice;
 pub mod remote_policy;
 pub mod remote_settings;
+pub mod remote_switch;
 pub mod remote_upload;
 pub mod rerun;
 pub mod root_path;
@@ -247,6 +249,7 @@ pub use remote_settings::{
     HeaderName, HostPath, InstanceName, RemoteScheme, RemoteSettings, RemoteSettingsBuilder,
     RemoteUrl, TokenSource,
 };
+pub use remote_switch::RemoteSwitch;
 pub use remote_upload::{RemoteContent, RemoteOutput, RemoteTree, RemoteUpload, Uploaded};
 pub use rerun::Rerun;
 pub use root_path::RootPath;

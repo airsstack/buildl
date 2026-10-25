@@ -8,11 +8,11 @@
 //! Responsibilities: [`row`]; the outcomes [`built`], [`cached`], [`fetched`], [`failed`],
 //! [`unstored`], [`unplaced`], [`mismatched`] and [`skipped`]; [`event`] with [`Progress`]; and
 //! the four steps that reach a port, in the order that keeps a crash harmless: [`store`] puts a
-//! built or fetched target's outputs in place and only then records its row, [`forget_contradicted`] removes
-//! the row a failed action contradicts, [`restore`] puts a cached target's outputs in place,
-//! and [`append`] logs an outcome whatever it is. An output that
-//! cannot be put in place whole is removed from its path again. [`shown`] reads back what an
-//! action printed, for whoever shows its outcome.
+//! built or fetched target's outputs in place and only then records its row,
+//! [`forget_contradicted`] removes the row a failed action contradicts, [`restore`] puts a
+//! cached target's outputs in place, and [`append`] logs an outcome whatever it is. An output
+//! that cannot be put in place whole is removed from its path again. [`shown`] reads back what
+//! an action printed, for whoever shows its outcome.
 //!
 //! Non-responsibilities: how content is put in place, how a row is kept and how the log is
 //! written, which are the ports'.
@@ -172,23 +172,31 @@ pub(crate) fn event(
     }
 }
 
+/// How the outputs a target has in hand came to be, which decides the class of its outcome.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Made {
+    /// An action ran and left them: [`OutcomeClass::Built`].
+    Built,
+    /// The remote cache held them: [`OutcomeClass::Fetched`].
+    Fetched,
+}
+
 /// What a target that has its outputs in hand has to record: the key it ran or was fetched
-/// under, the class it ended in, what it left and what it printed.
+/// under, how its outputs came to be, what it left and what it printed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Finished {
     /// The key the outputs belong to.
     pub(crate) key: ActionKey,
-    /// [`OutcomeClass::Fetched`] for a result taken from the remote cache and
-    /// [`OutcomeClass::Built`] for an action that ran.
-    pub(crate) class: OutcomeClass,
+    /// Whether an action ran or the remote cache held the result.
+    pub(crate) made: Made,
     /// What the target left, in the order its outputs were declared.
     pub(crate) outputs: Vec<Kept>,
     /// What the target printed.
     pub(crate) printed: Printed,
 }
 
-/// Records `target`, which ended as `finished` says, and returns its outcome, which carries
-/// the class `finished` names.
+/// Records `target`, which ended as `finished` says, and returns its outcome, which is
+/// [`OutcomeClass::Built`] or [`OutcomeClass::Fetched`] as `finished.made` says.
 ///
 /// Each output is put at its path of `paths`, in the order the outputs were written, and only
 /// then is the row stored: a row therefore exists only for content the store already holds.
@@ -203,7 +211,7 @@ pub(crate) fn store<A: ActionCache, C: ContentStore>(
 ) -> ActionOutcome {
     let Finished {
         key,
-        class,
+        made,
         outputs,
         printed,
     } = finished;
@@ -215,9 +223,9 @@ pub(crate) fn store<A: ActionCache, C: ContentStore>(
     let Some(row) = row(key, digests, printed) else {
         return mismatched(label, role, printed);
     };
-    let outcome = match class {
-        OutcomeClass::Fetched => fetched(label.clone(), role, &row),
-        _ => built(label.clone(), role, &row),
+    let outcome = match made {
+        Made::Fetched => fetched(label.clone(), role, &row),
+        Made::Built => built(label.clone(), role, &row),
     };
     let stored = place(&manifests, paths, cas).and_then(|()| cache.record(label.clone(), row));
     match stored {
@@ -392,8 +400,8 @@ mod tests {
     use std::sync::{Mutex, PoisonError};
 
     use super::{
-        Finished, Progress, built, cached, event, failed, forget_contradicted, mismatched, place,
-        row, shown, skipped, store, unplaced, unstored,
+        Finished, Made, Progress, built, cached, event, failed, forget_contradicted, mismatched,
+        place, row, shown, skipped, store, unplaced, unstored,
     };
     use crate::error::{Error, PortName, Result};
     use crate::execute::fixtures::{
@@ -1104,7 +1112,10 @@ mod tests {
 
     #[test]
     fn store_records_the_class_it_is_given() {
-        for class in [OutcomeClass::Built, OutcomeClass::Fetched] {
+        for (made, class) in [
+            (Made::Built, OutcomeClass::Built),
+            (Made::Fetched, OutcomeClass::Fetched),
+        ] {
             let mut cache = Rows::default();
             let kept = Kept {
                 digest: digest_of(&file("app")),
@@ -1115,7 +1126,7 @@ mod tests {
                 &node("//:app", |_| {}),
                 Finished {
                     key: key(&["app"]),
-                    class: class.clone(),
+                    made,
                     outputs: vec![kept],
                     printed: printed(),
                 },
