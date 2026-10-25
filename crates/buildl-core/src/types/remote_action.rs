@@ -5,14 +5,17 @@
 //! this value and an adapter turns it into the wire form, so nothing about that form is known
 //! here.
 //!
-//! Responsibilities: [`RemoteFile`], [`RemotePlatform`] and [`RemoteAction`].
+//! Responsibilities: [`RemoteFile`], [`RemotePlatform`] and [`RemoteAction`], and the words a
+//! remote cache uses for a [`Platform`].
 //!
 //! Non-responsibilities: building one from a ready action, and encoding it, which the phase that
 //! executes and the remote adapter do.
 
 use std::collections::BTreeMap;
 
-use crate::types::{Command, Digest, EnvName, EnvValue, FileMode, OutputPath, RootPath, Timeout};
+use crate::types::{
+    Command, Digest, EnvName, EnvValue, FileMode, OutputPath, Platform, RootPath, Timeout,
+};
 
 /// One file of the input root: where it is, the digest of its bytes, and whether it may be run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,10 +32,38 @@ pub struct RemoteFile {
 /// The machine an action runs on, in the two properties a remote cache tells machines apart by.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RemotePlatform {
+    os_family: String,
+    isa: String,
+}
+
+impl RemotePlatform {
+    /// The machine `platform` names, in the words a remote cache uses: the operating system is
+    /// kept as it is, and `aarch64` and `x86_64` become `arm-a64` and `x86-64`. Any other
+    /// architecture is kept as it is.
+    #[must_use]
+    pub fn of(platform: &Platform) -> Self {
+        let isa = match platform.arch() {
+            "aarch64" => "arm-a64",
+            "x86_64" => "x86-64",
+            other => other,
+        };
+        Self {
+            os_family: platform.os().to_owned(),
+            isa: isa.to_owned(),
+        }
+    }
+
     /// The operating system family, such as `linux` or `macos`.
-    pub os_family: String,
+    #[must_use]
+    pub fn os_family(&self) -> &str {
+        &self.os_family
+    }
+
     /// The instruction set, such as `x86-64` or `arm-a64`.
-    pub isa: String,
+    #[must_use]
+    pub fn isa(&self) -> &str {
+        &self.isa
+    }
 }
 
 /// An action as a remote cache is asked about it.
@@ -66,7 +97,8 @@ mod tests {
 
     use super::{RemoteAction, RemoteFile, RemotePlatform};
     use crate::types::{
-        Argument, Command, Digest, EnvName, EnvValue, FileMode, RootPath, SourcePath, Timeout,
+        Argument, Command, Digest, EnvName, EnvValue, FileMode, Platform, RootPath, SourcePath,
+        Timeout,
     };
 
     fn action(env: &[(&str, &str)]) -> RemoteAction {
@@ -88,10 +120,7 @@ mod tests {
                 digest: Digest::of(b"int main(void);"),
                 mode: None,
             }],
-            platform: RemotePlatform {
-                os_family: "linux".to_owned(),
-                isa: "x86-64".to_owned(),
-            },
+            platform: RemotePlatform::of(&Platform::parse("linux/x86_64").unwrap()),
             timeout: Timeout::default(),
         }
     }
@@ -109,6 +138,19 @@ mod tests {
         let mut other = action(&[]);
         other.salt = Digest::of(b"another key");
         assert_ne!(action(&[]), other);
+    }
+
+    #[test]
+    fn the_platform_maps_os_and_arch() {
+        for (platform, os_family, isa) in [
+            ("macos/aarch64", "macos", "arm-a64"),
+            ("linux/x86_64", "linux", "x86-64"),
+            ("linux/riscv64", "linux", "riscv64"),
+        ] {
+            let mapped = RemotePlatform::of(&Platform::parse(platform).unwrap());
+            assert_eq!(mapped.os_family(), os_family, "{platform}");
+            assert_eq!(mapped.isa(), isa, "{platform}");
+        }
     }
 
     #[test]

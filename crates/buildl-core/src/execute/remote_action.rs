@@ -3,8 +3,8 @@
 //! Its own file because the remote cache is keyed by a description of the work, not by buildl's
 //! own key, and building that description reads the content store: every file a dependency
 //! produced is part of the input root, and the key holds only the digest of each output's
-//! manifest. The fold from a ready action, its key and the execution settings into that
-//! description is pure apart from those reads, so it is kept apart from running anything.
+//! manifest. The fold from a task and the execution settings into that description is pure
+//! apart from those reads, so it is kept apart from running anything.
 //!
 //! Responsibilities: [`remote_action`].
 //!
@@ -12,14 +12,14 @@
 //! the bytes of a declared input, which are the remote adapter's.
 
 use crate::error::{Error, PortName, Result};
+use crate::execute::perform::Task;
 use crate::ports::ContentStore;
 use crate::types::{
-    ActionKey, Diagnostic, Digest, Execution, OutputManifest, OutputPath, ReadyAction,
-    RemoteAction, RemoteFile, RemotePlatform, RootPath,
+    ActionKey, Diagnostic, Digest, Execution, OutputManifest, OutputPath, RemoteAction, RemoteFile,
+    RemotePlatform, RootPath,
 };
 
-/// The `RemoteAction` of the task whose action is `ready` and whose key is `key`, run under
-/// `execution`.
+/// The `RemoteAction` of `task`, run under `execution`.
 ///
 /// The environment is the action's own with the variables the strategy pins laid over it, as
 /// the strategy sets them where the command runs. The outputs are sorted and hold no path
@@ -29,14 +29,22 @@ use crate::types::{
 ///
 /// # Errors
 ///
-/// Returns [`Error::Adapter`], naming [`PortName::ContentStore`], when a dependency output's
+/// Returns [`Error::Adapter`], naming [`PortName::ContentStore`], when the task's action and
+/// its key do not name the same number of dependency outputs, or when a dependency output's
 /// manifest is not held, cannot be read, or is not a manifest; and whatever `cas` returns.
-pub fn remote_action<C: ContentStore>(
-    ready: &ReadyAction,
-    key: &ActionKey,
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the worker that asks the remote cache calls this; nothing in the build does yet"
+    )
+)]
+pub(crate) fn remote_action<C: ContentStore>(
+    task: &Task,
     execution: &Execution,
     cas: &C,
 ) -> Result<RemoteAction> {
+    let (ready, key) = (&task.action, &task.key);
     let mut env = ready.env.clone();
     env.extend(execution.strategy.pinned());
 
@@ -55,7 +63,22 @@ pub fn remote_action<C: ContentStore>(
             mode: None,
         })
         .collect();
-    let produced = components.deps.iter().flat_map(|dep| &dep.outputs);
+    let produced: Vec<_> = components
+        .deps
+        .iter()
+        .flat_map(|dep| &dep.outputs)
+        .collect();
+    if produced.len() != ready.deps.len() {
+        return Err(Error::Adapter {
+            port: PortName::ContentStore,
+            diagnostic: Diagnostic::new(format!(
+                "the action of {} names {} dependency outputs but its key holds {}",
+                ready.label,
+                ready.deps.len(),
+                produced.len()
+            )),
+        });
+    }
     for (at, produced) in ready.deps.iter().zip(produced) {
         files.extend(output_files(at, &produced.digest, cas)?);
     }
@@ -107,17 +130,7 @@ fn output_files<C: ContentStore>(
 
 /// The machine `key` was made for, in the words a remote cache tells machines apart by.
 fn platform_of(key: &ActionKey) -> RemotePlatform {
-    let platform = key.components().own.platform.as_str();
-    let (os, arch) = platform.split_once('/').unwrap_or((platform, ""));
-    let isa = match arch {
-        "aarch64" => "arm-a64",
-        "x86_64" => "x86-64",
-        other => other,
-    };
-    RemotePlatform {
-        os_family: os.to_owned(),
-        isa: isa.to_owned(),
-    }
+    RemotePlatform::of(&key.components().own.platform)
 }
 
 #[cfg(test)]
@@ -132,11 +145,13 @@ mod tests {
     use super::remote_action;
     use crate::error::{Error, PortName, Result};
     use crate::execute::fixtures::{command, digest_of, file, label, output_path, own, path, tree};
+    use crate::execute::perform::Task;
     use crate::ports::ContentStore;
     use crate::types::{
         ActionKey, DepProducts, Digest, EnvName, EnvValue, Execution, FileMode, InputDigest,
-        Isolation, KeyComponents, NetworkAccess, OutputManifest, OutputName, OutputPath, Platform,
-        Produced, ReadyAction, RemoteAction, RemoteFile, RootPath, StoredFile, Timeout, TreePath,
+        Isolation, KeyComponents, NetworkAccess, NodeId, OutputManifest, OutputName, OutputPath,
+        Platform, Produced, ReadyAction, RemoteAction, RemoteFile, RootPath, StoredFile,
+        TargetRole, Timeout, TreePath,
     };
 
     /// A store that holds exactly the manifests it is given.
@@ -234,16 +249,25 @@ mod tests {
         }
     }
 
-    fn describe(ready: &ReadyAction, key: &ActionKey, execution: &Execution) -> RemoteAction {
-        remote_action(ready, key, execution, &Manifests::holding(&[])).unwrap()
+    fn task(action: ReadyAction, key: ActionKey) -> Task {
+        Task {
+            node: NodeId::new(0),
+            role: TargetRole::Build,
+            key,
+            action,
+        }
+    }
+
+    fn describe(ready: ReadyAction, key: ActionKey, execution: &Execution) -> RemoteAction {
+        remote_action(&task(ready, key), execution, &Manifests::holding(&[])).unwrap()
     }
 
     #[test]
     fn the_salt_is_the_buildl_key() {
         let key = plain_key();
         let action = describe(
-            &ready(BTreeMap::new(), Vec::new()),
-            &key,
+            ready(BTreeMap::new(), Vec::new()),
+            key.clone(),
             &Execution::default(),
         );
         assert_eq!(action.salt, key.digest());
@@ -252,9 +276,9 @@ mod tests {
 
     #[test]
     fn pinned_variables_override_declared_ones_under_the_sandbox() {
-        let declared = ready(env(&[("TZ", "X"), ("KEEP", "1")]), Vec::new());
+        let declared = || ready(env(&[("TZ", "X"), ("KEEP", "1")]), Vec::new());
 
-        let sandboxed = describe(&declared, &plain_key(), &execution(Isolation::Sandbox));
+        let sandboxed = describe(declared(), plain_key(), &execution(Isolation::Sandbox));
         assert_eq!(
             sandboxed.env,
             env(&[
@@ -265,7 +289,7 @@ mod tests {
             ])
         );
 
-        let bare = describe(&declared, &plain_key(), &execution(Isolation::Bare));
+        let bare = describe(declared(), plain_key(), &execution(Isolation::Bare));
         assert_eq!(bare.env, env(&[("KEEP", "1"), ("TZ", "X")]));
     }
 
@@ -274,8 +298,8 @@ mod tests {
         let b = output_path("//app:app", "b");
         let a = output_path("//app:app", "a");
         let action = describe(
-            &ready(BTreeMap::new(), vec![b.clone(), a.clone(), b.clone()]),
-            &plain_key(),
+            ready(BTreeMap::new(), vec![b.clone(), a.clone(), b.clone()]),
+            plain_key(),
             &Execution::default(),
         );
         assert_eq!(action.outputs, vec![a, b]);
@@ -327,7 +351,7 @@ mod tests {
             ],
         );
 
-        let described = remote_action(&action, &key, &Execution::default(), &held).unwrap();
+        let described = remote_action(&task(action, key), &Execution::default(), &held).unwrap();
 
         let entry = |name: &str, content: &str| RemoteFile {
             path: RootPath::from(&headers_at.entry(&TreePath::parse(name).unwrap())),
@@ -365,37 +389,74 @@ mod tests {
             ("linux/riscv64", "linux", "riscv64"),
         ] {
             let described = describe(
-                &ready(BTreeMap::new(), Vec::new()),
-                &key(platform, Vec::new(), Vec::new()),
+                ready(BTreeMap::new(), Vec::new()),
+                key(platform, Vec::new(), Vec::new()),
                 &Execution::default(),
             );
-            assert_eq!(described.platform.os_family, os_family, "{platform}");
-            assert_eq!(described.platform.isa, isa, "{platform}");
+            assert_eq!(described.platform.os_family(), os_family, "{platform}");
+            assert_eq!(described.platform.isa(), isa, "{platform}");
+        }
+    }
+
+    /// A task with one dependency output, `lib` of `//a:a`, whose manifest is `lib`.
+    fn task_with_a_dependency(lib: &OutputManifest) -> Task {
+        let mut action = ready(BTreeMap::new(), Vec::new());
+        action.deps = vec![output_path("//a:a", "lib")];
+        let key = key(
+            "linux/x86_64",
+            Vec::new(),
+            vec![dependency("//a:a", vec![produced("lib", lib)])],
+        );
+        task(action, key)
+    }
+
+    /// Asserts that `error` is a content store failure whose message holds `part`.
+    fn assert_content_store_error(error: Error, part: &str) {
+        match error {
+            Error::Adapter { port, diagnostic } => {
+                assert_eq!(port, PortName::ContentStore);
+                assert!(diagnostic.to_string().contains(part), "{diagnostic}");
+            }
+            other => unreachable!("expected Adapter, got {other:?}"),
         }
     }
 
     #[test]
     fn a_dependency_manifest_not_held_is_a_content_store_error() {
         let lib = file("lib");
-        let mut action = ready(BTreeMap::new(), Vec::new());
-        action.deps = vec![output_path("//a:a", "lib")];
-        let key = key(
-            "linux/x86_64",
-            Vec::new(),
-            vec![dependency("//a:a", vec![produced("lib", &lib)])],
-        );
-
         let error = remote_action(
-            &action,
-            &key,
+            &task_with_a_dependency(&lib),
             &Execution::default(),
             &Manifests::holding(&[]),
         )
         .unwrap_err();
-        match error {
-            Error::Adapter { port, .. } => assert_eq!(port, PortName::ContentStore),
-            other => unreachable!("expected Adapter, got {other:?}"),
-        }
+        assert_content_store_error(error, "is not held");
+    }
+
+    #[test]
+    fn a_dependency_manifest_that_is_not_a_manifest_is_a_content_store_error() {
+        let lib = file("lib");
+        let held = Manifests(BTreeMap::from([(
+            digest_of(&lib),
+            b"not a manifest".to_vec(),
+        )]));
+        let error =
+            remote_action(&task_with_a_dependency(&lib), &Execution::default(), &held).unwrap_err();
+        assert_content_store_error(error, "is not a manifest");
+    }
+
+    #[test]
+    fn an_action_and_a_key_naming_different_dependency_outputs_is_an_error() {
+        let lib = file("lib");
+        let mut mismatched = task_with_a_dependency(&lib);
+        mismatched.action.deps.clear();
+        let error = remote_action(
+            &mismatched,
+            &Execution::default(),
+            &Manifests::holding(&[&lib]),
+        )
+        .unwrap_err();
+        assert_content_store_error(error, "names 0 dependency outputs but its key holds 1");
     }
 
     #[test]
@@ -404,11 +465,7 @@ mod tests {
             timeout: Timeout::parse("90s").unwrap(),
             ..Execution::default()
         };
-        let described = describe(
-            &ready(BTreeMap::new(), Vec::new()),
-            &plain_key(),
-            &execution,
-        );
+        let described = describe(ready(BTreeMap::new(), Vec::new()), plain_key(), &execution);
         assert_eq!(described.timeout, Timeout::parse("90s").unwrap());
     }
 }

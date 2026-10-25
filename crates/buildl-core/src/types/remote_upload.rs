@@ -4,7 +4,8 @@
 //! which the local manifests do not hold: the local content store knows a file by its digest
 //! alone. The sizes are read once, where the bytes are, and carried here.
 //!
-//! Responsibilities: [`RemoteContent`], [`RemoteOutput`], [`RemoteUpload`] and [`Uploaded`].
+//! Responsibilities: [`RemoteContent`], [`RemoteTree`], [`RemoteOutput`], [`RemoteUpload`] and
+//! [`Uploaded`].
 //!
 //! Non-responsibilities: reading the bytes, and sending them, which the content store and the
 //! remote adapter do.
@@ -21,8 +22,27 @@ pub enum RemoteContent {
         /// Whether the file may be run.
         mode: FileMode,
     },
-    /// A directory of regular files, in path order.
-    Tree(Vec<RemoteTreeFile>),
+    /// A directory of regular files.
+    Tree(RemoteTree),
+}
+
+/// The regular files of an output directory, always in path order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteTree(Vec<RemoteTreeFile>);
+
+impl RemoteTree {
+    /// The directory holding `files`, put in path order.
+    #[must_use]
+    pub fn new(mut files: Vec<RemoteTreeFile>) -> Self {
+        files.sort_by(|left, right| left.path.cmp(&right.path));
+        Self(files)
+    }
+
+    /// The files, in path order.
+    #[must_use]
+    pub fn files(&self) -> &[RemoteTreeFile] {
+        &self.0
+    }
 }
 
 /// One declared output of a run.
@@ -61,7 +81,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use super::{RemoteContent, RemoteOutput, RemoteUpload, Uploaded};
+    use super::{RemoteContent, RemoteOutput, RemoteTree, RemoteUpload, Uploaded};
     use crate::types::{
         Blob, Directory, FileMode, Label, OutputName, OutputPath, RemoteTreeFile, RootPath,
         SourcePath, TreePath,
@@ -81,18 +101,36 @@ mod tests {
     #[test]
     fn a_tree_output_lists_each_file_with_its_size() {
         let upload = RemoteUpload {
-            outputs: vec![output(RemoteContent::Tree(vec![RemoteTreeFile {
-                path: TreePath::parse("a.txt").unwrap(),
-                blob: Blob::of(b"abc"),
-                mode: FileMode::Plain,
-            }]))],
+            outputs: vec![output(RemoteContent::Tree(RemoteTree::new(vec![
+                RemoteTreeFile {
+                    path: TreePath::parse("a.txt").unwrap(),
+                    blob: Blob::of(b"abc"),
+                    mode: FileMode::Plain,
+                },
+            ])))],
             stdout: Blob::of(b""),
             stderr: Blob::of(b""),
         };
         let RemoteContent::Tree(files) = &upload.outputs[0].content else {
             unreachable!("the output was built as a tree");
         };
-        assert_eq!(files[0].blob.size, 3);
+        assert_eq!(files.files()[0].blob.size, 3);
+    }
+
+    #[test]
+    fn a_tree_keeps_its_files_in_path_order_whatever_order_they_came_in() {
+        let file = |path: &str| RemoteTreeFile {
+            path: TreePath::parse(path).unwrap(),
+            blob: Blob::of(path.as_bytes()),
+            mode: FileMode::Plain,
+        };
+        let tree = RemoteTree::new(vec![file("b.h"), file("a/z.h"), file("a/a.h")]);
+        let paths: Vec<&str> = tree.files().iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["a/a.h", "a/z.h", "b.h"]);
+        assert_eq!(
+            tree,
+            RemoteTree::new(vec![file("a/a.h"), file("b.h"), file("a/z.h")])
+        );
     }
 
     #[test]

@@ -45,8 +45,8 @@
 //! - [`RemoteAction`], [`RemoteFile`] and [`RemotePlatform`] — the action a remote cache is
 //!   asked about; [`RemoteHit`] with [`RemoteOutputFile`], [`RemoteOutputDirectory`] and
 //!   [`RemoteTreeFile`] — the result it answers with, unchecked; [`RemoteUpload`] with
-//!   [`RemoteOutput`] and [`RemoteContent`], and [`Uploaded`] — what a run stores there and how
-//!   that ended.
+//!   [`RemoteOutput`], [`RemoteContent`] and [`RemoteTree`], and [`Uploaded`] — what a run stores
+//!   there and how that ended.
 //! - [`RemoteUse`], [`RemoteFailure`] and [`RemotePolicy`] — what a run does with the remote;
 //!   [`RemoteCall`] and [`RemoteNotice`] — what a build says about it.
 //! - [`RemoteSettings`] — the remote cache a workspace names, built through
@@ -245,7 +245,7 @@ pub use remote_settings::{
     HeaderName, HostPath, InstanceName, RemoteScheme, RemoteSettings, RemoteSettingsBuilder,
     RemoteUrl, TokenSource,
 };
-pub use remote_upload::{RemoteContent, RemoteOutput, RemoteUpload, Uploaded};
+pub use remote_upload::{RemoteContent, RemoteOutput, RemoteTree, RemoteUpload, Uploaded};
 pub use rerun::Rerun;
 pub use root_path::RootPath;
 pub use sample::Sample;

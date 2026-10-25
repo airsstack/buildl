@@ -106,10 +106,9 @@ mod tests {
 
     use super::PortSet;
     use crate::error::Result;
-    use crate::ports::NoRemote;
     use crate::ports::{
         ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher,
-        EventLog, ExecStrategy, GraphRecord, Host, Manifest, Ports, Reporter, RunHistory,
+        EventLog, ExecStrategy, GraphRecord, Host, Manifest, NoRemote, Ports, Reporter, RunHistory,
         StatCache, ToolResolver,
     };
     use crate::types::{

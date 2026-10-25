@@ -59,8 +59,8 @@ mod tests {
     use crate::error::{Error, PortName, Result};
     use crate::ports::{BlobSource, RemoteCache};
     use crate::types::{
-        Argument, Blob, Command, Digest, RemoteAction, RemotePlatform, RemoteUpload, Timeout,
-        Uploaded,
+        Argument, Blob, Command, Digest, Platform, RemoteAction, RemotePlatform, RemoteUpload,
+        Timeout, Uploaded,
     };
 
     fn action() -> RemoteAction {
@@ -70,10 +70,7 @@ mod tests {
             env: BTreeMap::new(),
             outputs: Vec::new(),
             files: Vec::new(),
-            platform: RemotePlatform {
-                os_family: "linux".to_owned(),
-                isa: "x86-64".to_owned(),
-            },
+            platform: RemotePlatform::of(&Platform::parse("linux/x86_64").unwrap()),
             timeout: Timeout::default(),
         }
     }
