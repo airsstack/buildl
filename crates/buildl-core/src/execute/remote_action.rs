@@ -32,13 +32,6 @@ use crate::types::{
 /// Returns [`Error::Adapter`], naming [`PortName::ContentStore`], when the task's action and
 /// its key do not name the same number of dependency outputs, or when a dependency output's
 /// manifest is not held, cannot be read, or is not a manifest; and whatever `cas` returns.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the worker that asks the remote cache calls this; nothing in the build does yet"
-    )
-)]
 pub(crate) fn remote_action<C: ContentStore>(
     task: &Task,
     execution: &Execution,

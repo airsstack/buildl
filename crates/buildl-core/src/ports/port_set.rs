@@ -115,7 +115,8 @@ mod tests {
         Approval, Attribution, BuildFile, CacheRow, Captured, Ceiling, Channel, Digest, Directory,
         Discovered, EnvName, EnvValue, Evaluated, Exit, FileMode, Found, InputStat, Label,
         LiveSink, LogLine, OutcomeEvent, OutputPath, Platform, Program, RawOutcome, ReadyAction,
-        SourcePath, StatEntry, Summary, TargetGraph, Timestamp, Turn, WantedSet, Workspace,
+        RemoteNotice, SourcePath, StatEntry, Summary, TargetGraph, Timestamp, Turn, WantedSet,
+        Workspace,
     };
 
     /// One port type answering that there is nothing, standing in for every port.
@@ -294,6 +295,8 @@ mod tests {
         fn printed(&mut self, _label: &Label, _channel: Channel, _bytes: &[u8]) {}
 
         fn finished(&mut self, _event: &OutcomeEvent, _printed: Captured<'_>) {}
+
+        fn remote(&mut self, _notice: &RemoteNotice) {}
 
         fn summary(&mut self, _summary: Summary) {}
     }

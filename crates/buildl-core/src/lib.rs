@@ -185,11 +185,11 @@ pub use types::{
     RemoteContent, RemoteFailure, RemoteFile, RemoteHit, RemoteNotice, RemoteOutput,
     RemoteOutputDirectory, RemoteOutputFile, RemotePlatform, RemotePolicy, RemoteScheme,
     RemoteSettings, RemoteSettingsBuilder, RemoteTree, RemoteTreeFile, RemoteUpload, RemoteUrl,
-    RemoteUse, Rerun, Rev, RootPath, Rule, Sample, Scope, Setting, SettingName, SettingValue,
-    SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
-    StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, TagName, Tally, Target,
-    TargetGraph, TargetName, TargetRole, Timeout, Timestamp, TokenSource, ToolIdentity, Tree,
-    TreeEntry, TreePath, Turn, Unfinished, Uploaded, Verdict, Verification, Want, WantedSet,
+    RemoteUse, Rerun, Rev, RootPath, Rule, RunChoices, Sample, Scope, Setting, SettingName,
+    SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
+    StagedSetting, StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, TagName, Tally,
+    Target, TargetGraph, TargetName, TargetRole, Timeout, Timestamp, TokenSource, ToolIdentity,
+    Tree, TreeEntry, TreePath, Turn, Unfinished, Uploaded, Verdict, Verification, Want, WantedSet,
     Workers, Workspace, Written,
 };
 pub use verify::verify;

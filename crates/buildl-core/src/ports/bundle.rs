@@ -33,8 +33,8 @@ use crate::ports::{
 ///     Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy,
 ///     FileMode, Found, GraphRecord, Host, InputStat, Label, LiveSink, LogLine, Manifest,
 ///     NoRemote, OutcomeEvent, OutputPath, Platform, PortName, Ports, Program, RawOutcome,
-///     ReadyAction, Reporter, Result, RunHistory, SourcePath, StatCache, StatEntry, Summary,
-///     TargetGraph, Timestamp, ToolResolver, Turn, WantedSet, Workspace,
+///     ReadyAction, RemoteNotice, Reporter, Result, RunHistory, SourcePath, StatCache, StatEntry,
+///     Summary, TargetGraph, Timestamp, ToolResolver, Turn, WantedSet, Workspace,
 /// };
 ///
 /// /// Every port at once, each answering that there is nothing.
@@ -229,6 +229,8 @@ use crate::ports::{
 ///     fn printed(&mut self, _label: &Label, _channel: Channel, _bytes: &[u8]) {}
 ///
 ///     fn finished(&mut self, _event: &OutcomeEvent, _printed: Captured<'_>) {}
+///
+///     fn remote(&mut self, _notice: &RemoteNotice) {}
 ///
 ///     fn summary(&mut self, _summary: Summary) {}
 /// }

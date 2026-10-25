@@ -29,8 +29,8 @@ use crate::ports::{
 use crate::resolve::{narrow, reach, resolve};
 use crate::types::{
     ActionOutcome, Declaration, Diagnostic, Discovered, EntryName, Label, LiveOutput, Loaded,
-    NodeId, OnFailure, Plan, Purpose, Query, Rerun, Sample, Scope, SettingName, SettingValue,
-    TargetGraph, TargetRole, Verdict, Verification,
+    NodeId, OnFailure, Plan, Purpose, Query, RemotePolicy, Rerun, RunChoices, Sample, Scope,
+    SettingName, SettingValue, TargetGraph, TargetRole, Verdict, Verification,
 };
 use crate::verify::verify;
 
@@ -45,6 +45,7 @@ struct Prepared {
 /// The pipeline over one chosen implementation of each port.
 pub struct Pipeline<P: Ports> {
     ports: PortSet<P>,
+    remote: RemotePolicy,
 }
 
 impl<P: Ports> fmt::Debug for Pipeline<P>
@@ -54,15 +55,28 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Pipeline")
             .field("ports", &self.ports)
+            .field("remote", &self.remote)
             .finish()
     }
 }
 
 impl<P: Ports> Pipeline<P> {
-    /// Assembles a pipeline from its ports.
+    /// Assembles a pipeline from its ports. It never consults the remote cache until
+    /// [`Pipeline::set_remote`] says to.
     #[must_use]
     pub const fn new(ports: PortSet<P>) -> Self {
-        Self { ports }
+        Self {
+            ports,
+            remote: RemotePolicy::OFF,
+        }
+    }
+
+    /// Sets how [`Pipeline::build`] and [`Pipeline::test`] use the remote cache, for the
+    /// discovery run and the run that follows it alike, until it is set again; see
+    /// [`execute`](fn@execute). The policy is [`RemotePolicy::OFF`] until then, and no other
+    /// command ever calls the remote.
+    pub const fn set_remote(&mut self, remote: RemotePolicy) {
+        self.remote = remote;
     }
 
     /// The ports this pipeline runs over.
@@ -314,15 +328,13 @@ impl<P: Ports> Pipeline<P> {
     ) -> Result<Vec<ActionOutcome>> {
         let plan = plan(graph, overrides, rerun, &mut self.ports)?;
         negotiate(plan.wanted(), plan.attribution(), &mut self.ports.approver)?;
-        execute(
-            whole,
-            graph,
-            &plan,
+        let choices = RunChoices {
             on_failure,
             live,
             rerun,
-            &mut self.ports,
-        )
+            remote: self.remote,
+        };
+        execute(whole, graph, &plan, choices, &mut self.ports)
     }
 
     /// Loads the workspace, builds its discovery targets first when it declares any, resolves it,
@@ -342,6 +354,9 @@ impl<P: Ports> Pipeline<P> {
     ///
     /// Once planned, the plan's wanted set is put to the [`Approver`](crate::Approver), and
     /// nothing runs if it does not approve, even when every target is cached.
+    ///
+    /// The remote cache is used as [`Pipeline::set_remote`] last said, by the discovery run and
+    /// the build alike.
     ///
     /// A workspace that declares a discovery target is loaded without discovery results, its
     /// discovery targets are built as a build of just them is, then it is loaded again with their
@@ -404,6 +419,9 @@ impl<P: Ports> Pipeline<P> {
     ///
     /// Once planned, the plan's wanted set is put to the [`Approver`](crate::Approver), and
     /// nothing runs if it does not approve, even when every target is cached.
+    ///
+    /// The remote cache is used as [`Pipeline::set_remote`] last said, by the discovery run and
+    /// the test run alike.
     ///
     /// A workspace that declares a discovery target is run as [`Pipeline::build`] runs it: its
     /// discovery targets are built first, as a build of just them is, then the workspace is

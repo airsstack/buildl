@@ -9,7 +9,9 @@
 //! Non-responsibilities: recording what a build did. The outcomes a build returns and the log
 //! it writes hold that; this type keeps nothing.
 
-use buildl_core::{Captured, Channel, Label, OutcomeEvent, ReadyAction, Reporter, Summary};
+use buildl_core::{
+    Captured, Channel, Label, OutcomeEvent, ReadyAction, RemoteNotice, Reporter, Summary,
+};
 
 /// A reporter that shows nothing.
 #[derive(Debug, Clone, Copy, Default)]
@@ -23,6 +25,8 @@ impl Reporter for Silent {
     fn printed(&mut self, _label: &Label, _channel: Channel, _bytes: &[u8]) {}
 
     fn finished(&mut self, _event: &OutcomeEvent, _printed: Captured<'_>) {}
+
+    fn remote(&mut self, _notice: &RemoteNotice) {}
 
     fn summary(&mut self, _summary: Summary) {}
 }
@@ -38,9 +42,9 @@ mod tests {
     use std::path::PathBuf;
 
     use buildl_core::{
-        ActionOutcome, Argument, Captured, Channel, Command, Directory, Label, NetworkAccess,
-        OutcomeClass, OutcomeEvent, Provenance, ReadyAction, Reporter, Summary, Tally, TargetRole,
-        Timestamp,
+        ActionOutcome, Argument, Captured, Channel, Command, Diagnostic, Directory, Label,
+        NetworkAccess, OutcomeClass, OutcomeEvent, Provenance, ReadyAction, RemoteCall,
+        RemoteNotice, Reporter, Summary, Tally, TargetRole, Timestamp,
     };
 
     use super::Silent;
@@ -85,6 +89,10 @@ mod tests {
                 stderr: b"",
             },
         );
+        silent.remote(&RemoteNotice::Failed {
+            call: RemoteCall::Lookup,
+            diagnostic: Diagnostic::new("unreachable"),
+        });
         silent.summary(Summary {
             all: Tally {
                 failed: 0,

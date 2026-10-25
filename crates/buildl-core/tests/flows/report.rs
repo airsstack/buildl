@@ -299,7 +299,9 @@ fn never_interleaved(calls: &[Reported]) -> bool {
             live = None;
             same
         }
-        Reported::Begun(_) | Reported::Started(..) | Reported::Summary(_) => true,
+        Reported::Begun(_) | Reported::Started(..) | Reported::Remote(_) | Reported::Summary(_) => {
+            true
+        }
     })
 }
 

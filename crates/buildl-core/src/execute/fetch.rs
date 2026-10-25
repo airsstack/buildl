@@ -134,13 +134,6 @@ fn manifest_of(
 /// [`usable`] for `task`, when a blob differs from the length or hash it was named with, when a
 /// tree holds what a build cannot place or is not a tree, and whatever `remote` and `cas`
 /// return.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the worker that consults the remote cache calls this; nothing in the build does yet"
-    )
-)]
 pub(crate) fn fetch<R: RemoteCache, C: ContentStore>(
     hit: &RemoteHit,
     task: &Task,

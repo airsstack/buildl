@@ -18,8 +18,8 @@
 use std::io::Write;
 
 use buildl_core::{
-    Captured, Channel, Label, OutcomeClass, OutcomeEvent, ReadyAction, Reporter, Rerun, Summary,
-    Tally, TargetRole,
+    Captured, Channel, Label, OutcomeClass, OutcomeEvent, ReadyAction, RemoteNotice, Reporter,
+    Rerun, Summary, Tally, TargetRole,
 };
 
 use crate::report::block::{block, header, summary_line, test_line, trailer};
@@ -199,6 +199,18 @@ impl<W: Write> TerminalReporter<W> {
     }
 }
 
+/// The line that tells of `notice`.
+fn warning(notice: &RemoteNotice) -> String {
+    match notice {
+        RemoteNotice::Failed { call, diagnostic } => format!(
+            "warning: remote cache {call} failed: {diagnostic}; the build goes on without it\n"
+        ),
+        RemoteNotice::InputChanged { label, path } => format!(
+            "warning: remote cache: {path} changed while {label} ran; its result was not uploaded\n"
+        ),
+    }
+}
+
 impl<W: Write> Reporter for TerminalReporter<W> {
     /// Writes nothing: keeps the number of targets, and forgets what an earlier build left.
     fn begun(&mut self, targets: usize) {
@@ -264,6 +276,20 @@ impl<W: Write> Reporter for TerminalReporter<W> {
         self.emit(&frame);
     }
 
+    /// Writes one warning line, after ending a line left open and erasing the status line, and
+    /// draws the status line again.
+    fn remote(&mut self, notice: &RemoteNotice) {
+        let mut frame = Vec::new();
+        self.erase(&mut frame);
+        if self.mid_line {
+            frame.push(b'\n');
+            self.mid_line = false;
+        }
+        frame.extend_from_slice(warning(notice).as_bytes());
+        self.draw(&mut frame);
+        self.emit(&frame);
+    }
+
     /// Erases the status line and writes the summary line: the count of targets for a build, the
     /// count of tests for a test run.
     ///
@@ -301,7 +327,8 @@ mod tests {
     use buildl_core::{
         ActionOutcome, Argument, Captured, Channel, Command, Diagnostic, ExpandedDescription,
         InfraKind, Label, NetworkAccess, OutcomeClass, OutcomeEvent, OutputName, Provenance,
-        ReadyAction, Reporter, Rerun, Summary, Tally, TargetRole, Timestamp,
+        ReadyAction, RemoteCall, RemoteNotice, Reporter, Rerun, Summary, Tally, TargetRole,
+        Timestamp,
     };
 
     use super::{Mode, Report, TerminalReporter, TestBlocks, block};
@@ -716,6 +743,40 @@ mod tests {
                 "    command: cc -c lib/text.c -o out/lib/text\n",
                 "2 failed, 1 skipped, 1 cached\n",
             )
+        );
+    }
+
+    #[test]
+    fn a_remote_failure_is_one_warning_line_naming_the_call_and_the_diagnostic() {
+        let mut reporter = reporter(Mode::Plain, Paint::Plain);
+        reporter.begun(1);
+        reporter.remote(&RemoteNotice::Failed {
+            call: RemoteCall::Lookup,
+            diagnostic: Diagnostic::new("the server cannot be reached"),
+        });
+        assert_eq!(
+            String::from_utf8(written(&mut reporter)).unwrap(),
+            "warning: remote cache lookup failed: the server cannot be reached; the build goes on without it\n"
+        );
+    }
+
+    #[test]
+    fn a_warning_ends_a_line_left_open_and_keeps_the_status_line_below_it() {
+        let mut reporter = reporter(Mode::Live, Paint::Plain);
+        reporter.begun(1);
+        reporter.started(&action("//lib:text", None));
+        reporter.printed(&label("//lib:text"), Channel::Stdout, b"partial");
+        let _ = written(&mut reporter);
+        reporter.remote(&RemoteNotice::Failed {
+            call: RemoteCall::Download,
+            diagnostic: Diagnostic::new("reset"),
+        });
+        let text = String::from_utf8(written(&mut reporter)).unwrap();
+        assert!(
+            text.starts_with(
+                "\nwarning: remote cache download failed: reset; the build goes on without it\n"
+            ),
+            "{text:?}"
         );
     }
 

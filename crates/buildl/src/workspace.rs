@@ -591,8 +591,8 @@ mod tests {
     use buildl_core::json::canonical;
     use buildl_core::{
         Captured, Channel, Diagnostic, Error, Label, LiveOutput, NameKind, OnFailure, OutcomeClass,
-        OutcomeEvent, PortName, ReadyAction, Reporter, Rerun, Result, Sample, Scope, Summary,
-        Tally, Verdict, Want,
+        OutcomeEvent, PortName, ReadyAction, RemoteNotice, Reporter, Rerun, Result, Sample, Scope,
+        Summary, Tally, Verdict, Want,
     };
 
     use crate::approver::NoTerminal;
@@ -703,6 +703,8 @@ mod tests {
         fn finished(&mut self, event: &OutcomeEvent, _printed: Captured<'_>) {
             self.finished.push(event.outcome.label.to_string());
         }
+
+        fn remote(&mut self, _notice: &RemoteNotice) {}
 
         fn summary(&mut self, summary: Summary) {
             self.summaries.push(summary);

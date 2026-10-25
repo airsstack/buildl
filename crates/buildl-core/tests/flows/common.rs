@@ -12,13 +12,16 @@ use buildl_core::{
     ContentStore, DeclarationOrder, DeclarationSource, Diagnostic, Digest, Digester, Directory,
     Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EvaluationFailure, EventLog,
     ExecStrategy, Exit, FileStat, Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest,
-    NetworkAccess, NoRemote, Origin, OutcomeEvent, OutputPath, Platform, PluginName, PluginRef,
+    NetworkAccess, Origin, OutcomeEvent, OutputPath, Platform, PluginName, PluginRef,
     PluginVersion, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory,
     SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
     StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver,
     WantedSet, Workspace, Written,
 };
-use buildl_core::{ActionOutcome, Pipeline};
+use buildl_core::{
+    ActionOutcome, Blob, BlobSource, Pipeline, RemoteAction, RemoteCache, RemoteHit, RemoteNotice,
+    RemoteOutputFile, RemoteTreeFile, RemoteUpload, Uploaded,
+};
 use buildl_core::{
     Captured, Channel, DenialReason, GraphRecord, LiveSink, OutcomeClass, Reporter, Summary,
     TargetGraph, Turn, json,
@@ -1044,6 +1047,8 @@ pub enum Reported {
         /// What it wrote to standard error, as handed over.
         stderr: Vec<u8>,
     },
+    /// `remote`.
+    Remote(RemoteNotice),
     /// `summary`.
     Summary(Summary),
 }
@@ -1084,8 +1089,170 @@ impl Reporter for FakeReporter {
         });
     }
 
+    fn remote(&mut self, notice: &RemoteNotice) {
+        self.calls.push(Reported::Remote(notice.clone()));
+    }
+
     fn summary(&mut self, summary: Summary) {
         self.calls.push(Reported::Summary(summary));
+    }
+}
+
+/// What a [`FakeRemote`] holds for one target.
+#[derive(Debug, Clone)]
+pub struct Held {
+    /// What each output holds, by the output path the target declares.
+    pub outputs: Vec<(OutputPath, Vec<u8>)>,
+    /// What the original run wrote to standard output.
+    pub stdout: Vec<u8>,
+    /// The exit status the original run ended with.
+    pub exit_code: i32,
+}
+
+impl Held {
+    /// A successful run that wrote `stdout` and left `bytes` at the output path `at`.
+    #[must_use]
+    pub fn of(at: OutputPath, bytes: &[u8], stdout: &[u8]) -> Self {
+        Self {
+            outputs: vec![(at, bytes.to_vec())],
+            stdout: stdout.to_vec(),
+            exit_code: 0,
+        }
+    }
+}
+
+/// What a [`FakeRemote`] was asked, behind its lock.
+#[derive(Debug, Default)]
+struct RemoteCalls {
+    lookups: Vec<RemoteAction>,
+    downloads: Vec<Vec<Blob>>,
+    uploads: usize,
+}
+
+/// A remote cache held in memory: it holds results by the first output path of the action it is
+/// asked about, and keeps every call it receives.
+///
+/// Workers call it from several threads, so what it records sits behind a lock.
+#[derive(Debug, Default)]
+pub struct FakeRemote {
+    /// The results it holds, by the output path of the target they stand for.
+    pub holds: BTreeMap<OutputPath, Held>,
+    /// Whether every lookup fails.
+    pub lookup_fails: bool,
+    /// Whether every download fails.
+    pub download_fails: bool,
+    /// Blobs it serves with other bytes than the ones they are named for, by digest.
+    pub tampered: BTreeMap<Digest, Vec<u8>>,
+    calls: Mutex<RemoteCalls>,
+}
+
+impl FakeRemote {
+    fn calls(&self) -> MutexGuard<'_, RemoteCalls> {
+        self.calls.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Every action it was asked about, in the order asked.
+    #[must_use]
+    pub fn lookups(&self) -> Vec<RemoteAction> {
+        self.calls().lookups.clone()
+    }
+
+    /// Every set of blobs it was asked for, in the order asked.
+    #[must_use]
+    pub fn downloads(&self) -> Vec<Vec<Blob>> {
+        self.calls().downloads.clone()
+    }
+
+    /// How many uploads it received.
+    #[must_use]
+    pub fn uploads(&self) -> usize {
+        self.calls().uploads
+    }
+
+    /// Whether it received no call at all.
+    #[must_use]
+    pub fn untouched(&self) -> bool {
+        let calls = self.calls();
+        calls.lookups.is_empty() && calls.downloads.is_empty() && calls.uploads == 0
+    }
+
+    /// The bytes it serves under `digest`.
+    fn served(&self, digest: &Digest) -> Option<Vec<u8>> {
+        if let Some(bytes) = self.tampered.get(digest) {
+            return Some(bytes.clone());
+        }
+        self.holds.values().find_map(|held| {
+            held.outputs
+                .iter()
+                .map(|(_, bytes)| bytes)
+                .chain(core::iter::once(&held.stdout))
+                .find(|bytes| Digest::of(bytes) == *digest)
+                .cloned()
+        })
+    }
+}
+
+/// The failure of a remote call, with the text `what`.
+fn remote_failure(what: &str) -> Error {
+    Error::Adapter {
+        port: PortName::RemoteCache,
+        diagnostic: Diagnostic::new(what),
+    }
+}
+
+impl RemoteCache for FakeRemote {
+    fn lookup(&self, action: &RemoteAction) -> Result<Option<RemoteHit>> {
+        self.calls().lookups.push(action.clone());
+        if self.lookup_fails {
+            return Err(remote_failure("the server cannot be reached"));
+        }
+        let Some(held) = action.outputs.first().and_then(|at| self.holds.get(at)) else {
+            return Ok(None);
+        };
+        Ok(Some(RemoteHit {
+            exit_code: held.exit_code,
+            files: held
+                .outputs
+                .iter()
+                .map(|(path, bytes)| RemoteOutputFile {
+                    path: path.to_string(),
+                    blob: Blob::of(bytes),
+                    mode: FileMode::Plain,
+                })
+                .collect(),
+            directories: Vec::new(),
+            symlinks: false,
+            stdout: Some(Blob::of(&held.stdout)),
+            stderr: None,
+        }))
+    }
+
+    fn download(&self, blobs: &[Blob]) -> Result<Vec<Vec<u8>>> {
+        self.calls().downloads.push(blobs.to_vec());
+        if self.download_fails {
+            return Err(remote_failure("the transfer was cut off"));
+        }
+        blobs
+            .iter()
+            .map(|blob| {
+                self.served(&blob.digest)
+                    .ok_or_else(|| remote_failure("the blob is not held"))
+            })
+            .collect()
+    }
+
+    fn decode_tree(&self, _bytes: &[u8]) -> Result<Option<Vec<RemoteTreeFile>>> {
+        Ok(Some(Vec::new()))
+    }
+
+    fn upload(
+        &self,
+        _action: &RemoteAction,
+        _produced: &RemoteUpload,
+        _blobs: &dyn BlobSource,
+    ) -> Result<Uploaded> {
+        self.calls().uploads += 1;
+        Ok(Uploaded::Done)
     }
 }
 
@@ -1169,7 +1336,7 @@ impl Ports for FakePorts {
     type Graph = FakeGraphRecord;
     type Reporter = FakeReporter;
     type Approver = FakeApprover;
-    type Remote = NoRemote;
+    type Remote = FakeRemote;
 }
 
 /// A workspace that writes to `out` and `.buildl`, under a ceiling allowing `cc` to run, any
@@ -1224,7 +1391,7 @@ pub fn ports(source: FakeSource) -> PortSet<FakePorts> {
         graph: FakeGraphRecord::default(),
         reporter: FakeReporter::default(),
         approver: FakeApprover::default(),
-        remote: NoRemote,
+        remote: FakeRemote::default(),
     }
 }
 
