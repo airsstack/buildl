@@ -22,7 +22,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use crate::error::{Error, PortName, Result};
 use crate::execute::fetch::fetch;
 use crate::execute::remote_action::remote_action;
-use crate::execute::upload::{upload, upload_of};
+use crate::execute::upload::{Sent, upload, upload_of};
 use crate::ports::{Clock, ContentStore, ExecStrategy, RemoteCache};
 use crate::types::{
     ActionKey, Channel, Diagnostic, Digest, Execution, Exit, Found, FoundEntry, FoundKind,
@@ -548,12 +548,12 @@ fn sent<C: ContentStore, R: RemoteCache>(
         Err(error) => return failed_to(InfraKind::Store, &error, Some(printed)),
     };
     match upload(remote.port, &task.action.label, &action, &produced, cas) {
-        Ok(None) => ended,
-        Ok(Some(notice)) => {
+        Sent::Stored => ended,
+        Sent::Declined(notice) => {
             tell(Told::Remote(notice));
             ended
         }
-        Err(notice) => failed_with(remote, notice, tell).unwrap_or(ended),
+        Sent::Failed(notice) => failed_with(remote, notice, tell).unwrap_or(ended),
     }
 }
 

@@ -35,7 +35,10 @@ impl fmt::Display for RemoteCall {
     }
 }
 
-/// Something about the remote cache a build says once.
+/// Something about the remote cache a build tells the person running it.
+///
+/// A failure is said once per command, because it turns the remote off; a changed input is said
+/// once per target it affects, because the remote stays on.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RemoteNotice {
     /// A call failed.

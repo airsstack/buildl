@@ -35,9 +35,26 @@ use crate::ports::{Dispatcher, Manifest, PortSet, Ports, Reporter};
 use crate::types::{
     ActionOutcome, Captured, Ceiling, Command, EnvName, EnvValue, ExpandedDescription, Forcing,
     Isolation, Label, LiveOutput, Node, NodeId, OutcomeEvent, OutputPath, OwnComponents, Plan,
-    PlannedKey, ReadyAction, RemoteSwitch, RemoteUse, Rerun, RunChoices, Summary, TargetGraph,
-    Turn, Verdict,
+    PlannedKey, ReadyAction, RemotePolicy, RemoteSwitch, RemoteUse, Rerun, RunChoices, Summary,
+    TargetGraph, Turn, Verdict,
 };
+
+/// Refuses a run that would upload to the remote cache while actions run `strategy`.
+///
+/// A bare action can read files it did not declare, so what it produced is not known to depend
+/// only on its declared inputs, and no one else could trust it. Reading from the remote is not
+/// refused.
+///
+/// # Errors
+///
+/// Returns [`Error::UploadUnsandboxed`] when `remote` writes and `strategy` is
+/// [`Isolation::Bare`].
+pub(crate) fn ensure_sandboxed_upload(remote: RemotePolicy, strategy: Isolation) -> Result<()> {
+    if remote.use_ == RemoteUse::ReadWrite && strategy == Isolation::Bare {
+        return Err(Error::UploadUnsandboxed);
+    }
+    Ok(())
+}
 
 /// Builds every target of `graph` as `plan` says, and returns one outcome per target, in id
 /// order.
@@ -153,9 +170,7 @@ pub fn execute<P: Ports>(
         return Err(Error::ForeignPlan);
     }
     let workspace = ports.manifest.workspace()?;
-    if remote.use_ == RemoteUse::ReadWrite && workspace.execution.strategy == Isolation::Bare {
-        return Err(Error::UploadUnsandboxed);
-    }
+    ensure_sandboxed_upload(remote, workspace.execution.strategy)?;
     Layout::of(whole, &workspace.out)?;
     let layout = Layout::of(graph, &workspace.out)?;
     let targets = prepared(graph, plan, &layout, &workspace.ceiling)?;

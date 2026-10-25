@@ -538,6 +538,11 @@ fn a_target_that_ran_is_uploaded_under_read_write() {
     let uploads = pipeline.ports().remote.uploads();
     assert_eq!(uploads.len(), 1);
     let (action, sent) = &uploads[0];
+    assert_eq!(
+        pipeline.ports().remote.lookups(),
+        std::slice::from_ref(action),
+        "the result is stored under the action that was looked up"
+    );
     assert_eq!(action.outputs, [out("//:a")]);
     let paths: Vec<&OutputPath> = sent.outputs.iter().map(|output| &output.path).collect();
     assert_eq!(paths, [&out("//:a")]);
@@ -637,14 +642,17 @@ fn a_strict_upload_failure_fails_the_build() {
     match error {
         Error::Adapter { port, diagnostic } => {
             assert_eq!(port, PortName::RemoteCache);
-            assert!(diagnostic.to_string().contains("upload"), "{diagnostic}");
+            assert!(
+                diagnostic.to_string().starts_with("upload: "),
+                "{diagnostic}"
+            );
         }
         other => unreachable!("expected an adapter error, got {other:?}"),
     }
 }
 
 #[test]
-fn an_input_changed_during_the_build_is_not_uploaded_and_the_remote_stays_on() {
+fn a_remote_that_declines_an_upload_for_a_changed_input_is_only_a_notice_and_stays_on() {
     let mut pipeline = root_only(vec![target("a", &[]), target("b", &[])]);
     let changed = RootPath::from(&SourcePath::parse("src/main.c").unwrap());
     pipeline.ports_mut().remote.input_changed = Some(changed.clone());
@@ -653,6 +661,11 @@ fn an_input_changed_during_the_build_is_not_uploaded_and_the_remote_stays_on() {
 
     assert_eq!(class(&outcomes, "//:a"), OutcomeClass::Built);
     assert_eq!(class(&outcomes, "//:b"), OutcomeClass::Built);
+    assert_eq!(
+        pipeline.ports().remote.uploads().len(),
+        2,
+        "the call is made for each target, and the adapter declines it"
+    );
     assert_eq!(
         pipeline.ports().remote.lookups().len(),
         2,
@@ -685,6 +698,10 @@ fn uploading_under_the_bare_strategy_is_refused_before_anything_runs() {
     let ports = pipeline.ports();
     assert_eq!(ports.strategy.handed(), []);
     assert!(ports.remote.untouched());
+    assert!(
+        ports.approver.asked.is_empty(),
+        "a refused build is not put to the approver"
+    );
 
     let outcomes = build(&mut pipeline, LENIENT).unwrap();
     assert_eq!(

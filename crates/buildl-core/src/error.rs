@@ -405,7 +405,8 @@ pub enum Error {
     /// depend only on its declared inputs, and no one else could trust it.
     #[error(
         "uploading to the remote cache needs actions to run in the input sandbox, \
-         but strategy is \"bare\""
+         but strategy is \"bare\"; set strategy to \"sandbox\", or stop uploading by \
+         unsetting BUILDL_REMOTE_UPLOAD or dropping --remote-upload"
     )]
     UploadUnsandboxed,
     /// Two outputs would be written to one place: the same path, or a path that another output
@@ -1717,11 +1718,12 @@ mod tests {
     }
 
     #[test]
-    fn an_unsandboxed_upload_says_which_setting_to_change() {
+    fn an_unsandboxed_upload_says_how_to_sandbox_or_stop_uploading() {
         assert_eq!(
             Error::UploadUnsandboxed.to_string(),
             "uploading to the remote cache needs actions to run in the input sandbox, \
-             but strategy is \"bare\""
+             but strategy is \"bare\"; set strategy to \"sandbox\", or stop uploading by \
+             unsetting BUILDL_REMOTE_UPLOAD or dropping --remote-upload"
         );
     }
 

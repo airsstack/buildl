@@ -6,7 +6,7 @@
 //!
 //! Responsibilities: [`upload_of`], which describes a run in the terms a remote cache stores it;
 //! [`StoredBlobs`], which lets a remote adapter read the local content store; and [`upload`],
-//! which sends the description and says what the answer means for the build.
+//! which sends the description and says, as a [`Sent`], what the answer means for the build.
 //!
 //! Non-responsibilities: deciding when to upload, and what a failed call does to the worker that
 //! met it, which the worker does; and the order of the calls on the wire, which the remote
@@ -109,28 +109,39 @@ impl<C: ContentStore> BlobSource for StoredBlobs<'_, C> {
     }
 }
 
+/// What the remote cache did with an upload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Sent {
+    /// The result and everything it names are stored.
+    Stored,
+    /// Nothing was stored, because an input file changed after its digest was taken. Not a
+    /// failure: the notice is a [`RemoteNotice::InputChanged`], and the remote stays on.
+    Declined(RemoteNotice),
+    /// The call failed: a [`RemoteNotice::Failed`] for [`RemoteCall::Upload`], carrying the
+    /// adapter's own message.
+    Failed(RemoteNotice),
+}
+
 /// Sends what a run produced to the remote cache as the result for `action`, and says what the
 /// answer means for the build.
 ///
-/// `label` is the target that ran. `Ok(None)` means the result and everything it names are
-/// stored. `Ok(Some(notice))` means an input file changed after its digest was taken and nothing
-/// was stored: a [`RemoteNotice::InputChanged`], which is not a failure and leaves the remote
-/// on. A failed call is `Err` of a [`RemoteNotice::Failed`] for [`RemoteCall::Upload`], carrying
-/// the adapter's own message.
+/// `label` is the target that ran. The answer is [`Sent`]: whether the result and everything it
+/// names are stored, whether an input file changed after its digest was taken so nothing was
+/// stored, or whether the call failed.
 pub(crate) fn upload<R: RemoteCache, C: ContentStore>(
     remote: &R,
     label: &Label,
     action: &RemoteAction,
     produced: &RemoteUpload,
     cas: &C,
-) -> core::result::Result<Option<RemoteNotice>, RemoteNotice> {
+) -> Sent {
     match remote.upload(action, produced, &StoredBlobs(cas)) {
-        Ok(Uploaded::Done) => Ok(None),
-        Ok(Uploaded::InputChanged(path)) => Ok(Some(RemoteNotice::InputChanged {
+        Ok(Uploaded::Done) => Sent::Stored,
+        Ok(Uploaded::InputChanged(path)) => Sent::Declined(RemoteNotice::InputChanged {
             label: label.clone(),
             path,
-        })),
-        Err(error) => Err(RemoteNotice::Failed {
+        }),
+        Err(error) => Sent::Failed(RemoteNotice::Failed {
             call: RemoteCall::Upload,
             diagnostic: match error {
                 Error::Adapter { diagnostic, .. } => diagnostic,
@@ -150,7 +161,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
-    use super::{StoredBlobs, upload, upload_of};
+    use super::{Sent, StoredBlobs, upload, upload_of};
     use crate::error::{Error, PortName, Result};
     use crate::execute::fixtures::{command, file, kept, key, label, output_path, tree};
     use crate::execute::perform::{Printed, Task};
@@ -419,7 +430,7 @@ mod tests {
 
         let said = upload(&remote, &label(TARGET), &action(), &produced, &store);
 
-        assert_eq!(said, Ok(None));
+        assert_eq!(said, Sent::Stored);
         assert_eq!(*remote.sent.lock().unwrap(), [produced]);
         assert_eq!(
             *remote.read_back.lock().unwrap(),
@@ -437,10 +448,10 @@ mod tests {
 
         assert_eq!(
             said,
-            Ok(Some(RemoteNotice::InputChanged {
+            Sent::Declined(RemoteNotice::InputChanged {
                 label: label(TARGET),
                 path: changed,
-            })),
+            }),
             "an answer, not an error: the worker leaves the remote on"
         );
     }
@@ -457,7 +468,7 @@ mod tests {
 
         assert_eq!(
             said,
-            Err(RemoteNotice::Failed {
+            Sent::Failed(RemoteNotice::Failed {
                 call: RemoteCall::Upload,
                 diagnostic: Diagnostic::new("the server refused the blob"),
             })

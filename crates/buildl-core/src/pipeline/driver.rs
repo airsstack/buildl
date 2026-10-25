@@ -19,12 +19,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::discovery::{discovery_labels, load_twice, results, second_pass};
 use crate::error::{Error, PortName, Result};
+use crate::execute::assembly::ensure_sandboxed_upload;
 use crate::execute::execute;
 use crate::grants::negotiate;
 use crate::load::{declaration_order, load};
 use crate::plan::plan;
 use crate::ports::{
-    ContentStore, DeclarationSource, Dispatcher, GraphRecord, PortSet, Ports, RunHistory,
+    ContentStore, DeclarationSource, Dispatcher, GraphRecord, Manifest, PortSet, Ports, RunHistory,
 };
 use crate::resolve::{narrow, reach, resolve};
 use crate::types::{
@@ -322,9 +323,10 @@ impl<P: Ports> Pipeline<P> {
         }
     }
 
-    /// Plans `graph`, puts what the plan wants to the approver, and executes it under `choices`,
-    /// as the part of `whole` that one run of a command covers. `remote_off` is the one switch of
-    /// the command, which every run of it shares.
+    /// Plans `graph`, refuses an upload that actions run bare cannot make, puts what the plan
+    /// wants to the approver, and executes it under `choices`, as the part of `whole` that one run
+    /// of a command covers. `remote_off` is the one switch of the command, which every run of it
+    /// shares.
     fn run(
         &mut self,
         whole: &TargetGraph,
@@ -334,6 +336,10 @@ impl<P: Ports> Pipeline<P> {
         remote_off: &RemoteSwitch,
     ) -> Result<Vec<ActionOutcome>> {
         let plan = plan(graph, overrides, choices.rerun, &mut self.ports)?;
+        ensure_sandboxed_upload(
+            choices.remote,
+            self.ports.manifest.workspace()?.execution.strategy,
+        )?;
         negotiate(plan.wanted(), plan.attribution(), &mut self.ports.approver)?;
         execute(whole, graph, &plan, choices, remote_off, &mut self.ports)
     }
@@ -386,8 +392,10 @@ impl<P: Ports> Pipeline<P> {
     /// the store or the log when the result of a discovery target that succeeded cannot be read
     /// back; whatever [`resolve`] returns; the graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope`
     /// that names neither a target nor an alias; whatever [`plan`](fn@plan) returns, two outputs
-    /// of the planned targets that would be written to one place included; [`Error::NotApproved`]
-    /// when the approver does not approve what a plan wants, or the approver's own failure; and
+    /// of the planned targets that would be written to one place included;
+    /// [`Error::UploadUnsandboxed`] when the remote cache is written to and actions run bare,
+    /// before the approver is asked; [`Error::NotApproved`] when the approver does not approve
+    /// what a plan wants, or the approver's own failure; and
     /// whatever [`execute`](fn@execute) returns: two outputs of the workspace that would be
     /// written to one place, whether or not both targets were asked for, a command that names no
     /// program or one outside the workspace's ceiling once it is expanded, or a port's own
@@ -455,9 +463,11 @@ impl<P: Ports> Pipeline<P> {
     /// back; whatever [`resolve`] returns; the graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope`
     /// that names neither a target nor an alias; [`Error::NotATest`] for a label of `scope` that
     /// names a target that is not a test; whatever [`plan`](fn@plan) returns, two outputs of the
-    /// planned targets that would be written to one place included; [`Error::NotApproved`] when
-    /// the approver does not approve what the plan wants, or the approver's own failure; and
-    /// whatever [`execute`](fn@execute) returns: two outputs of the workspace that would be
+    /// planned targets that would be written to one place included;
+    /// [`Error::UploadUnsandboxed`] when the remote cache is written to and actions run bare,
+    /// before the approver is asked; [`Error::NotApproved`] when the approver does not approve
+    /// what the plan wants, or the approver's own failure; and whatever
+    /// [`execute`](fn@execute) returns: two outputs of the workspace that would be
     /// written to one place, whether or not both targets were asked for, a command that names no
     /// program or one outside the workspace's ceiling once it is expanded, or a port's own
     /// failure.

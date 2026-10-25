@@ -62,8 +62,10 @@ pub trait Reporter {
     fn finished(&mut self, event: &OutcomeEvent, printed: Captured<'_>);
 
     /// The build tells of the remote cache: a call to it failed and the build went on without
-    /// it. Called at most once per command for a failed call, and at any point between
-    /// [`begun`](Reporter::begun) and [`summary`](Reporter::summary).
+    /// it, or a target's result was not uploaded because an input changed meanwhile and the
+    /// remote stays in use. Called at most once per command for a failed call, once per affected
+    /// target for a changed input, and at any point between [`begun`](Reporter::begun) and
+    /// [`summary`](Reporter::summary).
     fn remote(&mut self, notice: &RemoteNotice);
 
     /// Every target has its outcome, counted in `summary`. Called once, last.
