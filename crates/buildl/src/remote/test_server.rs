@@ -4,7 +4,8 @@
 //! `ByteStream` services of the REAPI from memory, on a port the operating system picks and
 //! on a runtime of its own. It records every call it receives, can be told to fail or to hold
 //! back the answer to a named call, and reports what it advertises through
-//! [`ServerOptions`], and serves TLS when given a [`TlsIdentity`]. It checks the protocol's size rules (a batch within the advertised
+//! [`ServerOptions`], and serves TLS when given a [`TlsIdentity`]. It can delay each message of
+//! a `ByteStream` read answer ([`TestServer::pace_stream`]). It checks the protocol's size rules (a batch within the advertised
 //! limit, a write whose bytes match the size in its resource name) so a client that gets them
 //! wrong fails here as it would against a real server.
 //!
@@ -18,7 +19,8 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use buildl_core::Digest as BlobDigest;
-use tonic::codegen::tokio_stream::{self, Empty, Iter};
+use tonic::codegen::BoxStream;
+use tonic::codegen::tokio_stream::{self, Empty, StreamExt};
 use tonic::metadata::KeyAndValueRef;
 use tonic::transport::server::TcpIncoming;
 use tonic::transport::{Identity, Server, ServerTlsConfig};
@@ -271,6 +273,11 @@ impl TestServer {
         self.shared.lock().stalls.insert(method, delay);
     }
 
+    /// Makes every later `ByteStream` read wait `delay` before each message of its answer.
+    pub fn pace_stream(&self, delay: Duration) {
+        self.shared.lock().stream_delay = delay;
+    }
+
     /// Stores `bytes` as a blob and returns its digest.
     #[must_use]
     pub fn put_blob(&self, bytes: &[u8]) -> BlobDigest {
@@ -299,6 +306,8 @@ struct State {
     calls: Vec<Call>,
     failures: BTreeMap<Method, Fault>,
     stalls: BTreeMap<Method, Duration>,
+    /// The wait before each message of a `ByteStream` read answer.
+    stream_delay: Duration,
     in_flight: usize,
     peak_in_flight: usize,
 }
@@ -641,7 +650,7 @@ impl ContentAddressableStorage for Service {
 
 #[tonic::async_trait]
 impl ByteStream for Service {
-    type ReadStream = Iter<std::vec::IntoIter<Result<ReadResponse, Status>>>;
+    type ReadStream = BoxStream<ReadResponse>;
 
     async fn read(
         &self,
@@ -675,7 +684,12 @@ impl ByteStream for Service {
                 })
             })
             .collect();
-        Ok(Response::new(tokio_stream::iter(messages)))
+        let delay = self.shared.lock().stream_delay;
+        let paced = tokio_stream::iter(messages).then(move |message| async move {
+            tokio::time::sleep(delay).await;
+            message
+        });
+        Ok(Response::new(Box::pin(paced)))
     }
 
     async fn write(

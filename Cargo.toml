@@ -84,8 +84,9 @@ prost       = "0.14.4"
 # `Any`, which the vendored googleapis messages (`google.rpc.Status`, operations) carry.
 prost-types = "0.14.4"
 # The runtime tonic's client needs, created and owned by the remote adapter in `buildl`;
-# worker threads reach it through `block_on`, and no other module sees it.
-tokio       = { version = "1.54.1", default-features = false, features = ["rt", "rt-multi-thread"] }
+# worker threads reach it through `block_on`, and no other module sees it. `time` bounds each
+# call and each stream message by the cache's timeout.
+tokio       = { version = "1.54.1", default-features = false, features = ["rt", "rt-multi-thread", "time"] }
 # Version 4 UUIDs naming a ByteStream upload's resource (`uploads/<uuid>/blobs/...`).
 uuid        = { version = "1.29.0", default-features = false, features = ["v4"] }
 # Internal workspace members, in dependency order — path for local builds, version
