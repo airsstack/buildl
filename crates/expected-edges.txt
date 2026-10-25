@@ -17,6 +17,7 @@ serde
 tempfile
 thiserror
 toml
+toml_edit
 # buildl-cli
 buildl
 clap

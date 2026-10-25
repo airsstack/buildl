@@ -24,6 +24,7 @@ use buildl_core::{
 };
 use toml::Spanned;
 
+use crate::manifest::anchor::table_written_at;
 use crate::manifest::memory::memory_bytes;
 use crate::manifest::root::MANIFEST_FILE;
 use crate::manifest::schema::{
@@ -337,32 +338,41 @@ fn remote(text: &str, table: Option<&Tabular<RemoteTable>>) -> Result<Option<Rem
     let Some(url) = table.url.as_ref() else {
         return Err(located(
             text,
-            table.anchor(),
+            table_written_at(text, &["remote"]),
             "remote.url: is required when [remote] is present",
         ));
     };
     let url = RemoteUrl::parse(url.get_ref())
         .map_err(|reason| refused(text, "remote.url", url, &reason))?;
-    let instance = optional(text, "remote.instance", table.instance.as_ref(), |raw| {
+    let mut builder = RemoteSettings::builder(url);
+    if let Some(instance) = optional(text, "remote.instance", table.instance.as_ref(), |raw| {
         InstanceName::parse(raw.as_str())
-    })?;
-    let ca = optional(text, "remote.ca", table.ca.as_ref(), |raw| {
+    })? {
+        builder = builder.instance(instance);
+    }
+    if let Some(ca) = optional(text, "remote.ca", table.ca.as_ref(), |raw| {
         HostPath::parse(raw.as_str())
-    })?;
-    let token = table
-        .token
-        .as_ref()
-        .map(|Tabular(token)| token_source(text, table, token))
-        .transpose()?;
-    let header = optional(text, "remote.header", table.header.as_ref(), |raw| {
+    })? {
+        builder = builder.ca(ca);
+    }
+    let mut place = None;
+    if let Some(Tabular(token)) = table.token.as_ref() {
+        let (source, written) = token_source(text, token)?;
+        place = Some(written.span());
+        builder = builder.token(source);
+    }
+    if let Some(header) = optional(text, "remote.header", table.header.as_ref(), |raw| {
         HeaderName::parse(raw.as_str())
-    })?;
-    let timeout = optional(text, "remote.timeout", table.timeout.as_ref(), |raw| {
+    })? {
+        builder = builder.header(header);
+    }
+    if let Some(timeout) = optional(text, "remote.timeout", table.timeout.as_ref(), |raw| {
         Timeout::parse(raw)
-    })?;
-    let place = token.as_ref().map(|(_, place)| place.span());
-    let source = token.map(|(source, _)| source);
-    RemoteSettings::new(url, instance, ca, source, header, timeout)
+    })? {
+        builder = builder.timeout(timeout);
+    }
+    builder
+        .build()
         .map(Some)
         .map_err(|reason| located(text, place, &format!("remote.token: {reason}")))
 }
@@ -371,10 +381,9 @@ fn remote(text: &str, table: Option<&Tabular<RemoteTable>>) -> Result<Option<Rem
 /// that key, which is where a refusal of the token is placed.
 ///
 /// A token naming both is placed at the first of the two written; one naming neither has no
-/// value to be placed at, and is placed where `table`, which holds it, first has a value.
+/// value to be placed at, and is placed where the `token` table is first written.
 fn token_source<'a>(
     text: &str,
-    table: &RemoteTable,
     token: &'a TokenTable,
 ) -> Result<(TokenSource, &'a Spanned<String>)> {
     match (&token.env, &token.file) {
@@ -396,7 +405,7 @@ fn token_source<'a>(
         )),
         (None, None) => Err(located(
             text,
-            table.anchor(),
+            table_written_at(text, &["remote", "token"]),
             &format!("remote.token: {TOKEN_SOURCE}"),
         )),
     }
@@ -699,17 +708,17 @@ mod tests {
             token    = { env = \"BUILDL_REMOTE_TOKEN\" }\n\
             header   = \"authorization\"\n\
             timeout  = \"30s\"\n";
-        let expected = RemoteSettings::new(
-            RemoteUrl::parse("grpcs://cache.example.com:443").unwrap(),
-            Some(InstanceName::parse("ci").unwrap()),
-            Some(HostPath::parse("certs/ca.pem").unwrap()),
-            Some(TokenSource::Env(
-                EnvName::parse("BUILDL_REMOTE_TOKEN").unwrap(),
-            )),
-            Some(HeaderName::parse("authorization").unwrap()),
-            Some(Timeout::parse("30s").unwrap()),
-        )
-        .unwrap();
+        let expected =
+            RemoteSettings::builder(RemoteUrl::parse("grpcs://cache.example.com:443").unwrap())
+                .instance(InstanceName::parse("ci").unwrap())
+                .ca(HostPath::parse("certs/ca.pem").unwrap())
+                .token(TokenSource::Env(
+                    EnvName::parse("BUILDL_REMOTE_TOKEN").unwrap(),
+                ))
+                .header(HeaderName::parse("authorization").unwrap())
+                .timeout(Timeout::parse("30s").unwrap())
+                .build()
+                .unwrap();
         assert_eq!(workspace(text, &raw(text)).unwrap().remote, Some(expected));
 
         let by_file = "[remote]\nurl = \"grpcs://c\"\ntoken.file = \"/run/secrets/cache\"\n";
@@ -723,11 +732,22 @@ mod tests {
     }
 
     #[test]
-    fn a_remote_table_without_url_is_refused() {
-        let text = "[remote]\ninstance = \"ci\"\n";
-        let message = refusal(text);
-        assert!(message.starts_with("manifest: buildl.toml:"), "{message}");
-        assert!(message.contains("remote.url"), "{message}");
+    fn a_remote_table_without_url_is_refused_at_its_header() {
+        let missing = "remote.url: is required when [remote] is present";
+        let cases = [
+            ("[remote]\ninstance = \"ci\"\n", "1:1"),
+            ("[workspace]\n\n[remote]\n", "3:1"),
+            ("[remote.token]\nenv = \"T\"\n", "1:2"),
+            ("# c\nremote.instance = \"ci\"\n", "2:1"),
+            ("remote = {}\n", "1:1"),
+        ];
+        for (text, place) in cases {
+            assert_eq!(
+                refusal(text),
+                format!("manifest: buildl.toml:{place}: {missing}"),
+                "{text:?}"
+            );
+        }
     }
 
     #[test]
@@ -750,12 +770,23 @@ mod tests {
     }
 
     #[test]
-    fn a_token_with_neither_is_refused() {
-        let text = "[remote]\nurl = \"grpcs://c\"\ntoken = {}\n";
-        assert_eq!(
-            refusal(text),
-            "manifest: buildl.toml:2:7: remote.token: must name exactly one of env and file"
-        );
+    fn a_token_with_neither_is_refused_where_the_token_is_written() {
+        let cases = [
+            ("[remote]\nurl = \"grpcs://c\"\ntoken = {}\n", "3:1"),
+            (
+                "[remote]\nurl = \"grpcs://c\"\ntimeout = \"5s\"\n\n[remote.token]\n",
+                "5:1",
+            ),
+        ];
+        for (text, place) in cases {
+            assert_eq!(
+                refusal(text),
+                format!(
+                    "manifest: buildl.toml:{place}: remote.token: must name exactly one of env and file"
+                ),
+                "{text:?}"
+            );
+        }
     }
 
     #[test]
@@ -775,5 +806,42 @@ mod tests {
             message.starts_with("manifest: buildl.toml:3:11: remote.timeout: "),
             "{message}"
         );
+    }
+
+    #[test]
+    fn every_refused_remote_value_is_named_with_its_place() {
+        let cases = [
+            (
+                "[remote]\nurl = \"https://cache.example.com\"\n",
+                "2:7: remote.url: invalid remote cache URL: \"https://cache.example.com\" — must start with grpc:// or grpcs://",
+            ),
+            (
+                "[remote]\nurl = \"grpcs://c\"\ninstance = \"a//b\"\n",
+                "3:12: remote.instance: ",
+            ),
+            (
+                "[remote]\nurl = \"grpcs://c\"\nca = \"../ca.pem\"\n",
+                "3:6: remote.ca: ",
+            ),
+            (
+                "[remote]\nurl = \"grpcs://c\"\nheader = \"te\"\n",
+                "3:10: remote.header: ",
+            ),
+            (
+                "[remote]\nurl = \"grpcs://c\"\ntoken.env = \"not valid\"\n",
+                "3:13: remote.token.env: ",
+            ),
+            (
+                "[remote]\nurl = \"grpcs://c\"\ntoken.file = \"\"\n",
+                "3:14: remote.token.file: ",
+            ),
+        ];
+        for (text, expected) in cases {
+            let message = refusal(text);
+            assert!(
+                message.starts_with(&format!("manifest: buildl.toml:{expected}")),
+                "{text:?}: {message}"
+            );
+        }
     }
 }

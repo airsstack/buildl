@@ -27,6 +27,8 @@ tempfile    = { workspace = true }
 thiserror   = { workspace = true }
 # Parsing `buildl.toml` in the `Manifest` adapter.
 toml        = { workspace = true }
+# Where a table of `buildl.toml` is first written, for the refusals of a table as a whole.
+toml_edit   = { workspace = true }
 
 [lints]
 workspace = true

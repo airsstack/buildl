@@ -15,7 +15,6 @@
 
 use core::fmt;
 use core::marker::PhantomData;
-use core::ops::Range;
 use std::collections::BTreeMap;
 
 use serde::Deserialize;
@@ -81,7 +80,8 @@ pub(crate) struct Raw {
     #[serde(default, deserialize_with = "table")]
     pub(crate) plugins: BTreeMap<Spanned<String>, Tabular<PluginTable>>,
     /// `[remote]`. The table as a whole keeps no place: the parser has none to give an implicit
-    /// parent, as in `[remote.token]`, so a refusal of the table is placed by its keys.
+    /// parent, as in `[remote.token]`, so a refusal of the table is placed by reading the text again, in
+    /// the `anchor` module.
     pub(crate) remote: Option<Tabular<RemoteTable>>,
 }
 
@@ -192,29 +192,6 @@ pub(crate) struct RemoteTable {
     pub(crate) header: Option<Spanned<String>>,
     /// How long one request may take, written with a unit.
     pub(crate) timeout: Option<Spanned<String>>,
-}
-
-impl RemoteTable {
-    /// The span of the first value written in the table, which is where a refusal of the table
-    /// as a whole is placed; `None` when no key is written.
-    pub(crate) fn anchor(&self) -> Option<Range<usize>> {
-        let token = self
-            .token
-            .as_ref()
-            .into_iter()
-            .flat_map(|Tabular(token)| [&token.env, &token.file]);
-        [
-            &self.url,
-            &self.instance,
-            &self.ca,
-            &self.header,
-            &self.timeout,
-        ]
-        .into_iter()
-        .chain(token)
-        .filter_map(|value| value.as_ref().map(Spanned::span))
-        .min_by_key(|span| span.start)
-    }
 }
 
 /// `token` of `[remote]`: the environment variable or the file the token is read from.

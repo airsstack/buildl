@@ -182,11 +182,11 @@ pub use types::{
     OutputPath, OutputRefusal, OwnComponents, Plan, PlannedKey, Platform, PluginCap, PluginChain,
     PluginName, PluginNetwork, PluginRef, PluginSource, PluginVersion, PluginViolation, Produced,
     Program, Provenance, Purpose, Query, RawOutcome, ReadyAction, RemoteScheme, RemoteSettings,
-    RemoteUrl, Rerun, Rev, Rule, Sample, Scope, Setting, SettingName, SettingValue, SourcePath,
-    StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
-    StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, TagName, Tally, Target,
-    TargetGraph, TargetName, TargetRole, Timeout, Timestamp, TokenSource, ToolIdentity, Tree,
-    TreeEntry, TreePath, Turn, Unfinished, Verdict, Verification, Want, WantedSet, Workers,
+    RemoteSettingsBuilder, RemoteUrl, Rerun, Rev, Rule, Sample, Scope, Setting, SettingName,
+    SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
+    StagedSetting, StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, TagName, Tally,
+    Target, TargetGraph, TargetName, TargetRole, Timeout, Timestamp, TokenSource, ToolIdentity,
+    Tree, TreeEntry, TreePath, Turn, Unfinished, Verdict, Verification, Want, WantedSet, Workers,
     Workspace, Written,
 };
 pub use verify::verify;

@@ -18,6 +18,7 @@
 //!
 //! This file holds only module declarations and re-exports, so it carries no logic to unit-test.
 
+mod anchor;
 mod interpret;
 mod memory;
 mod root;

@@ -45,6 +45,10 @@ rayon      = "1.12.0"
 # Held on 0.8 because airsl depends on 0.8: a second `toml` tree would fail
 # cargo-deny's duplicate-version check.
 toml       = { version = "0.8.23", default-features = false, features = ["parse"] }
+# The places in `buildl.toml` that `toml` cannot report: where a table is first written, even when
+# only a dotted key or a sub-table header implies it. Read-only, with `parse` alone. Held on the
+# 0.22 that `toml` 0.8 already pulls in, so the tree gains no second copy.
+toml_edit  = { version = "0.22.27", default-features = false, features = ["parse"] }
 # Source globbing for `b.sources()` — the declaration phase's only filesystem
 # read; results are sorted host-side so declaration is deterministic regardless
 # of filesystem order (design.md).

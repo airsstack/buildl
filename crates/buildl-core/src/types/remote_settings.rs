@@ -5,7 +5,7 @@
 //! needs the URL and the token source side by side. Every part is parsed once, where
 //! `buildl.toml` names it, so no later phase re-checks a URL, an instance name or a header.
 //!
-//! Responsibilities: [`RemoteSettings`], [`RemoteUrl`], [`RemoteScheme`], [`InstanceName`],
+//! Responsibilities: [`RemoteSettings`], [`RemoteSettingsBuilder`], [`RemoteUrl`], [`RemoteScheme`], [`InstanceName`],
 //! [`HostPath`], [`TokenSource`] and [`HeaderName`], their constructors, and their rendering.
 //!
 //! Non-responsibilities: connecting to the cache, reading a certificate or a token, and reading
@@ -13,6 +13,7 @@
 //! asks for a variable's value.
 
 use core::fmt;
+use core::num::NonZeroU64;
 use core::str::FromStr;
 
 use crate::error::{Error, NameKind, Result};
@@ -33,8 +34,9 @@ const RESERVED_SEGMENTS: [&str; 7] = [
 /// The header a token is sent in unless the workspace names another.
 const DEFAULT_HEADER: &str = "authorization";
 
-/// How long one request to the remote cache may take unless the workspace says otherwise.
-const DEFAULT_TIMEOUT: &str = "30s";
+/// How long one request to the remote cache may take unless the workspace says otherwise: 30
+/// seconds.
+const DEFAULT_TIMEOUT: Timeout = Timeout::from_secs(NonZeroU64::MIN.saturating_add(29));
 
 /// The refusal of `raw` as a value of `kind`.
 fn invalid(kind: NameKind, raw: &str, reason: &'static str) -> Error {
@@ -112,13 +114,20 @@ fn url_grammar(
     {
         return Err("must hold only a host and an optional port after the scheme");
     }
+    if host
+        .split('.')
+        .any(|label| label.is_empty() || label.starts_with('-') || label.ends_with('-'))
+    {
+        return Err("must be dot-separated labels, none empty or starting or ending with '-'");
+    }
     Ok((scheme, host.to_owned(), port))
 }
 
 /// The address of a remote cache: `grpc://` or `grpcs://`, a host, and an optional `:port`.
 ///
 /// Nothing may follow the port, so a path, a query or a fragment is refused. The host is a
-/// name or an IPv4 address; a bracketed IPv6 address is not accepted.
+/// name or an IPv4 address, made of dot-separated labels that are not empty and do not start or
+/// end with `-`; a bracketed IPv6 address is not accepted.
 ///
 /// # Examples
 ///
@@ -146,7 +155,8 @@ impl RemoteUrl {
     ///
     /// Returns [`Error::InvalidName`] when `raw` does not begin `grpc://` or `grpcs://`, names
     /// no host, holds a character other than ASCII letters, digits, `.`, `-` and `_` in the
-    /// host, or states a port that is not a whole number from 1 to 65535.
+    /// host, has a host label that is empty or starts or ends with `-`, or states a port that is
+    /// not a whole number from 1 to 65535.
     pub fn parse(raw: &str) -> Result<Self> {
         match url_grammar(raw) {
             Ok((scheme, host, port)) => Ok(Self { scheme, host, port }),
@@ -309,6 +319,9 @@ pub enum TokenSource {
     File(HostPath),
 }
 
+/// The names the gRPC transport sets itself and drops from the metadata of a request.
+const TRANSPORT_HEADERS: [&str; 3] = ["te", "content-type", "user-agent"];
+
 /// The grammar of a request header name, or the reason a candidate is rejected.
 fn header_grammar(raw: &str) -> core::result::Result<(), &'static str> {
     if raw.is_empty() {
@@ -326,13 +339,17 @@ fn header_grammar(raw: &str) -> core::result::Result<(), &'static str> {
     if raw.ends_with("-bin") {
         return Err("must not end with '-bin', which gRPC reads as binary");
     }
+    if TRANSPORT_HEADERS.contains(&raw) {
+        return Err("must not be te, content-type or user-agent, which the gRPC transport sets");
+    }
     Ok(())
 }
 
 /// The name of the request header a remote cache's token is sent in.
 ///
 /// One or more of the lowercase ASCII letters, digits, `_`, `-` and `.` that a gRPC header name
-/// is made of, not starting `grpc-` and not ending `-bin`. The default is `authorization`.
+/// is made of, not starting `grpc-`, not ending `-bin`, and not `te`, `content-type` or
+/// `user-agent`, which the transport sets itself. The default is `authorization`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct HeaderName(String);
 
@@ -342,7 +359,8 @@ impl HeaderName {
     /// # Errors
     ///
     /// Returns [`Error::InvalidName`] when `raw` is empty, holds a character outside lowercase
-    /// ASCII letters, digits, `_`, `-` and `.`, starts with `grpc-`, or ends with `-bin`.
+    /// ASCII letters, digits, `_`, `-` and `.`, starts with `grpc-`, ends with `-bin`, or is
+    /// `te`, `content-type` or `user-agent`.
     pub fn parse(raw: impl Into<String>) -> Result<Self> {
         let raw = raw.into();
         match header_grammar(&raw) {
@@ -382,11 +400,11 @@ impl fmt::Display for HeaderName {
 ///
 /// let token = TokenSource::Env(EnvName::parse("CACHE_TOKEN")?);
 /// let secure = RemoteUrl::parse("grpcs://cache.example.com")?;
-/// let settings = RemoteSettings::new(secure, None, None, Some(token.clone()), None, None)?;
+/// let settings = RemoteSettings::builder(secure).token(token.clone()).build()?;
 /// assert_eq!(settings.header().as_str(), "authorization");
 ///
 /// let plain = RemoteUrl::parse("grpc://cache.example.com")?;
-/// assert!(RemoteSettings::new(plain, None, None, Some(token), None, None).is_err());
+/// assert!(RemoteSettings::builder(plain).token(token).build().is_err());
 /// # Ok::<(), buildl_core::Error>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -400,35 +418,16 @@ pub struct RemoteSettings {
 }
 
 impl RemoteSettings {
-    /// Assembles the settings, filling the header with `authorization` and the timeout with
-    /// 30 seconds when they are not given.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`Error::InsecureToken`] when a token is given and `url` is `grpc://`.
-    pub fn new(
-        url: RemoteUrl,
-        instance: Option<InstanceName>,
-        ca: Option<HostPath>,
-        token: Option<TokenSource>,
-        header: Option<HeaderName>,
-        timeout: Option<Timeout>,
-    ) -> Result<Self> {
-        if token.is_some() && url.scheme() == RemoteScheme::Grpc {
-            return Err(Error::InsecureToken { url });
-        }
-        let timeout = match timeout {
-            Some(timeout) => timeout,
-            None => Timeout::parse(DEFAULT_TIMEOUT)?,
-        };
-        Ok(Self {
+    /// Starts the settings of the cache at `url`; every other part is optional.
+    pub const fn builder(url: RemoteUrl) -> RemoteSettingsBuilder {
+        RemoteSettingsBuilder {
             url,
-            instance,
-            ca,
-            token,
-            header: header.unwrap_or_default(),
-            timeout,
-        })
+            instance: None,
+            ca: None,
+            token: None,
+            header: None,
+            timeout: None,
+        }
     }
 
     /// The cache's address.
@@ -468,6 +467,71 @@ impl RemoteSettings {
     }
 }
 
+/// The parts of a [`RemoteSettings`] as they are stated, before the defaults are filled in and
+/// the token is checked against the URL.
+#[derive(Debug, Clone)]
+#[must_use = "a builder does nothing until `build` is called"]
+pub struct RemoteSettingsBuilder {
+    url: RemoteUrl,
+    instance: Option<InstanceName>,
+    ca: Option<HostPath>,
+    token: Option<TokenSource>,
+    header: Option<HeaderName>,
+    timeout: Option<Timeout>,
+}
+
+impl RemoteSettingsBuilder {
+    /// Names the instance the cache's storage is addressed under.
+    pub fn instance(mut self, instance: InstanceName) -> Self {
+        self.instance = Some(instance);
+        self
+    }
+
+    /// Names a certificate authority file to trust.
+    pub fn ca(mut self, ca: HostPath) -> Self {
+        self.ca = Some(ca);
+        self
+    }
+
+    /// Names where the token sent with every request is read from.
+    pub fn token(mut self, token: TokenSource) -> Self {
+        self.token = Some(token);
+        self
+    }
+
+    /// Names the header the token is sent in, instead of `authorization`.
+    pub fn header(mut self, header: HeaderName) -> Self {
+        self.header = Some(header);
+        self
+    }
+
+    /// Sets how long one request may take, instead of 30 seconds.
+    pub const fn timeout(mut self, timeout: Timeout) -> Self {
+        self.timeout = Some(timeout);
+        self
+    }
+
+    /// Assembles the settings, filling the header with `authorization` and the timeout with
+    /// 30 seconds when they are not given.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InsecureToken`] when a token is given and the URL is `grpc://`.
+    pub fn build(self) -> Result<RemoteSettings> {
+        if self.token.is_some() && self.url.scheme() == RemoteScheme::Grpc {
+            return Err(Error::InsecureToken { url: self.url });
+        }
+        Ok(RemoteSettings {
+            url: self.url,
+            instance: self.instance,
+            ca: self.ca,
+            token: self.token,
+            header: self.header.unwrap_or_default(),
+            timeout: self.timeout.unwrap_or(DEFAULT_TIMEOUT),
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -484,7 +548,11 @@ mod tests {
     };
 
     fn settings(url: &str, token: Option<TokenSource>) -> crate::error::Result<RemoteSettings> {
-        RemoteSettings::new(RemoteUrl::parse(url)?, None, None, token, None, None)
+        let builder = RemoteSettings::builder(RemoteUrl::parse(url)?);
+        match token {
+            Some(token) => builder.token(token).build(),
+            None => builder.build(),
+        }
     }
 
     fn token() -> TokenSource {
@@ -514,6 +582,13 @@ mod tests {
             "grpc://h/path",
             "grpc://h:",
             "grpc://h:99999",
+            "grpc://..",
+            "grpc://-",
+            "grpc://a..b",
+            "grpc://a.",
+            "grpc://.a",
+            "grpc://-a.b",
+            "grpc://a-.b",
             "",
         ] {
             let err = RemoteUrl::parse(raw).unwrap_err();
@@ -562,7 +637,17 @@ mod tests {
         for raw in ["authorization", "x-api-key", "a_b.c-1"] {
             assert_eq!(HeaderName::parse(raw).unwrap().as_str(), raw);
         }
-        for raw in ["X-Key", "grpc-x", "key-bin", "", "a b", "k:v"] {
+        for raw in [
+            "X-Key",
+            "grpc-x",
+            "key-bin",
+            "",
+            "a b",
+            "k:v",
+            "te",
+            "content-type",
+            "user-agent",
+        ] {
             let err = HeaderName::parse(raw).unwrap_err();
             assert!(
                 matches!(
@@ -623,15 +708,14 @@ mod tests {
 
     #[test]
     fn stated_values_override_the_defaults() {
-        let settings = RemoteSettings::new(
-            RemoteUrl::parse("grpcs://cache").unwrap(),
-            Some(InstanceName::parse("ci").unwrap()),
-            Some(HostPath::parse("certs/ca.pem").unwrap()),
-            Some(token()),
-            Some(HeaderName::parse("x-api-key").unwrap()),
-            Some(Timeout::parse("5s").unwrap()),
-        )
-        .unwrap();
+        let settings = RemoteSettings::builder(RemoteUrl::parse("grpcs://cache").unwrap())
+            .instance(InstanceName::parse("ci").unwrap())
+            .ca(HostPath::parse("certs/ca.pem").unwrap())
+            .token(token())
+            .header(HeaderName::parse("x-api-key").unwrap())
+            .timeout(Timeout::parse("5s").unwrap())
+            .build()
+            .unwrap();
         assert_eq!(settings.instance().unwrap().as_str(), "ci");
         assert_eq!(settings.ca().unwrap().as_str(), "certs/ca.pem");
         assert_eq!(settings.token(), Some(&token()));
