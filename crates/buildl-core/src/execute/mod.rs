@@ -4,7 +4,8 @@
 //! Recording what an action produced is the last step of running it, so it lives here too.
 //!
 //! Responsibilities: [`execute`]; `remote_action`, which describes one task for a remote cache;
-//! and `fetch`, which checks and stores a result the remote holds.
+//! `fetch`, which checks and stores a result the remote holds; and `upload`, which describes a
+//! run for the remote cache and sends it.
 //!
 //! Non-responsibilities: planning the build, which the phase before this one does; and running
 //! a command, storing content, keeping rows or writing the log, which are each a port's.
@@ -19,6 +20,7 @@ pub(crate) mod record;
 pub(crate) mod remote_action;
 mod schedule;
 pub(crate) mod settle;
+pub(crate) mod upload;
 
 #[cfg(test)]
 pub(crate) mod fixtures;
