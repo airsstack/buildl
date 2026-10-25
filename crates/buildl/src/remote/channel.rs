@@ -1,8 +1,10 @@
 //! The connection to the remote cache.
 //!
-//! [`connect`] turns the workspace's [`RemoteSettings`] into one gRPC channel that every worker
-//! shares: `grpc://` is plain HTTP/2, and `grpcs://` is TLS that trusts the system's roots and,
-//! when the settings name one, the certificate authority in the file at `ca`.
+//! [`prepare`] turns the workspace's [`RemoteSettings`] into a [`Pending`] connection, and
+//! [`Pending::open`] makes the one gRPC channel that every worker shares: `grpc://` is plain
+//! HTTP/2, and `grpcs://` is TLS that trusts the system's roots and, when the settings name
+//! one, the certificate authority in the file at `ca`. Preparing does not touch the network, so
+//! a cache that is down is found when the channel is opened and not when it is prepared.
 //!
 //! The channel carries no request timeout. A timeout on the channel would bound a streamed
 //! transfer as a whole, so each caller applies [`RemoteSettings::timeout`] to the calls it
@@ -12,6 +14,7 @@
 use std::error::Error as StdError;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use buildl_core::{RemoteScheme, RemoteSettings};
 use tonic::transport::{Certificate, Channel, ClientTlsConfig, Endpoint};
@@ -61,24 +64,27 @@ fn with_causes(error: &(dyn StdError + 'static)) -> String {
     text
 }
 
-/// Connects to the cache `settings` name, and returns the channel its workers share.
+/// The cache's address, checked and ready to be connected to.
 ///
-/// A relative `ca` is resolved against `root`. The handshake is made before this returns, so a
-/// cache that is down or whose certificate is not trusted is an error here and not at the first
-/// call. The whole attempt, the TCP connection and the TLS and HTTP/2 handshakes together, is
-/// bounded by the settings' timeout.
+/// Making one reads the certificate authority file and has the transport check the address,
+/// but does not touch the network: [`Pending::open`] does that, when a call first needs the
+/// channel.
+#[derive(Clone, Debug)]
+pub(crate) struct Pending {
+    endpoint: Endpoint,
+    url: String,
+    limit: Duration,
+}
+
+/// Prepares the connection to the cache `settings` name.
+///
+/// A relative `ca` is resolved against `root`.
 ///
 /// # Errors
 ///
-/// Returns [`ChannelError::CaUnreadable`] when the `ca` file cannot be read,
-/// [`ChannelError::Setup`] when the transport refuses the address or the certificate, and
-/// [`ChannelError::Connect`] when the cache cannot be reached or does not complete the TLS
-/// handshake.
-pub(crate) fn connect(
-    runtime: &Runtime,
-    settings: &RemoteSettings,
-    root: &Path,
-) -> Result<Channel, ChannelError> {
+/// Returns [`ChannelError::CaUnreadable`] when the `ca` file cannot be read, and
+/// [`ChannelError::Setup`] when the transport refuses the address or the certificate.
+pub(crate) fn prepare(settings: &RemoteSettings, root: &Path) -> Result<Pending, ChannelError> {
     let url = settings.url();
     let setup = |error: tonic::transport::Error| ChannelError::Setup {
         url: url.to_string(),
@@ -109,15 +115,35 @@ pub(crate) fn connect(
         endpoint = endpoint.tls_config(tls).map_err(setup)?;
     }
 
-    let limit = settings.timeout().as_duration();
-    let connect_error = |reason: String| ChannelError::Connect {
+    Ok(Pending {
+        endpoint,
         url: url.to_string(),
-        reason,
-    };
-    runtime
-        .block_on(async { tokio::time::timeout(limit, endpoint.connect()).await })
-        .map_err(|_| connect_error(format!("no answer within {limit:?}")))?
-        .map_err(|error| connect_error(with_causes(&error)))
+        limit: settings.timeout().as_duration(),
+    })
+}
+
+impl Pending {
+    /// Connects to the cache, and returns the channel its workers share.
+    ///
+    /// The handshake is made before this returns, so a cache that is down or whose certificate
+    /// is not trusted is an error here and not at the first call over the channel. The whole
+    /// attempt, the TCP connection and the TLS and HTTP/2 handshakes together, is bounded by
+    /// the settings' timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ChannelError::Connect`] when the cache cannot be reached or does not complete
+    /// the TLS handshake in time.
+    pub(crate) fn open(&self, runtime: &Runtime) -> Result<Channel, ChannelError> {
+        let connect_error = |reason: String| ChannelError::Connect {
+            url: self.url.clone(),
+            reason,
+        };
+        runtime
+            .block_on(async { tokio::time::timeout(self.limit, self.endpoint.connect()).await })
+            .map_err(|_| connect_error(format!("no answer within {:?}", self.limit)))?
+            .map_err(|error| connect_error(with_causes(&error)))
+    }
 }
 
 /// The `host` or `host:port` of the cache's address.
@@ -146,7 +172,7 @@ mod tests {
     use buildl_core::{HostPath, RemoteSettings, RemoteUrl, Timeout};
     use tonic::transport::Channel;
 
-    use super::{ChannelError, connect};
+    use super::{ChannelError, prepare};
     use crate::remote::proto::build::bazel::remote::execution::v2::GetCapabilitiesRequest;
     use crate::remote::proto::build::bazel::remote::execution::v2::capabilities_client::CapabilitiesClient;
     use crate::remote::runtime::Runtime;
@@ -154,6 +180,15 @@ mod tests {
     use crate::remote::tls_fixture::{
         CA_RELATIVE, root, secure_settings, tls_server, trusting_settings,
     };
+
+    /// Prepares the connection and opens it.
+    fn connect(
+        runtime: &Runtime,
+        settings: &RemoteSettings,
+        root: &Path,
+    ) -> Result<Channel, ChannelError> {
+        prepare(settings, root)?.open(runtime)
+    }
 
     /// Makes one `GetCapabilities` call over `channel`.
     fn call(runtime: &Runtime, channel: Channel) -> Result<(), tonic::Status> {
@@ -173,6 +208,28 @@ mod tests {
         let channel = connect(&runtime, &settings, root()).unwrap();
 
         call(&runtime, channel).unwrap();
+    }
+
+    #[test]
+    fn a_dead_address_is_prepared_and_fails_only_when_opened() {
+        let address = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let url = RemoteUrl::parse(&format!("grpc://{address}")).unwrap();
+        let settings = RemoteSettings::builder(url)
+            .timeout(Timeout::parse("2s").unwrap())
+            .build()
+            .unwrap();
+        let runtime = Runtime::new().unwrap();
+
+        let pending = prepare(&settings, root()).unwrap();
+        let outcome = pending.open(&runtime);
+
+        assert!(
+            matches!(&outcome, Err(ChannelError::Connect { url, .. }) if url.contains(&address.to_string())),
+            "{outcome:?}"
+        );
     }
 
     #[test]

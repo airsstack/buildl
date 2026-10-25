@@ -1,8 +1,10 @@
 //! The blocking client of the remote cache.
 //!
-//! A [`Client`] owns a runtime, the channel to the cache and the login every call carries, and
+//! A [`Client`] owns a runtime, the way to the cache and the login every call carries, and
 //! exposes the calls of the REAPI that buildl makes as plain blocking methods over the
-//! generated message types: any thread may call them, any number at once. The cache's
+//! generated message types: any thread may call them, any number at once. The channel to the
+//! cache is connected by the first call that needs it, and a failed connect is kept, so a cache
+//! that is down fails the first call with the reason and every later one at once. The cache's
 //! capabilities are asked for before the first call that needs them and kept, a failed ask
 //! included, so a cache that does not answer is found down once and not once per caller. Every
 //! unary call is bounded whole by the settings' timeout, each message of a `ByteStream` read by
@@ -21,7 +23,7 @@ use tonic::transport::Channel;
 use tonic::{Code, Status};
 
 use super::capabilities::Capabilities;
-use super::channel;
+use super::channel::{self, Pending};
 use super::error::RemoteError;
 use super::login::Login;
 use super::proto::build::bazel::remote::execution::v2::action_cache_client::ActionCacheClient;
@@ -67,11 +69,11 @@ impl Progress {
 
 /// What one call needs: the channel, the login, the instance name and the time allowed.
 ///
-/// It is borrowed from the [`Client`] for the length of a call, and builds the generated
-/// service clients, which are cheap to make.
-#[derive(Clone, Copy)]
+/// It is made by the [`Client`] for the length of a call, and builds the generated service
+/// clients, which are cheap to make.
+#[derive(Clone)]
 pub(super) struct Wire<'a> {
-    channel: &'a Channel,
+    channel: Channel,
     login: &'a Login,
     instance: Option<&'a InstanceName>,
     timeout: Duration,
@@ -158,10 +160,21 @@ enum Asked {
     Failed(String),
 }
 
+/// How far the connection to the cache has come.
+enum Link {
+    /// Not yet connected; the first call that needs the channel connects it.
+    Pending(Box<Pending>),
+    /// Connected, for every call to share.
+    Open(Channel),
+    /// The connect failed, with this reason; the cache is not connected to again.
+    Failed(String),
+}
+
 /// A connection to a remote cache, usable from any thread.
 pub(crate) struct Client {
     runtime: Runtime,
-    channel: Channel,
+    link: Mutex<Link>,
+    url: String,
     login: Login,
     instance: Option<InstanceName>,
     timeout: Duration,
@@ -170,22 +183,24 @@ pub(crate) struct Client {
 }
 
 impl Client {
-    /// Connects to the cache `settings` name and reads its token.
+    /// Prepares a client of the cache `settings` name, and reads its token.
     ///
-    /// A relative `ca` or token file is resolved against `root`.
+    /// Nothing is sent: the channel is connected by the first call that needs it. A relative
+    /// `ca` or token file is resolved against `root`.
     ///
     /// # Errors
     ///
-    /// Returns [`RemoteError::Runtime`] when the runtime cannot start,
-    /// [`RemoteError::Token`] when the token cannot be read, and [`RemoteError::Channel`] when
-    /// the cache cannot be reached.
-    pub(crate) fn connect(settings: &RemoteSettings, root: &Path) -> Result<Self, RemoteError> {
+    /// Returns [`RemoteError::Runtime`] when the runtime cannot start, [`RemoteError::Token`]
+    /// when the token cannot be read, and [`RemoteError::Channel`] when the certificate
+    /// authority file cannot be read or the transport refuses the address.
+    pub(crate) fn new(settings: &RemoteSettings, root: &Path) -> Result<Self, RemoteError> {
         let runtime = Runtime::new().map_err(RemoteError::Runtime)?;
         let login = Login::read(settings, root).map_err(RemoteError::Token)?;
-        let channel = channel::connect(&runtime, settings, root)?;
+        let pending = channel::prepare(settings, root)?;
         Ok(Self {
             runtime,
-            channel,
+            link: Mutex::new(Link::Pending(Box::new(pending))),
+            url: settings.url().to_string(),
             login,
             instance: settings.instance().cloned(),
             timeout: settings.timeout().as_duration(),
@@ -193,13 +208,43 @@ impl Client {
         })
     }
 
-    const fn wire(&self) -> Wire<'_> {
-        Wire {
-            channel: &self.channel,
+    /// The address of the cache, as the settings spell it.
+    pub(crate) fn url(&self) -> &str {
+        &self.url
+    }
+
+    /// What one call needs, connecting the channel if no call has yet.
+    ///
+    /// A failed connect is kept. The first caller gets the failure itself; callers that were
+    /// waiting, and every later one, get [`RemoteError::Unusable`] at once, so a cache that is
+    /// down costs one timeout and not one per caller.
+    fn wire(&self) -> Result<Wire<'_>, RemoteError> {
+        let mut link = self.link.lock().unwrap_or_else(PoisonError::into_inner);
+        let channel = match &*link {
+            Link::Open(channel) => channel.clone(),
+            Link::Failed(reason) => {
+                return Err(RemoteError::Unusable {
+                    reason: reason.clone(),
+                });
+            }
+            Link::Pending(pending) => match pending.open(&self.runtime) {
+                Ok(channel) => {
+                    *link = Link::Open(channel.clone());
+                    channel
+                }
+                Err(error) => {
+                    *link = Link::Failed(error.to_string());
+                    return Err(error.into());
+                }
+            },
+        };
+        drop(link);
+        Ok(Wire {
+            channel,
             login: &self.login,
             instance: self.instance.as_ref(),
             timeout: self.timeout,
-        }
+        })
     }
 
     /// The cache's capabilities, asked for on the first call and kept.
@@ -217,7 +262,10 @@ impl Client {
             Some(Asked::Failed(reason)) => return Err(RemoteError::Unusable { reason }),
             None => {}
         }
-        let asked = self.runtime.block_on(Capabilities::fetch(&self.wire()));
+        let asked = match self.wire() {
+            Ok(wire) => self.runtime.block_on(Capabilities::fetch(&wire)),
+            Err(error) => Err(error),
+        };
         *held = Some(match &asked {
             Ok(known) => Asked::Known(*known),
             Err(error) => Asked::Failed(error.to_string()),
@@ -236,8 +284,9 @@ impl Client {
         digests: &[Digest],
     ) -> Result<Vec<Digest>, RemoteError> {
         self.capabilities()?;
+        let wire = self.wire()?;
         self.runtime
-            .block_on(transfer::find_missing(&self.wire(), digests))
+            .block_on(transfer::find_missing(&wire, digests))
     }
 
     /// Reads the blobs `digests` name, in the same order.
@@ -247,8 +296,9 @@ impl Client {
     /// Returns the failure of a call, or of the first blob that failed.
     pub(crate) fn read_blobs(&self, digests: &[Digest]) -> Result<Vec<Vec<u8>>, RemoteError> {
         let threshold = self.capabilities()?.batch_threshold();
+        let wire = self.wire()?;
         self.runtime
-            .block_on(transfer::read_blobs(&self.wire(), threshold, digests))
+            .block_on(transfer::read_blobs(&wire, threshold, digests))
     }
 
     /// Writes `blobs`, each with the digest it is stored under.
@@ -260,8 +310,9 @@ impl Client {
     pub(crate) fn write_blobs(&self, blobs: &[(Digest, Vec<u8>)]) -> Result<(), RemoteError> {
         let capabilities = self.capabilities()?;
         capabilities.require_updates()?;
+        let wire = self.wire()?;
         self.runtime.block_on(transfer::write_blobs(
-            &self.wire(),
+            &wire,
             capabilities.batch_threshold(),
             blobs,
         ))
@@ -278,7 +329,7 @@ impl Client {
         action: &Digest,
     ) -> Result<Option<ActionResult>, RemoteError> {
         self.capabilities()?;
-        let wire = self.wire();
+        let wire = self.wire()?;
         let request = GetActionResultRequest {
             instance_name: wire.instance().to_owned(),
             action_digest: Some(action.clone()),
@@ -312,7 +363,7 @@ impl Client {
         result: ActionResult,
     ) -> Result<ActionResult, RemoteError> {
         self.capabilities()?.require_updates()?;
-        let wire = self.wire();
+        let wire = self.wire()?;
         let request = UpdateActionResultRequest {
             instance_name: wire.instance().to_owned(),
             action_digest: Some(action.clone()),
@@ -339,13 +390,15 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::net::TcpListener;
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use buildl_core::{InstanceName, RemoteSettings, RemoteUrl, Timeout};
+    use buildl_core::{HostPath, InstanceName, RemoteSettings, RemoteUrl, Timeout, TokenSource};
     use uuid::Uuid;
 
     use super::Client;
+    use crate::remote::channel::ChannelError;
     use crate::remote::error::RemoteError;
     use crate::remote::proto::build::bazel::remote::execution::v2::{ActionResult, Digest};
     use crate::remote::test_server::{Fault, Hashing, Method, ServerOptions, TestServer, Updates};
@@ -363,7 +416,7 @@ mod tests {
     }
 
     fn client(server: &TestServer) -> Client {
-        Client::connect(&settings(server, None, "30s"), root()).unwrap()
+        Client::new(&settings(server, None, "30s"), root()).unwrap()
     }
 
     fn server_with(limit: i64) -> TestServer {
@@ -396,6 +449,63 @@ mod tests {
                 digest_of(data)
             })
             .collect()
+    }
+
+    fn dead_settings(timeout: &str) -> RemoteSettings {
+        let address = TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap();
+        let url = RemoteUrl::parse(&format!("grpc://{address}")).unwrap();
+        RemoteSettings::builder(url)
+            .timeout(Timeout::parse(timeout).unwrap())
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn a_dead_address_is_a_failure_of_the_first_call_and_not_of_the_client() {
+        let client = Client::new(&dead_settings("2s"), root()).unwrap();
+
+        let first = client.find_missing_blobs(&[]).unwrap_err();
+        let second = client.get_action_result(&digest_of(b"x")).unwrap_err();
+
+        assert!(
+            matches!(first, RemoteError::Channel(ChannelError::Connect { .. })),
+            "{first:?}"
+        );
+        assert!(
+            matches!(second, RemoteError::Unusable { .. }),
+            "a failed connect is remembered: {second:?}"
+        );
+    }
+
+    #[test]
+    fn a_missing_token_is_refused_before_any_call() {
+        let url = RemoteUrl::parse("grpcs://127.0.0.1:1").unwrap();
+        let settings = RemoteSettings::builder(url)
+            .token(TokenSource::File(HostPath::parse("no-such-token").unwrap()))
+            .build()
+            .unwrap();
+
+        let outcome = Client::new(&settings, root());
+
+        assert!(
+            matches!(outcome, Err(RemoteError::Token(_))),
+            "{:?}",
+            outcome.map(|_| ())
+        );
+    }
+
+    #[test]
+    fn the_channel_connects_on_the_first_call_and_serves_the_rest() {
+        let server = TestServer::start().unwrap();
+        let client = client(&server);
+
+        client.find_missing_blobs(&[]).unwrap();
+        client.find_missing_blobs(&[]).unwrap();
+
+        assert_eq!(server.calls_to(Method::FindMissingBlobs).len(), 2);
     }
 
     #[test]
@@ -563,7 +673,7 @@ mod tests {
     #[test]
     fn the_instance_name_prefixes_resource_names() {
         let server = server_with(1024);
-        let client = Client::connect(&settings(&server, Some("ci"), "30s"), root()).unwrap();
+        let client = Client::new(&settings(&server, Some("ci"), "30s"), root()).unwrap();
         let data = bytes(2048, 8);
         let digest = digest_of(&data);
 
@@ -668,7 +778,7 @@ mod tests {
     fn a_stalled_unary_call_times_out() {
         let server = TestServer::start().unwrap();
         server.stall(Method::FindMissingBlobs, Duration::from_secs(5));
-        let client = Client::connect(&settings(&server, None, "200ms"), root()).unwrap();
+        let client = Client::new(&settings(&server, None, "200ms"), root()).unwrap();
 
         let started = Instant::now();
         let error = client.find_missing_blobs(&[digest_of(b"x")]).unwrap_err();
@@ -685,7 +795,7 @@ mod tests {
     fn a_slow_stream_that_keeps_moving_completes() {
         let server = server_with(1024);
         server.pace_stream(Duration::from_millis(120));
-        let client = Client::connect(&settings(&server, None, "300ms"), root()).unwrap();
+        let client = Client::new(&settings(&server, None, "300ms"), root()).unwrap();
         let data = bytes(MIB, 10);
         let digests = put_all(&server, std::slice::from_ref(&data));
 
@@ -760,7 +870,7 @@ mod tests {
     fn a_stalled_stream_write_times_out_within_a_timeout_of_the_last_chunk() {
         let server = server_with(1024);
         server.stall(Method::Write, Duration::from_secs(5));
-        let client = Client::connect(&settings(&server, None, "250ms"), root()).unwrap();
+        let client = Client::new(&settings(&server, None, "250ms"), root()).unwrap();
         let data = bytes(8 * MIB, 11);
         let digest = digest_of(&data);
 
@@ -779,7 +889,7 @@ mod tests {
     fn a_stalled_stream_read_message_times_out() {
         let server = server_with(1024);
         server.pace_stream(Duration::from_millis(600));
-        let client = Client::connect(&settings(&server, None, "200ms"), root()).unwrap();
+        let client = Client::new(&settings(&server, None, "200ms"), root()).unwrap();
         let data = bytes(MIB, 12);
         let digests = put_all(&server, std::slice::from_ref(&data));
 
@@ -798,7 +908,7 @@ mod tests {
     fn concurrent_callers_find_a_stalled_capabilities_ask_failed_once() {
         let server = TestServer::start().unwrap();
         server.stall(Method::GetCapabilities, Duration::from_secs(5));
-        let client = Client::connect(&settings(&server, None, "300ms"), root()).unwrap();
+        let client = Client::new(&settings(&server, None, "300ms"), root()).unwrap();
 
         let started = Instant::now();
         let errors: Vec<_> = thread::scope(|scope| {

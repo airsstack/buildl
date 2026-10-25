@@ -164,7 +164,10 @@ mod tests {
         login: Login,
     ) -> std::collections::BTreeMap<String, String> {
         let runtime = Runtime::new().unwrap();
-        let channel: Channel = channel::connect(&runtime, settings, root()).unwrap();
+        let channel: Channel = channel::prepare(settings, root())
+            .unwrap()
+            .open(&runtime)
+            .unwrap();
         let mut client = CapabilitiesClient::with_interceptor(channel, login);
         runtime
             .block_on(client.get_capabilities(GetCapabilitiesRequest::default()))

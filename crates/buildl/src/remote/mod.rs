@@ -2,95 +2,26 @@
 //!
 //! It holds the REAPI v2 message and service types, the runtime that drives the gRPC client, the
 //! channel to the cache and the login every call carries, the cache's capabilities, the
-//! transfer of blobs, the blocking client that makes the calls and the error it fails with,
-//! and, behind the `test-server` feature, an in-memory server to test against.
+//! transfer of blobs, the blocking client that makes the calls and the error it fails with, the
+//! encoding of buildl's remote values as REAPI messages, the input root of an action, and
+//! [`Reapi`], the remote cache built from them. Behind the `test-server` feature it also holds
+//! an in-memory server to test against.
 
-// Only `client` is an entry point that nothing outside the tests reaches. Whether the modules it
-// uses are reported as dead too depends on the compiler (current stable reports them, the
-// 1.94 floor does not), so they carry `allow`, as `proto` does, where an `expect` would be
-// unfulfilled on one of the two.
-#[cfg_attr(
-    not(all(test, feature = "test-server")),
-    allow(
-        dead_code,
-        reason = "no code outside this module's own tests asks for capabilities yet"
-    )
-)]
 mod capabilities;
-#[cfg_attr(
-    not(all(test, feature = "test-server")),
-    allow(
-        dead_code,
-        reason = "no code outside this module's own tests connects a channel yet"
-    )
-)]
 mod channel;
-#[cfg_attr(
-    not(all(test, feature = "test-server")),
-    expect(
-        dead_code,
-        reason = "no code outside this module's own tests makes a client yet"
-    )
-)]
 mod client;
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "no code outside this module's own tests encodes a message yet"
-    )
-)]
 mod encode;
-#[cfg_attr(
-    not(all(test, feature = "test-server")),
-    allow(
-        dead_code,
-        reason = "no code outside this module's own tests fails with a remote error yet"
-    )
-)]
 mod error;
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "no code outside this module's own tests builds an input root yet"
-    )
-)]
 mod input_tree;
-#[cfg_attr(
-    not(all(test, feature = "test-server")),
-    allow(
-        dead_code,
-        reason = "no code outside this module's own tests logs in yet"
-    )
-)]
 mod login;
 mod proto;
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "no code outside this module's own tests names the runtime"
-    )
-)]
+mod reapi;
 mod runtime;
 #[cfg(feature = "test-server")]
 pub mod test_server;
 #[cfg(all(test, feature = "test-server"))]
 mod tls_fixture;
-#[cfg_attr(
-    not(all(test, feature = "test-server")),
-    allow(
-        dead_code,
-        reason = "no code outside this module's own tests moves blobs yet"
-    )
-)]
 mod transfer;
-#[cfg_attr(
-    not(all(test, feature = "test-server")),
-    allow(
-        dead_code,
-        reason = "no code outside this module's own tests names a call or the updates setting yet"
-    )
-)]
 mod vocabulary;
+
+pub use reapi::Reapi;

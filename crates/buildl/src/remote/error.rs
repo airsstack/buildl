@@ -41,7 +41,8 @@ pub(crate) enum RemoteError {
         /// The time it was given.
         timeout: Duration,
     },
-    /// The cache was found unusable earlier, when its capabilities were asked for.
+    /// The cache was found unusable earlier, when the channel to it was connected or its
+    /// capabilities were asked for.
     #[error("the remote cache is unusable: {reason}")]
     Unusable {
         /// Why the first ask failed.

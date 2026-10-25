@@ -15,9 +15,10 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use buildl_core::{Diagnostic, Error, FileMode, PortName, RemoteFile};
+use buildl_core::{Blob, Diagnostic, Error, FileMode, PortName, RemoteFile};
 use prost::Message;
 
+use super::encode::wire_digest;
 use super::proto::build::bazel::remote::execution::v2::{
     Digest, Directory, DirectoryNode, FileNode,
 };
@@ -72,7 +73,7 @@ impl Node {
             node_properties: None,
         };
         let bytes = directory.encode_to_vec();
-        let digest = digest_of(&bytes);
+        let digest = wire_digest(&Blob::of(&bytes));
         if seen.insert(digest.hash.clone()) {
             out.push((digest.clone(), bytes));
         }
@@ -119,13 +120,6 @@ fn file_node(root: &Path, file: &RemoteFile, name: Option<&str>) -> Result<FileN
         is_executable: mode == FileMode::Executable,
         node_properties: None,
     })
-}
-
-fn digest_of(bytes: &[u8]) -> Digest {
-    Digest {
-        hash: buildl_core::Digest::of(bytes).to_string(),
-        size_bytes: i64::try_from(bytes.len()).unwrap_or(i64::MAX),
-    }
 }
 
 fn failure(text: &str) -> Error {
