@@ -70,6 +70,7 @@ mod tests {
             execution: Execution::default(),
             approver: ApproverMode::Manifest,
             plugins: std::collections::BTreeMap::new(),
+            remote: None,
         }
     }
 

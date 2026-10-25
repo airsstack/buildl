@@ -270,6 +270,7 @@ mod tests {
             },
             approver,
             plugins: std::collections::BTreeMap::new(),
+            remote: None,
         }
     }
 

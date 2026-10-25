@@ -70,6 +70,7 @@ pub(crate) fn workspace(text: &str, raw: &Raw) -> Result<Workspace> {
         execution: execution(text, &raw.execution)?,
         approver: approver(text, &raw.approver)?,
         plugins: caps(text, &raw.plugins)?,
+        remote: None,
     })
 }
 

@@ -178,6 +178,7 @@ mod tests {
                         ..PluginCap::default()
                     },
                 )]),
+                remote: None,
             })
         }
     }

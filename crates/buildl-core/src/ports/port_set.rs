@@ -138,6 +138,7 @@ mod tests {
                 execution: crate::types::Execution::default(),
                 approver: crate::types::ApproverMode::Manifest,
                 plugins: std::collections::BTreeMap::new(),
+                remote: None,
             })
         }
     }
