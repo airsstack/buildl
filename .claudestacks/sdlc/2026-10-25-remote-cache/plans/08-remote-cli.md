@@ -2,7 +2,7 @@
 status: approved
 created: 2026-10-25
 depends-on: [01, 04, 07]
-built-on: 867ed49b84d7
+built-on: 5ec007f25407
 ---
 
 # Remote CLI Implementation Plan
@@ -43,7 +43,7 @@ crates/buildl-cli/src/main.rs                 — [modify] read the two variable
 crates/buildl-cli/src/run.rs                  — [modify] build (:315), test (:345) resolve the switches; doctor (:288) passes them to the text
 crates/buildl-cli/src/doctor_text.rs          — [modify] the remote section
 crates/buildl-core/src/error.rs               — [modify] Error::RemoteSwitch { name, value } (a variable neither `1` nor `0`); Error::RemoteFlags { reason } (a flag combination spec §6 refuses)
-crates/buildl-cli/src/exit.rs                 — [modify] RemoteSwitch, RemoteFlags and RemoteToken (plan 06) → the usage exit, beside :97-102
+crates/buildl-cli/src/exit.rs                 — [modify] RemoteSwitch and RemoteFlags → the usage exit, beside RemoteToken (mapped by plan 06)
 crates/buildl-cli/Cargo.toml                  — [modify] dev-dependency `buildl` with feature `test-server`
 crates/buildl-cli/tests/cli/remote.rs         — [create] the binary against TestServer
 crates/buildl-cli/tests/cli/main.rs           — [modify] mod remote
@@ -62,7 +62,7 @@ variable `1` or `0`, anything else `Error::RemoteSwitch` naming the variable; a 
 switch on whatever its variable says; `--no-remote` → `RemotePolicy::OFF` whatever the variables
 say; no `[remote]` table → `OFF`, but either flag without one, or `--no-remote` with either
 flag, is `Error::RemoteFlags` (spec §6). Reading with upload → `ReadWrite`; strict → `Strict`.
-`exit.rs` maps both errors, and plan 06's `Error::RemoteToken`, to the usage exit (spec §7).
+`exit.rs` maps both errors to the usage exit (spec §7); plan 06 already maps `Error::RemoteToken` there.
 
 **Proof:** written first, seen failing, then passing —
 - `no_switch_reads_leniently` — `Read`, `Lenient`

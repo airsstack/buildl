@@ -1,8 +1,8 @@
 ---
-status: executing
+status: done
 created: 2026-10-25
 depends-on: [01, 02, 05]
-built-on: 867ed49b84d7
+built-on: 5ec007f25407
 ---
 
 # Remote Transport Implementation Plan
@@ -37,10 +37,15 @@ crates/buildl/src/remote/login.rs          — [create] read the token (env or f
 crates/buildl/src/remote/capabilities.rs   — [create] GetCapabilities once; SHA-256, update_enabled, batch limit
 crates/buildl/src/remote/transfer.rs       — [create] FindMissingBlobs; read and write blobs by batch or ByteStream; per-message stream timeout
 crates/buildl/src/remote/client.rs         — [create] Client: connect(settings, root) and the blocking calls
+crates/buildl/src/remote/error.rs          — [create] RemoteError: one error for capabilities, transfer and client, naming the call
+crates/buildl/src/remote/vocabulary.rs     — [create] Method (the REAPI calls) and Updates, shared by client and test server
+crates/buildl/src/remote/tls_fixture.rs    — [create, tests only] loads the committed test certificate
 crates/buildl/src/remote/test_server.rs    — [create, feature test-server] in-memory ActionCache, CAS, ByteStream, Capabilities on loopback; records calls; can be told to fail or stall
 crates/buildl/src/remote/mod.rs            — [modify] table of contents for the files above
 crates/buildl/tests/fixtures/tls/ca.pem, server.pem, server.key — [create] a test CA and a loopback server certificate, made once, long-lived
-crates/buildl-core/src/error.rs            — [modify] Error::RemoteToken { source } — a token named but not readable
+crates/buildl-core/src/error.rs            — [modify] Error::RemoteToken { from } — a token named but not readable
+crates/buildl-cli/src/exit.rs              — [modify] Error::RemoteToken → the usage exit (spec §7)
+Cargo.toml                                 — [modify] tokio gains `time`
 ```
 
 ## Order of work
@@ -70,7 +75,7 @@ plus the PEM at `ca` when set (a relative `HostPath` resolved against the worksp
 `Login` reads the token once — from the named variable, or the named file with one trailing
 newline dropped — and adds `header: Bearer <token>` for `authorization` and `header: <token>`
 for any other name to every call (spec §6). A variable unset or a file unreadable is a new
-`Error::RemoteToken { source }` naming the variable or file, never the token; plan 08 maps it
+`Error::RemoteToken { from }` naming the variable or file, never the token; plan 08 maps it
 to the usage exit (spec §7: a variable error is the existing usage error). The test
 certificate is made once with `openssl` for `127.0.0.1` and `localhost`.
 
@@ -139,3 +144,30 @@ batch answer is an error naming the digest.
 `cargo make dod`, `cargo deny check` and `cargo make guard-adapter-isolation` green; every REAPI
 call of spec §5 succeeds against the test server over plain and TLS channels, and every limit
 and timeout behaves as spec §5 says.
+
+## Review findings
+
+- correctness — `connect()` bounded only the TCP connect; a server silent after accept hung the build — `channel.rs` — fixed: whole connect under `tokio::time::timeout`; test against a TLS listener that never answers (blocking)
+- correctness — one digest asked twice in a batch read failed — `transfer.rs` — fixed: deduplicated request, answer fanned out; test `[a, b, a]` (blocking)
+- spec §5 — ByteStream Write bounded by timeout × chunk count — `transfer.rs` — fixed: per-message bound by a progress stamp re-armed when tonic pulls a chunk; stalled Write and stalled Read tests (blocking)
+- correctness — `split` counted data only; a full answer could pass tonic's 4 MiB cap — `transfer.rs` — fixed: 128 bytes per entry against 4 MiB − 64 KiB; 12,000 × 300 B round trip (blocking)
+- efficiency — a failed capabilities call was retried under the lock by every worker — `client.rs` — fixed: outcome kept; later callers get `RemoteError::Unusable` at once
+- error handling — `#[from] buildl_core::Error` made any core error a token error — `error.rs` — fixed: explicit `map_err`
+- correctness — a CRLF token file was refused, and the message pointed at permissions — `login.rs`, core `error.rs` — fixed: one trailing `\n` or `\r\n` dropped; wording names content too
+- efficiency — Write copies each chunk — kept: `WriteRequest.data` is `Vec<u8>` and the stream must be `'static`; one copy per chunk is the minimum without regenerating with `Bytes`
+- strong types — `bool` updates flag, `&'static str` call names beside test_server's `Method`, `String` digests and instance names — fixed: `vocabulary.rs` `Method`/`Updates`, proto `Digest`, `Option<InstanceName>`
+- doc-comment-discipline — stale `remote` docs in `lib.rs`, `channel.rs`, `Cargo.toml`, `error.rs`; a long test_server doc line — fixed; a doctest added
+- records — spec §5 Batching and Timeout, §8 tokio `time`; plan file list (`error.rs`, `vocabulary.rs`, `tls_fixture.rs`, `exit.rs`); `RemoteToken { from }`; plan 08's exit mapping — fixed: spec amended (user's yes, 2026-10-26), plans 06–09 re-pointed; plan 08 amended
+- Fix round gates (run by the fix coder): `cargo make dod` → `Build Done in 57.09 seconds`; `guard-adapter-isolation: OK (37 edges)`; `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`; `cargo +1.94 check -p buildl --all-targets --all-features` → `Finished`, no warning
+
+## Probe results
+
+- Task 1 risk (`block_on` from many threads): eight std threads, one `Runtime`, one channel; the server held each call 500 ms and saw `peak_in_flight` 8; all eight `Ok` — the runtime design holds
+- `Timeout` stores milliseconds (`Timeout::parse("200ms")`), so the sub-second tests build settings directly; `buildl-core` unchanged
+- `dead_code` differs by toolchain: stable reports every unused remote module, 1.94 only `client`; six modules carry `cfg_attr(not(test), allow(dead_code, reason))`, `client` an `expect`
+
+## Deviations
+
+- 2026-10-25 — Task 2: `Error::RemoteToken { from }`, since thiserror reads a field named `source` as the cause; `exit.rs` mapped here rather than in plan 08.
+- 2026-10-25 — Task 3: `error.rs` and `vocabulary.rs` added; connect is eager, so an untrusted certificate fails in `connect`.
+- 2026-10-26 — one reviewer pass reading the diff only (gates run once, by the coder), then one fix commit `7a77b03`.

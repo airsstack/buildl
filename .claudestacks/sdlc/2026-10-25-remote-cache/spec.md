@@ -172,10 +172,10 @@ case by content (§3).
 |Channel|`grpc://host:port` is plain HTTP/2, `grpcs://host:port` is TLS with the system roots plus `[remote] ca` when set. One channel per build, shared by the workers.|
 |Login|every call carries the header `[remote] header` (default `authorization`) holding `Bearer <token>` for `authorization` and the bare token for any other name. The token is read once, from `token.env` or `token.file`.|
 |Capabilities|`GetCapabilities` once per build, before the first call that needs it: SHA-256 must be among the digest functions, and uploading requires `update_enabled` (P12); otherwise a remote failure.|
-|Batching|a blob goes into a batch call while the batch stays under min(`max_batch_total_size_bytes` (0 = none), 4 MiB) less 64 KiB of headroom (P12, P13); a larger blob uses ByteStream, written in 1 MiB chunks under a fresh version 4 UUID (P11).|
+|Batching|a blob goes into a batch call while the batch's data stays at or under `max_batch_total_size_bytes` (0 = none) and its message — each blob's size plus 128 bytes of per-entry framing — stays under tonic's 4 MiB message cap less 64 KiB of headroom (P12, P13); a batch read that names one digest twice asks for it once and answers every position; a larger blob uses ByteStream, written in 1 MiB chunks under a fresh version 4 UUID (P11).|
 |Upload|`FindMissingBlobs` over everything §3 lists, the missing ones uploaded, then `UpdateActionResult`.|
 |Download|`GetActionResult`; then, through the core, each `Tree` blob, then the file blobs.|
-|Timeout|`[remote] timeout` (default 30 s) bounds each unary call whole, and each message of a ByteStream `Read` or `Write`, so a large transfer that keeps moving is never cut off.|
+|Timeout|`[remote] timeout` (default 30 s) bounds the connection (TCP, TLS and HTTP/2 handshakes together), each unary call whole, and each message of a ByteStream `Read` or `Write` (a `Write` by the time since tonic last pulled a chunk), so a large transfer that keeps moving is never cut off.|
 |Input tree|built here from the `RemoteAction`'s files with the sizes and executable bits read from disk (§2); input bytes read and hashed here for upload (§3).|
 |Encoding|`RemoteAction` and `RemoteUpload` become protobuf here; prost's tag-order encoding (P7, P8) makes the digests stable.|
 |Generated code|the REAPI v2, ByteStream and imported googleapis protos are vendored under `crates/buildl/proto/` at the commit of §1, and the Rust prost and tonic generate is committed under `crates/buildl/generated/reapi/`, outside `src/` because its `super::super` paths are refused there by `guard-adapter-isolation`; `src/remote/proto.rs` pulls each file in with `include!` and carries the lint suppressions the generated code needs, each with its reason. A generator kept outside the workspace regenerates it, so its build tools never enter `cargo deny` (P19).|
@@ -237,7 +237,7 @@ Nothing else in the exit code table changes.
 |---|---|---|
 |`tonic` 0.14 (`channel`, `codegen`, `tls-ring`, `tls-native-roots`)|`buildl`|the gRPC client|
 |`tonic-prost`, `prost` 0.14, `prost-types` 0.14|`buildl`|the generated messages and their codec|
-|`tokio` (`rt`, `rt-multi-thread`)|`buildl`|the runtime the client needs, owned by the remote adapter|
+|`tokio` (`rt`, `rt-multi-thread`, `time`)|`buildl`|the runtime the client needs, owned by the remote adapter|
 |`uuid` (`v4`)|`buildl`|ByteStream upload resource names (P11)|
 |feature `test-server` of `buildl` (`tonic/server`, `tonic/router`, `tokio/net`)|`buildl` tests; `buildl-cli` dev-dependency|the in-test REAPI server, one source for both crates' tests, never in the shipped binary|
 
