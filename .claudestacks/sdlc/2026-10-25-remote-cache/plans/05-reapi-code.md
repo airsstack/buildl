@@ -1,7 +1,7 @@
 ---
-status: approved
+status: done
 created: 2026-10-25
-built-on: 3d9113128fe5
+built-on: 867ed49b84d7
 ---
 
 # REAPI Code Implementation Plan
@@ -19,7 +19,7 @@ guard's first `grep`), and files outside `src/` are outside the unit-test mandat
 ordinary file, `crates/buildl/src/remote/proto.rs` — not a `mod.rs`, so the export-only rule
 does not bind it — declares the package-shaped modules and pulls each generated file in with
 `include!(concat!(env!("CARGO_MANIFEST_DIR"), "/generated/reapi/<file>.rs"))`, carrying the
-`#[expect]`s the lints need, and has its own unit tests. The server halves are generated
+lint suppressions the generated code needs, and has its own unit tests. The server halves are generated
 behind `#[cfg(feature = "test-server")]` (`server_mod_attribute`,
 `tonic-prost-build-0.14.6/src/lib.rs:544`).
 
@@ -54,6 +54,7 @@ crates/buildl/Cargo.toml                                                   — [
 deny.toml                                                                  — [modify] licenses, skips, bans of spec §8
 crates/expected-edges.txt                                                  — [modify] buildl's new direct dependencies
 Makefile.toml                                                              — [modify] task `reapi-codegen` running the generator
+.github/workflows/ci.yml                                                   — [modify] job `reapi-codegen`: regenerate and diff, and check the packaged crate lists generated/reapi/
 ```
 
 The vendored googleapis set is the closure of the two root protos' imports: `re.proto:19-26`
@@ -87,15 +88,19 @@ commits and each file's license.
 \"test-server\")]")`, `out_dir` `crates/buildl/generated/reapi`); `cargo make reapi-codegen`
 runs it. The root manifest excludes the tool and adds `tonic`, `tonic-prost`, `prost`,
 `prost-types`, `tokio` (`rt`, `rt-multi-thread`) and `uuid` (`v4`) to
-`[workspace.dependencies]`, each with its reason; `crates/buildl/Cargo.toml` takes them and
+`[workspace.dependencies]`, each with its reason (default features off; `tonic` with `channel`,
+`codegen`, `tls-ring`, `tls-native-roots`, spec §8); `crates/buildl/Cargo.toml` takes them and
 declares `test-server = ["tonic/server", "tonic/router", "tokio/net"]` — `router` because the
 test server serves four services on one address, which tonic 0.14.6 offers only through
 `Router` (`tonic-0.14.6/src/transport/server/mod.rs:149`, `:510`); with it, `cargo deny check`
 still prints `advisories ok, bans ok, licenses ok, sources ok` (probe, 2026-10-25).
 `remote/proto.rs` builds `build::bazel::remote::execution::v2`, `build::bazel::semver` and
 `google::{api, longrunning, rpc, bytestream}` over the generated files and carries the
-`#[expect(...)]`s the gate needs on them, each with its reason — the set is whatever
-`cargo make dod` reports, nothing more (Risks).
+lint suppressions the gate needs on them, each with its reason — the set is whatever
+`cargo make dod` reports, nothing more (Risks): `#![expect]` for `unreachable_pub` and the clippy
+lints that fire, `cfg_attr(feature = "test-server", expect(...))` for the two that fire only in
+the server halves, and `#![allow(dead_code)]` because `dead_code` fires on stable but not on the
+1.94 floor, where an `#[expect]` would warn (strict-quality's build-configuration exception).
 
 **Proof:**
 - `proto.rs` unit tests, written first: `prost_encodes_in_tag_order` — a `Command` with fields 1, 5, 6, 7 set encodes with tags `[1, 5, 6, 7]` (P8, kept as a regression); `an_action_round_trips` — encode then decode gives the same `Action`.
@@ -138,3 +143,26 @@ buildl's new direct dependencies.
 
 `cargo make dod`, `cargo deny check` and every `guard-*` task green with the generated code
 compiled in; regenerating changes nothing; the packaged crate carries the generated files.
+
+## Review findings
+
+- strict-quality — `#![expect(dead_code)]` unfulfilled on the 1.94 floor — `remote/proto.rs:13` — fixed: `#![allow(dead_code, reason)]`; `cargo +1.94 check -p buildl --all-targets --all-features` → `Finished`, no warning (blocking)
+- doc-comment-discipline — `remote` module doc described a client that does not exist yet; `lib.rs` did not place it — fixed: doc names the generated types; `lib.rs` paragraph after `plugins`
+- doc-comment-discipline — `bans.deny` reasons cited the chain's spec — `deny.toml` — fixed: each states its reason alone
+- unit-test-mandate — generator `main.rs` had no test or exemption header — fixed: `//!` exemption paragraph; rustfmt and clippy `-D warnings` clean
+- strict-quality (reversion) — nothing caught generated code drifting or dropping out of the package — fixed: CI job `reapi-codegen` (`66de514`)
+- spec drift — §5 put the generated code under `src/remote/`; §8 omitted `tonic/router` — fixed: spec amended (user's call, 2026-10-25); plans 05–09 re-pointed to fingerprint `867ed49b84d7` on the user's yes
+- Fix round gates (run by the fix coder): `cargo make dod` → `Build Done in 41.52 seconds`; `cargo deny check -D unused-wrapper` → `advisories ok, bans ok, licenses ok, sources ok`
+
+## Probe results
+
+- Task 1: all ten vendored files re-downloaded at their pinned commits compare `same`; the import closure is complete (`google/protobuf/*` from `protox`)
+- Task 2: `cargo make reapi-codegen` twice → empty `git diff`; `cargo package -p buildl --list --allow-dirty` lists the six generated files; `cargo fmt --check` does not follow `include!`
+- Task 3: `cargo deny check` duplicates were `getrandom@0.2.17`, `syn@2.0.119`, `windows-sys@0.52.0`, as the plan's probe said
+- Risk "generated code under the lint gate": `RUSTDOCFLAGS="-D warnings" cargo doc` passes with proto comments intact; `disable_comments` not needed
+
+## Deviations
+
+- 2026-10-25 — Task 1 committed without re-running `cargo make dod`: it changes no Rust code.
+- 2026-10-25 — Tasks 2 and 3 built by one coder (disjoint files), committed separately by path; the fix round's edits to those files landed in the task commits, its CI job in `66de514`.
+- 2026-10-25 — one reviewer pass reading the diff only (gates run once, by the coder), then one fix round.

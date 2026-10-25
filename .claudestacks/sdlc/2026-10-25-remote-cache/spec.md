@@ -178,7 +178,7 @@ case by content (§3).
 |Timeout|`[remote] timeout` (default 30 s) bounds each unary call whole, and each message of a ByteStream `Read` or `Write`, so a large transfer that keeps moving is never cut off.|
 |Input tree|built here from the `RemoteAction`'s files with the sizes and executable bits read from disk (§2); input bytes read and hashed here for upload (§3).|
 |Encoding|`RemoteAction` and `RemoteUpload` become protobuf here; prost's tag-order encoding (P7, P8) makes the digests stable.|
-|Generated code|the REAPI v2, ByteStream and imported googleapis protos are vendored under `crates/buildl/proto/` at the commit of §1, and the Rust prost and tonic generate is committed under `src/remote/`, carrying the `#[expect(...)]`s the generated code needs, each with its reason. A generator kept outside the workspace regenerates it, so its build tools never enter `cargo deny` (P19).|
+|Generated code|the REAPI v2, ByteStream and imported googleapis protos are vendored under `crates/buildl/proto/` at the commit of §1, and the Rust prost and tonic generate is committed under `crates/buildl/generated/reapi/`, outside `src/` because its `super::super` paths are refused there by `guard-adapter-isolation`; `src/remote/proto.rs` pulls each file in with `include!` and carries the lint suppressions the generated code needs, each with its reason. A generator kept outside the workspace regenerates it, so its build tools never enter `cargo deny` (P19).|
 
 ## 6. Configuration, switches, failures
 
@@ -239,7 +239,7 @@ Nothing else in the exit code table changes.
 |`tonic-prost`, `prost` 0.14, `prost-types` 0.14|`buildl`|the generated messages and their codec|
 |`tokio` (`rt`, `rt-multi-thread`)|`buildl`|the runtime the client needs, owned by the remote adapter|
 |`uuid` (`v4`)|`buildl`|ByteStream upload resource names (P11)|
-|feature `test-server` of `buildl` (`tonic/server`, `tokio/net`)|`buildl` tests; `buildl-cli` dev-dependency|the in-test REAPI server, one source for both crates' tests, never in the shipped binary|
+|feature `test-server` of `buildl` (`tonic/server`, `tonic/router`, `tokio/net`)|`buildl` tests; `buildl-cli` dev-dependency|the in-test REAPI server, one source for both crates' tests, never in the shipped binary|
 
 `deny.toml` (proven by P18): `BSD-3-Clause` and `ISC` join `licenses.allow`; `skip` gains
 `getrandom@0.2.17`, `syn@2.0.119` and `windows-sys@0.52.0`, each with its reason; `bans.deny`

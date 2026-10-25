@@ -2,7 +2,7 @@
 status: approved
 created: 2026-10-25
 depends-on: [01, 04, 07]
-built-on: 3d9113128fe5
+built-on: 867ed49b84d7
 ---
 
 # Remote CLI Implementation Plan
