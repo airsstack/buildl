@@ -31,7 +31,8 @@ use std::path::PathBuf;
 use crate::types::{
     Ceiling, Declaration, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
     FieldName, InputKind, Label, Node, Origin, OutputPath, PluginName, PluginViolation, Program,
-    Provenance, RemoteUrl, SettingName, SourcePath, TargetRole, TreePath, Want, WantedSet, Written,
+    Provenance, RemoteUrl, SettingName, SourcePath, TargetRole, TokenSource, TreePath, Want,
+    WantedSet, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -409,6 +410,15 @@ pub enum Error {
          unsetting BUILDL_REMOTE_UPLOAD or dropping --remote-upload"
     )]
     UploadUnsandboxed,
+    /// The remote cache's token is named, and cannot be read: the variable is unset or not text,
+    /// or the file is unreadable.
+    ///
+    /// The error names where the token should have come from and never holds the token itself.
+    #[error("the remote cache token cannot be read from {}", token_source(.from))]
+    RemoteToken {
+        /// The variable or file the token was to come from.
+        from: TokenSource,
+    },
     /// Two outputs would be written to one place: the same path, or a path that another output
     /// needs as a directory.
     #[error(
@@ -530,6 +540,14 @@ fn lost_by_the_dispatcher(targets: &[Label]) -> String {
         PortName::Dispatcher,
         labels.join(", ")
     )
+}
+
+/// Where a token is read from, as a phrase: `environment variable NAME` or `file PATH`.
+fn token_source(from: &TokenSource) -> String {
+    match from {
+        TokenSource::Env(name) => format!("environment variable {name}"),
+        TokenSource::File(path) => format!("file {path}"),
+    }
 }
 
 /// The suffix naming who required a missing build file.
@@ -1097,10 +1115,10 @@ mod tests {
     };
     use crate::types::{
         Argument, Ceiling, Command, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName,
-        EnvValue, FieldName, Freshness, InputKind, Label, NetworkAccess, Node, Origin, OutputName,
-        OutputPath, PluginName, PluginRef, PluginVersion, PluginViolation, Program, Provenance,
-        RemoteUrl, SettingName, SourcePath, TargetName, TargetRole, TreePath, Want, WantedSet,
-        Written,
+        EnvValue, FieldName, Freshness, HostPath, InputKind, Label, NetworkAccess, Node, Origin,
+        OutputName, OutputPath, PluginName, PluginRef, PluginVersion, PluginViolation, Program,
+        Provenance, RemoteUrl, SettingName, SourcePath, TargetName, TargetRole, TokenSource,
+        TreePath, Want, WantedSet, Written,
     };
 
     fn lib_file() -> Provenance {
@@ -1714,6 +1732,24 @@ mod tests {
         assert_eq!(
             err.to_string(),
             "target //:nope was asked for but is not declared"
+        );
+    }
+
+    #[test]
+    fn an_unreadable_token_names_where_it_was_to_come_from() {
+        let env = Error::RemoteToken {
+            from: TokenSource::Env(EnvName::parse("CACHE_TOKEN").unwrap()),
+        };
+        assert_eq!(
+            env.to_string(),
+            "the remote cache token cannot be read from environment variable CACHE_TOKEN"
+        );
+        let file = Error::RemoteToken {
+            from: TokenSource::File(HostPath::parse("secrets/token").unwrap()),
+        };
+        assert_eq!(
+            file.to_string(),
+            "the remote cache token cannot be read from file secrets/token"
         );
     }
 

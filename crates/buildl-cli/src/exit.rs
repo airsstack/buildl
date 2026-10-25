@@ -101,7 +101,8 @@ impl Exit {
             | Error::InvalidQuery { .. }
             | Error::NoRun { .. }
             | Error::NotATest { .. }
-            | Error::UploadUnsandboxed => Self::Usage,
+            | Error::UploadUnsandboxed
+            | Error::RemoteToken { .. } => Self::Usage,
             Error::MissingTool { .. } | Error::MissingOutput { .. } | Error::PluginFetch { .. } => {
                 Self::Infrastructure
             }
@@ -182,7 +183,7 @@ mod tests {
         Error, EvaluationFailure, FileChange, InfraKind, InputKind, Label, Origin, OutcomeClass,
         OutputDifference, OutputName, OutputPath, OutputRefusal, PluginName, PluginRef,
         PluginVersion, PluginViolation, PortName, Program, Provenance, SettingName, SourcePath,
-        TargetRole, TreeFault, Verification, Want, WantedSet,
+        TargetRole, TokenSource, TreeFault, Verification, Want, WantedSet,
     };
 
     use super::Exit;
@@ -247,6 +248,9 @@ mod tests {
                 site: Box::new(site()),
             },
             Error::UploadUnsandboxed,
+            Error::RemoteToken {
+                from: TokenSource::Env(EnvName::parse("CACHE_TOKEN").unwrap()),
+            },
         ]
     }
 
@@ -681,12 +685,12 @@ mod tests {
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [6, 4, 3, 20, 4, 7]);
+        assert_eq!(counts, [7, 4, 3, 20, 4, 7]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 44, "a variant is listed twice");
+        assert_eq!(variants.len(), 45, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");

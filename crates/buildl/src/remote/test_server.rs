@@ -4,7 +4,7 @@
 //! `ByteStream` services of the REAPI from memory, on a port the operating system picks and
 //! on a runtime of its own. It records every call it receives, can be told to fail or to hold
 //! back the answer to a named call, and reports what it advertises through
-//! [`ServerOptions`]. It checks the protocol's size rules (a batch within the advertised
+//! [`ServerOptions`], and serves TLS when given a [`TlsIdentity`]. It checks the protocol's size rules (a batch within the advertised
 //! limit, a write whose bytes match the size in its resource name) so a client that gets them
 //! wrong fails here as it would against a real server.
 //!
@@ -20,8 +20,8 @@ use std::time::Duration;
 use buildl_core::Digest as BlobDigest;
 use tonic::codegen::tokio_stream::{self, Empty, Iter};
 use tonic::metadata::KeyAndValueRef;
-use tonic::transport::Server;
 use tonic::transport::server::TcpIncoming;
+use tonic::transport::{Identity, Server, ServerTlsConfig};
 use tonic::{Code, Request, Response, Status, Streaming};
 
 use super::proto::build::bazel::remote::execution::v2::action_cache_server::{
@@ -122,6 +122,15 @@ pub enum Updates {
     Disabled,
 }
 
+/// The certificate chain and private key a server presents when it serves TLS, both PEM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TlsIdentity {
+    /// The server's certificate, then any certificates that lead to the authority.
+    pub certificate_pem: &'static str,
+    /// The private key of the server's certificate.
+    pub key_pem: &'static str,
+}
+
 /// What the server advertises in `GetCapabilities`, and the limits it enforces to match.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ServerOptions {
@@ -131,6 +140,8 @@ pub struct ServerOptions {
     pub hashing: Hashing,
     /// Whether action results may be written.
     pub updates: Updates,
+    /// The identity to serve TLS with; `None` serves plain HTTP/2.
+    pub tls: Option<TlsIdentity>,
 }
 
 impl Default for ServerOptions {
@@ -139,6 +150,7 @@ impl Default for ServerOptions {
             max_batch_total_size_bytes: 4 * 1024 * 1024,
             hashing: Hashing::default(),
             updates: Updates::default(),
+            tls: None,
         }
     }
 }
@@ -180,7 +192,8 @@ impl TestServer {
     ///
     /// # Errors
     ///
-    /// As [`TestServer::start`].
+    /// As [`TestServer::start`], and also when `options` carries a TLS identity that cannot be
+    /// used.
     pub fn start_with(options: ServerOptions) -> io::Result<Self> {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
@@ -200,7 +213,14 @@ impl TestServer {
         let service = Service {
             shared: Arc::clone(&shared),
         };
-        let router = Server::builder()
+        let mut builder = Server::builder();
+        if let Some(identity) = options.tls {
+            let identity = Identity::from_pem(identity.certificate_pem, identity.key_pem);
+            builder = builder
+                .tls_config(ServerTlsConfig::new().identity(identity))
+                .map_err(io::Error::other)?;
+        }
+        let router = builder
             .add_service(CapabilitiesServer::new(service.clone()))
             .add_service(ActionCacheServer::new(service.clone()))
             .add_service(ContentAddressableStorageServer::new(service.clone()))
@@ -952,6 +972,7 @@ mod tests {
             max_batch_total_size_bytes: 1024,
             hashing: Hashing::Sha1,
             updates: Updates::Disabled,
+            tls: None,
         });
         let mut client = CapabilitiesClient::new(fixture.channel.clone());
 
