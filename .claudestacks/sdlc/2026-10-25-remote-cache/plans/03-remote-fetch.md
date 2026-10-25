@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-25
 depends-on: [02]
 built-on: 3d9113128fe5
@@ -12,15 +12,21 @@ built-on: 3d9113128fe5
 **Architecture:** The remote is consulted on the worker, inside `perform` (`execute/perform.rs:326`),
 before the action runs (spec §3, P20). `perform` gains one argument, `remote:
 Option<RemoteRun<'_, R>>` — the port, the `RemotePolicy`, the workspace's `Execution` and a
-`down` flag — so `verify`, which calls `perform` too (`verify/assembly.rs:330`), passes `None`
-and never reaches the remote (spec §6). A hit is checked and stored by a new
-`execute/fetch.rs` and comes back as `Ended::Fetched`, which the scheduler records through the
-same `store` as `Ended::Produced` (`record.rs:176-199`, P21), with outcome class `Fetched`. A
+`down: &RemoteSwitch` (`types/remote_switch.rs`: `turn_off()` is one compare-exchange, true only
+for the caller that flipped it) — so `verify`, which calls `perform` too (`verify/assembly.rs:330`), passes `None`
+and never reaches the remote (spec §6). A hit is downloaded and checked by a new
+`execute/fetch.rs` (`fetch` → `Checked`), then kept in the store by `Checked::keep` — a store
+failure there is the run's infrastructure `Store` failure, never a remote failure — and comes back as `Ended::Fetched`, which the scheduler records through the
+same `store` as `Ended::Produced` (`record.rs:176-199`, P21), through
+`Finished { made: Made::Fetched, … }` (`Made` is `Built` or `Fetched`, so no other class reaches it). A
 remote failure becomes a `Told::Remote` notice the scheduler reports (only the scheduling
 thread calls the reporter); under `Strict` it is `Ended::RemoteFailed`, the build's fatal
-error. `execute` (`assembly.rs:104`) and the pipeline's `build`/`test` (`pipeline/driver.rs:367`,
-`:430`, through `run` `:306`) take a `RemotePolicy`; the `buildl` facade passes
-`RemotePolicy::OFF` until plan 08.
+error. The policy reaches `execute` through `RunChoices.remote` (`types/run_choices.rs`), set by
+`Pipeline::set_remote(policy)` (default `RemotePolicy::OFF`, kept for every later build and
+test) — a new parameter on `build`/`test`/`run`/`execute` would pass clippy's
+`too_many_arguments` limit. `build` and `test` each create one `RemoteSwitch` and hand it to both
+`execute` passes (discovery, then main), so a remote turned off in the first pass stays off for
+the rest of the command (spec §6) and gives one warning per command.
 
 **Tech Stack:** Rust, `buildl-core`, `buildl`, `buildl-cli`, `cargo make dod`, `cargo deny check`.
 Guideline: `claudestacks-guideline-rust:rust-guidelines`.
@@ -77,10 +83,11 @@ are in place"), serialized as its name like `Cached`; `succeeded()` true; `Tally
 `fetched`, counted in `Tally::of` (`outcome.rs:154-160`); the terminal summary prints the
 fetched count beside built and cached; `failure_text` returns `None` for it and the block
 header marks it ` (fetched)`; `buildl log` words it `fetched`; `of_class` treats it as a
-success; `store` records the class it is given, `Built` for a run and `Fetched` for a hit.
+success; `store` records what `Finished.made` says, `Made::Built` for a run and
+`Made::Fetched` for a hit.
 
 **Proof:** written first, seen failing, then passing —
-- `fetched_is_a_success_whose_outputs_are_in_place` — `succeeded()` true, `outputs_in_place` true
+- `fetched_is_a_success_whose_outputs_are_in_place` — `succeeded()` true (whose doc defines success as outputs in place; there is no separate `outputs_in_place`)
 - `fetched_serializes_as_its_name` — canonical JSON is `"Fetched"` and reads back equal
 - `a_tally_counts_fetched_targets` — two fetched, one built → `fetched: 2, built: 1`
 - `the_summary_line_counts_fetched` (terminal.rs) — the line names the fetched count
@@ -120,7 +127,7 @@ reaches the store.
 - `a_fetched_tree_has_the_manifest_a_local_run_would_store` — the same digest as the manifest `collected` (`perform.rs:210`) builds for the same files
 
 **Done when:** `cargo test -p buildl-core execute::fetch` passes; `cargo make dod` green.
-Commit `feat(buildl-core): check and store a remote cache hit`.
+Commit `feat(buildl-core): check and fetch a remote hit`.
 
 ### Task 3 — The worker consults the remote
 
@@ -132,9 +139,11 @@ Commit `feat(buildl-core): check and store a remote cache hit`.
 **Change:** in `perform`, with `Some(remote)` whose policy reads and whose `down` is not set:
 build the task's `RemoteAction` (plan 02), `lookup`; on a hit, `fetch`; a usable hit ends
 `Ended::Fetched` with the worker's span and without `Told::Began`, so the target is not shown
-as started. A miss, `None`, or `RemoteUse::Off` runs the action as today. A failure (an `Err`
-from the port, or an unusable hit): under `Lenient`, the worker whose compare-exchange flips
-`down` from false to true sends the one `Told::Remote(notice)` — any other worker failing at
+as started. A miss, `None`, or `RemoteUse::Off` runs the action as today. A task that cannot
+be described for the remote (a dependency manifest missing from the store) is told `Began` and
+ends as an infrastructure `Store` failure, as any run's store failure does. A failure (an `Err`
+from the port, a failed download, a digest mismatch, or an unusable hit): under `Lenient`, the
+worker whose `RemoteSwitch::turn_off()` returns true sends the one `Told::Remote(notice)` — any other worker failing at
 the same moment sends nothing — and the action runs; under `Strict`, `Ended::RemoteFailed(notice)`,
 which the scheduler turns into the build's fatal `Error::Adapter` naming `PortName::RemoteCache`
 and the call. The scheduler records `Ended::Fetched` through `store` with class `Fetched` and
@@ -148,7 +157,11 @@ two new variants, which `None` never produces, to its infrastructure check failu
 - `a_miss_runs_the_action` — outcome `Built`, strategy called once
 - `the_off_policy_never_calls_the_remote` — the fake records no call
 - `a_fetched_target_is_not_reported_as_started` — the reporter sees `finished`, never `started`
-- `a_lookup_failure_warns_once_and_turns_the_remote_off` — two workers, four independent targets, every lookup failing: exactly one notice; at most two lookups (one per worker); all four built
+- `a_lookup_failure_warns_once_and_turns_the_remote_off` — four independent targets, every lookup failing: exactly one notice; one lookup; all four built (buildl-core's `clippy.toml` bans `std::thread`, so the flow runs on one thread)
+- `RemoteSwitch` races — 16 threads behind a `Barrier`, 200 rounds, exactly one told it turned the remote off (`crates/buildl/tests/e2e/remote_switch.rs`, where threads are allowed)
+- a store failure while keeping a hit is a `Store` failure, not a remote notice (lenient and strict)
+- a failed download, and a tampered blob, each warn once and build locally; nothing tampered is stored
+- a workspace with a discovery target and a failing remote: one notice and one lookup across both passes; the next command asks again
 - `a_strict_lookup_failure_fails_the_build` — fatal `Error::Adapter` naming the remote cache and `Lookup`
 - `an_unusable_hit_is_a_remote_failure` — one notice; the target built
 - `a_fetched_dependency_gives_dependents_the_keys_a_local_build_would` — early cutoff: the dependent's finished key equals the one a fully local build gives
@@ -175,3 +188,33 @@ two new variants, which `None` never produces, to its infrastructure check failu
 `cargo make dod`, `cargo make guard-module-edges` and `cargo deny check` green; the flow tests
 show a fully remote-held graph building with no action run, the same graph with the remote off
 producing identical keys and rows, and `verify` never touching the remote.
+
+## Review findings
+
+- correctness — a local store failure while keeping a hit was reported as a remote `Download` failure (turned the remote off; strict named the remote cache) — `execute/fetch.rs:190`, `perform.rs:457` — fixed: `fetch` → `Checked`, `Checked::keep` stores; store errors are the run's `Store` failure; flow tests for lenient and strict; verified by the fix coder's single `cargo make dod` run, exit 0
+- correctness — a task that could not be described for the remote ended `InfraFailure{Store}` without `Told::Began` — `perform.rs:448` — fixed, unit test; same run
+- unguarded fix — the warn-once race had no concurrent test — `perform.rs:698` — fixed: `RemoteSwitch::turn_off` (one compare-exchange) and `crates/buildl/tests/e2e/remote_switch.rs` (16 threads, 200 rounds); same run
+- strong-types — `Finished.class` accepted any of nine classes, `_ =>` recorded them as `Built` — `record.rs:183,220` — fixed: `Made { Built, Fetched }`; same run
+- doc-comment-discipline — edited doc lines past 100 columns — `assembly.rs`, `record.rs`, `reporter.rs`, `block.rs`, `log_text.rs` — fixed
+- style — split import — `assembly.rs:35` — fixed
+- test-coverage — `FakeRemote::download_fails` and `tampered` unused by any flow test — `tests/flows/common.rs` — fixed: two flow tests; same run
+- question → correctness — `down` lived per `execute` pass, so a discovery workspace re-enabled a dead remote and warned twice (spec §6: off for the rest of the build) — `assembly.rs:151` — fixed: one `RemoteSwitch` per build/test command, flow tests for one notice across passes and a fresh switch per command; same run
+- temporal coupling — `Pipeline::set_remote` persists across calls — `pipeline/driver.rs:78` — kept; rustdoc now says it applies to every later build and test until changed
+- spec — five deviations not written back; plan 08 Task 2 said "plan 03's parameter" — fixed: plans 03 and 08 amended
+- spec — `outputs_in_place` named a method that does not exist — fixed in the plan text
+- spec — Task 2 commit subject differs and landed before Task 1 — plan text amended to the subject used
+- Fix round gates (fix coder, run once): `cargo make dod` exit 0; `cargo make guard-module-edges` exit 0
+
+## Probe results
+
+- "two workers" warn-once flow test — `crates/buildl-core/clippy.toml` bans `std::thread` and `guard-core-purity` forbids silencing it — AGAINST the plan (Task 3 Proof); the concurrent check moved to the `buildl` crate's e2e tests
+- "`execute`/`build`/`test` take a `RemotePolicy`" — clippy `too_many_arguments` (8 > 7) on `test`, `run`, `execute` — AGAINST the plan (Architecture); replaced by `RunChoices` and `Pipeline::set_remote`
+- "`store` takes the class it records" — clippy `too_many_arguments` — AGAINST the plan (Task 1); replaced by `Finished { made }`
+
+## Deviations
+
+- 2026-10-25 — Architecture: the policy travels in `RunChoices.remote` set by `Pipeline::set_remote`; plan 08 Task 2 amended to call it.
+- 2026-10-25 — Task 1: `store` takes `Finished { key, made, outputs, printed }`; the test summary reads `N passed (X cached, Y fetched)`.
+- 2026-10-25 — Task 3: `down` is a `RemoteSwitch` shared by both passes of one command; fetch split into `fetch` (remote) and `Checked::keep` (store).
+- 2026-10-25 — Tasks 1 and 2 ran in parallel; Task 2's commit (`a6caf3b`) landed before Task 1's (`90aa7ed`).
+- 2026-10-25 — one reviewer pass over the three tasks, reading the diff only (the user asked that gates run once, by the coder), then one fix commit (`42b9c19`).

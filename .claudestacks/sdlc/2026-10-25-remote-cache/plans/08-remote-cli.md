@@ -85,8 +85,8 @@ flag, is `Error::RemoteFlags` (spec §6). Reading with upload → `ReadWrite`; s
 
 **Change:** `Remote::of` returns `Off` when the policy is `OFF` or the workspace names no
 remote, and otherwise connects a `Client` lazily and reads the token, so a missing token is an
-error before anything runs (spec §6). `RunOptions` carries the policy; `build`/`test` pass it
-to the pipeline (plan 03's parameter, `RemotePolicy::OFF` until now). `plan`, `verify`,
+error before anything runs (spec §6). `RunOptions` carries the policy; `build`/`test` hand it
+to the pipeline with `Pipeline::set_remote(policy)` before running (`RemotePolicy::OFF` until now). `plan`, `verify`,
 `query`, `graph`, `check`, `log`, `clean`, `gc` and `doctor` keep `RemotePolicy::OFF` and never
 build a `Reapi`.
 
