@@ -3,8 +3,8 @@
 //! Its own directory because it is a phase, and each phase has one home that names no other.
 //! Recording what an action produced is the last step of running it, so it lives here too.
 //!
-//! Responsibilities: [`execute`], and `remote_action`, which describes one task for a remote
-//! cache.
+//! Responsibilities: [`execute`]; `remote_action`, which describes one task for a remote cache;
+//! and `fetch`, which checks and stores a result the remote holds.
 //!
 //! Non-responsibilities: planning the build, which the phase before this one does; and running
 //! a command, storing content, keeping rows or writing the log, which are each a port's.
@@ -13,6 +13,7 @@
 
 mod admission;
 pub mod assembly;
+pub(crate) mod fetch;
 pub(crate) mod perform;
 pub(crate) mod record;
 pub(crate) mod remote_action;
