@@ -62,9 +62,9 @@ pub enum Report {
 /// Which tests of a test run get a block: those that failed, or every one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestBlocks {
-    /// Only a test that failed. A test that was built or cached shows nothing.
+    /// Only a test that failed. A test that was built, cached or fetched shows nothing.
     Failed,
-    /// Every test, a passing one with what it printed and a cached one marked as such.
+    /// Every test, a passing one with what it printed, and a cached or fetched one marked as such.
     Every,
 }
 
@@ -151,7 +151,7 @@ impl<W: Write> TerminalReporter<W> {
         ) && event.outcome.role == TargetRole::Test
             && matches!(
                 event.outcome.class,
-                OutcomeClass::Built | OutcomeClass::Cached
+                OutcomeClass::Built | OutcomeClass::Cached | OutcomeClass::Fetched
             )
     }
 
@@ -397,12 +397,14 @@ mod tests {
                 skipped,
                 built,
                 cached,
+                fetched: 0,
             },
             tests: Tally {
                 failed: 0,
                 skipped: 0,
                 built: 0,
                 cached: 0,
+                fetched: 0,
             },
         }
     }
@@ -595,6 +597,7 @@ mod tests {
             skipped: 0,
             built: 1,
             cached: 0,
+            fetched: 0,
         };
         reporter.summary(summary);
         assert_eq!(written(&mut reporter), b"tests: 1 passed, 1 failed\n");
@@ -606,6 +609,16 @@ mod tests {
         reporter.begun(1);
         reporter.summary(counts(0, 0, 1, 0));
         assert_eq!(written(&mut reporter), b"1 built\n");
+    }
+
+    #[test]
+    fn the_summary_line_counts_fetched() {
+        let mut reporter = reporter(Mode::Plain, Paint::Plain);
+        reporter.begun(3);
+        let mut summary = counts(0, 0, 1, 0);
+        summary.all.fetched = 2;
+        reporter.summary(summary);
+        assert_eq!(written(&mut reporter), b"1 built, 2 fetched\n");
     }
 
     #[test]
@@ -626,6 +639,7 @@ mod tests {
             skipped: 0,
             built: 0,
             cached: 1,
+            fetched: 0,
         };
         reporter.summary(summary);
         assert_eq!(written(&mut reporter), b"tests: 1 passed (1 cached)\n");
@@ -641,6 +655,7 @@ mod tests {
             skipped: 0,
             built: 1,
             cached: 0,
+            fetched: 0,
         };
         reporter.summary(summary);
         assert_eq!(written(&mut reporter), b"tests (rerun): 1 passed\n");

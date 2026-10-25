@@ -33,7 +33,8 @@ fn a_failure_stops_the_build_by_default() {
                 failed: 1,
                 skipped: 4,
                 built: 0,
-                cached: 0
+                cached: 0,
+                fetched: 0,
             },
             tests: Tally::default()
         }
@@ -64,7 +65,8 @@ fn keep_going_builds_what_does_not_depend_on_the_failure() {
                 failed: 1,
                 skipped: 2,
                 built: 2,
-                cached: 0
+                cached: 0,
+                fetched: 0,
             },
             tests: Tally::default()
         }

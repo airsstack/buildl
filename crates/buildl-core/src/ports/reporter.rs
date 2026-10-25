@@ -170,6 +170,7 @@ mod tests {
                 skipped: 0,
                 built: 1,
                 cached: 0,
+                fetched: 0,
             },
             tests: Tally::default(),
         });

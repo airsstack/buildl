@@ -22,13 +22,14 @@ use crate::error::{Error, Result};
 use crate::execute::admission::admit;
 use crate::execute::perform::{Ended, Performed, Shared, Task, Told, Worked, perform};
 use crate::execute::record::{
-    Progress, append, failed, forget_contradicted, restore, shown, skipped, store,
+    Finished, Progress, append, failed, forget_contradicted, restore, shown, skipped, store,
 };
 use crate::execute::schedule::{Finish, Schedule};
 use crate::execute::settle::{Settled, settle};
 use crate::placement::expand::{Lists, expand, expand_description};
 use crate::placement::layout::Layout;
 use crate::ports::{Dispatcher, Manifest, PortSet, Ports, Reporter};
+use crate::types::OutcomeClass;
 use crate::types::{
     ActionOutcome, Captured, Ceiling, Command, EnvName, EnvValue, ExpandedDescription, Forcing,
     Label, LiveOutput, Node, NodeId, OnFailure, OutcomeEvent, OutputPath, OwnComponents, Plan,
@@ -471,9 +472,12 @@ impl<P: Ports> Build<'_, P> {
         let outcome = match performed.ended {
             Ended::Produced { outputs, printed } => store(
                 target.node,
-                performed.key,
-                outputs,
-                printed,
+                Finished {
+                    key: performed.key,
+                    class: OutcomeClass::Built,
+                    outputs,
+                    printed,
+                },
                 self.layout.outputs(node),
                 self.cas,
                 self.cache,

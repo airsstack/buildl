@@ -1030,7 +1030,8 @@ mod tests {
                         failed: 0,
                         skipped: 0,
                         built: 1,
-                        cached: 0
+                        cached: 0,
+                        fetched: 0,
                     },
                     tests: Tally::default()
                 },
@@ -1039,7 +1040,8 @@ mod tests {
                         failed: 0,
                         skipped: 0,
                         built: 0,
-                        cached: 1
+                        cached: 1,
+                        fetched: 0,
                     },
                     tests: Tally::default()
                 }

@@ -1830,6 +1830,7 @@ mod tests {
                 skipped: 0,
                 built: 1,
                 cached: 1,
+                fetched: 0,
             },
             tests: Tally::default(),
         };

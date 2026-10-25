@@ -46,9 +46,10 @@ impl Exit {
     /// that failure decides the status. A class this binary has no row for is buildl's fault.
     pub(crate) const fn of_class(class: &OutcomeClass) -> Self {
         match class {
-            OutcomeClass::Cached | OutcomeClass::Built | OutcomeClass::Skipped { .. } => {
-                Self::Success
-            }
+            OutcomeClass::Cached
+            | OutcomeClass::Built
+            | OutcomeClass::Fetched
+            | OutcomeClass::Skipped { .. } => Self::Success,
             OutcomeClass::ActionFailure { .. }
             | OutcomeClass::Killed { .. }
             | OutcomeClass::OutputMissing { .. }
@@ -522,6 +523,7 @@ mod tests {
         vec![
             (OutcomeClass::Cached, Exit::Success),
             (OutcomeClass::Built, Exit::Success),
+            (OutcomeClass::Fetched, Exit::Success),
             (
                 OutcomeClass::Skipped {
                     because: label("//:lib"),
