@@ -6,7 +6,8 @@
 //!
 //! The channel carries no request timeout. A timeout on the channel would bound a streamed
 //! transfer as a whole, so each caller applies [`RemoteSettings::timeout`] to the calls it
-//! makes: to a unary call whole, and to each message of a stream.
+//! makes: to a unary call whole, to each message a `ByteStream` read waits for, and to the time
+//! a `ByteStream` write goes without taking a chunk.
 
 use std::error::Error as StdError;
 use std::io;
@@ -37,7 +38,8 @@ pub(crate) enum ChannelError {
         /// What the transport reported, including its causes.
         reason: String,
     },
-    /// The cache could not be reached, or the TLS handshake with it failed.
+    /// The cache could not be reached, did not complete its handshakes in time, or failed the TLS
+    /// handshake.
     #[error("cannot connect to {url}: {reason}")]
     Connect {
         /// The cache's address.
@@ -63,7 +65,8 @@ fn with_causes(error: &(dyn StdError + 'static)) -> String {
 ///
 /// A relative `ca` is resolved against `root`. The handshake is made before this returns, so a
 /// cache that is down or whose certificate is not trusted is an error here and not at the first
-/// call. The connection attempt is bounded by the settings' timeout.
+/// call. The whole attempt, the TCP connection and the TLS and HTTP/2 handshakes together, is
+/// bounded by the settings' timeout.
 ///
 /// # Errors
 ///
@@ -106,12 +109,15 @@ pub(crate) fn connect(
         endpoint = endpoint.tls_config(tls).map_err(setup)?;
     }
 
+    let limit = settings.timeout().as_duration();
+    let connect_error = |reason: String| ChannelError::Connect {
+        url: url.to_string(),
+        reason,
+    };
     runtime
-        .block_on(endpoint.connect())
-        .map_err(|error| ChannelError::Connect {
-            url: url.to_string(),
-            reason: with_causes(&error),
-        })
+        .block_on(async { tokio::time::timeout(limit, endpoint.connect()).await })
+        .map_err(|_| connect_error(format!("no answer within {limit:?}")))?
+        .map_err(|error| connect_error(with_causes(&error)))
 }
 
 /// The `host` or `host:port` of the cache's address.
@@ -131,9 +137,13 @@ mod tests {
     )]
 
     use std::fs;
+    use std::net::TcpListener;
     use std::path::Path;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
 
-    use buildl_core::{HostPath, RemoteSettings, RemoteUrl};
+    use buildl_core::{HostPath, RemoteSettings, RemoteUrl, Timeout};
     use tonic::transport::Channel;
 
     use super::{ChannelError, connect};
@@ -239,5 +249,36 @@ mod tests {
         let outcome = connect(&runtime, &settings, dir.path());
 
         assert!(outcome.is_err(), "{outcome:?}");
+    }
+
+    #[test]
+    fn a_cache_that_accepts_and_never_answers_times_out() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = RemoteUrl::parse(&format!("grpcs://{}", listener.local_addr().unwrap())).unwrap();
+        let settings = RemoteSettings::builder(url)
+            .timeout(Timeout::parse("300ms").unwrap())
+            .build()
+            .unwrap();
+        let runtime = Runtime::new().unwrap();
+        let (done, outcome) = mpsc::channel();
+        let started = Instant::now();
+        thread::spawn(move || {
+            let result = connect(&runtime, &settings, root()).map(|_| ());
+            let _ = done.send(result);
+        });
+
+        // A timeout here means the attempt outlived its own bound.
+        let result = outcome.recv_timeout(Duration::from_secs(5)).unwrap();
+
+        assert!(
+            matches!(&result, Err(ChannelError::Connect { .. })),
+            "{result:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "{:?}",
+            started.elapsed()
+        );
+        drop(listener);
     }
 }

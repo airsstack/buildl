@@ -8,17 +8,19 @@ use super::error::RemoteError;
 use super::proto::build::bazel::remote::execution::v2::{
     GetCapabilitiesRequest, ServerCapabilities, digest_function,
 };
+use super::vocabulary::{Method, Updates};
 
 /// The largest message tonic accepts by default, which bounds a batch whatever the cache says.
-const MESSAGE_CAP: usize = 4 * 1024 * 1024;
+pub(super) const MESSAGE_CAP: usize = 4 * 1024 * 1024;
 
-/// Room left under the message cap for what a batch carries besides blob data.
-const HEADROOM: usize = 64 * 1024;
+/// Room left under the message cap for what a batch carries besides its entries: the instance
+/// name and the message's own fields.
+pub(super) const HEADROOM: usize = 64 * 1024;
 
 /// What the cache offers, once it is known to speak SHA-256.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Capabilities {
-    update_enabled: bool,
+    updates: Updates,
     /// The cache's own limit on a batch, `None` when it states none.
     batch_limit: Option<usize>,
 }
@@ -41,10 +43,15 @@ impl Capabilities {
             return Err(RemoteError::NoSha256);
         }
         Ok(Self {
-            update_enabled: cache
+            updates: if cache
                 .action_cache_update_capabilities
                 .as_ref()
-                .is_some_and(|updates| updates.update_enabled),
+                .is_some_and(|updates| updates.update_enabled)
+            {
+                Updates::Enabled
+            } else {
+                Updates::Disabled
+            },
             batch_limit: usize::try_from(cache.max_batch_total_size_bytes)
                 .ok()
                 .filter(|limit| *limit > 0),
@@ -62,10 +69,7 @@ impl Capabilities {
             instance_name: wire.instance().to_owned(),
         };
         let response = wire
-            .bounded(
-                "Capabilities.GetCapabilities",
-                client.get_capabilities(request),
-            )
+            .bounded(Method::GetCapabilities, client.get_capabilities(request))
             .await?;
         Self::from_response(&response.into_inner())
     }
@@ -76,10 +80,9 @@ impl Capabilities {
     ///
     /// Returns [`RemoteError::UpdatesDisabled`] when the cache does not enable updates.
     pub(crate) const fn require_updates(&self) -> Result<(), RemoteError> {
-        if self.update_enabled {
-            Ok(())
-        } else {
-            Err(RemoteError::UpdatesDisabled)
+        match self.updates {
+            Updates::Enabled => Ok(()),
+            Updates::Disabled => Err(RemoteError::UpdatesDisabled),
         }
     }
 

@@ -6,16 +6,18 @@
 //! blobs the cache lacks.
 //!
 //! A call is bounded whole by the client's timeout. A `ByteStream` read allows each message the
-//! timeout, so a large blob that keeps arriving is never cut off, and a write allows it for
-//! each chunk it sends.
+//! timeout, so a large blob that keeps arriving is never cut off, and a write allows the
+//! timeout from the moment the transport last took a chunk, so a large blob that keeps being
+//! taken is never cut off either.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use tonic::Code;
-use tonic::codegen::tokio_stream;
+use tonic::codegen::tokio_stream::{self, StreamExt};
 use uuid::Uuid;
 
-use super::client::Wire;
+use super::capabilities::{HEADROOM, MESSAGE_CAP};
+use super::client::{Progress, Wire};
 use super::error::RemoteError;
 use super::proto::build::bazel::remote::execution::v2::{
     BatchReadBlobsRequest, BatchUpdateBlobsRequest, Digest, FindMissingBlobsRequest,
@@ -23,6 +25,7 @@ use super::proto::build::bazel::remote::execution::v2::{
 };
 use super::proto::google::bytestream::{ReadRequest, WriteRequest};
 use super::proto::google::rpc;
+use super::vocabulary::Method;
 
 /// The size of a chunk written through `ByteStream`.
 const WRITE_CHUNK: usize = 1024 * 1024;
@@ -31,40 +34,53 @@ const WRITE_CHUNK: usize = 1024 * 1024;
 /// digest claims.
 const READ_RESERVE: usize = 16 * 1024 * 1024;
 
-const BATCH_READ: &str = "ContentAddressableStorage.BatchReadBlobs";
-const BATCH_UPDATE: &str = "ContentAddressableStorage.BatchUpdateBlobs";
-const STREAM_READ: &str = "ByteStream.Read";
-const STREAM_WRITE: &str = "ByteStream.Write";
+/// What the largest message of a batch call may weigh on the wire, entries' framing included.
+const BATCH_BUDGET: usize = MESSAGE_CAP - HEADROOM;
+
+/// What one entry of a batch call weighs besides its data: the digest (64 hex digits and a
+/// size), the status, and the field framing around them. The server's own limit counts data
+/// only; this keeps a batch of many small blobs under the message cap all the same.
+const ENTRY_OVERHEAD: usize = 128;
 
 /// How a set of blobs divides between batch calls and `ByteStream`.
 #[derive(Debug, PartialEq, Eq)]
 struct Split {
-    /// Positions of the blobs in each batch, in order; a batch holds at most the threshold.
+    /// Positions of the blobs in each batch, in order; a batch holds at most the threshold in
+    /// data and at most the batch budget on the wire.
     batches: Vec<Vec<usize>>,
     /// Positions of the blobs too large for any batch.
     streamed: Vec<usize>,
 }
 
-/// Divides blobs of `sizes` between batches of at most `threshold` bytes and `ByteStream`.
+/// Divides blobs of `sizes` between batches of at most `threshold` bytes of data and
+/// `ByteStream`.
 ///
-/// Blobs join the open batch in order, and a blob that would carry it over the threshold opens
+/// Blobs join the open batch in order, and a blob that would carry it over the threshold, or
+/// carry its encoded size over the batch budget once each entry's framing is counted, opens
 /// the next one. A blob larger than the threshold on its own is streamed.
 fn split(sizes: &[usize], threshold: usize) -> Split {
     let mut batches = Vec::new();
     let mut streamed = Vec::new();
     let mut open = Vec::new();
     let mut total = 0_usize;
+    let mut framed = 0_usize;
     for (position, &size) in sizes.iter().enumerate() {
         if size > threshold {
             streamed.push(position);
             continue;
         }
-        if total.saturating_add(size) > threshold {
+        let entry = size.saturating_add(ENTRY_OVERHEAD);
+        if !open.is_empty()
+            && (total.saturating_add(size) > threshold
+                || framed.saturating_add(entry) > BATCH_BUDGET)
+        {
             batches.push(std::mem::take(&mut open));
             total = 0;
+            framed = 0;
         }
         open.push(position);
         total += size;
+        framed += entry;
     }
     if !open.is_empty() {
         batches.push(open);
@@ -105,8 +121,13 @@ fn label(digest: &Digest) -> String {
     format!("{}/{}", digest.hash, digest.size_bytes)
 }
 
-/// The size a digest states, or the protocol error a negative one is.
-fn size_of(digest: &Digest, call: &'static str) -> Result<usize, RemoteError> {
+/// The key a digest is looked up by.
+fn key(digest: &Digest) -> (String, i64) {
+    (digest.hash.clone(), digest.size_bytes)
+}
+
+/// The size a digest states, or the protocol error a negative one is, named for `call`.
+fn size_of(digest: &Digest, call: Method) -> Result<usize, RemoteError> {
     usize::try_from(digest.size_bytes).map_err(|_| RemoteError::Protocol {
         call,
         detail: format!("the digest {} has a negative size", label(digest)),
@@ -116,7 +137,7 @@ fn size_of(digest: &Digest, call: &'static str) -> Result<usize, RemoteError> {
 /// The failure of one blob, as the status the cache gave it.
 fn blob_failure(digest: &Digest, code: Code, message: &str) -> RemoteError {
     RemoteError::Blob {
-        digest: label(digest),
+        digest: digest.clone(),
         code,
         message: message.to_owned(),
     }
@@ -154,10 +175,7 @@ pub(super) async fn find_missing(
         digest_function: digest_function::Value::Sha256 as i32,
     };
     let response = wire
-        .bounded(
-            "ContentAddressableStorage.FindMissingBlobs",
-            client.find_missing_blobs(request),
-        )
+        .bounded(Method::FindMissingBlobs, client.find_missing_blobs(request))
         .await?;
     Ok(response.into_inner().missing_blob_digests)
 }
@@ -172,9 +190,10 @@ pub(super) async fn read_blobs(
     threshold: usize,
     digests: &[Digest],
 ) -> Result<Vec<Vec<u8>>, RemoteError> {
+    // Every read starts as a batch read, so a size that cannot be one is named for that call.
     let sizes = digests
         .iter()
-        .map(|digest| size_of(digest, BATCH_READ))
+        .map(|digest| size_of(digest, Method::BatchReadBlobs))
         .collect::<Result<Vec<_>, _>>()?;
     let split = split(&sizes, threshold);
 
@@ -192,7 +211,7 @@ pub(super) async fn read_blobs(
     (0..digests.len())
         .map(|at| {
             read.remove(&at).ok_or_else(|| RemoteError::Protocol {
-                call: BATCH_READ,
+                call: Method::BatchReadBlobs,
                 detail: "a requested blob was not read".to_owned(),
             })
         })
@@ -200,53 +219,80 @@ pub(super) async fn read_blobs(
 }
 
 /// Reads `digests`, which together fit one batch, with one call.
+///
+/// A digest that appears more than once is asked for once and answered at each position.
 async fn batch_read(wire: &Wire<'_>, digests: &[&Digest]) -> Result<Vec<Vec<u8>>, RemoteError> {
+    let mut uses: BTreeMap<(String, i64), usize> = BTreeMap::new();
+    let mut unique = Vec::new();
+    for digest in digests {
+        let count = uses.entry(key(digest)).or_default();
+        if *count == 0 {
+            unique.push((*digest).clone());
+        }
+        *count += 1;
+    }
+
     let mut client = wire.cas();
     let request = BatchReadBlobsRequest {
         instance_name: wire.instance().to_owned(),
-        digests: digests.iter().map(|digest| (*digest).clone()).collect(),
+        digests: unique.clone(),
         digest_function: digest_function::Value::Sha256 as i32,
         ..BatchReadBlobsRequest::default()
     };
     let response = wire
-        .bounded(BATCH_READ, client.batch_read_blobs(request))
+        .bounded(Method::BatchReadBlobs, client.batch_read_blobs(request))
         .await?
         .into_inner();
 
     let mut answers = BTreeMap::new();
     for answer in response.responses {
         if let Some(digest) = &answer.digest {
-            answers.insert((digest.hash.clone(), digest.size_bytes), answer);
+            answers.insert(key(digest), answer);
         }
+    }
+    let mut blobs = BTreeMap::new();
+    for digest in &unique {
+        let answer = answers
+            .remove(&key(digest))
+            .ok_or_else(|| RemoteError::Protocol {
+                call: Method::BatchReadBlobs,
+                detail: format!("no answer for the blob {}", label(digest)),
+            })?;
+        check(digest, answer.status.as_ref())?;
+        if usize::try_from(digest.size_bytes) != Ok(answer.data.len()) {
+            return Err(RemoteError::Protocol {
+                call: Method::BatchReadBlobs,
+                detail: format!(
+                    "the blob {} came back with {} bytes",
+                    label(digest),
+                    answer.data.len()
+                ),
+            });
+        }
+        blobs.insert(key(digest), answer.data);
     }
     digests
         .iter()
         .map(|digest| {
-            let answer = answers
-                .remove(&(digest.hash.clone(), digest.size_bytes))
-                .ok_or_else(|| RemoteError::Protocol {
-                    call: BATCH_READ,
-                    detail: format!("no answer for the blob {}", label(digest)),
-                })?;
-            check(digest, answer.status.as_ref())?;
-            if usize::try_from(digest.size_bytes) != Ok(answer.data.len()) {
-                return Err(RemoteError::Protocol {
-                    call: BATCH_READ,
-                    detail: format!(
-                        "the blob {} came back with {} bytes",
-                        label(digest),
-                        answer.data.len()
-                    ),
-                });
-            }
-            Ok(answer.data)
+            let wanted = key(digest);
+            let left = uses.entry(wanted.clone()).or_default();
+            *left = left.saturating_sub(1);
+            let blob = if *left == 0 {
+                blobs.remove(&wanted)
+            } else {
+                blobs.get(&wanted).cloned()
+            };
+            blob.ok_or_else(|| RemoteError::Protocol {
+                call: Method::BatchReadBlobs,
+                detail: format!("no answer for the blob {}", label(digest)),
+            })
         })
         .collect()
 }
 
 /// Reads one blob through `ByteStream`, allowing each message the client's timeout.
 async fn stream_read(wire: &Wire<'_>, digest: &Digest) -> Result<Vec<u8>, RemoteError> {
-    let size = size_of(digest, STREAM_READ)?;
+    let size = size_of(digest, Method::Read)?;
     let mut client = wire.bytestream();
     let request = ReadRequest {
         resource_name: read_resource(wire.instance(), digest),
@@ -254,14 +300,14 @@ async fn stream_read(wire: &Wire<'_>, digest: &Digest) -> Result<Vec<u8>, Remote
         read_limit: 0,
     };
     let mut stream = wire
-        .bounded(STREAM_READ, client.read(request))
+        .bounded(Method::Read, client.read(request))
         .await
         .map_err(naming(digest))?
         .into_inner();
 
     let mut data = Vec::with_capacity(size.min(READ_RESERVE));
     while let Some(message) = wire
-        .bounded(STREAM_READ, stream.message())
+        .bounded(Method::Read, stream.message())
         .await
         .map_err(naming(digest))?
     {
@@ -270,17 +316,23 @@ async fn stream_read(wire: &Wire<'_>, digest: &Digest) -> Result<Vec<u8>, Remote
             break;
         }
     }
-    if data.len() == size {
-        Ok(data)
-    } else {
-        Err(RemoteError::Protocol {
-            call: STREAM_READ,
+    match data.len().cmp(&size) {
+        std::cmp::Ordering::Equal => Ok(data),
+        std::cmp::Ordering::Less => Err(RemoteError::Protocol {
+            call: Method::Read,
             detail: format!(
-                "the blob {} came back with {} bytes or more",
+                "the blob {} ended after {} of its {size} bytes",
                 label(digest),
                 data.len()
             ),
-        })
+        }),
+        std::cmp::Ordering::Greater => Err(RemoteError::Protocol {
+            call: Method::Read,
+            detail: format!(
+                "the blob {} is longer than the {size} bytes its digest states",
+                label(digest)
+            ),
+        }),
     }
 }
 
@@ -325,31 +377,31 @@ async fn batch_write(wire: &Wire<'_>, blobs: &[&(Digest, Vec<u8>)]) -> Result<()
         digest_function: digest_function::Value::Sha256 as i32,
     };
     let response = wire
-        .bounded(BATCH_UPDATE, client.batch_update_blobs(request))
+        .bounded(Method::BatchUpdateBlobs, client.batch_update_blobs(request))
         .await?
         .into_inner();
 
+    let mut answered = BTreeSet::new();
     for answer in &response.responses {
         if let Some(digest) = &answer.digest {
             check(digest, answer.status.as_ref())?;
+            answered.insert(key(digest));
         }
     }
-    if response.responses.len() < blobs.len() {
-        return Err(RemoteError::Protocol {
-            call: BATCH_UPDATE,
-            detail: format!(
-                "{} answers for {} blobs",
-                response.responses.len(),
-                blobs.len()
-            ),
-        });
+    for (digest, _) in blobs.iter().copied() {
+        if !answered.contains(&key(digest)) {
+            return Err(RemoteError::Protocol {
+                call: Method::BatchUpdateBlobs,
+                detail: format!("no answer for the blob {}", label(digest)),
+            });
+        }
     }
     Ok(())
 }
 
 /// Writes one blob through `ByteStream` in 1 MiB chunks under a fresh upload name.
 ///
-/// The call is allowed the client's timeout for each chunk it sends.
+/// The call is allowed the client's timeout from the moment the transport last took a chunk.
 async fn stream_write(wire: &Wire<'_>, digest: &Digest, data: &[u8]) -> Result<(), RemoteError> {
     let name = write_resource(wire.instance(), Uuid::new_v4(), digest);
     let pieces: Vec<&[u8]> = if data.is_empty() {
@@ -357,9 +409,6 @@ async fn stream_write(wire: &Wire<'_>, digest: &Digest, data: &[u8]) -> Result<(
     } else {
         data.chunks(WRITE_CHUNK).collect()
     };
-    let allowance = wire
-        .timeout()
-        .saturating_mul(u32::try_from(pieces.len()).unwrap_or(u32::MAX));
     let last = pieces.len().saturating_sub(1);
     let messages: Vec<_> = pieces
         .into_iter()
@@ -376,13 +425,15 @@ async fn stream_write(wire: &Wire<'_>, digest: &Digest, data: &[u8]) -> Result<(
         })
         .collect();
 
+    let progress = Progress::start();
+    let taken = progress.clone();
+    let outbound = tokio_stream::iter(messages).map(move |message| {
+        taken.record();
+        message
+    });
     let mut client = wire.bytestream();
     let response = wire
-        .bounded_for(
-            STREAM_WRITE,
-            allowance,
-            client.write(tokio_stream::iter(messages)),
-        )
+        .bounded_by_progress(Method::Write, &progress, client.write(outbound))
         .await
         .map_err(naming(digest))?
         .into_inner();
@@ -390,7 +441,7 @@ async fn stream_write(wire: &Wire<'_>, digest: &Digest, data: &[u8]) -> Result<(
         Ok(())
     } else {
         Err(RemoteError::Protocol {
-            call: STREAM_WRITE,
+            call: Method::Write,
             detail: format!(
                 "the cache committed {} bytes of the blob {}",
                 response.committed_size,
@@ -404,8 +455,13 @@ async fn stream_write(wire: &Wire<'_>, digest: &Digest, data: &[u8]) -> Result<(
 mod tests {
     use uuid::Uuid;
 
-    use super::{Split, read_resource, split, write_resource};
-    use crate::remote::proto::build::bazel::remote::execution::v2::Digest;
+    use prost::Message;
+
+    use super::{BATCH_BUDGET, ENTRY_OVERHEAD, Split, read_resource, split, write_resource};
+    use crate::remote::proto::build::bazel::remote::execution::v2::{
+        Digest, batch_read_blobs_response, batch_update_blobs_request,
+    };
+    use crate::remote::proto::google::rpc;
 
     fn digest() -> Digest {
         Digest {
@@ -485,5 +541,66 @@ mod tests {
             write_resource("", upload, &digest),
             format!("uploads/{upload}/blobs/{hash}/7")
         );
+    }
+
+    #[test]
+    fn many_small_blobs_close_a_batch_before_its_entries_pass_the_budget() {
+        let sizes = vec![300; 12_000];
+
+        let divided = split(&sizes, BATCH_BUDGET);
+
+        assert!(divided.batches.len() > 1, "{}", divided.batches.len());
+        assert_eq!(divided.streamed, Vec::<usize>::new());
+        for batch in &divided.batches {
+            assert!(batch.len() * (300 + ENTRY_OVERHEAD) <= BATCH_BUDGET);
+        }
+        let positions: Vec<_> = divided.batches.concat();
+        assert_eq!(positions, (0..12_000).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn empty_blobs_do_not_keep_a_batch_open_for_ever() {
+        let divided = split(&vec![0; 100_000], BATCH_BUDGET);
+
+        assert!(divided.batches.len() > 1, "{}", divided.batches.len());
+    }
+
+    #[test]
+    fn a_blob_filling_the_budget_alone_still_batches() {
+        let divided = split(&[BATCH_BUDGET], BATCH_BUDGET);
+
+        assert_eq!(
+            divided,
+            Split {
+                batches: vec![vec![0]],
+                streamed: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn the_entry_overhead_covers_the_framing_of_an_entry() {
+        let data = vec![0_u8; 4 * 1024 * 1024];
+        let digest = Digest {
+            hash: "f".repeat(64),
+            size_bytes: i64::try_from(data.len()).unwrap_or(i64::MAX),
+        };
+        let answer = batch_read_blobs_response::Response {
+            digest: Some(digest.clone()),
+            data: data.clone(),
+            status: Some(rpc::Status::default()),
+            ..batch_read_blobs_response::Response::default()
+        };
+        let request = batch_update_blobs_request::Request {
+            digest: Some(digest),
+            data: data.clone(),
+            ..batch_update_blobs_request::Request::default()
+        };
+
+        // One entry of a repeated field costs its encoding and the tag and length before it.
+        let framed = |encoded: usize| encoded + 1 + prost::length_delimiter_len(encoded);
+
+        assert!(framed(answer.encoded_len()) - data.len() <= ENTRY_OVERHEAD);
+        assert!(framed(request.encoded_len()) - data.len() <= ENTRY_OVERHEAD);
     }
 }

@@ -5,9 +5,16 @@
 //! on a runtime of its own. It records every call it receives, can be told to fail or to hold
 //! back the answer to a named call, and reports what it advertises through
 //! [`ServerOptions`], and serves TLS when given a [`TlsIdentity`]. It can delay each message of
-//! a `ByteStream` read answer ([`TestServer::pace_stream`]). It checks the protocol's size rules (a batch within the advertised
-//! limit, a write whose bytes match the size in its resource name) so a client that gets them
-//! wrong fails here as it would against a real server.
+//! a `ByteStream` read answer ([`TestServer::pace_stream`]). It checks the protocol's size rules
+//! (a batch within the advertised limit, a write whose bytes match the size in its resource
+//! name) so a client that gets them wrong fails here as it would against a real server.
+//!
+//! ```
+//! use buildl::remote::test_server::{Method, TestServer};
+//!
+//! let server = TestServer::start().expect("a loopback port is free");
+//! assert!(server.calls_to(Method::GetCapabilities).is_empty());
+//! ```
 //!
 //! The server never verifies that a blob's bytes hash to the digest it is stored under, and
 //! it serves the whole blob to a `ByteStream` read whatever limit the request carries.
@@ -51,30 +58,10 @@ use super::proto::google::bytestream::{
     WriteResponse,
 };
 use super::proto::google::rpc;
+pub use super::vocabulary::{Method, Updates};
 
 /// The size of one message of a `ByteStream` read answer.
 const READ_CHUNK: usize = 256 * 1024;
-
-/// A call of the REAPI that the server answers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum Method {
-    /// `Capabilities.GetCapabilities`.
-    GetCapabilities,
-    /// `ContentAddressableStorage.FindMissingBlobs`.
-    FindMissingBlobs,
-    /// `ContentAddressableStorage.BatchUpdateBlobs`.
-    BatchUpdateBlobs,
-    /// `ContentAddressableStorage.BatchReadBlobs`.
-    BatchReadBlobs,
-    /// `ByteStream.Read`.
-    Read,
-    /// `ByteStream.Write`.
-    Write,
-    /// `ActionCache.GetActionResult`.
-    GetActionResult,
-    /// `ActionCache.UpdateActionResult`.
-    UpdateActionResult,
-}
 
 /// How a scripted call fails: the status the client sees.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,16 +99,6 @@ pub enum Hashing {
     Sha256,
     /// SHA-1 alone, so a client that needs SHA-256 must refuse the server.
     Sha1,
-}
-
-/// Whether the server lets a client write action results.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Updates {
-    /// `update_enabled` is advertised and `UpdateActionResult` is accepted.
-    #[default]
-    Enabled,
-    /// `update_enabled` is withheld and `UpdateActionResult` is refused.
-    Disabled,
 }
 
 /// The certificate chain and private key a server presents when it serves TLS, both PEM.

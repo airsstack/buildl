@@ -3,16 +3,19 @@
 //! A [`Client`] owns a runtime, the channel to the cache and the login every call carries, and
 //! exposes the calls of the REAPI that buildl makes as plain blocking methods over the
 //! generated message types: any thread may call them, any number at once. The cache's
-//! capabilities are asked for before the first call that needs them and kept. Every unary call
-//! is bounded whole by the settings' timeout, and each message of a `ByteStream` read by the
-//! same timeout.
+//! capabilities are asked for before the first call that needs them and kept, a failed ask
+//! included, so a cache that does not answer is found down once and not once per caller. Every
+//! unary call is bounded whole by the settings' timeout, each message of a `ByteStream` read by
+//! the same timeout, and a `ByteStream` write by the same timeout for each chunk the cache takes.
 
 use std::future::Future;
 use std::path::Path;
-use std::sync::{Mutex, PoisonError};
+use std::pin::pin;
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use buildl_core::RemoteSettings;
+use buildl_core::{InstanceName, RemoteSettings};
+use tokio::time::Instant;
 use tonic::service::interceptor::InterceptedService;
 use tonic::transport::Channel;
 use tonic::{Code, Status};
@@ -30,9 +33,37 @@ use super::proto::build::bazel::remote::execution::v2::{
 use super::proto::google::bytestream::byte_stream_client::ByteStreamClient;
 use super::runtime::Runtime;
 use super::transfer;
+use super::vocabulary::Method;
 
 /// A channel that adds the login to each call.
 type Intercepted = InterceptedService<Channel, Login>;
+
+/// When an outbound stream last gave the transport a message.
+///
+/// The stream stamps it as the transport takes each message; [`Wire::bounded_by_progress`]
+/// reads it to tell a write that is moving from one that has stopped.
+#[derive(Clone, Debug)]
+pub(super) struct Progress {
+    last: Arc<Mutex<Instant>>,
+}
+
+impl Progress {
+    /// Progress as of now.
+    pub(super) fn start() -> Self {
+        Self {
+            last: Arc::new(Mutex::new(Instant::now())),
+        }
+    }
+
+    /// Notes that a message has just been taken.
+    pub(super) fn record(&self) {
+        *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Instant::now();
+    }
+
+    fn last(&self) -> Instant {
+        *self.last.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+}
 
 /// What one call needs: the channel, the login, the instance name and the time allowed.
 ///
@@ -42,19 +73,14 @@ type Intercepted = InterceptedService<Channel, Login>;
 pub(super) struct Wire<'a> {
     channel: &'a Channel,
     login: &'a Login,
-    instance: &'a str,
+    instance: Option<&'a InstanceName>,
     timeout: Duration,
 }
 
 impl Wire<'_> {
     /// The instance name, empty when the settings name none.
-    pub(super) const fn instance(&self) -> &str {
-        self.instance
-    }
-
-    /// The time one call, or one stream message, is allowed.
-    pub(super) const fn timeout(&self) -> Duration {
-        self.timeout
+    pub(super) fn instance(&self) -> &str {
+        self.instance.map_or("", InstanceName::as_str)
     }
 
     pub(super) fn capabilities(&self) -> CapabilitiesClient<Intercepted> {
@@ -73,34 +99,63 @@ impl Wire<'_> {
         ByteStreamClient::with_interceptor(self.channel.clone(), self.login.clone())
     }
 
+    /// Waits for `call`, which sends a stream, for as long as the stream keeps moving.
+    ///
+    /// The call fails with [`RemoteError::TimedOut`] once a whole timeout has passed since
+    /// `progress` last moved: since the transport took the stream's latest message, which
+    /// includes the wait for the cache's answer after the last one. A cache that stops reading
+    /// stops the transport taking messages, so a stalled write fails within about a timeout
+    /// however long the blob is.
+    pub(super) async fn bounded_by_progress<T>(
+        &self,
+        name: Method,
+        progress: &Progress,
+        call: impl Future<Output = Result<T, Status>>,
+    ) -> Result<T, RemoteError> {
+        let mut call = pin!(call);
+        loop {
+            let deadline = progress.last() + self.timeout;
+            match tokio::time::timeout_at(deadline, call.as_mut()).await {
+                Ok(Ok(answer)) => return Ok(answer),
+                Ok(Err(source)) => return Err(RemoteError::Status { call: name, source }),
+                Err(_) if progress.last() + self.timeout > Instant::now() => {}
+                Err(_) => {
+                    return Err(RemoteError::TimedOut {
+                        call: name,
+                        timeout: self.timeout,
+                    });
+                }
+            }
+        }
+    }
+
     /// Waits for `call` for at most the timeout.
     ///
     /// The timer is created when this future is first polled, so the future must be driven by
     /// the runtime.
     pub(super) async fn bounded<T>(
         &self,
-        name: &'static str,
+        name: Method,
         call: impl Future<Output = Result<T, Status>>,
     ) -> Result<T, RemoteError> {
-        self.bounded_for(name, self.timeout, call).await
-    }
-
-    /// Waits for `call` for at most `limit`.
-    pub(super) async fn bounded_for<T>(
-        &self,
-        name: &'static str,
-        limit: Duration,
-        call: impl Future<Output = Result<T, Status>>,
-    ) -> Result<T, RemoteError> {
-        match tokio::time::timeout(limit, call).await {
+        match tokio::time::timeout(self.timeout, call).await {
             Ok(Ok(answer)) => Ok(answer),
             Ok(Err(source)) => Err(RemoteError::Status { call: name, source }),
             Err(_) => Err(RemoteError::TimedOut {
                 call: name,
-                timeout: limit,
+                timeout: self.timeout,
             }),
         }
     }
+}
+
+/// What asking the cache for its capabilities came to.
+#[derive(Clone, Debug)]
+enum Asked {
+    /// The cache answered.
+    Known(Capabilities),
+    /// The ask failed, with this reason; the cache is not asked again.
+    Failed(String),
 }
 
 /// A connection to a remote cache, usable from any thread.
@@ -108,10 +163,10 @@ pub(crate) struct Client {
     runtime: Runtime,
     channel: Channel,
     login: Login,
-    instance: String,
+    instance: Option<InstanceName>,
     timeout: Duration,
-    /// The cache's capabilities, once asked for.
-    capabilities: Mutex<Option<Capabilities>>,
+    /// The outcome of asking for the cache's capabilities, once asked.
+    capabilities: Mutex<Option<Asked>>,
 }
 
 impl Client {
@@ -126,44 +181,49 @@ impl Client {
     /// the cache cannot be reached.
     pub(crate) fn connect(settings: &RemoteSettings, root: &Path) -> Result<Self, RemoteError> {
         let runtime = Runtime::new().map_err(RemoteError::Runtime)?;
-        let login = Login::read(settings, root)?;
+        let login = Login::read(settings, root).map_err(RemoteError::Token)?;
         let channel = channel::connect(&runtime, settings, root)?;
         Ok(Self {
             runtime,
             channel,
             login,
-            instance: settings
-                .instance()
-                .map_or_else(String::new, |name| name.as_str().to_owned()),
+            instance: settings.instance().cloned(),
             timeout: settings.timeout().as_duration(),
             capabilities: Mutex::new(None),
         })
     }
 
-    fn wire(&self) -> Wire<'_> {
+    const fn wire(&self) -> Wire<'_> {
         Wire {
             channel: &self.channel,
             login: &self.login,
-            instance: &self.instance,
+            instance: self.instance.as_ref(),
             timeout: self.timeout,
         }
     }
 
     /// The cache's capabilities, asked for on the first call and kept.
     ///
-    /// A failed ask is not kept: the next call asks again.
+    /// A failed ask is kept too. The first caller gets the failure itself; callers that were
+    /// waiting, and every later one, get [`RemoteError::Unusable`] at once, so a cache that
+    /// does not answer costs one timeout and not one per caller.
     fn capabilities(&self) -> Result<Capabilities, RemoteError> {
         let mut held = self
             .capabilities
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        if let Some(known) = *held {
-            return Ok(known);
+        match held.clone() {
+            Some(Asked::Known(known)) => return Ok(known),
+            Some(Asked::Failed(reason)) => return Err(RemoteError::Unusable { reason }),
+            None => {}
         }
-        let fetched = self.runtime.block_on(Capabilities::fetch(&self.wire()))?;
-        *held = Some(fetched);
+        let asked = self.runtime.block_on(Capabilities::fetch(&self.wire()));
+        *held = Some(match &asked {
+            Ok(known) => Asked::Known(*known),
+            Err(error) => Asked::Failed(error.to_string()),
+        });
         drop(held);
-        Ok(fetched)
+        asked
     }
 
     /// The members of `digests` the cache does not hold.
@@ -220,7 +280,7 @@ impl Client {
         self.capabilities()?;
         let wire = self.wire();
         let request = GetActionResultRequest {
-            instance_name: self.instance.clone(),
+            instance_name: wire.instance().to_owned(),
             action_digest: Some(action.clone()),
             digest_function: digest_function::Value::Sha256 as i32,
             ..GetActionResultRequest::default()
@@ -228,10 +288,7 @@ impl Client {
         self.runtime.block_on(async {
             let mut client = wire.cache();
             match wire
-                .bounded(
-                    "ActionCache.GetActionResult",
-                    client.get_action_result(request),
-                )
+                .bounded(Method::GetActionResult, client.get_action_result(request))
                 .await
             {
                 Ok(found) => Ok(Some(found.into_inner())),
@@ -257,7 +314,7 @@ impl Client {
         self.capabilities()?.require_updates()?;
         let wire = self.wire();
         let request = UpdateActionResultRequest {
-            instance_name: self.instance.clone(),
+            instance_name: wire.instance().to_owned(),
             action_digest: Some(action.clone()),
             action_result: Some(result),
             digest_function: digest_function::Value::Sha256 as i32,
@@ -266,7 +323,7 @@ impl Client {
         self.runtime.block_on(async {
             let mut client = wire.cache();
             wire.bounded(
-                "ActionCache.UpdateActionResult",
+                Method::UpdateActionResult,
                 client.update_action_result(request),
             )
             .await
@@ -282,6 +339,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::thread;
     use std::time::{Duration, Instant};
 
     use buildl_core::{InstanceName, RemoteSettings, RemoteUrl, Timeout};
@@ -656,5 +714,109 @@ mod tests {
 
         assert!(matches!(error, RemoteError::Blob { .. }), "{error:?}");
         assert!(error.to_string().contains(&missing.hash), "{error}");
+    }
+
+    #[test]
+    fn the_same_blob_asked_twice_in_one_read_is_answered_at_each_position() {
+        let server = TestServer::start().unwrap();
+        let contents = [bytes(10, 1), bytes(20, 2)];
+        let digests = put_all(&server, &contents);
+        let asked = [digests[0].clone(), digests[1].clone(), digests[0].clone()];
+
+        let read = client(&server).read_blobs(&asked).unwrap();
+
+        assert_eq!(
+            read,
+            [
+                contents[0].clone(),
+                contents[1].clone(),
+                contents[0].clone()
+            ]
+        );
+    }
+
+    #[test]
+    fn many_small_blobs_travel_in_batches_no_message_cap_refuses() {
+        let server = TestServer::start().unwrap();
+        let client = client(&server);
+        let contents: Vec<Vec<u8>> = (0..12_000)
+            .map(|index| format!("{index:0>300}").into_bytes())
+            .collect();
+        let blobs: Vec<_> = contents
+            .iter()
+            .map(|data| (digest_of(data), data.clone()))
+            .collect();
+        let digests: Vec<_> = blobs.iter().map(|(digest, _)| digest.clone()).collect();
+
+        client.write_blobs(&blobs).unwrap();
+        let read = client.read_blobs(&digests).unwrap();
+
+        assert_eq!(read, contents);
+        assert!(server.calls_to(Method::BatchUpdateBlobs).len() > 1);
+        assert!(server.calls_to(Method::BatchReadBlobs).len() > 1);
+    }
+
+    #[test]
+    fn a_stalled_stream_write_times_out_within_a_timeout_of_the_last_chunk() {
+        let server = server_with(1024);
+        server.stall(Method::Write, Duration::from_secs(5));
+        let client = Client::connect(&settings(&server, None, "250ms"), root()).unwrap();
+        let data = bytes(8 * MIB, 11);
+        let digest = digest_of(&data);
+
+        let started = Instant::now();
+        let error = client.write_blobs(&[(digest, data)]).unwrap_err();
+
+        assert!(matches!(error, RemoteError::TimedOut { .. }), "{error:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn a_stalled_stream_read_message_times_out() {
+        let server = server_with(1024);
+        server.pace_stream(Duration::from_millis(600));
+        let client = Client::connect(&settings(&server, None, "200ms"), root()).unwrap();
+        let data = bytes(MIB, 12);
+        let digests = put_all(&server, std::slice::from_ref(&data));
+
+        let started = Instant::now();
+        let error = client.read_blobs(&digests).unwrap_err();
+
+        assert!(matches!(error, RemoteError::TimedOut { .. }), "{error:?}");
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn concurrent_callers_find_a_stalled_capabilities_ask_failed_once() {
+        let server = TestServer::start().unwrap();
+        server.stall(Method::GetCapabilities, Duration::from_secs(5));
+        let client = Client::connect(&settings(&server, None, "300ms"), root()).unwrap();
+
+        let started = Instant::now();
+        let errors: Vec<_> = thread::scope(|scope| {
+            let callers: Vec<_> = (0..4)
+                .map(|_| scope.spawn(|| client.find_missing_blobs(&[]).unwrap_err()))
+                .collect();
+            callers
+                .into_iter()
+                .map(|caller| caller.join().unwrap())
+                .collect()
+        });
+
+        assert!(
+            started.elapsed() < Duration::from_millis(900),
+            "{:?}",
+            started.elapsed()
+        );
+        assert_eq!(server.calls_to(Method::GetCapabilities).len(), 1);
+        assert_eq!(errors.len(), 4);
     }
 }

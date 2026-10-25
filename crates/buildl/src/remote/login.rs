@@ -41,14 +41,14 @@ impl Login {
 
     /// Reads the token `settings` name, taking the value of a variable from `lookup`.
     ///
-    /// A token from a file loses one trailing newline. Settings without a token give a login
-    /// that adds nothing.
+    /// A token from a file loses one trailing line ending, `\n` or `\r\n`. Settings without a
+    /// token give a login that adds nothing.
     ///
     /// # Errors
     ///
     /// Returns [`Error::RemoteToken`] when the variable is unset or not text, when the file
-    /// cannot be read as text, or when the token cannot travel in a header. The error names the
-    /// variable or the file, never the token.
+    /// cannot be read as text, or when the token holds a character a header cannot carry. The
+    /// error names the variable or the file, never the token.
     pub(crate) fn read_with(
         settings: &RemoteSettings,
         root: &Path,
@@ -71,6 +71,9 @@ impl Login {
                 let mut text = std::fs::read_to_string(file).map_err(|_| unreadable())?;
                 if text.ends_with('\n') {
                     text.pop();
+                    if text.ends_with('\r') {
+                        text.pop();
+                    }
                 }
                 text
             }
@@ -207,6 +210,18 @@ mod tests {
     }
 
     #[test]
+    fn a_token_from_a_file_drops_one_trailing_line_ending_of_either_kind() {
+        let server = tls_server();
+        let dir = tempfile::tempdir().unwrap();
+        let settings = settings_with_token_file(&server, &dir, "s3cret\r\n", Some("x-api-key"));
+
+        let login = Login::read(&settings, root()).unwrap();
+
+        let headers = recorded_headers(&server, &settings, login);
+        assert_eq!(headers["x-api-key"], "s3cret");
+    }
+
+    #[test]
     fn a_relative_token_file_is_read_from_the_workspace_root() {
         let server = tls_server();
         let dir = tempfile::tempdir().unwrap();
@@ -267,7 +282,8 @@ mod tests {
         );
         assert_eq!(
             error.to_string(),
-            "the remote cache token cannot be read from environment variable CACHE_TOKEN"
+            "the remote cache token from environment variable CACHE_TOKEN cannot be used: \
+             it is missing or unreadable, or it holds a character a header cannot carry"
         );
     }
 

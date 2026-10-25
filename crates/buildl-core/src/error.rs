@@ -410,11 +410,15 @@ pub enum Error {
          unsetting BUILDL_REMOTE_UPLOAD or dropping --remote-upload"
     )]
     UploadUnsandboxed,
-    /// The remote cache's token is named, and cannot be read: the variable is unset or not text,
-    /// or the file is unreadable.
+    /// The remote cache's token is named, and cannot be used: the variable is unset or not text,
+    /// the file is unreadable, or the token holds a character a header cannot carry.
     ///
     /// The error names where the token should have come from and never holds the token itself.
-    #[error("the remote cache token cannot be read from {}", token_source(.from))]
+    #[error(
+        "the remote cache token from {} cannot be used: it is missing or unreadable, \
+         or it holds a character a header cannot carry",
+        token_source(.from)
+    )]
     RemoteToken {
         /// The variable or file the token was to come from.
         from: TokenSource,
@@ -1742,14 +1746,16 @@ mod tests {
         };
         assert_eq!(
             env.to_string(),
-            "the remote cache token cannot be read from environment variable CACHE_TOKEN"
+            "the remote cache token from environment variable CACHE_TOKEN cannot be used: \
+             it is missing or unreadable, or it holds a character a header cannot carry"
         );
         let file = Error::RemoteToken {
             from: TokenSource::File(HostPath::parse("secrets/token").unwrap()),
         };
         assert_eq!(
             file.to_string(),
-            "the remote cache token cannot be read from file secrets/token"
+            "the remote cache token from file secrets/token cannot be used: \
+             it is missing or unreadable, or it holds a character a header cannot carry"
         );
     }
 

@@ -70,3 +70,11 @@ mod tls_fixture;
     )
 )]
 mod transfer;
+#[cfg_attr(
+    not(all(test, feature = "test-server")),
+    allow(
+        dead_code,
+        reason = "no code outside this module's own tests names a call or the updates setting yet"
+    )
+)]
+mod vocabulary;

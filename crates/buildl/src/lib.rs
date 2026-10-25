@@ -132,7 +132,9 @@
 //! `buildl-core`.
 //!
 //! [`remote`] serves no port yet and is in neither table: it holds the REAPI v2 and `ByteStream`
-//! message and service types, generated from the vendored protos.
+//! message and service types, generated from the vendored protos, and the blocking client of a
+//! remote cache built on them (runtime, channel, login, capabilities, blob transfer), with an
+//! in-memory cache server behind the `test-server` feature.
 //!
 //! The adapters meet in two modules and nowhere else. Neither is public: what they hold is
 //! exported from the crate root.
