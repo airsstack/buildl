@@ -131,6 +131,9 @@
 //! that pins a git plugin through the system `git`; it names only [`state`], [`search_path`] and
 //! `buildl-core`.
 //!
+//! [`remote`] serves no port yet and is in neither table: it holds the REAPI v2 and `ByteStream`
+//! message and service types, generated from the vendored protos.
+//!
 //! The adapters meet in two modules and nowhere else. Neither is public: what they hold is
 //! exported from the crate root.
 //!
@@ -181,6 +184,7 @@ pub mod host;
 pub mod log;
 pub mod manifest;
 pub mod plugins;
+pub mod remote;
 pub mod report;
 pub mod search_path;
 pub mod statcache;

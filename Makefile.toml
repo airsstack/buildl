@@ -27,9 +27,9 @@ min_version = "0.37.0"
 [env]
 CARGO_TERM_COLOR = "always"
 
-# `--all-features` below is carried for forward-safety: no crate in this
-# workspace declares Cargo `[features]`, so today it equals the default build.
-# It stays in every command so the gate stays correct the day a feature is added.
+# `--all-features` below builds the one optional feature, `test-server` of `buildl`
+# (the server halves of the generated REAPI services), so the gate lints and tests
+# the code a default build leaves out.
 
 # ---------------------------------------------------------------------------
 # The gate
@@ -400,3 +400,17 @@ RUSTDOCFLAGS="-D warnings" cargo doc -p "${crate}" --all-features --no-deps
 cargo test -p "${crate}" --all-targets --all-features
 cargo test -p "${crate}" --all-features --doc
 '''
+
+[tasks.reapi-codegen]
+category = "Development"
+description = "Regenerate crates/buildl/generated/reapi/ from the vendored protos"
+# The generator is a package of its own, excluded from the workspace, so its
+# build tools (protox, prost-build) never enter the workspace's dependency graph.
+# `--locked` resolves the generator exactly as its committed lock file says.
+command = "cargo"
+args = [
+  "run",
+  "--locked",
+  "--manifest-path",
+  "tools/reapi-codegen/Cargo.toml",
+]

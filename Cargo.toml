@@ -6,6 +6,9 @@ members  = [
     "crates/buildl",
     "crates/buildl-cli",
 ]
+# The REAPI code generator is a package of its own: its build tools (protox,
+# prost-build) must not enter the workspace's dependency graph or `cargo deny` run.
+exclude  = ["tools/reapi-codegen"]
 
 [workspace.package]
 edition      = "2024"
@@ -68,6 +71,23 @@ tempfile   = "3.27.0"
 # and its tree, and whether anything is coloured is decided in one place, by the
 # binary, from `--color`, `NO_COLOR` and the terminal.
 clap       = { version = "4.6.7", default-features = false, features = ["std", "derive", "help", "usage", "error-context", "suggestions"] }
+# The gRPC client of the remote cache, in `buildl` only. Default features are off: `channel`
+# for the client transport, `codegen` for what the generated services use, `tls-ring` and
+# `tls-native-roots` for `grpcs://` with the system roots. The default `transport` feature
+# would add the server half to every build; the in-test server asks for it through
+# `buildl`'s `test-server` feature instead.
+tonic      = { version = "0.14.6", default-features = false, features = ["channel", "codegen", "tls-ring", "tls-native-roots"] }
+# The protobuf codec the generated tonic services call, and the messages' derive and
+# encoding. Their tag-order encoding is what keeps the digests of a remote action stable.
+tonic-prost = "0.14.6"
+prost       = "0.14.4"
+# `Any`, which the vendored googleapis messages (`google.rpc.Status`, operations) carry.
+prost-types = "0.14.4"
+# The runtime tonic's client needs, created and owned by the remote adapter in `buildl`;
+# worker threads reach it through `block_on`, and no other module sees it.
+tokio       = { version = "1.54.1", default-features = false, features = ["rt", "rt-multi-thread"] }
+# Version 4 UUIDs naming a ByteStream upload's resource (`uploads/<uuid>/blobs/...`).
+uuid        = { version = "1.29.0", default-features = false, features = ["v4"] }
 # Internal workspace members, in dependency order — path for local builds, version
 # for publish-readiness. Members inherit these with `{ workspace = true }`. Cargo
 # strips the path and keeps the version when packaging, so a published crate
