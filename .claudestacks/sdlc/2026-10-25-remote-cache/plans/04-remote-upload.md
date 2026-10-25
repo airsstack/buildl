@@ -45,7 +45,8 @@ crates/buildl-core/tests/flows/common.rs     — [modify] FakeRemote records upl
 **Files:** `execute/upload.rs`, `execute/mod.rs`.
 
 **Change:** `upload_of(task, kept, printed, cas)` builds the `RemoteUpload`: per declared
-output its `OutputPath` and `OutputManifest`, each file's size read from the content store,
+output a `RemoteOutput` — its `OutputPath` and `RemoteContent` (`File { blob, mode }`, or
+`Tree(RemoteTree)` of the manifest's entries), each file's size read from the content store —
 and stdout and stderr as `Blob`s. `upload(remote, action, upload, cas)` calls `remote.upload`
 with a `BlobSource` reading the content store, and maps its answer: `Done` → nothing to say;
 `InputChanged(path)` → a `RemoteNotice::InputChanged { label, path }` that does not turn the
