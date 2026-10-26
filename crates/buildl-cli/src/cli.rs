@@ -64,6 +64,8 @@ pub(crate) enum Command {
     Plan(PlanArgs),
     /// Build targets and what they need
     Build(BuildArgs),
+    /// Build targets, then build again when a file they read changes
+    Watch(BuildArgs),
     /// Run test targets and what they need
     Test(TestArgs),
     /// Re-run cached actions and name those whose outputs differ
@@ -148,7 +150,7 @@ pub(crate) struct PlanArgs {
     pub json: bool,
 }
 
-/// The arguments of `build`.
+/// The arguments of `build` and of `watch`, which takes the flags of a build.
 #[derive(Debug, Args)]
 pub(crate) struct BuildArgs {
     /// Which targets, under which settings.
@@ -426,6 +428,14 @@ mod tests {
         }
     }
 
+    /// The arguments of the `watch` command line `args`.
+    fn watch(args: &[&str]) -> BuildArgs {
+        match parsed(args).command {
+            Command::Watch(watch) => watch,
+            other => panic!("expected watch, got {other:?}"),
+        }
+    }
+
     /// The arguments of the `plan` command line `args`.
     fn plan(args: &[&str]) -> PlanArgs {
         match parsed(args).command {
@@ -634,6 +644,34 @@ mod tests {
             refused(&["plan", "--remote-upload"]),
             ErrorKind::UnknownArgument
         );
+    }
+
+    #[test]
+    fn watch_parses_builds_flags() {
+        let args = watch(&[
+            "watch",
+            "-k",
+            "--stream",
+            "--set",
+            "a=b",
+            "//x",
+            "--remote-upload",
+            "--remote-strict",
+        ]);
+        assert_eq!(args.on_failure(), OnFailure::KeepGoing);
+        assert_eq!(args.live(), LiveOutput::OneAction);
+        assert_eq!(args.selection.targets, ["//x"]);
+        assert_eq!(overrides(args.selection.overrides).unwrap().len(), 1);
+        assert!(args.remote.upload && args.remote.strict && !args.remote.no_remote);
+        assert!(watch(&["watch", "--no-remote"]).remote.no_remote);
+    }
+
+    #[test]
+    fn watch_with_no_target_is_the_whole_workspace() {
+        let args = watch(&["watch"]);
+        assert_eq!(args.selection.targets, Vec::<String>::new());
+        assert_eq!(args.on_failure(), OnFailure::Stop);
+        assert_eq!(args.live(), LiveOutput::Off);
     }
 
     #[test]
