@@ -102,7 +102,9 @@ impl Exit {
             | Error::NoRun { .. }
             | Error::NotATest { .. }
             | Error::UploadUnsandboxed
-            | Error::RemoteToken { .. } => Self::Usage,
+            | Error::RemoteToken { .. }
+            | Error::RemoteSwitch { .. }
+            | Error::RemoteFlags { .. } => Self::Usage,
             Error::MissingTool { .. } | Error::MissingOutput { .. } | Error::PluginFetch { .. } => {
                 Self::Infrastructure
             }
@@ -250,6 +252,13 @@ mod tests {
             Error::UploadUnsandboxed,
             Error::RemoteToken {
                 from: TokenSource::Env(EnvName::parse("CACHE_TOKEN").unwrap()),
+            },
+            Error::RemoteSwitch {
+                name: "BUILDL_REMOTE_UPLOAD",
+                value: "yes".to_owned(),
+            },
+            Error::RemoteFlags {
+                reason: "--no-remote cannot be combined with --remote-upload",
             },
         ]
     }
@@ -600,6 +609,25 @@ mod tests {
     }
 
     #[test]
+    fn the_three_errors_exit_as_usage() {
+        let errors = [
+            Error::RemoteToken {
+                from: TokenSource::Env(EnvName::parse("CACHE_TOKEN").unwrap()),
+            },
+            Error::RemoteSwitch {
+                name: "BUILDL_REMOTE_STRICT",
+                value: "yes".to_owned(),
+            },
+            Error::RemoteFlags {
+                reason: "--no-remote cannot be combined with --remote-strict",
+            },
+        ];
+        for error in &errors {
+            assert_eq!(Exit::of_error(error), Exit::Usage, "{error}");
+        }
+    }
+
+    #[test]
     fn a_lost_build_file_is_an_internal_fault() {
         let lost = Error::LostBuildFiles {
             directories: vec![Directory::root()],
@@ -685,12 +713,12 @@ mod tests {
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [7, 4, 3, 20, 4, 7]);
+        assert_eq!(counts, [9, 4, 3, 20, 4, 7]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 45, "a variant is listed twice");
+        assert_eq!(variants.len(), 47, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");

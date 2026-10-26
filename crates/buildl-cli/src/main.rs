@@ -90,6 +90,7 @@ mod cli;
 mod console;
 mod doctor_text;
 mod exit;
+mod remote_switches;
 mod run;
 mod terminal;
 
@@ -99,10 +100,15 @@ fn main() -> ExitCode {
         term: env::var_os("TERM"),
         no_color: env::var_os("NO_COLOR"),
     };
+    let remote = remote_switches::RemoteSwitches {
+        upload: env::var_os("BUILDL_REMOTE_UPLOAD"),
+        strict: env::var_os("BUILDL_REMOTE_STRICT"),
+    };
     let exit = run::run(
         env::args_os(),
         env::current_dir(),
         &terminal,
+        &remote,
         &mut io::stdout(),
         &mut io::stderr(),
         &mut console::StdConsole,

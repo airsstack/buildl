@@ -423,6 +423,20 @@ pub enum Error {
         /// The variable or file the token was to come from.
         from: TokenSource,
     },
+    /// A remote cache switch variable holds something other than `1` or `0`.
+    #[error("{name} is {value:?}, and must be 1 or 0")]
+    RemoteSwitch {
+        /// The variable.
+        name: &'static str,
+        /// What it holds, as text.
+        value: String,
+    },
+    /// The remote cache flags of a run contradict each other or the workspace.
+    #[error("{reason}")]
+    RemoteFlags {
+        /// What is wrong with the combination, and how to fix it.
+        reason: &'static str,
+    },
     /// Two outputs would be written to one place: the same path, or a path that another output
     /// needs as a directory.
     #[error(
@@ -1756,6 +1770,29 @@ mod tests {
             file.to_string(),
             "the remote cache token from file secrets/token cannot be used: \
              it is missing or unreadable, or it holds a character a header cannot carry"
+        );
+    }
+
+    #[test]
+    fn a_bad_switch_names_the_variable_and_what_it_holds() {
+        let err = Error::RemoteSwitch {
+            name: "BUILDL_REMOTE_UPLOAD",
+            value: "yes".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "BUILDL_REMOTE_UPLOAD is \"yes\", and must be 1 or 0"
+        );
+    }
+
+    #[test]
+    fn refused_flags_say_why() {
+        let err = Error::RemoteFlags {
+            reason: "--no-remote cannot be combined with --remote-upload",
+        };
+        assert_eq!(
+            err.to_string(),
+            "--no-remote cannot be combined with --remote-upload"
         );
     }
 

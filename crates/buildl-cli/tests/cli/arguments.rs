@@ -86,6 +86,19 @@ const TEST_FLAGS: &str = concat!(
     "\n",
 );
 
+/// The help of the remote cache flags `build` and `test` share.
+const REMOTE_FLAGS: &str = concat!(
+    "      --remote-upload\n",
+    "          Upload what this run produced to the remote cache\n",
+    "\n",
+    "      --remote-strict\n",
+    "          Fail the run when a call to the remote cache fails, instead of warning and building locally\n",
+    "\n",
+    "      --no-remote\n",
+    "          Do not use the remote cache in this run, whatever the variables say\n",
+    "\n",
+);
+
 /// What the binary writes to standard output for `args`, which it must answer with success and
 /// nothing on standard error.
 fn answered(args: &[&str]) -> String {
@@ -276,6 +289,7 @@ fn selecting_helps() -> [(&'static str, String); 3] {
                 "      --stream\n",
                 "          Show one running action's output as it is printed\n",
                 "\n",
+                REMOTE_FLAGS,
                 HELP_AND_VERSION,
             ]
             .concat(),
@@ -290,6 +304,7 @@ fn selecting_helps() -> [(&'static str, String); 3] {
                 COLOR,
                 SET,
                 TEST_FLAGS,
+                REMOTE_FLAGS,
                 HELP_AND_VERSION,
             ]
             .concat(),

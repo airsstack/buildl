@@ -37,6 +37,7 @@ use crate::cli::{
 };
 use crate::doctor_text::doctor_text;
 use crate::exit::Exit;
+use crate::remote_switches::RemoteSwitches;
 use crate::terminal::Terminal;
 
 /// Why a command stopped before its end.
@@ -73,14 +74,15 @@ impl From<io::Error> for Stop {
 ///
 /// `start` is the directory the command was started in, as the process read it: the workspace
 /// is the nearest one at or above it, and a target named without its directory is read against
-/// it. `terminal` is what is known of where standard error goes. What the command was asked
-/// for is written to `stdout`, and everything about how it went to `stderr`. `console` is
-/// where a workspace whose approver is `interactive` asks about what a build, a test run or a
-/// verify wants.
+/// it. `terminal` is what is known of where standard error goes, and `remote` what this
+/// machine's variables say about the remote cache. What the command was asked for is written
+/// to `stdout`, and everything about how it went to `stderr`. `console` is where a workspace
+/// whose approver is `interactive` asks about what a build, a test run or a verify wants.
 pub(crate) fn run<A, O, E, C>(
     args: A,
     start: io::Result<PathBuf>,
     terminal: &Terminal,
+    _remote: &RemoteSwitches,
     stdout: &mut O,
     stderr: &mut E,
     console: &mut C,
@@ -450,6 +452,7 @@ mod tests {
     use super::{Stop, run, told};
     use crate::cli::Cli;
     use crate::exit::Exit;
+    use crate::remote_switches::RemoteSwitches;
     use crate::terminal::Terminal;
 
     /// The manifest text up to the `strategy` line: allows a build to write its outputs and its
@@ -530,6 +533,7 @@ mod tests {
             iter::once(&"buildl").chain(args),
             Ok(start.to_path_buf()),
             terminal,
+            &RemoteSwitches::default(),
             &mut stdout,
             &mut stderr,
             &mut NoTerminal,
@@ -567,6 +571,7 @@ mod tests {
             ["buildl", "graph"],
             Ok(start.to_path_buf()),
             &piped(),
+            &RemoteSwitches::default(),
             &mut Failing(kind),
             &mut stderr,
             &mut NoTerminal,
@@ -801,6 +806,7 @@ mod tests {
             ["buildl", "log", "both"],
             Ok(root),
             &piped(),
+            &RemoteSwitches::default(),
             &mut Failing(io::ErrorKind::BrokenPipe),
             &mut stderr,
             &mut NoTerminal,
@@ -957,6 +963,7 @@ mod tests {
             ["buildl", "check"],
             Err(io::Error::from(io::ErrorKind::NotFound)),
             &piped(),
+            &RemoteSwitches::default(),
             &mut stdout,
             &mut stderr,
             &mut NoTerminal,
@@ -977,6 +984,7 @@ mod tests {
             ["buildl", "--version"],
             Err(io::Error::from(io::ErrorKind::NotFound)),
             &piped(),
+            &RemoteSwitches::default(),
             &mut stdout,
             &mut stderr,
             &mut NoTerminal,
