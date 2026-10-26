@@ -5,8 +5,8 @@
 //! arrives, the summary last. It is given the stream it writes to as a value, so what it writes
 //! can be captured in memory.
 //!
-//! Responsibilities: [`TerminalReporter`], its [`Reporter`] implementation and
-//! [`TerminalReporter::close`]; [`Mode`], whether a status line is kept; and [`Report`] and
+//! Responsibilities: [`TerminalReporter`], its [`Reporter`] and [`WatchReport`] implementations
+//! and [`TerminalReporter::close`]; [`Mode`], whether a status line is kept; and [`Report`] and
 //! [`TestBlocks`], what kind of run is shown and which tests of a test run get a block.
 //!
 //! Non-responsibilities: what a block or the summary holds, which the block renderings decide;
@@ -18,12 +18,14 @@
 use std::io::Write;
 
 use buildl_core::{
-    Captured, Channel, Label, OutcomeClass, OutcomeEvent, ReadyAction, RemoteNotice, Reporter,
-    Rerun, Summary, Tally, TargetRole,
+    Captured, Channel, Error, Label, OutcomeClass, OutcomeEvent, ReadyAction, RemoteNotice,
+    Reporter, Rerun, Summary, Tally, TargetRole, Trigger, WatchReport,
 };
 
 use crate::report::block::{block, header, summary_line, test_line, trailer};
+use crate::report::message::error_text;
 use crate::report::paint::Paint;
+use crate::report::watch_text::{building_line, waiting_line};
 
 /// Moves to the start of the row and clears it.
 const ERASE: &[u8] = b"\r\x1b[2K";
@@ -130,6 +132,13 @@ impl<W: Write> TerminalReporter<W> {
     /// For a build that ended in an error before its summary: whatever is written next then
     /// starts on an empty row.
     pub fn close(&mut self) {
+        let frame = self.closing();
+        self.emit(&frame);
+    }
+
+    /// What closes the status line and a line left open, which leaves the stream at the start of
+    /// an empty row.
+    fn closing(&mut self) -> Vec<u8> {
         let mut frame = Vec::new();
         self.erase(&mut frame);
         if self.mid_line {
@@ -137,6 +146,14 @@ impl<W: Write> TerminalReporter<W> {
         }
         self.live = None;
         self.mid_line = false;
+        frame
+    }
+
+    /// Writes `text` on a row of its own, in one write: the status line is closed first and is
+    /// not drawn again.
+    fn say(&mut self, text: &str) {
+        let mut frame = self.closing();
+        frame.extend_from_slice(text.as_bytes());
         self.emit(&frame);
     }
 
@@ -313,6 +330,23 @@ impl<W: Write> Reporter for TerminalReporter<W> {
     }
 }
 
+impl<W: Write> WatchReport for TerminalReporter<W> {
+    /// Writes the line that says what began the cycle, on a row of its own.
+    fn building(&mut self, trigger: &Trigger) {
+        self.say(&building_line(trigger));
+    }
+
+    /// Writes the error as a command shows it, on a row of its own, in the reporter's paint.
+    fn failed(&mut self, error: &Error) {
+        self.say(&error_text(error, self.paint));
+    }
+
+    /// Writes the line that says the watch is waiting, on a row of its own.
+    fn waiting(&mut self) {
+        self.say(&waiting_line());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -325,13 +359,14 @@ mod tests {
     use std::path::PathBuf;
 
     use buildl_core::{
-        ActionOutcome, Argument, Captured, Channel, Command, Diagnostic, ExpandedDescription,
-        InfraKind, Label, NetworkAccess, OutcomeClass, OutcomeEvent, OutputName, Provenance,
-        ReadyAction, RemoteCall, RemoteNotice, Reporter, Rerun, Summary, Tally, TargetRole,
-        Timestamp,
+        ActionOutcome, Argument, Captured, Channel, Command, Diagnostic, Error,
+        ExpandedDescription, InfraKind, Label, NetworkAccess, OutcomeClass, OutcomeEvent,
+        OutputName, Provenance, ReadyAction, RemoteCall, RemoteNotice, Reporter, Rerun,
+        SettingName, Summary, Tally, TargetRole, Timestamp, Trigger, WatchReport,
     };
 
     use super::{Mode, Report, TerminalReporter, TestBlocks, block};
+    use crate::report::message::error_text;
     use crate::report::paint::Paint;
 
     fn label(raw: &str) -> Label {
@@ -1208,5 +1243,46 @@ mod tests {
         );
         live.close();
         assert_eq!(written(&mut live), b"");
+    }
+
+    #[test]
+    fn a_failed_cycle_is_written_as_any_error_is() {
+        let error = Error::UnknownOverride {
+            name: SettingName::parse("optimise").unwrap(),
+        };
+        for paint in [Paint::Plain, Paint::Ansi] {
+            let mut reporter = reporter(Mode::Plain, paint);
+            reporter.failed(&error);
+            assert_eq!(written(&mut reporter), error_text(&error, paint).as_bytes());
+        }
+    }
+
+    #[test]
+    fn watch_lines_start_on_a_row_of_their_own() {
+        let mut reporter = reporter(Mode::Live, Paint::Plain);
+        reporter.building(&Trigger::Start);
+        assert_eq!(written(&mut reporter), b"watch: building\n");
+        reporter.begun(1);
+        reporter.started(&action("//:app", None));
+        assert_eq!(
+            written(&mut reporter),
+            b"\x1b[?7l[0/1] 1 running: //:app\x1b[?7h"
+        );
+        reporter.waiting();
+        assert_eq!(
+            written(&mut reporter),
+            b"\r\x1b[2Kwatch: waiting for changes\n"
+        );
+    }
+
+    #[test]
+    fn a_watch_line_ends_a_line_a_live_action_left_open() {
+        let mut reporter = reporter(Mode::Plain, Paint::Plain);
+        reporter.begun(1);
+        reporter.started(&action("//:docs", None));
+        reporter.printed(&label("//:docs"), Channel::Stdout, b"page 1");
+        let _ = written(&mut reporter);
+        reporter.waiting();
+        assert_eq!(written(&mut reporter), b"\nwatch: waiting for changes\n");
     }
 }
