@@ -52,5 +52,7 @@ verify -> placement
 verify -> ports
 verify -> types
 watch -> error
+watch -> grants
 watch -> ports
+watch -> resolve
 watch -> types
