@@ -138,13 +138,14 @@ returns a guard that frees it on drop.
 `execute/assembly.rs` (record arm), `verify/assembly.rs`.
 
 **Change:** `Ended::Executed { outputs, printed }`; `Made::Remote`; `store` (`record.rs:222`)
-gives `OutcomeClass::Remote` for it; the record arm for `Ended::Executed` (`assembly.rs:541-570`)
-mirrors the `Fetched` arm (`:554-565`) with `Made::Remote`; `verify`'s `rechecked`
-(`verify/assembly.rs:198-215`) gains the arm. The log event carries class `Remote`, the key, and
-the span the worker measured. Nothing yet produces `Ended::Executed`; the tests hand one to
-`record` directly.
+gives `OutcomeClass::Remote` for it; the `Ended` match of `Build::record` (`assembly.rs:541-570`)
+moves into `record.rs` as `recorded(target, key, ended, paths, cas, cache)`, so it can be tested
+without the flow fakes, and its `Executed` arm mirrors the `Fetched` arm with `Made::Remote`;
+`Build::record` calls it. `verify`'s `rechecked` (`verify/assembly.rs:198-215`) gains the arm.
+The log event carries class `Remote`, the key, and the span the worker measured. Nothing yet
+produces `Ended::Executed`; the tests hand one to `recorded` directly.
 
-**Proof:** written first, seen failing, then passing (`record.rs` and `assembly.rs` tests) —
+**Proof:** written first, seen failing, then passing (`record.rs` tests) —
 - `an_executed_result_is_placed_and_recorded_as_remote` — the outcome class is `Remote`, the row is written after the content, as `the_row_is_written_only_after_the_content` (`tests/flows/remote.rs:127`) checks for a fetch
 - `an_executed_result_logs_remote_with_its_key_and_span` — mirrors `:500`
 

@@ -21,11 +21,9 @@ use std::collections::{BTreeMap, VecDeque};
 
 use crate::error::{Error, Result};
 use crate::execute::admission::admit;
-use crate::execute::perform::{
-    Ended, Performed, RemoteRun, Shared, Task, Told, Worked, perform, remote_failure,
-};
+use crate::execute::perform::{Performed, RemoteRun, Shared, Task, Told, Worked, perform};
 use crate::execute::record::{
-    Finished, Made, Progress, append, failed, forget_contradicted, restore, shown, skipped, store,
+    Progress, append, forget_contradicted, recorded, restore, shown, skipped,
 };
 use crate::execute::schedule::{Finish, Schedule};
 use crate::execute::settle::{Settled, settle};
@@ -536,45 +534,20 @@ impl<P: Ports> Build<'_, P> {
         let Some(target) = self.targets.get(node.index()) else {
             return Ok(());
         };
-        let role = target.node.role;
         let was_live = performed.live;
         let progress = Progress::Began {
             key: performed.key.digest(),
             span: performed.span,
         };
         let key = performed.key.clone();
-        let outcome = match performed.ended {
-            Ended::Produced { outputs, printed } => store(
-                target.node,
-                Finished {
-                    key: performed.key,
-                    made: Made::Built,
-                    outputs,
-                    printed,
-                },
-                self.layout.outputs(node),
-                self.cas,
-                self.cache,
-            ),
-            Ended::Fetched { outputs, printed } => store(
-                target.node,
-                Finished {
-                    key: performed.key,
-                    made: Made::Fetched,
-                    outputs,
-                    printed,
-                },
-                self.layout.outputs(node),
-                self.cas,
-                self.cache,
-            ),
-            Ended::RemoteFailed(notice) => return Err(remote_failure(&notice)),
-            Ended::Failed {
-                class,
-                diagnostic,
-                printed,
-            } => failed(target.node.label.clone(), role, class, diagnostic, printed),
-        };
+        let outcome = recorded(
+            target.node,
+            performed.key,
+            performed.ended,
+            self.layout.outputs(node),
+            self.cas,
+            self.cache,
+        )?;
         // Before the outcome is finished, so the row is gone before the log line is written.
         let outcome = forget_contradicted(outcome, &key, self.cache);
         self.finish(node, progress, outcome)?;

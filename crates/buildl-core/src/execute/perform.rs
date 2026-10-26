@@ -188,6 +188,18 @@ pub(crate) enum Ended {
         /// What the original run printed.
         printed: Printed,
     },
+    /// The remote cache ran the action, and all of what it left is stored. The action was not
+    /// run here.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only the tests end a task this way")
+    )]
+    Executed {
+        /// Each declared output, in declared order.
+        outputs: Vec<Kept>,
+        /// What the remote run printed.
+        printed: Printed,
+    },
     /// A call to the remote cache failed in a build that fails when one does.
     RemoteFailed(RemoteNotice),
 }
