@@ -129,8 +129,8 @@ description = "Assert every member's direct dependencies against crates/expected
 # cargo-deny states which edges are forbidden; nothing there states which edges
 # must exist, and nothing there sees a forbidden dependency on a crate that is
 # not in the graph yet. A committed dump of the live graph covers both. Colour is off
-# so the dump is the same in a terminal and in a pipe; `(*)` marks a crate listed a
-# second time, as a dev-dependency that turns on a feature.
+# because CARGO_TERM_COLOR is "always" above, which would put colour codes into the dump;
+# `(*)` marks a crate cargo has already listed once.
 script_runner = "@shell"
 script = '''
 expected="crates/expected-edges.txt"

@@ -184,8 +184,9 @@ mod tests {
         DeclarationSite, DeclaredKind, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
         Error, EvaluationFailure, FileChange, InfraKind, InputKind, Label, Origin, OutcomeClass,
         OutputDifference, OutputName, OutputPath, OutputRefusal, PluginName, PluginRef,
-        PluginVersion, PluginViolation, PortName, Program, Provenance, SettingName, SourcePath,
-        TargetRole, TokenSource, TreeFault, Verification, Want, WantedSet,
+        PluginVersion, PluginViolation, PortName, Program, Provenance, RemoteFlagConflict,
+        RemoteVariable, SettingName, SourcePath, TargetRole, TokenSource, TreeFault, Verification,
+        Want, WantedSet,
     };
 
     use super::Exit;
@@ -254,11 +255,11 @@ mod tests {
                 from: TokenSource::Env(EnvName::parse("CACHE_TOKEN").unwrap()),
             },
             Error::RemoteSwitch {
-                name: "BUILDL_REMOTE_UPLOAD",
+                name: RemoteVariable::Upload,
                 value: "yes".to_owned(),
             },
             Error::RemoteFlags {
-                reason: "--no-remote cannot be combined with --remote-upload",
+                conflict: RemoteFlagConflict::NoRemoteWithSwitch,
             },
         ]
     }
@@ -615,11 +616,11 @@ mod tests {
                 from: TokenSource::Env(EnvName::parse("CACHE_TOKEN").unwrap()),
             },
             Error::RemoteSwitch {
-                name: "BUILDL_REMOTE_STRICT",
+                name: RemoteVariable::Strict,
                 value: "yes".to_owned(),
             },
             Error::RemoteFlags {
-                reason: "--no-remote cannot be combined with --remote-strict",
+                conflict: RemoteFlagConflict::SwitchWithoutRemote,
             },
         ];
         for error in &errors {

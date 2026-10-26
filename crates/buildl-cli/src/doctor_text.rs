@@ -24,12 +24,34 @@ use crate::remote_switches::Switch;
 /// The spaces after the longest cell of a column.
 const GAP: usize = 2;
 
+/// Whether a build would find the token `buildl.toml` names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TokenState {
+    /// The `[remote]` table names no token.
+    Unnamed,
+    /// The token is named and a build would read it.
+    Set,
+    /// The token is named and a build would fail to read it.
+    Missing,
+}
+
+impl TokenState {
+    /// The word `doctor` prints for this state.
+    const fn word(self) -> &'static str {
+        match self {
+            Self::Unnamed => "-",
+            Self::Set => "set",
+            Self::Missing => "not set",
+        }
+    }
+}
+
 /// What `doctor` says of the remote cache beyond what `buildl.toml` holds: what this machine
 /// has, and so what no manifest can say.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RemoteReport {
     /// Whether the token the manifest names can be found.
-    pub token_set: bool,
+    pub token: TokenState,
     /// How `BUILDL_REMOTE_UPLOAD` reads.
     pub upload: Switch,
     /// How `BUILDL_REMOTE_STRICT` reads.
@@ -44,7 +66,7 @@ pub(crate) struct RemoteReport {
 ///
 /// The remote cache follows the run settings: `remote: none` when `buildl.toml` has no
 /// `[remote]` table, and otherwise a `remote` section of the table's `url`, `instance`, `ca`,
-/// `header` and `timeout`, whether the token is set, and `upload` and `strict` as this
+/// `header` and `timeout`, whether the token is set (`-` when none is named), and `upload` and `strict` as this
 /// machine's variables read in `remote`. The token itself is never in the text.
 ///
 /// Under a want that plugins' targets are behind, one line for each chain reads
@@ -215,10 +237,7 @@ fn remote_lines(settings: Option<&RemoteSettings>, remote: &RemoteReport) -> Vec
         ("ca", or_dash(settings.ca().map(ToString::to_string))),
         ("header", settings.header().to_string()),
         ("timeout", settings.timeout().to_string()),
-        (
-            "token",
-            if remote.token_set { "set" } else { "not set" }.to_owned(),
-        ),
+        ("token", remote.token.word().to_owned()),
         ("upload", remote.upload.to_string()),
         ("strict", remote.strict.to_string()),
     ];
@@ -277,7 +296,7 @@ mod tests {
         RemoteUrl, Timeout, TokenSource, Want, WantedSet, Workers, Workspace,
     };
 
-    use super::{RemoteReport, doctor_text};
+    use super::{RemoteReport, TokenState, doctor_text};
     use crate::remote_switches::Switch;
 
     fn programs(names: &[&str]) -> BTreeSet<Program> {
@@ -359,7 +378,7 @@ mod tests {
     /// A machine whose token is not found and whose variables are not set.
     const fn machine() -> RemoteReport {
         RemoteReport {
-            token_set: false,
+            token: TokenState::Missing,
             upload: Switch::Off,
             strict: Switch::Off,
         }
@@ -416,7 +435,7 @@ mod tests {
                 .build()
                 .unwrap();
         let machine = RemoteReport {
-            token_set: true,
+            token: TokenState::Set,
             upload: Switch::On,
             strict: Switch::Invalid("yes".to_owned()),
         };
@@ -444,12 +463,16 @@ mod tests {
     }
 
     #[test]
-    fn an_unnamed_instance_and_authority_show_a_dash_and_a_missing_token_says_so() {
+    fn an_unnamed_instance_authority_and_token_show_a_dash() {
         let settings = RemoteSettings::builder(RemoteUrl::parse("grpc://127.0.0.1:9092").unwrap())
             .build()
             .unwrap();
+        let machine = RemoteReport {
+            token: TokenState::Unnamed,
+            ..machine()
+        };
 
-        let text = report_on(remote_workspace(settings), &machine());
+        let text = report_on(remote_workspace(settings), &machine);
 
         assert!(
             text.contains(concat!(
@@ -457,12 +480,25 @@ mod tests {
                 "  ca        -\n",
                 "  header    authorization\n",
                 "  timeout   30s\n",
-                "  token     not set\n",
+                "  token     -\n",
                 "  upload    off\n",
                 "  strict    off\n",
             )),
             "{text}"
         );
+    }
+
+    #[test]
+    fn a_named_token_a_build_cannot_read_says_not_set() {
+        let settings =
+            RemoteSettings::builder(RemoteUrl::parse("grpcs://cache.example.com").unwrap())
+                .token(TokenSource::Env(EnvName::parse("CACHE_TOKEN").unwrap()))
+                .build()
+                .unwrap();
+
+        let text = report_on(remote_workspace(settings), &machine());
+
+        assert!(text.contains("  token     not set\n"), "{text}");
     }
 
     #[test]

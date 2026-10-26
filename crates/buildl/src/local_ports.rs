@@ -603,6 +603,15 @@ mod tests {
     }
 
     #[test]
+    fn the_manifest_names_a_remote_only_with_a_remote_table() {
+        let (_dir, without) = workspace("");
+        let (_other, named) = workspace("[remote]\nurl = \"grpc://127.0.0.1:1\"\n");
+
+        assert!(!Wiring::read(&without).unwrap().names_remote());
+        assert!(Wiring::read(&named).unwrap().names_remote());
+    }
+
+    #[test]
     fn bare_and_sandbox_can_be_run() {
         for manifest in [
             "[execution]\nstrategy = \"bare\"\n",

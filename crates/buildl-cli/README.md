@@ -11,8 +11,8 @@ It is a thin shell: it parses arguments, calls into `buildl`, writes what the li
 | `buildl check` | evaluates every build file twice and compares the two; runs nothing and writes nothing |
 | `buildl graph` | prints the target graph on stdout: canonical JSON with `--json`, the default, or DOT with `--dot` |
 | `buildl plan [TARGET]...` | prints on stdout what would run, and why; `--json` gives the plan as canonical JSON |
-| `buildl build [TARGET]...` | builds the targets and what they need; blocks, a status line on a terminal and a summary go to stderr. `-k`, `--keep-going` carries on past a failure; `--stream` shows one running action's output as it is printed |
-| `buildl test [TARGET]...` | runs the test targets and what they need |
+| `buildl build [TARGET]...` | builds the targets and what they need; blocks, a status line on a terminal and a summary go to stderr. `-k`, `--keep-going` carries on past a failure; `--stream` shows one running action's output as it is printed; `--remote-upload`, `--remote-strict` and `--no-remote` say how the run uses the workspace's `[remote]` cache |
+| `buildl test [TARGET]...` | runs the test targets and what they need; takes the same `--remote-upload`, `--remote-strict` and `--no-remote` |
 | `buildl verify [TARGET]...` | re-runs cached actions in the sandbox and names those whose outputs differ |
 | `buildl query <EXPR>` | prints the targets `deps(TARGET)` or `rdeps(TARGET)` reaches |
 | `buildl log <TARGET>` | shows what a target printed when it last ran |

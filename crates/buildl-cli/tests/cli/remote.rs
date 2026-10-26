@@ -211,8 +211,14 @@ fn a_token_with_a_grpc_url_is_refused() {
 
     assert_eq!(code(&built), 5, "{}", stderr(&built));
     let text = stderr(&built);
-    assert!(text.contains("buildl.toml"), "{text}");
-    assert!(text.contains("token"), "{text}");
+    let manifest = std::fs::read_to_string(root.join("buildl.toml")).unwrap();
+    let line = manifest
+        .lines()
+        .position(|line| line.starts_with("token"))
+        .unwrap()
+        + 1;
+    assert!(text.contains(&format!("buildl.toml:{line}:")), "{text}");
+    assert!(text.contains("remote.token"), "{text}");
     assert!(!text.contains(TOKEN), "{text}");
     assert!(!root.join("out").exists(), "something was built");
 }

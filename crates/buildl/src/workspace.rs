@@ -159,6 +159,16 @@ impl Workspace {
         self.wiring.names_remote()
     }
 
+    /// How a run with `options` uses the remote cache: as `options` say when `buildl.toml` names
+    /// one, and not at all when it names none.
+    const fn remote_policy(&self, options: RunOptions) -> RemotePolicy {
+        if self.names_remote() {
+            options.remote
+        } else {
+            RemotePolicy::OFF
+        }
+    }
+
     /// A target as a person names it: `//dir:name`, or `:name` / `name` in the directory the
     /// workspace was opened from.
     ///
@@ -391,7 +401,7 @@ impl Workspace {
                 self.wiring
                     .ports(&lock, reporter, console, options.remote)?,
             );
-        pipeline.set_remote(options.remote);
+        pipeline.set_remote(self.remote_policy(options));
         let built = pipeline.build(
             self.wiring.entry(),
             scope,
@@ -594,7 +604,7 @@ impl Workspace {
                 self.wiring
                     .ports(&lock, reporter, console, options.remote)?,
             );
-        pipeline.set_remote(options.remote);
+        pipeline.set_remote(self.remote_policy(options));
         let tested = pipeline.test(
             self.wiring.entry(),
             scope,
@@ -632,8 +642,8 @@ mod tests {
     use buildl_core::json::canonical;
     use buildl_core::{
         Captured, Channel, Diagnostic, Error, Label, LiveOutput, NameKind, OnFailure, OutcomeClass,
-        OutcomeEvent, PortName, ReadyAction, RemoteNotice, Reporter, Rerun, Result, Sample, Scope,
-        Summary, Tally, Verdict, Want,
+        OutcomeEvent, PortName, ReadyAction, RemoteFailure, RemoteNotice, RemotePolicy, RemoteUse,
+        Reporter, Rerun, Result, Sample, Scope, Summary, Tally, Verdict, Want,
     };
 
     use crate::approver::NoTerminal;
@@ -1439,5 +1449,36 @@ mod tests {
         );
         // Refused before the lock was taken: no state directory, no lock file.
         assert_eq!(names(&root), ["a.txt", "build.lua", "buildl.toml"]);
+    }
+
+    #[test]
+    fn a_workspace_names_a_remote_only_with_a_remote_table() {
+        let (_without, bare) = workspace(&[("buildl.toml", "")]);
+        let (_with, named) =
+            workspace(&[("buildl.toml", "[remote]\nurl = \"grpc://127.0.0.1:1\"\n")]);
+
+        assert!(!Workspace::open(&bare).unwrap().names_remote());
+        assert!(Workspace::open(&named).unwrap().names_remote());
+    }
+
+    #[test]
+    fn the_remote_policy_is_off_unless_the_workspace_names_a_remote() {
+        let (_without, bare) = workspace(&[("buildl.toml", "")]);
+        let (_with, named) =
+            workspace(&[("buildl.toml", "[remote]\nurl = \"grpc://127.0.0.1:1\"\n")]);
+        let upload = RemotePolicy {
+            use_: RemoteUse::ReadWrite,
+            failure: RemoteFailure::Strict,
+        };
+        let options = RunOptions::new(OnFailure::Stop, LiveOutput::Off).with_remote(upload);
+
+        assert_eq!(
+            Workspace::open(&bare).unwrap().remote_policy(options),
+            RemotePolicy::OFF
+        );
+        assert_eq!(
+            Workspace::open(&named).unwrap().remote_policy(options),
+            upload
+        );
     }
 }

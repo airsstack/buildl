@@ -88,8 +88,8 @@
 //!
 //! Every command that loads build files first checks each plugin `buildl.toml` names in
 //! `[plugins.<name>]` against `buildl.lock` and the plugin store, and hands the directories to
-//! the Lua evaluator; none of them reaches the network, and [`Workspace::fetch_plugins`] is the
-//! one that does. A workspace that declares a discovery target is loaded a second time with the
+//! the Lua evaluator; loading never reaches the network, and [`Workspace::fetch_plugins`] is the
+//! one command that fetches plugins. A workspace that declares a discovery target is loaded a second time with the
 //! last result of each, read from the build log and the content store, and
 //! [`Workspace::build`] and [`Workspace::test`] run the discovery targets first.
 //!
@@ -114,6 +114,7 @@
 //! | [`clock`] | the wall clock | [`Clock`] |
 //! | [`report`] | what a build shows while it runs, and every rendering of a value as text | [`Reporter`] |
 //! | [`approver`] | whether a build may do what it wants | [`Approver`] |
+//! | [`remote`] | the cache of results other machines share | [`RemoteCache`] |
 //!
 //! [`DeclarationSource`] has no module here: its adapter is the `buildl-lua` crate.
 //!
@@ -131,11 +132,10 @@
 //! that pins a git plugin through the system `git`; it names only [`state`], [`search_path`] and
 //! `buildl-core`.
 //!
-//! [`remote`] serves the [`RemoteCache`] port and is in neither table: it holds the REAPI v2 and
-//! `ByteStream` message and service types, generated from the vendored protos, the blocking
-//! client of a remote cache built on them (runtime, channel, login, capabilities, blob
-//! transfer), the adapter over that client, and the choice between it and no remote at all,
-//! with an in-memory cache server behind the `test-server` feature.
+//! [`remote`] holds the REAPI v2 and `ByteStream` message and service types, generated from the
+//! vendored protos, the blocking client of a remote cache built on them (runtime, channel,
+//! login, capabilities, blob transfer), the adapter over that client, and the choice between it
+//! and no remote at all, with an in-memory cache server behind the `test-server` feature.
 //!
 //! The adapters meet in two modules and nowhere else. Neither is public: what they hold is
 //! exported from the crate root.

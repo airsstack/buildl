@@ -207,3 +207,22 @@ fn a_build_given_no_remote_policy_never_connects() {
 
     assert!(server.calls().is_empty(), "{:?}", server.calls());
 }
+
+#[test]
+fn a_workspace_without_a_remote_table_builds_whatever_the_policy_says() {
+    for policy in [UPLOADING, READING] {
+        let fixture = Fixture::copy_of("verified", &[]);
+        fixture.append("buildl.toml", b"strategy = \"bare\"\n");
+        let mut recorder = Recorder::default();
+
+        let outcomes = build(&fixture, policy, &mut recorder).unwrap();
+
+        assert!(
+            outcomes
+                .iter()
+                .any(|outcome| outcome.class == OutcomeClass::Built)
+        );
+        assert!(all_ended(&outcomes, &OutcomeClass::Built), "{outcomes:?}");
+        assert!(recorder.notices.is_empty(), "{:?}", recorder.notices);
+    }
+}

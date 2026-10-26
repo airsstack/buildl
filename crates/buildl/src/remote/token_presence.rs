@@ -1,46 +1,39 @@
-//! Whether the token the remote settings name can be found, without reading it.
+//! Whether the token the remote settings name can be read, as a build would read it.
 //!
-//! `doctor` says whether a build would find the token, and must not hold its content to say so:
-//! a variable counts when it is set, a file when it can be opened.
+//! `doctor` says whether a build would find the token. It asks the login every call carries, so
+//! the two cannot disagree: the variable is set and holds text, or the file reads as text, and
+//! the token holds nothing a header cannot carry. The token is dropped as soon as it has been
+//! read and is never part of the answer.
 //!
 //! Responsibilities: [`token_is_present`].
 //!
-//! Non-responsibilities: reading the token, which the login every call carries does, and judging
-//! whether what it holds can be sent.
+//! Non-responsibilities: reading and sending the token, which [`Login`] does.
 
-use std::ffi::OsString;
-use std::fs::File;
 use std::path::Path;
 
-use buildl_core::{EnvName, RemoteSettings, TokenSource};
+use buildl_core::{EnvName, RemoteSettings};
 
-/// Whether the token `settings` name is there to read: the variable is set, or the file opens,
-/// with a relative file resolved against `root`. Settings without a token have none to find.
+use super::login::Login;
+
+/// Whether the settings name a token that a build would read.
 ///
-/// Neither the variable's value nor the file's content is read into the answer.
+/// The variable is set to text, or the file reads as text, with a relative file resolved against
+/// `root`, and what it holds can be sent in the header the settings choose. Settings without a
+/// token have none to find.
+///
+/// The token is read and dropped; it is never returned or shown.
 #[must_use]
 pub fn token_is_present(settings: &RemoteSettings, root: &Path) -> bool {
-    token_is_present_with(settings, root, |name| std::env::var_os(name.as_str()))
+    token_is_present_with(settings, root, |name| std::env::var(name.as_str()).ok())
 }
 
 /// [`token_is_present`], taking the value of a variable from `lookup`.
 fn token_is_present_with(
     settings: &RemoteSettings,
     root: &Path,
-    lookup: impl FnOnce(&EnvName) -> Option<OsString>,
+    lookup: impl FnOnce(&EnvName) -> Option<String>,
 ) -> bool {
-    match settings.token() {
-        None => false,
-        Some(TokenSource::Env(name)) => lookup(name).is_some(),
-        Some(TokenSource::File(path)) => {
-            let file = if path.is_absolute() {
-                Path::new(path.as_str()).to_path_buf()
-            } else {
-                root.join(path.as_str())
-            };
-            File::open(file).is_ok()
-        }
-    }
+    settings.token().is_some() && Login::read_with(settings, root, lookup).is_ok()
 }
 
 #[cfg(test)]
@@ -77,7 +70,7 @@ mod tests {
         assert!(!token_is_present_with(
             &settings(None),
             Path::new("/"),
-            |_| Some("x".into())
+            |_| Some("x".to_owned())
         ));
     }
 
@@ -86,7 +79,7 @@ mod tests {
         let named = settings(Some(variable("CACHE_TOKEN")));
 
         assert!(token_is_present_with(&named, Path::new("/"), |name| {
-            (name.as_str() == "CACHE_TOKEN").then(|| "s3cret".into())
+            (name.as_str() == "CACHE_TOKEN").then(|| "s3cret".to_owned())
         }));
         assert!(!token_is_present_with(&named, Path::new("/"), |_| None));
     }
@@ -116,5 +109,25 @@ mod tests {
             Path::new("/nowhere"),
             |_| None
         ));
+    }
+
+    #[test]
+    fn a_token_a_build_would_refuse_is_not_present() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("a-directory")).unwrap();
+        fs::write(dir.path().join("two-lines"), "one\ntwo").unwrap();
+        let directory = settings(Some(TokenSource::File(
+            HostPath::parse("a-directory").unwrap(),
+        )));
+        let two_lines = settings(Some(TokenSource::File(
+            HostPath::parse("two-lines").unwrap(),
+        )));
+        let named = settings(Some(variable("CACHE_TOKEN")));
+
+        assert!(!token_is_present_with(&directory, dir.path(), |_| None));
+        assert!(!token_is_present_with(&two_lines, dir.path(), |_| None));
+        assert!(!token_is_present_with(&named, dir.path(), |_| Some(
+            "one\ntwo".to_owned()
+        )));
     }
 }

@@ -155,7 +155,7 @@ pub mod verify;
 
 pub use error::{
     ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
-    EvaluationLimit, NameKind, PortName, Result, TreeFault,
+    EvaluationLimit, NameKind, PortName, RemoteFlagConflict, RemoteVariable, Result, TreeFault,
 };
 pub use execute::execute;
 pub use grants::negotiate;

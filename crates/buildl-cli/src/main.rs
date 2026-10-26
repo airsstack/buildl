@@ -13,8 +13,8 @@
 //! | `buildl graph [--json \| --dot]` | the target graph: canonical JSON (the default) or Graphviz DOT | nothing, or `//svc:pkgs has not run; run buildl build` for each discovery target that has not run |
 //! | `buildl query <EXPR> [--json]` | the targets the expression reaches, one per line, or as canonical JSON | nothing, or the same line for each discovery target that has not run |
 //! | `buildl plan [TARGET]... [--set NAME=VALUE]... [--json]` | what a build would run and why, or the plan as canonical JSON | nothing |
-//! | `buildl build [TARGET]... [--set NAME=VALUE]... [-k \| --keep-going] [--stream]` | nothing | a block for each action that printed or failed, and a summary |
-//! | `buildl test [TARGET]... [--set NAME=VALUE]... [--stop] [--stream] [--rerun] [--verbose]` | nothing | a block for each failing test (and each test that printed, with `--verbose`) and for each other target that printed or failed, and a line counting the tests |
+//! | `buildl build [TARGET]... [--set NAME=VALUE]... [-k \| --keep-going] [--stream] [--remote-upload] [--remote-strict] [--no-remote]` | nothing | a block for each action that printed or failed, and a summary |
+//! | `buildl test [TARGET]... [--set NAME=VALUE]... [--stop] [--stream] [--rerun] [--verbose] [--remote-upload] [--remote-strict] [--no-remote]` | nothing | a block for each failing test (and each test that printed, with `--verbose`) and for each other target that printed or failed, and a line counting the tests |
 //! | `buildl verify [TARGET]... [--set NAME=VALUE]... [--sample N]` | nothing | a line for each checked target that was verified, mismatched, failed, skipped or not put back, and a line counting them and the targets left out |
 //! | `buildl doctor` | the workspace root, its approver, its run settings, its remote cache (`remote: none`, or its settings, whether its token is set, and the upload and strict variables as this machine sets them; it connects to nothing), its ceiling, and one row per want saying whether the ceiling allows it and whether it is approved, with the plugins whose targets want it under each row, and the wants a plugin does not allow under `plugin violations` | nothing, or the same line for each discovery target that has not run |
 //! | `buildl log <TARGET> [--stdout \| --stderr]` | the stored stdout, or the one stream asked for | the header, a warning of damaged lines, and the stored stderr when no flag is given |
@@ -29,7 +29,12 @@
 //! does not stop, and `--stream` shows one running action's output as it is printed. `--stop`
 //! starts nothing new after the first failure. `--rerun` runs the selected tests even when
 //! nothing they depend on changed. `--verbose` shows what every test printed, not only what a
-//! failing one did. `--sample N`, with `N` at least one, makes `verify` re-run only the `N` cached
+//! failing one did. In a workspace whose `buildl.toml` has a `[remote]` table, `build` and `test`
+//! look results up in that remote cache; `--remote-upload` also sends what the run produced
+//! (`BUILDL_REMOTE_UPLOAD=1` does the same for every run on a machine), `--remote-strict` fails
+//! the run when a call to the cache fails instead of warning and building locally
+//! (`BUILDL_REMOTE_STRICT=1`), and `--no-remote` leaves the cache out of one run, whatever the
+//! variables say; it cannot be combined with the other two. `--sample N`, with `N` at least one, makes `verify` re-run only the `N` cached
 //! actions whose key digests are lowest, the same ones every time; `verify` runs under
 //! `strategy = "sandbox"` only and records nothing. Every command takes
 //! `--color auto|always|never`: under `auto`, what is printed is coloured only when standard

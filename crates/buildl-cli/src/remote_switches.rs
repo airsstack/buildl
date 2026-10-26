@@ -14,14 +14,11 @@
 use core::fmt;
 use std::ffi::OsString;
 
-use buildl::buildl_core::{Error, RemoteFailure, RemotePolicy, RemoteUse};
+use buildl::buildl_core::{
+    Error, RemoteFailure, RemoteFlagConflict, RemotePolicy, RemoteUse, RemoteVariable,
+};
 
 use crate::cli::RemoteArgs;
-
-/// The variable that turns uploading on for a machine.
-const UPLOAD_VARIABLE: &str = "BUILDL_REMOTE_UPLOAD";
-/// The variable that makes a remote failure fail the build, for a machine.
-const STRICT_VARIABLE: &str = "BUILDL_REMOTE_STRICT";
 
 /// Whether the workspace's `buildl.toml` has a `[remote]` table.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -97,7 +94,8 @@ impl RemoteSwitches {
     /// # Errors
     ///
     /// [`Error::RemoteSwitch`] when a variable holds anything but `1` or `0`, unless
-    /// `--no-remote` is given; [`Error::RemoteFlags`] when `--no-remote` comes with an
+    /// `--no-remote` is given or the switch's own flag is, since the flag settles the switch
+    /// without reading the variable; [`Error::RemoteFlags`] when `--no-remote` comes with an
     /// upload or strict flag, or such a flag comes with a workspace that names no remote.
     pub(crate) fn resolve(
         &self,
@@ -107,20 +105,18 @@ impl RemoteSwitches {
         if args.no_remote {
             return if args.upload || args.strict {
                 Err(Error::RemoteFlags {
-                    reason: "--no-remote cannot be combined with --remote-upload or \
-                             --remote-strict",
+                    conflict: RemoteFlagConflict::NoRemoteWithSwitch,
                 })
             } else {
                 Ok(RemotePolicy::OFF)
             };
         }
-        let upload = args.upload || switched_on(UPLOAD_VARIABLE, self.upload.as_ref())?;
-        let strict = args.strict || switched_on(STRICT_VARIABLE, self.strict.as_ref())?;
+        let upload = args.upload || switched_on(RemoteVariable::Upload, self.upload.as_ref())?;
+        let strict = args.strict || switched_on(RemoteVariable::Strict, self.strict.as_ref())?;
         if table == RemoteTable::Absent {
             return if args.upload || args.strict {
                 Err(Error::RemoteFlags {
-                    reason: "--remote-upload and --remote-strict need a [remote] table in \
-                             buildl.toml, and this workspace has none",
+                    conflict: RemoteFlagConflict::SwitchWithoutRemote,
                 })
             } else {
                 Ok(RemotePolicy::OFF)
@@ -142,7 +138,7 @@ impl RemoteSwitches {
 }
 
 /// Whether the variable `name`, holding `value`, is on: `1` is, `0` and unset are not.
-fn switched_on(name: &'static str, value: Option<&OsString>) -> Result<bool, Error> {
+fn switched_on(name: RemoteVariable, value: Option<&OsString>) -> Result<bool, Error> {
     match Switch::of(value) {
         Switch::Off => Ok(false),
         Switch::On => Ok(true),
@@ -157,7 +153,9 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use buildl::buildl_core::{Error, RemoteFailure, RemotePolicy, RemoteUse};
+    use buildl::buildl_core::{
+        Error, RemoteFailure, RemoteFlagConflict, RemotePolicy, RemoteUse, RemoteVariable,
+    };
 
     use super::{RemoteSwitches, RemoteTable, Switch};
     use crate::cli::RemoteArgs;
@@ -235,8 +233,53 @@ mod tests {
             let refused = machine(None, None)
                 .resolve(&args, RemoteTable::Named)
                 .unwrap_err();
-            assert!(matches!(refused, Error::RemoteFlags { .. }), "{refused}");
+            assert!(
+                matches!(
+                    refused,
+                    Error::RemoteFlags {
+                        conflict: RemoteFlagConflict::NoRemoteWithSwitch
+                    }
+                ),
+                "{refused}"
+            );
         }
+    }
+
+    #[test]
+    fn no_remote_never_reads_the_variables() {
+        let resolved = machine(Some("yes"), Some("yes"))
+            .resolve(&flags(false, false, true), RemoteTable::Named)
+            .unwrap();
+        assert_eq!(resolved, RemotePolicy::OFF);
+    }
+
+    #[test]
+    fn a_flag_settles_its_switch_without_reading_its_variable() {
+        let upload = machine(Some("yes"), None)
+            .resolve(&flags(true, false, false), RemoteTable::Named)
+            .unwrap();
+        let strict = machine(None, Some("yes"))
+            .resolve(&flags(false, true, false), RemoteTable::Named)
+            .unwrap();
+        assert_eq!(upload, policy(RemoteUse::ReadWrite, RemoteFailure::Lenient));
+        assert_eq!(strict, policy(RemoteUse::Read, RemoteFailure::Strict));
+    }
+
+    #[test]
+    fn the_other_switchs_bad_variable_is_still_refused_beside_a_flag() {
+        let refused = machine(None, Some("yes"))
+            .resolve(&flags(true, false, false), RemoteTable::Named)
+            .unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                Error::RemoteSwitch {
+                    name: RemoteVariable::Strict,
+                    ..
+                }
+            ),
+            "{refused}"
+        );
     }
 
     #[test]
@@ -245,7 +288,15 @@ mod tests {
             let refused = machine(None, None)
                 .resolve(&args, RemoteTable::Absent)
                 .unwrap_err();
-            assert!(matches!(refused, Error::RemoteFlags { .. }), "{refused}");
+            assert!(
+                matches!(
+                    refused,
+                    Error::RemoteFlags {
+                        conflict: RemoteFlagConflict::SwitchWithoutRemote
+                    }
+                ),
+                "{refused}"
+            );
         }
     }
 
@@ -290,8 +341,8 @@ mod tests {
         assert!(
             matches!(
                 &refused,
-                Error::RemoteSwitch { name, value }
-                    if *name == "BUILDL_REMOTE_UPLOAD" && value == "yes"
+                Error::RemoteSwitch { name: RemoteVariable::Upload, value }
+                    if value == "yes"
             ),
             "{refused}"
         );
@@ -302,7 +353,10 @@ mod tests {
         assert!(
             matches!(
                 &refused,
-                Error::RemoteSwitch { name, .. } if *name == "BUILDL_REMOTE_STRICT"
+                Error::RemoteSwitch {
+                    name: RemoteVariable::Strict,
+                    ..
+                }
             ),
             "{refused}"
         );

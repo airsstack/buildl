@@ -36,7 +36,7 @@ use crate::cli::{
     BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, PluginsArgs, PluginsCommand, QueryArgs,
     Streams, TestArgs, VerifyArgs, overrides,
 };
-use crate::doctor_text::{RemoteReport, doctor_text};
+use crate::doctor_text::{RemoteReport, TokenState, doctor_text};
 use crate::exit::Exit;
 use crate::remote_switches::{RemoteSwitches, RemoteTable};
 use crate::terminal::Terminal;
@@ -304,7 +304,8 @@ fn query<O: Write, E: Write>(
 /// `doctor`: writes to `stdout` what the workspace allows and what its build wants, and the
 /// remote cache it names with what `remote` says of this machine. Wants outside the ceiling or
 /// not approved are reported, and the command succeeded. Which discovery targets have not run
-/// is said on `stderr`. It connects to no remote cache and reads no token's content.
+/// is said on `stderr`. It connects to no remote cache; a named token is read only to see that
+/// a build could, and is never shown.
 fn doctor<O: Write, E: Write>(
     start: &Path,
     remote: &RemoteSwitches,
@@ -313,13 +314,13 @@ fn doctor<O: Write, E: Write>(
 ) -> Result<Exit, Stop> {
     let (doctor, missing) = Workspace::open(start)?.doctor()?;
     let _ = stderr.write_all(not_run_lines(&missing).as_bytes());
+    let token = match doctor.checkup().workspace().remote.as_ref() {
+        Some(settings) if settings.token().is_none() => TokenState::Unnamed,
+        Some(settings) if token_is_present(settings, doctor.root()) => TokenState::Set,
+        _ => TokenState::Missing,
+    };
     let report = RemoteReport {
-        token_set: doctor
-            .checkup()
-            .workspace()
-            .remote
-            .as_ref()
-            .is_some_and(|settings| token_is_present(settings, doctor.root())),
+        token,
         upload: remote.upload_switch(),
         strict: remote.strict_switch(),
     };

@@ -18,6 +18,8 @@
 //!   declaration holding a bad reference, one target on a dependency cycle, one declaration of a
 //!   duplicated label, or the target a test run named that is not a test.
 //! - [`PortName`] — which port an [`Error::Adapter`] came through.
+//! - [`RemoteVariable`] and [`RemoteFlagConflict`] — which switch variable an
+//!   [`Error::RemoteSwitch`] refused, and which flag combination an [`Error::RemoteFlags`] did.
 //! - [`TreeFault`] — why a list of files an [`Error::InvalidTree`] is about is not a tree.
 //! - [`Result`] — the crate-wide alias.
 //!
@@ -427,15 +429,15 @@ pub enum Error {
     #[error("{name} is {value:?}, and must be 1 or 0")]
     RemoteSwitch {
         /// The variable.
-        name: &'static str,
+        name: RemoteVariable,
         /// What it holds, as text.
         value: String,
     },
     /// The remote cache flags of a run contradict each other or the workspace.
-    #[error("{reason}")]
+    #[error("{conflict}")]
     RemoteFlags {
-        /// What is wrong with the combination, and how to fix it.
-        reason: &'static str,
+        /// What is wrong with the combination.
+        conflict: RemoteFlagConflict,
     },
     /// Two outputs would be written to one place: the same path, or a path that another output
     /// needs as a directory.
@@ -980,6 +982,54 @@ impl fmt::Display for ActionFound {
     }
 }
 
+/// The variable of a remote cache switch.
+///
+/// Non-exhaustive for the same reason [`Error`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RemoteVariable {
+    /// `BUILDL_REMOTE_UPLOAD`, which turns uploading on.
+    Upload,
+    /// `BUILDL_REMOTE_STRICT`, which makes a remote failure fail the build.
+    Strict,
+}
+
+impl fmt::Display for RemoteVariable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Upload => "BUILDL_REMOTE_UPLOAD",
+            Self::Strict => "BUILDL_REMOTE_STRICT",
+        })
+    }
+}
+
+/// A combination of remote cache flags that an [`Error::RemoteFlags`] refuses.
+///
+/// Non-exhaustive for the same reason [`Error`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RemoteFlagConflict {
+    /// `--no-remote` together with `--remote-upload` or `--remote-strict`.
+    NoRemoteWithSwitch,
+    /// `--remote-upload` or `--remote-strict` in a workspace whose `buildl.toml` has no
+    /// `[remote]` table.
+    SwitchWithoutRemote,
+}
+
+impl fmt::Display for RemoteFlagConflict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::NoRemoteWithSwitch => {
+                "--no-remote cannot be combined with --remote-upload or --remote-strict"
+            }
+            Self::SwitchWithoutRemote => {
+                "--remote-upload and --remote-strict need a [remote] table in buildl.toml, \
+                 and this workspace has none"
+            }
+        })
+    }
+}
+
 /// Which domain name an [`Error::InvalidName`] is about.
 ///
 /// A type rather than a string so classification is read as a field. Non-exhaustive for the same
@@ -1129,7 +1179,7 @@ mod tests {
 
     use super::{
         ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
-        EvaluationLimit, NameKind, PortName, TreeFault,
+        EvaluationLimit, NameKind, PortName, RemoteFlagConflict, RemoteVariable, TreeFault,
     };
     use crate::types::{
         Argument, Ceiling, Command, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName,
@@ -1776,23 +1826,32 @@ mod tests {
     #[test]
     fn a_bad_switch_names_the_variable_and_what_it_holds() {
         let err = Error::RemoteSwitch {
-            name: "BUILDL_REMOTE_UPLOAD",
+            name: RemoteVariable::Upload,
             value: "yes".to_owned(),
         };
         assert_eq!(
             err.to_string(),
             "BUILDL_REMOTE_UPLOAD is \"yes\", and must be 1 or 0"
         );
+        assert_eq!(RemoteVariable::Strict.to_string(), "BUILDL_REMOTE_STRICT");
     }
 
     #[test]
     fn refused_flags_say_why() {
-        let err = Error::RemoteFlags {
-            reason: "--no-remote cannot be combined with --remote-upload",
+        let combined = Error::RemoteFlags {
+            conflict: RemoteFlagConflict::NoRemoteWithSwitch,
+        };
+        let unnamed = Error::RemoteFlags {
+            conflict: RemoteFlagConflict::SwitchWithoutRemote,
         };
         assert_eq!(
-            err.to_string(),
-            "--no-remote cannot be combined with --remote-upload"
+            combined.to_string(),
+            "--no-remote cannot be combined with --remote-upload or --remote-strict"
+        );
+        assert_eq!(
+            unnamed.to_string(),
+            "--remote-upload and --remote-strict need a [remote] table in buildl.toml, \
+             and this workspace has none"
         );
     }
 
