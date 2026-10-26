@@ -21,7 +21,8 @@ use std::path::{Path, PathBuf};
 
 use buildl::approver::Console;
 use buildl::buildl_core::json::canonical;
-use buildl::buildl_core::{Error, Scope};
+use buildl::buildl_core::{Clock, Error, Scope};
+use buildl::clock::SystemClock;
 use buildl::plugins::FetchStatus;
 use buildl::remote::token_is_present;
 use buildl::report::{
@@ -413,7 +414,7 @@ fn watch<E: Write, C: Console>(
     let workspace = Workspace::open(start)?;
     let policy = remote.resolve(&args.remote, remote_table(&workspace))?;
     let scope = scope(&workspace, &args.selection.targets)?;
-    let mut changes = match NotifyChanges::start(workspace.root()) {
+    let mut changes = match NotifyChanges::start(workspace.root(), SystemClock.now()) {
         Ok(changes) => changes,
         Err(error) => return Ok(watch_ended(&error, paint, stderr)),
     };
