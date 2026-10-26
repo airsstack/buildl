@@ -46,7 +46,8 @@
 //!   root a remote action is given.
 //! - [`RemoteAction`], [`RemoteFile`] and [`RemotePlatform`] — the action a remote cache is
 //!   asked about; [`RemoteHit`] with [`RemoteOutputFile`], [`RemoteOutputDirectory`] and
-//!   [`RemoteTreeFile`] — the result it answers with, unchecked; [`RemoteUpload`] with
+//!   [`RemoteTreeFile`] — the result it answers with, unchecked, and [`DecodedTree`], what the
+//!   blob that lists one of its directories holds; [`RemoteUpload`] with
 //!   [`RemoteOutput`], [`RemoteContent`] and [`RemoteTree`], and [`Uploaded`] — what a run stores
 //!   there and how that ended.
 //! - [`Executed`] — how a remote ended a request to run an action.
@@ -262,7 +263,9 @@ pub use raw_outcome::{Exit, RawOutcome};
 pub use reaction::Reaction;
 pub use ready_action::ReadyAction;
 pub use remote_action::{RemoteAction, RemoteFile, RemotePlatform};
-pub use remote_hit::{RemoteHit, RemoteOutputDirectory, RemoteOutputFile, RemoteTreeFile};
+pub use remote_hit::{
+    DecodedTree, RemoteHit, RemoteOutputDirectory, RemoteOutputFile, RemoteTreeFile,
+};
 pub use remote_notice::{RemoteCall, RemoteNotice};
 pub use remote_policy::{RemoteExecution, RemoteFailure, RemotePolicy, RemoteUse};
 pub use remote_settings::{

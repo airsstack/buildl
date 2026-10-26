@@ -1,0 +1,14 @@
+[workspace]
+name   = "gates"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["cp"]
+env.read = []
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
+
+[execution]
+timeout = "1m"

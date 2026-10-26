@@ -15,7 +15,7 @@
 
 use crate::error::Result;
 use crate::types::{
-    Blob, Digest, Executed, RemoteAction, RemoteHit, RemoteTreeFile, RemoteUpload, Uploaded,
+    Blob, DecodedTree, Digest, Executed, RemoteAction, RemoteHit, RemoteUpload, Uploaded,
 };
 
 /// A cache of results shared between machines, asked and filled by the action that made them,
@@ -41,13 +41,15 @@ pub trait RemoteCache: Send + Sync {
     /// Returns an error when the remote cannot be reached, or does not hold one of them.
     fn download(&self, blobs: &[Blob]) -> Result<Vec<Vec<u8>>>;
 
-    /// The files of a directory tree the remote stores, in path order; `None` when the tree
-    /// holds a symlink or an empty directory, which a build cannot place.
+    /// What a directory tree the remote stores holds: its files in path order, or the first
+    /// thing in it a build cannot place, a symlink or an empty directory, named by its path
+    /// below the tree's root.
     ///
     /// # Errors
     ///
-    /// Returns an error when `bytes` are not a tree this port can read.
-    fn decode_tree(&self, bytes: &[u8]) -> Result<Option<Vec<RemoteTreeFile>>>;
+    /// Returns an error when the port cannot decode at all; bytes it cannot read as a tree are
+    /// [`DecodedTree::Unreadable`].
+    fn decode_tree(&self, bytes: &[u8]) -> Result<DecodedTree>;
 
     /// Stores what a run produced as the result for `action`, with the input files and the
     /// output and log blobs it names. The output and log blobs are read from `blobs`.

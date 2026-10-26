@@ -9,11 +9,6 @@
 //! Non-responsibilities: choosing the counts, and deciding what a worker does after the wait,
 //! which the worker does.
 
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "only the tests take places at a gate")
-)]
-
 use std::sync::{Condvar, Mutex, MutexGuard, PoisonError};
 
 /// Admits at most a fixed number of holders at once; the others wait in [`Gate::enter`].
@@ -54,6 +49,12 @@ impl Gate {
         Place { gate: self }
     }
 
+    /// The places nobody holds.
+    #[cfg(test)]
+    pub(crate) fn free(&self) -> usize {
+        *self.places()
+    }
+
     /// The count of free places. The lock is held only while the count changes, never while a
     /// place is used, so even a poisoned lock holds a whole count.
     fn places(&self) -> MutexGuard<'_, usize> {
@@ -72,22 +73,17 @@ impl Drop for Place<'_> {
 mod tests {
     use super::Gate;
 
-    /// The places of `gate` that nobody holds.
-    fn free(gate: &Gate) -> usize {
-        *gate.places()
-    }
-
     #[test]
     fn a_gate_admits_its_count_at_once() {
         let gate = Gate::new(3);
         let first = gate.enter();
         let second = gate.enter();
-        assert_eq!(free(&gate), 1, "one place is left after two holders");
+        assert_eq!(gate.free(), 1, "one place is left after two holders");
         let third = gate.enter();
-        assert_eq!(free(&gate), 0, "a fourth holder would have to wait");
+        assert_eq!(gate.free(), 0, "a fourth holder would have to wait");
         drop((first, second, third));
         assert_eq!(
-            free(&gate),
+            gate.free(),
             3,
             "every place is freed once its holder leaves"
         );
@@ -97,27 +93,27 @@ mod tests {
     fn a_place_is_freed_when_its_holder_leaves() {
         let gate = Gate::new(1);
         let first = gate.enter();
-        assert_eq!(free(&gate), 0);
+        assert_eq!(gate.free(), 0);
         drop(first);
-        assert_eq!(free(&gate), 1);
+        assert_eq!(gate.free(), 1);
         let _second = gate.enter();
-        assert_eq!(free(&gate), 0);
+        assert_eq!(gate.free(), 0);
     }
 
     #[test]
     fn a_gate_of_one_serializes() {
         let gate = Gate::new(1);
         let holder = gate.enter();
-        assert_eq!(free(&gate), 0, "no place is left while the one is held");
+        assert_eq!(gate.free(), 0, "no place is left while the one is held");
         drop(holder);
         let _next = gate.enter();
-        assert_eq!(free(&gate), 0);
+        assert_eq!(gate.free(), 0);
     }
 
     #[test]
     fn a_gate_of_no_places_admits_one() {
         let gate = Gate::new(0);
         let _only = gate.enter();
-        assert_eq!(free(&gate), 0);
+        assert_eq!(gate.free(), 0);
     }
 }

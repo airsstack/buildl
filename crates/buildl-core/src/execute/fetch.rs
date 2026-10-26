@@ -7,19 +7,24 @@
 //! first step takes no content store, so an unchecked byte cannot be stored.
 //!
 //! Responsibilities: [`usable`], which decides whether an answer may stand for a task;
-//! [`fetch`], which downloads what the answer names and checks it, returning [`Checked`]; and
-//! [`Checked::keep`], which stores it and returns what a run would have.
+//! [`unasked`] and [`unusable`], which say why an answer cannot: it names a path nobody asked
+//! for, or its outputs are ones a build cannot keep; [`fetch`], which downloads what the answer
+//! names and checks it, returning [`Checked`] or [`Unfetched`]; [`Checked::keep`], which stores
+//! it and returns what a run would have; and [`logs`], which does the same for the logs of a
+//! run that left nothing to place, or whose outputs are refused.
 //!
 //! Non-responsibilities: asking the remote for the answer, deciding when to ask, and what a
 //! failure does to the build, which the worker does; and encoding anything for the wire, which
 //! is the remote adapter's.
 
+use core::slice;
+
 use crate::error::{Error, PortName, Result};
-use crate::execute::perform::{Kept, Printed, Task};
+use crate::execute::perform::{Kept, Printed, Task, Unkept, collected};
 use crate::ports::{ContentStore, RemoteCache};
 use crate::types::{
-    Blob, Diagnostic, Digest, OutputManifest, OutputPath, RemoteHit, RemoteTreeFile, StoredFile,
-    TargetRole, Tree, TreeEntry,
+    Blob, DecodedTree, Diagnostic, Digest, FileMode, Found, FoundEntry, FoundKind, OutputManifest,
+    OutputPath, RemoteHit, RemoteTreeFile, StoredFile, TargetRole, Tree, TreeEntry,
 };
 
 /// The error for a result that cannot be used, saying what is wrong with it.
@@ -52,6 +57,60 @@ pub(crate) fn usable(hit: &RemoteHit, outputs: &[OutputPath], role: TargetRole) 
     let mut declared: Vec<&str> = outputs.iter().map(OutputPath::as_str).collect();
     declared.sort_unstable();
     named == declared
+}
+
+/// The first path `hit` names, as a file, a directory or a link, that is not one of `outputs`.
+///
+/// A result for the action that was sent names only the paths its command listed, so a path
+/// outside them means the server answered for something else.
+pub(crate) fn unasked<'hit>(hit: &'hit RemoteHit, outputs: &[OutputPath]) -> Option<&'hit str> {
+    hit.files
+        .iter()
+        .map(|file| file.path.as_str())
+        .chain(hit.directories.iter().map(|dir| dir.path.as_str()))
+        .chain(hit.symlinks.iter().map(String::as_str))
+        .find(|named| !outputs.iter().any(|output| output.as_str() == *named))
+}
+
+/// Why the outputs of `hit` cannot be kept for `task`, as the failure a local run leaving the
+/// same would have: `None` when every declared output is there as a file or a directory a build
+/// can keep. The exit status is not looked at.
+///
+/// The outputs are examined in declared order and the first that fails decides. A directory is
+/// judged by being a directory; what it holds is checked when it is fetched.
+pub(crate) fn unusable(hit: &RemoteHit, task: &Task) -> Option<Unkept> {
+    let found = task
+        .action
+        .outputs
+        .iter()
+        .map(|at| found_at(hit, at.as_str()))
+        .collect();
+    collected(task.role, &task.key.components().own.outputs, found).err()
+}
+
+/// What `hit` reports at the output path `at`.
+///
+/// A directory is reported as a tree of one file, whatever it holds: its content is only known
+/// once its tree is downloaded, and [`fetch`] judges that.
+fn found_at(hit: &RemoteHit, at: &str) -> Found {
+    if hit.symlinks.iter().any(|link| link == at) {
+        Found::Symlink
+    } else if let Some(file) = hit.files.iter().find(|file| file.path == at) {
+        Found::File(StoredFile {
+            digest: file.blob.digest,
+            mode: file.mode,
+        })
+    } else if let Some(dir) = hit.directories.iter().find(|dir| dir.path == at) {
+        Found::Tree(vec![FoundEntry {
+            path: "tree".to_owned(),
+            kind: FoundKind::File(StoredFile {
+                digest: dir.tree.digest,
+                mode: FileMode::Plain,
+            }),
+        }])
+    } else {
+        Found::Nothing
+    }
 }
 
 /// Downloads `blobs`, and returns their bytes once each has the length and the SHA-256 it was
@@ -121,6 +180,36 @@ fn manifest_of(
         })
 }
 
+/// Why a result was not fetched.
+#[derive(Debug)]
+pub(crate) enum Unfetched {
+    /// A directory the result names holds something a build cannot place, so that a local run
+    /// leaving the same would be refused: the failure it would have, and not a fault of the
+    /// remote.
+    Unkept(Unkept),
+    /// The remote answered wrongly, or could not be asked.
+    Failed(Error),
+}
+
+impl Unfetched {
+    /// The error for a remote that answered with a result it cannot be used for.
+    pub(crate) fn into_error(self) -> Error {
+        match self {
+            Self::Failed(error) => error,
+            Self::Unkept(unkept) => refused(unkept.diagnostic.map_or_else(
+                || "the result holds an output a build cannot keep".to_owned(),
+                |diagnostic| diagnostic.to_string(),
+            )),
+        }
+    }
+}
+
+impl From<Error> for Unfetched {
+    fn from(error: Error) -> Self {
+        Self::Failed(error)
+    }
+}
+
 /// What a remote answer holds once every check has passed and nothing is stored yet.
 #[derive(Debug)]
 pub(crate) struct Checked {
@@ -171,16 +260,23 @@ impl Checked {
 ///
 /// # Errors
 ///
-/// Returns [`Error::Adapter`] naming [`PortName::RemoteCache`] when `hit` is not [`usable`] for
-/// `task`, when a blob differs from the length or hash it was named with, when a tree holds
-/// what a build cannot place or is not a tree, and whatever `remote` returns.
-pub(crate) fn fetch<R: RemoteCache>(hit: &RemoteHit, task: &Task, remote: &R) -> Result<Checked> {
+/// Returns [`Unfetched::Unkept`] when a directory holds a symlink or an empty directory, the
+/// first declared output that does deciding which. Otherwise returns [`Unfetched::Failed`] with
+/// an [`Error::Adapter`] naming [`PortName::RemoteCache`] when `hit` is not [`usable`] for
+/// `task`, when a blob differs from the length or hash it was named with, when a tree is not
+/// one, and whatever `remote` returns.
+pub(crate) fn fetch<R: RemoteCache>(
+    hit: &RemoteHit,
+    task: &Task,
+    remote: &R,
+) -> core::result::Result<Checked, Unfetched> {
     let declared = &task.action.outputs;
     if !usable(hit, declared, task.role) {
         return Err(refused(format!(
             "the result it holds does not stand for {}",
             task.action.label
-        )));
+        ))
+        .into());
     }
 
     // Round one: the logs and the tree blobs.
@@ -194,14 +290,44 @@ pub(crate) fn fetch<R: RemoteCache>(hit: &RemoteHit, task: &Task, remote: &R) ->
     let stdout = hit.stdout.and_then(|_| got.next()).unwrap_or_default();
     let stderr = hit.stderr.and_then(|_| got.next()).unwrap_or_default();
     let mut trees = Vec::with_capacity(hit.directories.len());
+    let names = &task.key.components().own.outputs;
+    let mut unkept: Option<(usize, Unkept)> = None;
     for (dir, bytes) in hit.directories.iter().zip(got) {
-        let files = remote.decode_tree(&bytes)?.ok_or_else(|| {
-            refused(format!(
-                "{} holds a symlink or an empty directory",
-                dir.path
-            ))
-        })?;
-        trees.push(files);
+        let entries = match remote.decode_tree(&bytes)? {
+            DecodedTree::Files(files) => {
+                trees.push(files);
+                continue;
+            }
+            DecodedTree::Symlink(path) => vec![FoundEntry {
+                path,
+                kind: FoundKind::Symlink,
+            }],
+            // The directory itself holds nothing.
+            DecodedTree::EmptyDirectory(path) if path.is_empty() => Vec::new(),
+            DecodedTree::EmptyDirectory(path) => vec![FoundEntry {
+                path,
+                kind: FoundKind::EmptyDirectory,
+            }],
+            DecodedTree::Unreadable => {
+                return Err(
+                    refused(format!("{} is not a directory a build can place", dir.path)).into(),
+                );
+            }
+        };
+        let (at, name) = declared
+            .iter()
+            .position(|output| output.as_str() == dir.path)
+            .and_then(|at| Some((at, names.get(at)?)))
+            .ok_or_else(|| refused(format!("the result names no output at {}", dir.path)))?;
+        if let Err(refusal) =
+            collected(task.role, slice::from_ref(name), vec![Found::Tree(entries)])
+            && unkept.as_ref().is_none_or(|(first, _)| at < *first)
+        {
+            unkept = Some((at, refusal));
+        }
+    }
+    if let Some((_, refusal)) = unkept {
+        return Err(Unfetched::Unkept(refusal));
     }
 
     // Round two: every file, once.
@@ -227,6 +353,52 @@ pub(crate) fn fetch<R: RemoteCache>(hit: &RemoteHit, task: &Task, remote: &R) ->
     })
 }
 
+/// The logs of a run that left nothing to place, once downloaded and checked and before
+/// anything is stored.
+#[derive(Debug)]
+pub(crate) struct Logs {
+    /// What the run wrote to standard output.
+    stdout: Vec<u8>,
+    /// What the run wrote to standard error.
+    stderr: Vec<u8>,
+}
+
+impl Logs {
+    /// Stores both logs, and returns their digests.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever `cas` returns.
+    pub(crate) fn keep<C: ContentStore>(self, cas: &C) -> Result<Printed> {
+        Ok(Printed {
+            stdout: cas.put(&self.stdout)?,
+            stderr: cas.put(&self.stderr)?,
+        })
+    }
+}
+
+/// Downloads and checks the logs of a run that left no result to place.
+///
+/// A log the server did not keep stands for empty content. Nothing is stored here; see
+/// [`Logs::keep`].
+///
+/// # Errors
+///
+/// Returns [`Error::Adapter`] naming [`PortName::RemoteCache`] when a blob differs from the
+/// length or hash it was named with, and whatever `remote` returns.
+pub(crate) fn logs<R: RemoteCache>(
+    stdout: Option<Blob>,
+    stderr: Option<Blob>,
+    remote: &R,
+) -> Result<Logs> {
+    let named: Vec<Blob> = stdout.into_iter().chain(stderr).collect();
+    let mut got = downloaded(remote, &named)?.into_iter();
+    Ok(Logs {
+        stdout: stdout.and_then(|_| got.next()).unwrap_or_default(),
+        stderr: stderr.and_then(|_| got.next()).unwrap_or_default(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     #![expect(
@@ -237,16 +409,16 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::Mutex;
 
-    use super::{fetch, usable};
+    use super::{Unfetched, fetch, logs, unasked, unusable, usable};
     use crate::error::{Error, PortName, Result};
     use crate::execute::fixtures::{command, key, label, output_path};
     use crate::execute::perform::{Task, collected};
     use crate::ports::{BlobSource, ContentStore, RemoteCache};
     use crate::types::{
-        Blob, Diagnostic, Digest, FileMode, Found, FoundEntry, FoundKind, NetworkAccess, NodeId,
-        OutputManifest, OutputName, OutputPath, ReadyAction, RemoteAction, RemoteHit,
-        RemoteOutputDirectory, RemoteOutputFile, RemoteTreeFile, RemoteUpload, StoredFile,
-        TargetRole, TreePath,
+        Blob, DecodedTree, Diagnostic, Digest, FileMode, Found, FoundEntry, FoundKind,
+        NetworkAccess, NodeId, OutcomeClass, OutputManifest, OutputName, OutputPath, OutputRefusal,
+        ReadyAction, RemoteAction, RemoteHit, RemoteOutputDirectory, RemoteOutputFile,
+        RemoteTreeFile, RemoteUpload, StoredFile, TargetRole, TreePath,
     };
 
     /// A remote that serves scripted bytes, and notes every download and decode asked of it.
@@ -255,7 +427,7 @@ mod tests {
         /// The bytes served under each digest, which a test may make differ from the digest.
         served: BTreeMap<Digest, Vec<u8>>,
         /// What `decode_tree` answers for tree bytes, by their digest.
-        trees: BTreeMap<Digest, Option<Vec<RemoteTreeFile>>>,
+        trees: BTreeMap<Digest, DecodedTree>,
         downloads: Mutex<Vec<Vec<Blob>>>,
         decoded: Mutex<u32>,
     }
@@ -269,9 +441,9 @@ mod tests {
         }
 
         /// Serves a tree blob and scripts what it decodes to.
-        fn serve_tree(&mut self, label: &str, files: Option<Vec<RemoteTreeFile>>) -> Blob {
+        fn serve_tree(&mut self, label: &str, decoded: DecodedTree) -> Blob {
             let blob = self.serve(label.as_bytes());
-            self.trees.insert(blob.digest, files);
+            self.trees.insert(blob.digest, decoded);
             blob
         }
 
@@ -305,7 +477,7 @@ mod tests {
                 .collect()
         }
 
-        fn decode_tree(&self, bytes: &[u8]) -> Result<Option<Vec<RemoteTreeFile>>> {
+        fn decode_tree(&self, bytes: &[u8]) -> Result<DecodedTree> {
             *self.decoded.lock().unwrap() += 1;
             self.trees
                 .get(&Digest::of(bytes))
@@ -506,7 +678,7 @@ mod tests {
             vec![output_file("bin", good), output_file("log", named)],
             Vec::new(),
         );
-        let refused = fetch(&hit, &task, &remote).unwrap_err();
+        let refused = fetch(&hit, &task, &remote).unwrap_err().into_error();
         assert!(matches!(
             refused,
             Error::Adapter {
@@ -523,7 +695,7 @@ mod tests {
         let named = Blob::of(b"bin");
         remote.served.insert(named.digest, b"bin and more".to_vec());
         let hit = hit(vec![output_file("bin", named)], Vec::new());
-        let refused = fetch(&hit, &task, &remote).unwrap_err();
+        let refused = fetch(&hit, &task, &remote).unwrap_err().into_error();
         assert!(refused.to_string().contains("length"), "{refused}");
     }
 
@@ -538,14 +710,109 @@ mod tests {
         assert_eq!(*remote.decoded.lock().unwrap(), 0, "decode_tree not called");
     }
 
+    /// The class a fetch that refuses a directory ends in.
+    fn refusal_of(unfetched: Unfetched) -> OutcomeClass {
+        match unfetched {
+            Unfetched::Unkept(unkept) => unkept.class,
+            Unfetched::Failed(error) => unreachable!("expected a refusal, got {error}"),
+        }
+    }
+
     #[test]
-    fn a_tree_holding_a_symlink_is_unusable() {
+    fn a_tree_holding_a_symlink_is_refused_as_a_local_run_would_refuse_it() {
         let task = task(TargetRole::Build, &["inc"]);
         let mut remote = Remote::default();
-        let tree = remote.serve_tree("tree with a link", None);
+        let tree = remote.serve_tree(
+            "tree with a link",
+            DecodedTree::Symlink("sub/link".to_owned()),
+        );
         let hit = hit(Vec::new(), vec![output_directory("inc", tree)]);
-        let refused = fetch(&hit, &task, &remote).unwrap_err();
-        assert!(refused.to_string().contains("inc"), "{refused}");
+
+        let unfetched = fetch(&hit, &task, &remote).unwrap_err();
+
+        let Unfetched::Unkept(unkept) = unfetched else {
+            unreachable!("expected a refusal");
+        };
+        assert_eq!(
+            unkept.class,
+            OutcomeClass::OutputRefused {
+                name: OutputName::parse("inc").unwrap(),
+                refusal: OutputRefusal::Symlink,
+            }
+        );
+        let diagnostic = unkept.diagnostic.unwrap().to_string();
+        assert!(diagnostic.contains("inc/sub/link"), "{diagnostic}");
+        assert_eq!(remote.rounds().len(), 1, "no file is downloaded");
+    }
+
+    #[test]
+    fn a_tree_holding_an_empty_directory_is_refused_as_a_local_run_would_refuse_it() {
+        let task = task(TargetRole::Build, &["inc"]);
+        let mut remote = Remote::default();
+        let nested =
+            remote.serve_tree("nested", DecodedTree::EmptyDirectory("sub/none".to_owned()));
+        let itself = remote.serve_tree("itself", DecodedTree::EmptyDirectory(String::new()));
+        let class = |tree| {
+            let hit = hit(Vec::new(), vec![output_directory("inc", tree)]);
+            refusal_of(fetch(&hit, &task, &remote).unwrap_err())
+        };
+        let refused = OutcomeClass::OutputRefused {
+            name: OutputName::parse("inc").unwrap(),
+            refusal: OutputRefusal::EmptyDirectory,
+        };
+        assert_eq!(class(nested), refused);
+        assert_eq!(class(itself), refused);
+    }
+
+    #[test]
+    fn of_two_refused_directories_the_first_declared_decides() {
+        let task = task(TargetRole::Build, &["a", "b"]);
+        let mut remote = Remote::default();
+        let link = remote.serve_tree("link", DecodedTree::Symlink("l".to_owned()));
+        let empty = remote.serve_tree("empty", DecodedTree::EmptyDirectory("e".to_owned()));
+        let hit = hit(
+            Vec::new(),
+            vec![output_directory("b", empty), output_directory("a", link)],
+        );
+
+        assert_eq!(
+            refusal_of(fetch(&hit, &task, &remote).unwrap_err()),
+            OutcomeClass::OutputRefused {
+                name: OutputName::parse("a").unwrap(),
+                refusal: OutputRefusal::Symlink,
+            }
+        );
+    }
+
+    #[test]
+    fn a_tree_that_cannot_be_read_is_a_failed_call() {
+        let task = task(TargetRole::Build, &["inc"]);
+        let mut remote = Remote::default();
+        let tree = remote.serve_tree("not a tree", DecodedTree::Unreadable);
+        let hit = hit(Vec::new(), vec![output_directory("inc", tree)]);
+
+        let unfetched = fetch(&hit, &task, &remote).unwrap_err();
+
+        assert!(matches!(unfetched, Unfetched::Failed(_)), "{unfetched:?}");
+    }
+
+    #[test]
+    fn a_refusal_stands_as_an_error_for_a_lookup() {
+        let task = task(TargetRole::Build, &["inc"]);
+        let mut remote = Remote::default();
+        let tree = remote.serve_tree("tree with a link", DecodedTree::Symlink("link".to_owned()));
+        let hit = hit(Vec::new(), vec![output_directory("inc", tree)]);
+
+        let error = fetch(&hit, &task, &remote).unwrap_err().into_error();
+
+        assert!(matches!(
+            error,
+            Error::Adapter {
+                port: PortName::RemoteCache,
+                ..
+            }
+        ));
+        assert!(error.to_string().contains("inc/link"), "{error}");
     }
 
     #[test]
@@ -558,7 +825,7 @@ mod tests {
         let stdout = remote.serve(b"compiling\n");
         let tree = remote.serve_tree(
             "inc tree",
-            Some(vec![
+            DecodedTree::Files(vec![
                 tree_file("a.h", a, FileMode::Plain),
                 tree_file("sub/b.h", b, FileMode::Plain),
             ]),
@@ -620,7 +887,7 @@ mod tests {
         let page = remote.serve(b"page");
         let tree = remote.serve_tree(
             "inc tree",
-            Some(vec![
+            DecodedTree::Files(vec![
                 tree_file("index.html", page, FileMode::Plain),
                 tree_file("bin/go", go, FileMode::Executable),
             ]),
@@ -650,5 +917,107 @@ mod tests {
         assert_eq!(outputs[0].digest, Digest::of(&local[0].to_bytes().unwrap()));
         assert!(store.contains(&Digest::of(b"go")));
         assert!(store.contains(&Digest::of(b"page")));
+    }
+
+    #[test]
+    fn a_path_nobody_asked_for_is_named() {
+        let task = task(TargetRole::Build, &["bin"]);
+        let blob = Blob::of(b"x");
+        let mut hit = hit(vec![output_file("bin", blob)], Vec::new());
+        assert_eq!(unasked(&hit, declared(&task)), None);
+
+        hit.files.push(output_file("other", blob));
+        assert_eq!(unasked(&hit, declared(&task)), Some(at("other").as_str()));
+
+        hit.files.pop();
+        hit.symlinks.push("link".to_owned());
+        assert_eq!(unasked(&hit, declared(&task)), Some("link"));
+
+        hit.symlinks.clear();
+        hit.directories.push(output_directory("dir", blob));
+        assert_eq!(unasked(&hit, declared(&task)), Some(at("dir").as_str()));
+    }
+
+    #[test]
+    fn a_result_with_every_output_has_nothing_to_refuse() {
+        let task = task(TargetRole::Build, &["bin", "inc"]);
+        let blob = Blob::of(b"x");
+        let hit = hit(
+            vec![output_file("bin", blob)],
+            vec![output_directory("inc", blob)],
+        );
+        assert_eq!(unusable(&hit, &task), None);
+    }
+
+    #[test]
+    fn the_first_declared_output_that_cannot_be_kept_decides() {
+        let task = task(TargetRole::Build, &["a", "b", "c"]);
+        let blob = Blob::of(b"x");
+        let mut hit = hit(vec![output_file("a", blob)], Vec::new());
+        hit.symlinks.push(at("c"));
+
+        let refused = unusable(&hit, &task).unwrap();
+        assert_eq!(
+            refused.class,
+            OutcomeClass::OutputMissing {
+                name: OutputName::parse("b").unwrap()
+            },
+            "b is missing before c is a link"
+        );
+
+        hit.files.push(output_file("b", blob));
+        let refused = unusable(&hit, &task).unwrap();
+        assert_eq!(
+            refused.class,
+            OutcomeClass::OutputRefused {
+                name: OutputName::parse("c").unwrap(),
+                refusal: OutputRefusal::Symlink,
+            }
+        );
+    }
+
+    #[test]
+    fn a_directory_where_a_discovery_target_needs_a_file_is_refused() {
+        let task = task(TargetRole::Discovery, &["found"]);
+        let hit = hit(
+            Vec::new(),
+            vec![output_directory("found", Blob::of(b"found"))],
+        );
+        let refused = unusable(&hit, &task).unwrap();
+        assert_eq!(
+            refused.class,
+            OutcomeClass::OutputRefused {
+                name: OutputName::parse("found").unwrap(),
+                refusal: OutputRefusal::NotAFile,
+            }
+        );
+    }
+
+    #[test]
+    fn logs_are_checked_and_a_log_not_kept_is_empty() {
+        let mut remote = Remote::default();
+        let stdout = remote.serve(b"out\n");
+        let store = Store::default();
+
+        let printed = logs(Some(stdout), None, &remote)
+            .unwrap()
+            .keep(&store)
+            .unwrap();
+        assert_eq!(printed.stdout, Digest::of(b"out\n"));
+        assert_eq!(printed.stderr, Digest::of(b""));
+        assert!(store.contains(&printed.stdout));
+
+        let named = Blob::of(b"named");
+        remote.served.insert(named.digest, b"other".to_vec());
+        assert!(logs(None, Some(named), &remote).is_err());
+        assert_eq!(remote.rounds().len(), 2);
+
+        let none = logs(None, None, &remote).unwrap().keep(&store).unwrap();
+        assert_eq!(none.stdout, Digest::of(b""));
+        assert_eq!(
+            remote.rounds().len(),
+            2,
+            "nothing asked for, nothing downloaded"
+        );
     }
 }

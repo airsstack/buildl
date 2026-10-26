@@ -19,9 +19,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
-    Blob, BlobSource, Diagnostic, Digest, Error, Executed, Hasher, PortName, RemoteAction,
-    RemoteCache, RemoteContent, RemoteFile, RemoteHit, RemoteSettings, RemoteTreeFile,
-    RemoteUpload, Result, RootPath, Uploaded,
+    Blob, BlobSource, DecodedTree, Diagnostic, Digest, Error, Executed, Hasher, PortName,
+    RemoteAction, RemoteCache, RemoteContent, RemoteFile, RemoteHit, RemoteSettings, RemoteUpload,
+    Result, RootPath, Uploaded,
 };
 
 use super::client::Client;
@@ -377,7 +377,7 @@ impl RemoteCache for Reapi {
             .map_err(|error| self.failed(Method::BatchReadBlobs, error))
     }
 
-    fn decode_tree(&self, bytes: &[u8]) -> Result<Option<Vec<RemoteTreeFile>>> {
+    fn decode_tree(&self, bytes: &[u8]) -> Result<DecodedTree> {
         Ok(encode::tree_files(bytes))
     }
 
@@ -466,11 +466,12 @@ mod tests {
     use std::time::Duration;
 
     use buildl_core::{
-        Argument, Blob, BlobSource, Command, Digest, Directory, Error, FileMode, HostPath, Label,
-        OutputName, OutputPath, Platform, PlatformProperties, PlatformPropertyName, PortName,
-        RemoteAction, RemoteCache, RemoteContent, RemoteFile, RemoteOutput, RemoteOutputDirectory,
-        RemoteOutputFile, RemotePlatform, RemoteSettings, RemoteTree, RemoteTreeFile, RemoteUpload,
-        RemoteUrl, Result, RootPath, SourcePath, Timeout, TokenSource, TreePath, Uploaded,
+        Argument, Blob, BlobSource, Command, DecodedTree, Digest, Directory, Error, FileMode,
+        HostPath, Label, OutputName, OutputPath, Platform, PlatformProperties,
+        PlatformPropertyName, PortName, RemoteAction, RemoteCache, RemoteContent, RemoteFile,
+        RemoteOutput, RemoteOutputDirectory, RemoteOutputFile, RemotePlatform, RemoteSettings,
+        RemoteTree, RemoteTreeFile, RemoteUpload, RemoteUrl, Result, RootPath, SourcePath, Timeout,
+        TokenSource, TreePath, Uploaded,
     };
 
     use super::Reapi;
@@ -967,7 +968,7 @@ mod tests {
 
         assert_eq!(
             files,
-            Some(vec![RemoteTreeFile {
+            DecodedTree::Files(vec![RemoteTreeFile {
                 path: TreePath::parse("inner.txt").unwrap(),
                 blob: Blob::of(LOG),
                 mode: FileMode::Plain,

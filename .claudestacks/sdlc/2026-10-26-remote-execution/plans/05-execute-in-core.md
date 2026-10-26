@@ -59,6 +59,9 @@ crates/buildl/tests/e2e/remote_gates.rs           — [create] the gates' limits
 crates/buildl/tests/e2e/main.rs                   — [modify] declare remote_gates
 crates/buildl-core/tests/flows/remote.rs          — [modify] the four RemotePolicy consts (:33-51) gain execution: Off; new flow tests
 crates/buildl-core/tests/flows/build.rs, report.rs, discovery.rs — [modify] Tally literals
+crates/buildl-core/src/types/remote_hit.rs (bis) — [modify] DecodedTree: Files, Symlink(path), EmptyDirectory(path), Unreadable — what a decoded output tree holds
+crates/buildl-core/src/ports/remote_cache.rs (bis)— [modify] decode_tree returns DecodedTree, so a refused tree is told apart from an unreadable one
+docs/architecture.md, docs/architecture-building-blocks.md — [modify] the decode_tree signature
 crates/buildl/src/remote/encode.rs                — [modify] names_symlinks (:293) becomes symlink_paths, returning the paths of all three wire lists, sorted and deduplicated
 crates/buildl/src/remote/reapi.rs                 — [modify] impl RemoteCache (:327) gains execute answering an adapter error, replaced in plan 08
 crates/buildl/src/remote/configured.rs            — [modify] Remote::Off answers execute with an adapter error; Remote::Reapi delegates; RemotePolicy literal (:119)
@@ -164,7 +167,9 @@ and the remote is not down — and the two gates, built in `assembly.rs:190` fro
 After a lookup miss in `consult` (before the live place is claimed, `:425-429`), an executing run
 enters the remote gate, checks `shared.stop` again and returns `Worked::NotBegun` if it is set,
 says the task began (`Told::Began`, once), and calls `execute(&described)`. The answer is judged
-by a new `executed()`, row by row of spec §4 step 4:
+by `sent_to_be_run` and `judged`, row by row of spec §4 step 4 (a path not asked for is a failed call
+whatever the exit status; an output directory holding a symlink or an empty directory is refused
+with the class a local run gets, never a failed call):
 
 | `Executed` | Ends as |
 |---|---|
@@ -181,7 +186,10 @@ Every local `run` of an executing build enters the local gate first and then che
 `shared.stop` again, ending `Worked::NotBegun` if it is set; a task that already said it began
 (a fallback after a failed `execute`) does not say it again. An `Ended::Executed` never reaches
 `sent` (`:533`), so it is never uploaded (spec §4). `FakeRemote` scripts an `Executed` per call
-and records the calls. The gates' limits need real threads, which buildl-core cannot start, so
+and records the calls. After waiting at the remote gate a worker checks again that the remote is
+still on, and runs locally without sending when another worker turned it off meanwhile (spec §6).
+Each `remote_gates` test builds its own `ThreadPool` of the width it needs; taking the width from
+`[execution] workers` and `jobs` is plan 09's. The gates' limits need real threads, which buildl-core cannot start, so
 they are proven in `buildl`'s `tests/e2e/remote_gates.rs`: it takes the ports `Wiring::ports`
 makes, moves them into a `PortSet` whose `remote` is a fake that holds each `execute` until the
 test releases it, and builds through `Pipeline` with the policy's `RemoteExecution::On`.
@@ -204,7 +212,7 @@ the four marked `(threads)`, `crates/buildl/tests/e2e/remote_gates.rs` —
 - `remote_jobs_never_exceed_jobs_below_workers` (threads) — `jobs = 2`, `local = 4`, eight targets, each execute held: peak 2
 - `remote_jobs_reach_jobs_above_workers` (threads) — `jobs = 6`, `local = 2`, a dispatcher of 6 (`[execution] workers = 6`): peak 6
 - `local_runs_never_exceed_workers_while_executing` (threads) — every execute fails leniently, `jobs = 6`, `local = 2`: peak local runs 2
-- `a_task_waiting_at_a_gate_when_the_build_stops_is_not_begun` (threads) — `jobs = 1`, the first execute held then answered with an action failure, fail-fast: the waiting targets end not begun and `execute` was called once
+- `a_task_waiting_at_a_gate_when_the_build_stops_is_not_begun` (threads) — `jobs = 1`, the first execute held then answered with an action failure, fail-fast: the waiting targets end not begun and `execute` was called once. A worker already waiting at the remote gate is admitted as the failing job's place is freed, before the build sets stop, so it is sent (spec §4 "Stopping": sent before the build stopped); the test therefore holds the other targets at their lookup until the first result is taken, so they reach the gate only after stop is set
 - `a_target_sent_to_be_executed_is_reported_as_started` (flow)
 - `an_executed_dependency_gives_dependents_the_keys_a_local_build_would` (flow) — mirrors `:427`
 

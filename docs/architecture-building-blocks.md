@@ -369,9 +369,9 @@ pub trait RemoteCache: Send + Sync {
     fn lookup(&self, action: &RemoteAction) -> Result<Option<RemoteHit>>;
     /// The bytes of each of `blobs`, in the same order.
     fn download(&self, blobs: &[Blob]) -> Result<Vec<Vec<u8>>>;
-    /// The files of a directory tree the cache stores, in path order; `None` when it holds a
-    /// symlink or an empty directory, which a build cannot place.
-    fn decode_tree(&self, bytes: &[u8]) -> Result<Option<Vec<RemoteTreeFile>>>;
+    /// What a directory tree the cache stores holds: its files in path order, or the first
+    /// symlink or empty directory in it, which a build cannot place, named by its path.
+    fn decode_tree(&self, bytes: &[u8]) -> Result<DecodedTree>;
     /// Stores what a run produced as the result for `action`, with the input files and the
     /// blobs it names; the output and log blobs are read from `blobs`.
     fn upload(

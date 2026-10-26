@@ -17,8 +17,9 @@
 use std::collections::BTreeMap;
 
 use buildl_core::{
-    Blob, Digest, FileMode, RemoteAction, RemoteContent, RemoteHit, RemoteOutputDirectory,
-    RemoteOutputFile, RemotePlatform, RemoteTreeFile, RemoteUpload, Timeout, TreePath,
+    Blob, DecodedTree, Digest, FileMode, RemoteAction, RemoteContent, RemoteHit,
+    RemoteOutputDirectory, RemoteOutputFile, RemotePlatform, RemoteTreeFile, RemoteUpload, Timeout,
+    TreePath,
 };
 use prost::Message;
 
@@ -378,27 +379,52 @@ pub(crate) fn hit(result: &wire::ActionResult) -> Result<RemoteHit, RemoteError>
 /// not used.
 const MAX_TREE_ENTRIES: usize = 1 << 18;
 
-/// The regular files of the `Tree` that `bytes` encode, in path order.
+/// What the `Tree` that `bytes` encode holds.
 ///
-/// `None` when the tree cannot be used as a directory of files: `bytes` are not a `Tree`, it
-/// holds a symlink or an empty directory below the root, it refers to a directory it does not
-/// hold, a name in it is not one `TreePath` takes, or it expands to more than
+/// [`DecodedTree::Files`] holds its regular files in path order. A symlink, or a directory that
+/// holds nothing (the root included), is named by the first such path in path order. The bytes
+/// are [`DecodedTree::Unreadable`] when they are not a `Tree`, when it refers to a directory it
+/// does not hold, when a name in it is not one `TreePath` takes, or when it expands to more than
 /// [`MAX_TREE_ENTRIES`] files and directories.
-pub(crate) fn tree_files(bytes: &[u8]) -> Option<Vec<RemoteTreeFile>> {
-    let tree = wire::Tree::decode(bytes).ok()?;
+pub(crate) fn tree_files(bytes: &[u8]) -> DecodedTree {
+    let Ok(tree) = wire::Tree::decode(bytes) else {
+        return DecodedTree::Unreadable;
+    };
+    let Some(root) = tree.root.as_ref() else {
+        return DecodedTree::Unreadable;
+    };
+    read_tree(&tree, root).unwrap_or(DecodedTree::Unreadable)
+}
+
+/// Something in a tree a build cannot place.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Unplaceable {
+    Symlink,
+    EmptyDirectory,
+}
+
+/// The contents of `tree`, below `root`; `None` when it cannot be read as a directory.
+fn read_tree(tree: &wire::Tree, root: &wire::Directory) -> Option<DecodedTree> {
     let by_blob: BTreeMap<Blob, &wire::Directory> = tree
         .children
         .iter()
         .map(|child| (Encoded::of(child).blob, child))
         .collect();
     let mut files = Vec::new();
-    let mut pending = vec![(String::new(), tree.root.as_ref()?, true)];
+    let mut unplaceable: Vec<(String, Unplaceable)> = Vec::new();
+    let mut pending = vec![(String::new(), root)];
     // The root, and then every file and directory as it is queued.
     let mut expanded = 1_usize;
-    while let Some((prefix, directory, is_root)) = pending.pop() {
-        let empty = directory.files.is_empty() && directory.directories.is_empty();
-        if !directory.symlinks.is_empty() || (empty && !is_root) {
-            return None;
+    while let Some((prefix, directory)) = pending.pop() {
+        if directory.files.is_empty()
+            && directory.directories.is_empty()
+            && directory.symlinks.is_empty()
+        {
+            let at = prefix.trim_end_matches('/').to_owned();
+            unplaceable.push((at, Unplaceable::EmptyDirectory));
+        }
+        for link in &directory.symlinks {
+            unplaceable.push((format!("{prefix}{}", link.name), Unplaceable::Symlink));
         }
         for file in &directory.files {
             expanded += 1;
@@ -417,11 +443,18 @@ pub(crate) fn tree_files(bytes: &[u8]) -> Option<Vec<RemoteTreeFile>> {
                 return None;
             }
             let child = by_blob.get(&blob_of(node.digest.as_ref(), &node.name).ok()?)?;
-            pending.push((format!("{prefix}{}/", node.name), child, false));
+            pending.push((format!("{prefix}{}/", node.name), child));
         }
     }
+    unplaceable.sort();
+    if let Some((path, kind)) = unplaceable.into_iter().next() {
+        return Some(match kind {
+            Unplaceable::Symlink => DecodedTree::Symlink(path),
+            Unplaceable::EmptyDirectory => DecodedTree::EmptyDirectory(path),
+        });
+    }
     files.sort_by(|left, right| left.path.cmp(&right.path));
-    Some(files)
+    Some(DecodedTree::Files(files))
 }
 
 #[cfg(test)]
@@ -434,10 +467,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     use buildl_core::{
-        Argument, Blob, Command, Digest, Directory, EnvName, EnvValue, FileMode, Label, OutputName,
-        OutputPath, Platform, PlatformProperties, PlatformPropertyName, RemoteAction,
-        RemoteContent, RemoteOutput, RemotePlatform, RemoteTree, RemoteTreeFile, RemoteUpload,
-        Timeout, TreePath,
+        Argument, Blob, Command, DecodedTree, Digest, Directory, EnvName, EnvValue, FileMode,
+        Label, OutputName, OutputPath, Platform, PlatformProperties, PlatformPropertyName,
+        RemoteAction, RemoteContent, RemoteOutput, RemotePlatform, RemoteTree, RemoteTreeFile,
+        RemoteUpload, Timeout, TreePath,
     };
     use prost::Message;
 
@@ -682,7 +715,7 @@ mod tests {
         let built = action_result(&upload).unwrap();
         assert_eq!(
             tree_files(&built.trees[0].bytes),
-            Some(tree.files().to_vec())
+            DecodedTree::Files(tree.files().to_vec())
         );
         // the same files encode to the same tree every time
         assert_eq!(
@@ -692,7 +725,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tree_with_a_symlink_or_an_empty_directory_decodes_to_none() {
+    fn a_tree_with_a_symlink_or_an_empty_directory_names_it() {
         let file = |name: &str| wire::FileNode {
             name: name.to_owned(),
             digest: Some(digest_of(name.as_bytes())),
@@ -710,7 +743,10 @@ mod tests {
             }),
             children: Vec::new(),
         };
-        assert_eq!(tree_files(&with_symlink.encode_to_vec()), None);
+        assert_eq!(
+            tree_files(&with_symlink.encode_to_vec()),
+            DecodedTree::Symlink("link".to_owned())
+        );
 
         let empty_child = wire::Directory::default();
         let with_empty_directory = wire::Tree {
@@ -724,7 +760,10 @@ mod tests {
             }),
             children: vec![empty_child],
         };
-        assert_eq!(tree_files(&with_empty_directory.encode_to_vec()), None);
+        assert_eq!(
+            tree_files(&with_empty_directory.encode_to_vec()),
+            DecodedTree::EmptyDirectory("empty".to_owned())
+        );
 
         let bad_name = wire::Tree {
             root: Some(wire::Directory {
@@ -733,7 +772,10 @@ mod tests {
             }),
             children: Vec::new(),
         };
-        assert_eq!(tree_files(&bad_name.encode_to_vec()), None);
+        assert_eq!(
+            tree_files(&bad_name.encode_to_vec()),
+            DecodedTree::Unreadable
+        );
     }
 
     #[test]
@@ -763,7 +805,7 @@ mod tests {
         let root = children.pop();
         let tree = wire::Tree { root, children };
 
-        assert_eq!(tree_files(&tree.encode_to_vec()), None);
+        assert_eq!(tree_files(&tree.encode_to_vec()), DecodedTree::Unreadable);
     }
 
     #[test]

@@ -10,7 +10,7 @@
 use crate::error::{Error, PortName, Result};
 use crate::ports::{BlobSource, RemoteCache};
 use crate::types::{
-    Blob, Diagnostic, Executed, RemoteAction, RemoteHit, RemoteTreeFile, RemoteUpload, Uploaded,
+    Blob, DecodedTree, Diagnostic, Executed, RemoteAction, RemoteHit, RemoteUpload, Uploaded,
 };
 
 /// A remote cache that holds nothing and stores nothing.
@@ -33,8 +33,8 @@ impl RemoteCache for NoRemote {
         })
     }
 
-    fn decode_tree(&self, _bytes: &[u8]) -> Result<Option<Vec<RemoteTreeFile>>> {
-        Ok(None)
+    fn decode_tree(&self, _bytes: &[u8]) -> Result<DecodedTree> {
+        Ok(DecodedTree::Unreadable)
     }
 
     fn upload(
@@ -67,7 +67,7 @@ mod tests {
     use crate::error::{Error, PortName, Result};
     use crate::ports::{BlobSource, RemoteCache};
     use crate::types::{
-        Argument, Blob, Command, Digest, Platform, PlatformProperties, RemoteAction,
+        Argument, Blob, Command, DecodedTree, Digest, Platform, PlatformProperties, RemoteAction,
         RemotePlatform, RemoteUpload, Timeout, Uploaded,
     };
 
@@ -134,7 +134,10 @@ mod tests {
 
     #[test]
     fn no_remote_reads_no_tree() {
-        assert_eq!(NoRemote.decode_tree(b"tree").unwrap(), None);
+        assert_eq!(
+            NoRemote.decode_tree(b"tree").unwrap(),
+            DecodedTree::Unreadable
+        );
     }
 
     #[test]

@@ -11,8 +11,8 @@
 use std::path::Path;
 
 use buildl_core::{
-    Blob, BlobSource, Executed, NoRemote, RemoteAction, RemoteCache, RemoteHit, RemotePolicy,
-    RemoteSettings, RemoteTreeFile, RemoteUpload, RemoteUse, Result, Uploaded,
+    Blob, BlobSource, DecodedTree, Executed, NoRemote, RemoteAction, RemoteCache, RemoteHit,
+    RemotePolicy, RemoteSettings, RemoteUpload, RemoteUse, Result, Uploaded,
 };
 
 use super::Reapi;
@@ -68,7 +68,7 @@ impl RemoteCache for Remote {
         }
     }
 
-    fn decode_tree(&self, bytes: &[u8]) -> Result<Option<Vec<RemoteTreeFile>>> {
+    fn decode_tree(&self, bytes: &[u8]) -> Result<DecodedTree> {
         match self {
             Self::Off => NoRemote.decode_tree(bytes),
             Self::Reapi(reapi) => reapi.decode_tree(bytes),

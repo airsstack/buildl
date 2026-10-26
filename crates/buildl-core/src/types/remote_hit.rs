@@ -5,8 +5,8 @@
 //! answer apart from the validated values the pipeline works with means a check cannot be
 //! skipped by passing the wrong one.
 //!
-//! Responsibilities: [`RemoteOutputFile`], [`RemoteOutputDirectory`], [`RemoteHit`] and
-//! [`RemoteTreeFile`].
+//! Responsibilities: [`RemoteOutputFile`], [`RemoteOutputDirectory`], [`RemoteHit`],
+//! [`RemoteTreeFile`] and [`DecodedTree`].
 //!
 //! Non-responsibilities: deciding whether an answer is usable, and fetching what it names, which
 //! the phase that executes and the remote adapter do.
@@ -60,6 +60,23 @@ pub struct RemoteTreeFile {
     pub blob: Blob,
     /// Whether the file may be run.
     pub mode: FileMode,
+}
+
+/// What the blob that lists an output directory holds, once decoded.
+///
+/// Names the first thing in the directory a build cannot place, so that a result is refused for
+/// the reason a local run leaving the same would be.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DecodedTree {
+    /// Regular files only: every one of them, in path order.
+    Files(Vec<RemoteTreeFile>),
+    /// A symbolic link, at this path below the directory.
+    Symlink(String),
+    /// A directory that holds nothing, at this path below the directory; empty for the directory
+    /// itself.
+    EmptyDirectory(String),
+    /// Bytes that are not a tree this port can read as a directory of files.
+    Unreadable,
 }
 
 #[cfg(test)]

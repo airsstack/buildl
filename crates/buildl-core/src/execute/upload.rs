@@ -167,10 +167,11 @@ mod tests {
     use crate::execute::perform::{Printed, Task};
     use crate::ports::{BlobSource, ContentStore, RemoteCache};
     use crate::types::{
-        Blob, Diagnostic, Digest, Executed, FileMode, NetworkAccess, NodeId, OutputPath, Platform,
-        PlatformProperties, ReadyAction, RemoteAction, RemoteCall, RemoteContent, RemoteHit,
-        RemoteNotice, RemoteOutput, RemotePlatform, RemoteTree, RemoteTreeFile, RemoteUpload,
-        RootPath, SourcePath, TargetRole, Timeout, TreePath, Uploaded,
+        Blob, DecodedTree, Diagnostic, Digest, Executed, FileMode, NetworkAccess, NodeId,
+        OutputPath, Platform, PlatformProperties, ReadyAction, RemoteAction, RemoteCall,
+        RemoteContent, RemoteHit, RemoteNotice, RemoteOutput, RemotePlatform, RemoteTree,
+        RemoteTreeFile, RemoteUpload, RootPath, SourcePath, TargetRole, Timeout, TreePath,
+        Uploaded,
     };
 
     const TARGET: &str = "//app:app";
@@ -241,7 +242,7 @@ mod tests {
             unreachable!("an upload downloads nothing")
         }
 
-        fn decode_tree(&self, _bytes: &[u8]) -> Result<Option<Vec<RemoteTreeFile>>> {
+        fn decode_tree(&self, _bytes: &[u8]) -> Result<DecodedTree> {
             unreachable!("an upload decodes no tree")
         }
 

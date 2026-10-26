@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, VecDeque};
 
 use crate::error::{Error, Result};
 use crate::execute::admission::admit;
-use crate::execute::perform::{Performed, RemoteRun, Shared, Task, Told, Worked, perform};
+use crate::execute::perform::{Gates, Performed, RemoteRun, Shared, Task, Told, Worked, perform};
 use crate::execute::record::{
     Progress, append, forget_contradicted, recorded, restore, shown, skipped,
 };
@@ -195,6 +195,7 @@ pub fn execute<P: Ports>(
             .as_ref()
             .map_or(&no_properties, RemoteSettings::properties),
         down: remote_off,
+        gates: Gates::of(remote.execution),
     };
     let stop = AtomicBool::new(false);
     let place = AtomicBool::new(false);
