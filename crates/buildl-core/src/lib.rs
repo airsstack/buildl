@@ -124,6 +124,19 @@
 //! for a caller that holds a [`DeclarationSource`], a [`Manifest`], a [`RunHistory`] and a
 //! [`ContentStore`].
 //!
+//! A target no cache row stands for may be served by a cache other machines share, reached
+//! through the [`RemoteCache`] port. [`Pipeline::set_remote`] sets the [`RemotePolicy`] of a
+//! build and a test run: a [`RemoteUse`] and a [`RemoteFailure`]. With the remote on, a worker
+//! asks the port for the result of a [`RemoteAction`] built from the ready action before it runs
+//! anything. A [`RemoteHit`] is used only when it is a clean success for the declared outputs;
+//! every blob is checked against its digest and stored before the row is written, and the target
+//! ends as [`OutcomeClass::Fetched`]. A miss runs the action, and under [`RemoteUse::ReadWrite`]
+//! a run that succeeded is uploaded, its blobs read from the content store through
+//! [`BlobSource`]. A failed call warns once and turns the remote off for the rest of the command
+//! under [`RemoteFailure::Lenient`], and fails the command under [`RemoteFailure::Strict`]; a
+//! result that is not usable is a failure of the same kind. [`NoRemote`] is the port of a
+//! workspace that names none, and every command but `build` and `test` never calls it.
+//!
 //! A verify compares what cached targets produce when re-run with what was cached.
 //! [`Pipeline::verify`] plans as a build does, asks the [`Approver`] as a build does, then
 //! [`verify`](fn@verify) puts the outputs of every target whose last build still stands back in

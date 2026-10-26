@@ -86,6 +86,12 @@
 //! cached target, or a sample of them when asked, in the input sandbox, and refuses a workspace
 //! on `bare`.
 //!
+//! A build and a test run consult the remote cache `[remote]` names only when
+//! [`RunOptions::with_remote`] gives them a [`buildl_core::RemotePolicy`] that reads it: a
+//! result the local cache lacks is looked up there before the action runs, and a result a run
+//! produced is uploaded only when the policy says to. A workspace with no `[remote]` table, and
+//! every other command, never reaches it.
+//!
 //! Every command that loads build files first checks each plugin `buildl.toml` names in
 //! `[plugins.<name>]` against `buildl.lock` and the plugin store, and hands the directories to
 //! the Lua evaluator; loading never reaches the network, and [`Workspace::fetch_plugins`] is the
