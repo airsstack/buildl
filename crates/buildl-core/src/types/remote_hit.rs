@@ -42,8 +42,9 @@ pub struct RemoteHit {
     pub files: Vec<RemoteOutputFile>,
     /// The output directories.
     pub directories: Vec<RemoteOutputDirectory>,
-    /// Whether the result names any output symlink.
-    pub symlinks: bool,
+    /// The paths of the outputs the server reported as symbolic links, which a build cannot
+    /// place; empty when the result names none.
+    pub symlinks: Vec<String>,
     /// What the command printed on its standard output, when the server kept it.
     pub stdout: Option<Blob>,
     /// What the command printed on its standard error, when the server kept it.
@@ -84,7 +85,7 @@ mod tests {
                 path: "out//dir/".to_owned(),
                 tree: Blob::of(b"tree"),
             }],
-            symlinks: false,
+            symlinks: Vec::new(),
             stdout: None,
             stderr: Some(Blob::of(b"warning")),
         };

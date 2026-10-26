@@ -298,15 +298,23 @@ pub(crate) fn action_result(upload: &RemoteUpload) -> Result<ResultMessages, Rem
     })
 }
 
-/// Whether `result` names an output symlink in any of the three lists that can hold one.
+/// The paths `result` names as output symlinks, from any of the three lists that can hold one,
+/// each once and in path order.
 #[expect(
     deprecated,
     reason = "a v2.0 server reports symlinks only in these fields"
 )]
-const fn names_symlinks(result: &wire::ActionResult) -> bool {
-    !result.output_symlinks.is_empty()
-        || !result.output_file_symlinks.is_empty()
-        || !result.output_directory_symlinks.is_empty()
+fn symlink_paths(result: &wire::ActionResult) -> Vec<String> {
+    let mut paths: Vec<String> = result
+        .output_symlinks
+        .iter()
+        .chain(&result.output_file_symlinks)
+        .chain(&result.output_directory_symlinks)
+        .map(|symlink| symlink.path.clone())
+        .collect();
+    paths.sort_unstable();
+    paths.dedup();
+    paths
 }
 
 /// The mode a file node's executable bit gives.
@@ -319,7 +327,7 @@ const fn mode_of(is_executable: bool) -> FileMode {
 }
 
 /// The answer a cache gave, as the values the core checks: every output file and directory as
-/// the server wrote it, and whether it names an output symlink.
+/// the server wrote it, and the paths it names as output symlinks.
 ///
 /// # Errors
 ///
@@ -357,7 +365,7 @@ pub(crate) fn hit(result: &wire::ActionResult) -> Result<RemoteHit, RemoteError>
         exit_code: result.exit_code,
         files,
         directories,
-        symlinks: names_symlinks(result),
+        symlinks: symlink_paths(result),
         stdout: log(result.stdout_digest.as_ref(), "stdout")?,
         stderr: log(result.stderr_digest.as_ref(), "stderr")?,
     })
@@ -655,7 +663,7 @@ mod tests {
         assert_eq!(result.directories[0].tree, built.trees[0].blob);
         assert_eq!(result.stdout, Some(Blob::of(b"out text")));
         assert_eq!(result.stderr, Some(Blob::of(b"")));
-        assert!(!result.symlinks);
+        assert_eq!(result.symlinks, Vec::<String>::new());
     }
 
     #[test]
@@ -788,7 +796,7 @@ mod tests {
             node_properties: None,
         };
         let plain = hit(&wire::ActionResult::default()).unwrap();
-        assert!(!plain.symlinks);
+        assert_eq!(plain.symlinks, Vec::<String>::new());
         for result in [
             wire::ActionResult {
                 output_symlinks: vec![symlink.clone()],
@@ -803,7 +811,37 @@ mod tests {
                 ..wire::ActionResult::default()
             },
         ] {
-            assert!(hit(&result).unwrap().symlinks);
+            assert_eq!(hit(&result).unwrap().symlinks, ["out/link"]);
         }
+    }
+
+    #[test]
+    #[expect(
+        deprecated,
+        reason = "the test builds a result the way a v2.0 server does"
+    )]
+    fn a_hit_names_its_symlinked_outputs() {
+        let link = |path: &str| wire::OutputSymlink {
+            path: path.to_owned(),
+            target: "x".to_owned(),
+            node_properties: None,
+        };
+        let one = wire::ActionResult {
+            output_symlinks: vec![link("out/link")],
+            ..wire::ActionResult::default()
+        };
+        assert_eq!(hit(&one).unwrap().symlinks, ["out/link"]);
+
+        // A v2.1 server may repeat a link in the older field as well; it is named once.
+        let repeated = wire::ActionResult {
+            output_symlinks: vec![link("out/link")],
+            output_file_symlinks: vec![link("out/link")],
+            output_directory_symlinks: vec![link("out/dir-link")],
+            ..wire::ActionResult::default()
+        };
+        assert_eq!(
+            hit(&repeated).unwrap().symlinks,
+            ["out/dir-link", "out/link"]
+        );
     }
 }

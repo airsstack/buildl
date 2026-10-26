@@ -110,6 +110,7 @@ const ALL_BUILT: Summary = Summary {
         built: 4,
         cached: 0,
         fetched: 0,
+        remote: 0,
     },
     tests: Tally {
         failed: 0,
@@ -117,6 +118,7 @@ const ALL_BUILT: Summary = Summary {
         built: 0,
         cached: 0,
         fetched: 0,
+        remote: 0,
     },
 };
 
@@ -178,6 +180,7 @@ fn a_cached_target_never_starts_and_is_reported_with_what_it_printed_when_it_ran
                     built: 0,
                     cached: 4,
                     fetched: 0,
+                    remote: 0,
                 },
                 tests: Tally::default()
             }),
@@ -228,6 +231,7 @@ fn a_failure_and_what_it_skips_are_reported_and_a_skipped_target_never_starts() 
                     built: 1,
                     cached: 0,
                     fetched: 0,
+                    remote: 0,
                 },
                 tests: Tally::default()
             }),
@@ -383,6 +387,7 @@ fn a_build_of_one_target_builds_what_it_needs_and_nothing_else() {
                 built: 2,
                 cached: 0,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally::default()
         }))
@@ -410,6 +415,7 @@ fn a_whole_build_after_a_build_of_one_target_finds_that_part_cached() {
                 built: 2,
                 cached: 2,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally::default()
         }
@@ -575,6 +581,7 @@ fn asking_for_no_target_builds_nothing() {
                 built: 0,
                 cached: 0,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally::default()
         }

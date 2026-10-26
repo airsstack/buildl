@@ -19,8 +19,8 @@ use buildl_core::{
     WantedSet, Workspace, Written,
 };
 use buildl_core::{
-    ActionOutcome, Blob, BlobSource, Pipeline, RemoteAction, RemoteCache, RemoteHit, RemoteNotice,
-    RemoteOutputFile, RemoteTreeFile, RemoteUpload, RootPath, Uploaded,
+    ActionOutcome, Blob, BlobSource, Executed, Pipeline, RemoteAction, RemoteCache, RemoteHit,
+    RemoteNotice, RemoteOutputFile, RemoteTreeFile, RemoteUpload, RootPath, Uploaded,
 };
 use buildl_core::{
     Captured, Channel, DenialReason, GraphRecord, LiveSink, OutcomeClass, Reporter, Summary,
@@ -1262,7 +1262,7 @@ impl RemoteCache for FakeRemote {
                 })
                 .collect(),
             directories: Vec::new(),
-            symlinks: false,
+            symlinks: Vec::new(),
             stdout: Some(Blob::of(&held.stdout)),
             stderr: None,
         }))
@@ -1305,6 +1305,10 @@ impl RemoteCache for FakeRemote {
             .input_changed
             .clone()
             .map_or(Uploaded::Done, Uploaded::InputChanged))
+    }
+
+    fn execute(&self, _action: &RemoteAction) -> Result<Executed> {
+        Err(remote_failure("execution is not scripted"))
     }
 }
 
@@ -2050,6 +2054,7 @@ mod tests {
                 built: 1,
                 cached: 1,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally::default(),
         };

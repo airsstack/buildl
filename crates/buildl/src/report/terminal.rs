@@ -460,6 +460,7 @@ mod tests {
                 built,
                 cached,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally {
                 failed: 0,
@@ -467,6 +468,7 @@ mod tests {
                 built: 0,
                 cached: 0,
                 fetched: 0,
+                remote: 0,
             },
         }
     }
@@ -660,6 +662,7 @@ mod tests {
             built: 1,
             cached: 0,
             fetched: 0,
+            remote: 0,
         };
         reporter.summary(summary);
         assert_eq!(written(&mut reporter), b"tests: 1 passed, 1 failed\n");
@@ -702,6 +705,7 @@ mod tests {
             built: 0,
             cached: 1,
             fetched: 0,
+            remote: 0,
         };
         reporter.summary(summary);
         assert_eq!(written(&mut reporter), b"tests: 1 passed (1 cached)\n");
@@ -718,6 +722,7 @@ mod tests {
             built: 1,
             cached: 0,
             fetched: 0,
+            remote: 0,
         };
         reporter.summary(summary);
         assert_eq!(written(&mut reporter), b"tests (rerun): 1 passed\n");

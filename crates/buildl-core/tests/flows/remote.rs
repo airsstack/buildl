@@ -10,8 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use buildl_core::{
     ActionOutcome, Digest, EntryName, Error, InfraKind, Isolation, LiveOutput, OnFailure,
     OutcomeClass, OutputName, OutputPath, Pipeline, PlatformProperties, PlatformPropertyName,
-    PortName, RemoteCall, RemoteFailure, RemoteNotice, RemotePolicy, RemoteSettings, RemoteUrl,
-    RemoteUse, RootPath, Sample, Scope, SourcePath, TargetRole, json,
+    PortName, RemoteCall, RemoteExecution, RemoteFailure, RemoteNotice, RemotePolicy,
+    RemoteSettings, RemoteUrl, RemoteUse, RootPath, Sample, Scope, SourcePath, TargetRole, json,
 };
 
 use crate::common::{
@@ -34,24 +34,28 @@ fn out(raw: &str) -> OutputPath {
 const LENIENT: RemotePolicy = RemotePolicy {
     use_: RemoteUse::Read,
     failure: RemoteFailure::Lenient,
+    execution: RemoteExecution::Off,
 };
 
 /// Reading from the remote, and failing the build when it fails.
 const STRICT: RemotePolicy = RemotePolicy {
     use_: RemoteUse::Read,
     failure: RemoteFailure::Strict,
+    execution: RemoteExecution::Off,
 };
 
 /// Reading from and writing to the remote, and carrying on without it when it fails.
 const WRITING: RemotePolicy = RemotePolicy {
     use_: RemoteUse::ReadWrite,
     failure: RemoteFailure::Lenient,
+    execution: RemoteExecution::Off,
 };
 
 /// Reading from and writing to the remote, and failing the build when it fails.
 const WRITING_STRICT: RemotePolicy = RemotePolicy {
     use_: RemoteUse::ReadWrite,
     failure: RemoteFailure::Strict,
+    execution: RemoteExecution::Off,
 };
 
 /// A build of the whole workspace under `policy`.

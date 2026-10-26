@@ -59,7 +59,7 @@ crates/buildl/tests/e2e/remote_gates.rs           — [create] the gates' limits
 crates/buildl/tests/e2e/main.rs                   — [modify] declare remote_gates
 crates/buildl-core/tests/flows/remote.rs          — [modify] the four RemotePolicy consts (:33-51) gain execution: Off; new flow tests
 crates/buildl-core/tests/flows/build.rs, report.rs, discovery.rs — [modify] Tally literals
-crates/buildl/src/remote/encode.rs                — [modify] names_symlinks (:293) returns the paths
+crates/buildl/src/remote/encode.rs                — [modify] names_symlinks (:293) becomes symlink_paths, returning the paths of all three wire lists, sorted and deduplicated
 crates/buildl/src/remote/reapi.rs                 — [modify] impl RemoteCache (:327) gains execute answering an adapter error, replaced in plan 08
 crates/buildl/src/remote/configured.rs            — [modify] Remote::Off answers execute with an adapter error; Remote::Reapi delegates; RemotePolicy literal (:119)
 crates/buildl/src/report/block.rs, silent.rs, terminal.rs — [modify] Tally literals only (plan 06 changes what they print)

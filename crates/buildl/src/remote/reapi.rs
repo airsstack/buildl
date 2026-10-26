@@ -19,9 +19,9 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
-    Blob, BlobSource, Diagnostic, Digest, Error, Hasher, PortName, RemoteAction, RemoteCache,
-    RemoteContent, RemoteFile, RemoteHit, RemoteSettings, RemoteTreeFile, RemoteUpload, Result,
-    RootPath, Uploaded,
+    Blob, BlobSource, Diagnostic, Digest, Error, Executed, Hasher, PortName, RemoteAction,
+    RemoteCache, RemoteContent, RemoteFile, RemoteHit, RemoteSettings, RemoteTreeFile,
+    RemoteUpload, Result, RootPath, Uploaded,
 };
 
 use super::client::Client;
@@ -442,6 +442,13 @@ impl RemoteCache for Reapi {
             .map_err(|error| self.failed(Method::UpdateActionResult, error))?;
         Ok(Uploaded::Done)
     }
+
+    fn execute(&self, _action: &RemoteAction) -> Result<Executed> {
+        Err(adapter(format!(
+            "{}: execution is not available",
+            self.client.url()
+        )))
+    }
 }
 
 #[cfg(all(test, feature = "test-server"))]
@@ -624,7 +631,7 @@ mod tests {
         );
         assert_eq!(found.stdout, Some(Blob::of(LOG)));
         assert_eq!(found.stderr, Some(Blob::of(b"")));
-        assert!(!found.symlinks);
+        assert_eq!(found.symlinks, Vec::<String>::new());
         assert_eq!(
             server.blob(&tree.blob.digest).as_deref(),
             Some(tree.bytes.as_slice())

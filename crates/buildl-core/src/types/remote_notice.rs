@@ -22,6 +22,8 @@ pub enum RemoteCall {
     Download,
     /// Storing a result and what it names.
     Upload,
+    /// Asking the server to run an action.
+    Execute,
 }
 
 impl fmt::Display for RemoteCall {
@@ -31,6 +33,7 @@ impl fmt::Display for RemoteCall {
             Self::Lookup => "lookup",
             Self::Download => "download",
             Self::Upload => "upload",
+            Self::Execute => "execute",
         })
     }
 }
@@ -74,5 +77,10 @@ mod tests {
         .map(ToString::to_string)
         .collect();
         assert_eq!(names, ["capabilities", "lookup", "download", "upload"]);
+    }
+
+    #[test]
+    fn execute_is_shown_as_execute() {
+        assert_eq!(RemoteCall::Execute.to_string(), "execute");
     }
 }

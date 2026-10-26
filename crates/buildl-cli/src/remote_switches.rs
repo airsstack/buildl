@@ -15,7 +15,8 @@ use core::fmt;
 use std::ffi::OsString;
 
 use buildl::buildl_core::{
-    Error, RemoteFailure, RemoteFlagConflict, RemotePolicy, RemoteUse, RemoteVariable,
+    Error, RemoteExecution, RemoteFailure, RemoteFlagConflict, RemotePolicy, RemoteUse,
+    RemoteVariable,
 };
 
 use crate::cli::RemoteArgs;
@@ -133,6 +134,7 @@ impl RemoteSwitches {
             } else {
                 RemoteFailure::Lenient
             },
+            execution: RemoteExecution::Off,
         })
     }
 }
@@ -154,7 +156,8 @@ mod tests {
     )]
 
     use buildl::buildl_core::{
-        Error, RemoteFailure, RemoteFlagConflict, RemotePolicy, RemoteUse, RemoteVariable,
+        Error, RemoteExecution, RemoteFailure, RemoteFlagConflict, RemotePolicy, RemoteUse,
+        RemoteVariable,
     };
 
     use super::{RemoteSwitches, RemoteTable, Switch};
@@ -178,7 +181,11 @@ mod tests {
     }
 
     fn policy(use_: RemoteUse, failure: RemoteFailure) -> RemotePolicy {
-        RemotePolicy { use_, failure }
+        RemotePolicy {
+            use_,
+            failure,
+            execution: RemoteExecution::Off,
+        }
     }
 
     #[test]

@@ -36,7 +36,7 @@ fn refused(what: impl Into<String>) -> Error {
 /// once, as a file or as a directory, and no other path, and it names no symbolic link. The
 /// output of a discovery target must be a file, so a directory is never usable for one.
 pub(crate) fn usable(hit: &RemoteHit, outputs: &[OutputPath], role: TargetRole) -> bool {
-    if hit.exit_code != 0 || hit.symlinks {
+    if hit.exit_code != 0 || !hit.symlinks.is_empty() {
         return false;
     }
     if role == TargetRole::Discovery && !hit.directories.is_empty() {
@@ -321,6 +321,10 @@ mod tests {
         ) -> Result<crate::types::Uploaded> {
             Err(unscripted("upload"))
         }
+
+        fn execute(&self, _action: &RemoteAction) -> Result<crate::types::Executed> {
+            Err(unscripted("execute"))
+        }
     }
 
     /// A store that keeps what it is given.
@@ -405,7 +409,7 @@ mod tests {
             exit_code: 0,
             files,
             directories,
-            symlinks: false,
+            symlinks: Vec::new(),
             stdout: None,
             stderr: None,
         }
@@ -474,7 +478,7 @@ mod tests {
     fn an_output_symlink_is_unusable() {
         let task = task(TargetRole::Build, &["bin"]);
         let mut hit = hit(vec![output_file("bin", Blob::of(b"bin"))], Vec::new());
-        hit.symlinks = true;
+        hit.symlinks = vec!["link".to_owned()];
         assert!(!usable(&hit, declared(&task), task.role));
     }
 

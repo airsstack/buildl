@@ -295,6 +295,7 @@ mod tests {
             built,
             cached,
             fetched: 0,
+            remote: 0,
         }
     }
 

@@ -657,8 +657,8 @@ mod tests {
     use crate::types::{
         Diagnostic, Digest, Execution, Exit, FileMode, Found, FoundEntry, FoundKind, InfraKind,
         NetworkAccess, NodeId, OutcomeClass, OutputManifest, OutputRefusal, PlatformProperties,
-        ReadyAction, RemoteCall, RemoteFailure, RemoteNotice, RemotePolicy, RemoteSwitch,
-        RemoteUse, StoredFile, TargetRole, Timestamp,
+        ReadyAction, RemoteCall, RemoteExecution, RemoteFailure, RemoteNotice, RemotePolicy,
+        RemoteSwitch, RemoteUse, StoredFile, TargetRole, Timestamp,
     };
 
     fn printed() -> Printed {
@@ -727,6 +727,7 @@ mod tests {
         RemotePolicy {
             use_: RemoteUse::Read,
             failure,
+            execution: RemoteExecution::Off,
         }
     }
 
@@ -761,6 +762,7 @@ mod tests {
             let policy = RemotePolicy {
                 use_,
                 failure: RemoteFailure::Lenient,
+                execution: RemoteExecution::Off,
             };
             assert_eq!(
                 running(policy, &execution, &none, &up).consulted(),
@@ -785,6 +787,7 @@ mod tests {
             let policy = RemotePolicy {
                 use_,
                 failure: RemoteFailure::Lenient,
+                execution: RemoteExecution::Off,
             };
             assert_eq!(
                 running(policy, &execution, &none, &up).uploading(),

@@ -167,7 +167,7 @@ mod tests {
     use crate::execute::perform::{Printed, Task};
     use crate::ports::{BlobSource, ContentStore, RemoteCache};
     use crate::types::{
-        Blob, Diagnostic, Digest, FileMode, NetworkAccess, NodeId, OutputPath, Platform,
+        Blob, Diagnostic, Digest, Executed, FileMode, NetworkAccess, NodeId, OutputPath, Platform,
         PlatformProperties, ReadyAction, RemoteAction, RemoteCall, RemoteContent, RemoteHit,
         RemoteNotice, RemoteOutput, RemotePlatform, RemoteTree, RemoteTreeFile, RemoteUpload,
         RootPath, SourcePath, TargetRole, Timeout, TreePath, Uploaded,
@@ -257,6 +257,10 @@ mod tests {
                 .unwrap()
                 .push(blobs.read(&produced.stdout.digest)?);
             self.answer.lock().unwrap().take().unwrap()
+        }
+
+        fn execute(&self, _action: &RemoteAction) -> Result<Executed> {
+            unreachable!("an upload runs nothing")
         }
     }
 

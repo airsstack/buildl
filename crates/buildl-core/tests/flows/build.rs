@@ -179,6 +179,7 @@ fn a_workspace_never_built_builds_every_target_after_what_it_depends_on() {
                 built: 4,
                 cached: 0,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally::default()
         }
@@ -242,6 +243,7 @@ fn a_second_build_with_nothing_changed_runs_nothing_and_places_every_output_agai
                 built: 0,
                 cached: 4,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally::default()
         }
@@ -560,6 +562,7 @@ fn under_keep_going_a_failure_skips_only_what_depends_on_it() {
                 built: 2,
                 cached: 0,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally::default()
         }
@@ -758,6 +761,7 @@ fn every_way_an_action_can_fail_is_a_class_of_its_own_and_none_is_recorded() {
                 built: 0,
                 cached: 0,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally::default()
         }
@@ -1041,6 +1045,7 @@ fn a_test_targets_outcomes_carry_its_role_whether_built_cached_failed_or_skipped
                 built: 1,
                 cached: 1,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally {
                 failed: 1,
@@ -1048,6 +1053,7 @@ fn a_test_targets_outcomes_carry_its_role_whether_built_cached_failed_or_skipped
                 built: 1,
                 cached: 1,
                 fetched: 0,
+                remote: 0,
             }
         }
     );
@@ -1308,6 +1314,7 @@ fn a_two_directory_workspace_hands_each_action_its_expanded_command_and_logs_the
                 built: 4,
                 cached: 0,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally {
                 failed: 0,
@@ -1315,6 +1322,7 @@ fn a_two_directory_workspace_hands_each_action_its_expanded_command_and_logs_the
                 built: 1,
                 cached: 0,
                 fetched: 0,
+                remote: 0,
             }
         }
     );
@@ -1691,6 +1699,7 @@ fn editing_only_a_description_leaves_every_target_cached() {
                 built: 0,
                 cached: 3,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally::default()
         }
@@ -2243,10 +2252,7 @@ fn an_output_that_cannot_be_put_back_exactly_is_refused_and_never_recorded() {
         Summary {
             all: Tally {
                 failed: 7,
-                skipped: 0,
-                built: 0,
-                cached: 0,
-                fetched: 0,
+                ..Tally::default()
             },
             tests: Tally::default()
         }

@@ -10,13 +10,14 @@
 use crate::error::{Error, PortName, Result};
 use crate::ports::{BlobSource, RemoteCache};
 use crate::types::{
-    Blob, Diagnostic, RemoteAction, RemoteHit, RemoteTreeFile, RemoteUpload, Uploaded,
+    Blob, Diagnostic, Executed, RemoteAction, RemoteHit, RemoteTreeFile, RemoteUpload, Uploaded,
 };
 
 /// A remote cache that holds nothing and stores nothing.
 ///
 /// Every lookup misses and every upload is accepted and dropped, so a build that has no remote
-/// behaves as one that was never offered one.
+/// behaves as one that was never offered one. It runs nothing: a request to run an action is
+/// refused.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct NoRemote;
 
@@ -43,6 +44,13 @@ impl RemoteCache for NoRemote {
         _blobs: &dyn BlobSource,
     ) -> Result<Uploaded> {
         Ok(Uploaded::Done)
+    }
+
+    fn execute(&self, _action: &RemoteAction) -> Result<Executed> {
+        Err(Error::Adapter {
+            port: PortName::RemoteCache,
+            diagnostic: Diagnostic::new("there is no remote cache to run an action"),
+        })
     }
 }
 
@@ -93,6 +101,23 @@ mod tests {
     #[test]
     fn no_remote_holds_no_blob() {
         let error = NoRemote.download(&[Blob::of(b"x")]).unwrap_err();
+
+        assert!(
+            matches!(
+                error,
+                Error::Adapter {
+                    port: PortName::RemoteCache,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        assert!(error.to_string().starts_with("remote cache: "), "{error}");
+    }
+
+    #[test]
+    fn no_remote_refuses_to_execute() {
+        let error = NoRemote.execute(&action()).unwrap_err();
 
         assert!(
             matches!(

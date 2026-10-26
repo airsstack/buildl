@@ -1,4 +1,5 @@
-//! The port through which a build asks a remote cache for a result and stores one there.
+//! The port through which a build asks a remote cache for a result, stores one there, and asks
+//! it to run an action.
 //!
 //! Its own file because a remote cache is a different kind of store from the local one: it is
 //! keyed by a description of the work rather than by buildl's own key, it answers with a result
@@ -13,9 +14,12 @@
 //! This file holds only trait definitions, so it carries no logic to unit-test.
 
 use crate::error::Result;
-use crate::types::{Blob, Digest, RemoteAction, RemoteHit, RemoteTreeFile, RemoteUpload, Uploaded};
+use crate::types::{
+    Blob, Digest, Executed, RemoteAction, RemoteHit, RemoteTreeFile, RemoteUpload, Uploaded,
+};
 
-/// A cache of results shared between machines, asked and filled by the action that made them.
+/// A cache of results shared between machines, asked and filled by the action that made them,
+/// and able to run an action itself.
 ///
 /// Blocking, and called from several worker threads at once. Every failure is an
 /// [`Error::Adapter`](crate::Error::Adapter) naming
@@ -57,6 +61,15 @@ pub trait RemoteCache: Send + Sync {
         produced: &RemoteUpload,
         blobs: &dyn BlobSource,
     ) -> Result<Uploaded>;
+
+    /// Asks the remote to run `action`, and returns how it ended: the result, as it was
+    /// answered and not yet checked, or the reason there is none.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the remote cannot be reached, does not run actions, or answers in
+    /// a way this port cannot read.
+    fn execute(&self, action: &RemoteAction) -> Result<Executed>;
 }
 
 /// Where the bytes of the blobs an upload names are read from.

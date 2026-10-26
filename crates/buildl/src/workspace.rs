@@ -675,8 +675,9 @@ mod tests {
     use buildl_core::json::canonical;
     use buildl_core::{
         Captured, Channel, Diagnostic, Error, Label, LiveOutput, NameKind, OnFailure, OutcomeClass,
-        OutcomeEvent, PortName, ReadyAction, RemoteFailure, RemoteNotice, RemotePolicy, RemoteUse,
-        Reporter, Rerun, Result, Sample, Scope, Summary, Tally, Verdict, Want,
+        OutcomeEvent, PortName, ReadyAction, RemoteExecution, RemoteFailure, RemoteNotice,
+        RemotePolicy, RemoteUse, Reporter, Rerun, Result, Sample, Scope, Summary, Tally, Verdict,
+        Want,
     };
 
     use crate::approver::NoTerminal;
@@ -1118,6 +1119,7 @@ mod tests {
                         built: 1,
                         cached: 0,
                         fetched: 0,
+                        remote: 0,
                     },
                     tests: Tally::default()
                 },
@@ -1128,6 +1130,7 @@ mod tests {
                         built: 0,
                         cached: 1,
                         fetched: 0,
+                        remote: 0,
                     },
                     tests: Tally::default()
                 }
@@ -1550,6 +1553,7 @@ mod tests {
         let upload = RemotePolicy {
             use_: RemoteUse::ReadWrite,
             failure: RemoteFailure::Strict,
+            execution: RemoteExecution::Off,
         };
         let options = RunOptions::new(OnFailure::Stop, LiveOutput::Off).with_remote(upload);
 

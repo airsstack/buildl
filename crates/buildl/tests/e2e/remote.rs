@@ -14,8 +14,8 @@ use buildl::RunOptions;
 use buildl::approver::NoTerminal;
 use buildl::buildl_core::{
     ActionOutcome, Captured, Channel, Error, Label, LiveOutput, OnFailure, OutcomeClass,
-    OutcomeEvent, ReadyAction, RemoteCall, RemoteFailure, RemoteNotice, RemotePolicy, RemoteUse,
-    Reporter, Result, Sample, Scope, Summary,
+    OutcomeEvent, ReadyAction, RemoteCall, RemoteExecution, RemoteFailure, RemoteNotice,
+    RemotePolicy, RemoteUse, Reporter, Result, Sample, Scope, Summary,
 };
 use buildl::remote::test_server::TestServer;
 use buildl::report::Silent;
@@ -27,12 +27,14 @@ use crate::common::Fixture;
 const UPLOADING: RemotePolicy = RemotePolicy {
     use_: RemoteUse::ReadWrite,
     failure: RemoteFailure::Lenient,
+    execution: RemoteExecution::Off,
 };
 
 /// Results looked up and downloaded, and nothing uploaded.
 const READING: RemotePolicy = RemotePolicy {
     use_: RemoteUse::Read,
     failure: RemoteFailure::Lenient,
+    execution: RemoteExecution::Off,
 };
 
 /// A copy of `verified` whose manifest names the remote cache at `url`.
