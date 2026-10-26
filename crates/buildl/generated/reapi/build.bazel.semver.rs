@@ -17,3 +17,13 @@ pub struct SemVer {
     #[prost(string, tag = "4")]
     pub prerelease: ::prost::alloc::string::String,
 }
+impl ::prost::Name for SemVer {
+    const NAME: &'static str = "SemVer";
+    const PACKAGE: &'static str = "build.bazel.semver";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.semver.SemVer".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.semver.SemVer".into()
+    }
+}

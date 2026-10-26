@@ -18,6 +18,16 @@ pub struct Http {
     #[prost(bool, tag = "2")]
     pub fully_decode_reserved_expansion: bool,
 }
+impl ::prost::Name for Http {
+    const NAME: &'static str = "Http";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.Http".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.Http".into()
+    }
+}
 /// gRPC Transcoding
 ///
 /// gRPC Transcoding is a feature for mapping between a gRPC method and one or
@@ -362,6 +372,16 @@ pub mod http_rule {
         Custom(super::CustomHttpPattern),
     }
 }
+impl ::prost::Name for HttpRule {
+    const NAME: &'static str = "HttpRule";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.HttpRule".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.HttpRule".into()
+    }
+}
 /// A custom pattern is used for defining custom HTTP verb.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CustomHttpPattern {
@@ -371,6 +391,16 @@ pub struct CustomHttpPattern {
     /// The path matched by this custom verb.
     #[prost(string, tag = "2")]
     pub path: ::prost::alloc::string::String,
+}
+impl ::prost::Name for CustomHttpPattern {
+    const NAME: &'static str = "CustomHttpPattern";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.CustomHttpPattern".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.CustomHttpPattern".into()
+    }
 }
 /// The launch stage as defined by [Google Cloud Platform
 /// Launch Stages](<https://cloud.google.com/terms/launch-stages>).
@@ -464,6 +494,16 @@ pub struct CommonLanguageSettings {
     #[prost(message, optional, tag = "3")]
     pub selective_gapic_generation: ::core::option::Option<SelectiveGapicGeneration>,
 }
+impl ::prost::Name for CommonLanguageSettings {
+    const NAME: &'static str = "CommonLanguageSettings";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.CommonLanguageSettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.CommonLanguageSettings".into()
+    }
+}
 /// Details about how and where to publish client libraries.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ClientLibrarySettings {
@@ -503,6 +543,16 @@ pub struct ClientLibrarySettings {
     /// Settings for Go client libraries.
     #[prost(message, optional, tag = "28")]
     pub go_settings: ::core::option::Option<GoSettings>,
+}
+impl ::prost::Name for ClientLibrarySettings {
+    const NAME: &'static str = "ClientLibrarySettings";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.ClientLibrarySettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.ClientLibrarySettings".into()
+    }
 }
 /// This message configures the settings for publishing [Google Cloud Client
 /// libraries](<https://cloud.google.com/apis/docs/cloud-client-libraries>)
@@ -554,6 +604,16 @@ pub struct Publishing {
     #[prost(string, tag = "111")]
     pub rest_reference_documentation_uri: ::prost::alloc::string::String,
 }
+impl ::prost::Name for Publishing {
+    const NAME: &'static str = "Publishing";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.Publishing".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.Publishing".into()
+    }
+}
 /// Settings for Java client libraries.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct JavaSettings {
@@ -598,12 +658,32 @@ pub struct JavaSettings {
     #[prost(message, optional, tag = "3")]
     pub common: ::core::option::Option<CommonLanguageSettings>,
 }
+impl ::prost::Name for JavaSettings {
+    const NAME: &'static str = "JavaSettings";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.JavaSettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.JavaSettings".into()
+    }
+}
 /// Settings for C++ client libraries.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct CppSettings {
     /// Some settings.
     #[prost(message, optional, tag = "1")]
     pub common: ::core::option::Option<CommonLanguageSettings>,
+}
+impl ::prost::Name for CppSettings {
+    const NAME: &'static str = "CppSettings";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.CppSettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.CppSettings".into()
+    }
 }
 /// Settings for Php client libraries.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -627,6 +707,16 @@ pub struct PhpSettings {
     /// ```
     #[prost(string, tag = "2")]
     pub library_package: ::prost::alloc::string::String,
+}
+impl ::prost::Name for PhpSettings {
+    const NAME: &'static str = "PhpSettings";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.PhpSettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.PhpSettings".into()
+    }
 }
 /// Settings for Python client libraries.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -666,6 +756,26 @@ pub mod python_settings {
         #[prost(bool, tag = "3")]
         pub unversioned_package_disabled: bool,
     }
+    impl ::prost::Name for ExperimentalFeatures {
+        const NAME: &'static str = "ExperimentalFeatures";
+        const PACKAGE: &'static str = "google.api";
+        fn full_name() -> ::prost::alloc::string::String {
+            "google.api.PythonSettings.ExperimentalFeatures".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "type.googleapis.com/google.api.PythonSettings.ExperimentalFeatures".into()
+        }
+    }
+}
+impl ::prost::Name for PythonSettings {
+    const NAME: &'static str = "PythonSettings";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.PythonSettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.PythonSettings".into()
+    }
 }
 /// Settings for Node client libraries.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -673,6 +783,16 @@ pub struct NodeSettings {
     /// Some settings.
     #[prost(message, optional, tag = "1")]
     pub common: ::core::option::Option<CommonLanguageSettings>,
+}
+impl ::prost::Name for NodeSettings {
+    const NAME: &'static str = "NodeSettings";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.NodeSettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.NodeSettings".into()
+    }
 }
 /// Settings for Dotnet client libraries.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -719,12 +839,32 @@ pub struct DotnetSettings {
     #[prost(string, repeated, tag = "6")]
     pub handwritten_signatures: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+impl ::prost::Name for DotnetSettings {
+    const NAME: &'static str = "DotnetSettings";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.DotnetSettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.DotnetSettings".into()
+    }
+}
 /// Settings for Ruby client libraries.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct RubySettings {
     /// Some settings.
     #[prost(message, optional, tag = "1")]
     pub common: ::core::option::Option<CommonLanguageSettings>,
+}
+impl ::prost::Name for RubySettings {
+    const NAME: &'static str = "RubySettings";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.RubySettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.RubySettings".into()
+    }
 }
 /// Settings for Go client libraries.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -749,6 +889,16 @@ pub struct GoSettings {
         ::prost::alloc::string::String,
         ::prost::alloc::string::String,
     >,
+}
+impl ::prost::Name for GoSettings {
+    const NAME: &'static str = "GoSettings";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.GoSettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.GoSettings".into()
+    }
 }
 /// Describes the generator configuration for a method.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -842,6 +992,26 @@ pub mod method_settings {
         #[prost(message, optional, tag = "4")]
         pub total_poll_timeout: ::core::option::Option<::prost_types::Duration>,
     }
+    impl ::prost::Name for LongRunning {
+        const NAME: &'static str = "LongRunning";
+        const PACKAGE: &'static str = "google.api";
+        fn full_name() -> ::prost::alloc::string::String {
+            "google.api.MethodSettings.LongRunning".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "type.googleapis.com/google.api.MethodSettings.LongRunning".into()
+        }
+    }
+}
+impl ::prost::Name for MethodSettings {
+    const NAME: &'static str = "MethodSettings";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.MethodSettings".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.MethodSettings".into()
+    }
 }
 /// This message is used to configure the generation of a subset of the RPCs in
 /// a service for client libraries.
@@ -862,6 +1032,16 @@ pub struct SelectiveGapicGeneration {
     #[prost(bool, tag = "2")]
     pub generate_omitted_as_internal: bool,
 }
+impl ::prost::Name for SelectiveGapicGeneration {
+    const NAME: &'static str = "SelectiveGapicGeneration";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.SelectiveGapicGeneration".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.SelectiveGapicGeneration".into()
+    }
+}
 /// `BatchingConfigProto` defines the batching configuration for an API method.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct BatchingConfigProto {
@@ -871,6 +1051,16 @@ pub struct BatchingConfigProto {
     /// The request and response fields used in batching.
     #[prost(message, optional, tag = "2")]
     pub batch_descriptor: ::core::option::Option<BatchingDescriptorProto>,
+}
+impl ::prost::Name for BatchingConfigProto {
+    const NAME: &'static str = "BatchingConfigProto";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.BatchingConfigProto".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.BatchingConfigProto".into()
+    }
 }
 /// `BatchingSettingsProto` specifies a set of batching thresholds, each of
 /// which acts as a trigger to send a batch of messages as a request. At least
@@ -907,6 +1097,16 @@ pub struct BatchingSettingsProto {
     #[prost(enumeration = "FlowControlLimitExceededBehaviorProto", tag = "8")]
     pub flow_control_limit_exceeded_behavior: i32,
 }
+impl ::prost::Name for BatchingSettingsProto {
+    const NAME: &'static str = "BatchingSettingsProto";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.BatchingSettingsProto".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.BatchingSettingsProto".into()
+    }
+}
 /// `BatchingDescriptorProto` specifies the fields of the request message to be
 /// used for batching, and, optionally, the fields of the response message to be
 /// used for demultiplexing.
@@ -926,6 +1126,16 @@ pub struct BatchingDescriptorProto {
     /// together.
     #[prost(string, tag = "3")]
     pub subresponse_field: ::prost::alloc::string::String,
+}
+impl ::prost::Name for BatchingDescriptorProto {
+    const NAME: &'static str = "BatchingDescriptorProto";
+    const PACKAGE: &'static str = "google.api";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.api.BatchingDescriptorProto".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.api.BatchingDescriptorProto".into()
+    }
 }
 /// The organization for which the client libraries are being published.
 /// Affects the url where generated docs are published, etc.
