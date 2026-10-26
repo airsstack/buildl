@@ -4,7 +4,7 @@
 
 The positioning in one sentence: Lua where Starlark sits in Bazel [5], ninja's execution discipline underneath [4], and airsl's capability model as the trust layer neither of them has.
 
-> **Status: the core pipeline is built.** The `buildl` binary runs `check`, `graph`, `query`, `plan`, `build`, `test`, `verify`, `log`, `clean`, `gc`, `doctor` and `plugins fetch` on a real workspace: it evaluates build files on airsl, in parallel, keys every target, runs what is dirty in parallel with its output captured, and keeps results in a local content-addressed store and action cache, so a second build runs nothing and a build repeated in another directory is byte-identical. Actions run by default at isolation tier 2, the input sandbox: each in a directory of its own outside the workspace, holding copies of its declared inputs and nothing else of the workspace, with `TZ`, `LC_ALL` and `SOURCE_DATE_EPOCH` fixed; tier 1, a plain process holding only its declared environment, runs on request. That is the first item of the [roadmap](#roadmap), with `query`, `test`, `log`, `clean`, `gc` and parallel loading from the second, the input sandbox and `verify` from the third, grant negotiation — the approver and `doctor` — from the fourth, and plugins with discovery targets from the fifth; the remote cache and watch mode are designed and not built. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
+> **Status: the core pipeline is built.** The `buildl` binary runs `check`, `graph`, `query`, `plan`, `build`, `test`, `verify`, `log`, `clean`, `gc`, `doctor` and `plugins fetch` on a real workspace: it evaluates build files on airsl, in parallel, keys every target, runs what is dirty in parallel with its output captured, and keeps results in a local content-addressed store and action cache, so a second build runs nothing and a build repeated in another directory is byte-identical. Actions run by default at isolation tier 2, the input sandbox: each in a directory of its own outside the workspace, holding copies of its declared inputs and nothing else of the workspace, with `TZ`, `LC_ALL` and `SOURCE_DATE_EPOCH` fixed; tier 1, a plain process holding only its declared environment, runs on request. That is the first item of the [roadmap](#roadmap), with `query`, `test`, `log`, `clean`, `gc` and parallel loading from the second, the input sandbox and `verify` from the third, grant negotiation — the approver and `doctor` — from the fourth, plugins with discovery targets from the fifth, and the remote cache from the sixth; watch mode is designed and not built. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
 
 ---
 
@@ -150,6 +150,30 @@ graph TD
 
 Tier 2 is Bazel's execroot discipline — undeclared inputs are simply absent, so hidden dependencies fail loudly [8]. The governing principle across all tiers: **every behavioral difference between two builds must be traceable to a difference in a declared input.**
 
+## The remote cache
+
+`build` and `test` can share results with other machines through a server that speaks the Remote Execution API v2 over gRPC [7], as a client only; buildl ships no server. It has been run against bazel-remote 2.6.4; other servers that follow the protocol are expected to work, and have not been tried. The workspace names the server in `buildl.toml`, and the secret stays out of it:
+
+```toml
+[remote]
+url      = "grpcs://cache.example.com:443"   # grpc:// or grpcs://
+instance = "ci"                              # optional
+ca       = "certs/ca.pem"                    # optional, added to the system roots
+token    = { env = "BUILDL_REMOTE_TOKEN" }   # or { file = "/run/secrets/cache" }; never with grpc://
+header   = "authorization"                   # optional; the token is sent as `Bearer <token>` there
+timeout  = "30s"                             # optional
+```
+
+A target the local cache cannot serve is looked up on the server under the digest of an REAPI `Action` that holds its command, its inputs and its dependencies' outputs, with the target's action key as the salt, so two targets whose keys differ never share an entry. A hit is downloaded, every blob is checked against its digest, and the files are stored locally before the cache row is written; the target is reported `fetched` and nothing ran. A miss runs the action as before. Reading is the default; uploading and strict failure handling are turned on per machine or per run:
+
+|Switch|Per machine|Per run|
+|---|---|---|
+|upload what this run built|`BUILDL_REMOTE_UPLOAD=1`|`build --remote-upload`, `test --remote-upload`|
+|fail the run when a remote call fails|`BUILDL_REMOTE_STRICT=1`|`--remote-strict`|
+|leave the remote out of this run|—|`--no-remote`, which overrides the other two|
+
+Only an action that ran and succeeded is uploaded, never a failure or a target restored from the local cache, and never under `strategy = "bare"`, where an action can read what it did not declare: that is refused. Without `--remote-strict` a failed call — unreachable server, timeout, an unusable result or a digest that does not match — prints one warning, the build carries on locally and the remote is left alone for the rest of the command; with it the run fails. A variable is `1` or `0`; a flag turns its switch on whatever the variable says; either flag in a workspace with no `[remote]` table, or `--no-remote` beside either flag, is a usage error. A token that is named and missing is an error before anything runs, and the token never appears in output or in the log. `plan`, `verify`, `query`, `graph`, `check`, `log`, `clean` and `gc` never connect. `buildl doctor` prints `remote: none` without a `[remote]` table, and otherwise a `remote` section: the `url`, `instance`, `ca`, `header` and `timeout`, whether the `token` is set, and `upload` and `strict` as this machine's variables read, with a note that the flags turn either on for one run. It connects to nothing and never shows the token.
+
 ## Commands
 
 Each CLI command is the Load → Resolve → Plan → Execute → Record pipeline truncated at a different point:
@@ -166,10 +190,10 @@ Each CLI command is the Load → Resolve → Plan → Execute → Record pipelin
 | `buildl verify [target]... [--sample N]` | Execute | re-run cached actions in the sandbox and name those whose outputs differ | yes |
 | `buildl clean` / `gc` | `out/`; rows + cas | remove outputs; drop rows of undeclared targets and blobs nothing needs | yes |
 | `buildl log <target> [--stdout \| --stderr]` | log + cas | show what a target printed when it last ran | yes |
-| `buildl doctor` | Resolve | print the ceiling, the approver, the execution settings, and each want: allowed or refused, approved or not, and the plugins that want it | yes |
+| `buildl doctor` | Resolve | print the ceiling, the approver, the execution settings, the remote cache, and each want: allowed or refused, approved or not, and the plugins that want it | yes |
 | `buildl plugins fetch` | — | pin every git plugin `buildl.toml` names in `buildl.lock` and store its files; the only command that uses the network | yes |
 
-`plan`, `build` and `test` take any number of targets and `--set name=value`; `build` adds `--keep-going` and `--stream`; with no targets `plan` and `build` take every target but the tests, while `test` takes every test, keeps going after a failure and adds `--stop`, `--stream`, `--rerun` and `--verbose`, and naming a target that is not a test is a usage error; `verify` takes the targets and `--set` as `build` does, writes no cache row and no log event, and never leaves a re-run's bytes in `out/`; it runs only under `strategy = "sandbox"`; `log` takes one target and at most one of `--stdout` and `--stderr`, and takes no lock, so it answers while a build runs; `clean` and `gc` take no arguments and take the lock; `plugins fetch` takes no arguments, takes the lock and reads no build file. A command finds its workspace at the nearest `buildl.toml` at or above the current directory. The exit code says what kind of end it was, so CI need not read text: `0` done, `1` an action failed or a `verify` re-run differed, `2` a wrong command line, `3` a sick builder (a `git` that is missing or fails included), or a `verify` target skipped or not put back, `4` the build wants more than the ceiling, than a plugin's manifest or cap, or than was approved, `5` a mistake in a build file or in `buildl.toml`, a plugin that is not fetched, or discovery targets that changed between the two passes, `6` a state file that is not what buildl writes, or a plugin changed since it was fetched, `7` a fault in buildl.
+`plan`, `build` and `test` take any number of targets and `--set name=value`; `build` and `test` add `--remote-upload`, `--remote-strict` and `--no-remote` (see [the remote cache](#the-remote-cache)); `build` adds `--keep-going` and `--stream`; with no targets `plan` and `build` take every target but the tests, while `test` takes every test, keeps going after a failure and adds `--stop`, `--stream`, `--rerun` and `--verbose`, and naming a target that is not a test is a usage error; `verify` takes the targets and `--set` as `build` does, writes no cache row and no log event, and never leaves a re-run's bytes in `out/`; it runs only under `strategy = "sandbox"`; `log` takes one target and at most one of `--stdout` and `--stderr`, and takes no lock, so it answers while a build runs; `clean` and `gc` take no arguments and take the lock; `plugins fetch` takes no arguments, takes the lock and reads no build file. A command finds its workspace at the nearest `buildl.toml` at or above the current directory. The exit code says what kind of end it was, so CI need not read text: `0` done, `1` an action failed or a `verify` re-run differed, `2` a wrong command line, which includes a remote switch variable that is neither `1` nor `0`, remote flags that conflict, a remote token that is named and not supplied, and an upload asked for under `strategy = "bare"`, `3` a sick builder (a `git` that is missing or fails included, a remote cache that fails under `--remote-strict` or cannot be set up), or a `verify` target skipped or not put back, `4` the build wants more than the ceiling, than a plugin's manifest or cap, or than was approved, `5` a mistake in a build file or in `buildl.toml`, a plugin that is not fetched, or discovery targets that changed between the two passes, `6` a state file that is not what buildl writes, or a plugin changed since it was fetched, `7` a fault in buildl.
 
 ## Running it
 
@@ -231,7 +255,7 @@ Dependency-ordered, from [`design.md` §13](./docs/design.md); progress is track
 3. **Local input sandbox (tier 2)** — the correctness discipline everything remote depends on; with it `verify`, which re-runs cached actions and names those that differ; built
 4. **Grant negotiation UX** — wanted set, ceiling intersection, approver, and the `doctor` command; per-target grant narrowing is settled here, as declined; built
 5. **Plugins** — the `extension.toml` manifest, attribution, `buildl.use`; with them discovery targets; built
-6. **Remote cache via REAPI** [7] — most of the remote value at a fraction of the complexity
+6. **Remote cache via REAPI** [7] — most of the remote value at a fraction of the complexity; built
 7. **Watch mode** — full-reload variant first
 8. **Remote execution, toolchain containers** — when a repo has genuinely outgrown one machine
 

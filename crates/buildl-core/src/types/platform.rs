@@ -40,13 +40,14 @@ fn part_grammar(part: &str) -> core::result::Result<(), &'static str> {
     Ok(())
 }
 
-/// The grammar of a platform, returning the reason a candidate is rejected.
-fn platform_grammar(raw: &str) -> core::result::Result<(), &'static str> {
+/// The grammar of a platform, returning where its `/` is, or the reason a candidate is rejected.
+fn platform_grammar(raw: &str) -> core::result::Result<usize, &'static str> {
     let Some((os, arch)) = raw.split_once('/') else {
         return Err("must be an operating system and an architecture joined by '/'");
     };
     part_grammar(os)?;
-    part_grammar(arch)
+    part_grammar(arch)?;
+    Ok(os.len())
 }
 
 /// An operating system and an architecture, such as `linux/x86_64` or `macos/aarch64`.
@@ -56,7 +57,12 @@ fn platform_grammar(raw: &str) -> core::result::Result<(), &'static str> {
 /// when their text is.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(into = "String", try_from = "String")]
-pub struct Platform(String);
+pub struct Platform {
+    /// The whole text, `os/arch`.
+    raw: String,
+    /// Where the one `/` is in `raw`.
+    slash: usize,
+}
 
 impl Platform {
     /// Validates `raw` and wraps it.
@@ -69,7 +75,7 @@ impl Platform {
     pub fn parse(raw: impl Into<String>) -> Result<Self> {
         let raw = raw.into();
         match platform_grammar(&raw) {
-            Ok(()) => Ok(Self(raw)),
+            Ok(slash) => Ok(Self { raw, slash }),
             Err(reason) => Err(Error::InvalidName {
                 kind: NameKind::Platform,
                 value: raw,
@@ -81,19 +87,31 @@ impl Platform {
     /// The platform as a string slice.
     #[must_use]
     pub fn as_str(&self) -> &str {
-        &self.0
+        &self.raw
+    }
+
+    /// The operating system, the part before the `/`.
+    #[must_use]
+    pub fn os(&self) -> &str {
+        &self.raw[..self.slash]
+    }
+
+    /// The architecture, the part after the `/`.
+    #[must_use]
+    pub fn arch(&self) -> &str {
+        &self.raw[self.slash + 1..]
     }
 }
 
 impl fmt::Display for Platform {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        f.write_str(&self.raw)
     }
 }
 
 impl AsRef<str> for Platform {
     fn as_ref(&self) -> &str {
-        &self.0
+        &self.raw
     }
 }
 
@@ -106,7 +124,7 @@ impl FromStr for Platform {
 
 impl From<Platform> for String {
     fn from(value: Platform) -> Self {
-        value.0
+        value.raw
     }
 }
 
@@ -180,6 +198,13 @@ mod tests {
         assert_eq!(serde_json::from_str::<Platform>(&json).unwrap(), value);
         assert_eq!(value.to_string(), "linux/x86_64");
         assert!(serde_json::from_str::<Platform>(r#""linux""#).is_err());
+    }
+
+    #[test]
+    fn platform_names_its_operating_system_and_architecture() {
+        let value = Platform::parse("macos/aarch64").unwrap();
+        assert_eq!(value.os(), "macos");
+        assert_eq!(value.arch(), "aarch64");
     }
 
     #[test]

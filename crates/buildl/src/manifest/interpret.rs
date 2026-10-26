@@ -18,16 +18,18 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
     ApproverMode, Ceiling, Diagnostic, Directory, EntryName, EnvName, Error, Execution, GitUrl,
-    Isolation, PluginCap, PluginName, PluginNetwork, PluginSource, PortName, Program, Result, Rev,
-    Timeout, Workers, Workspace,
+    HeaderName, HostPath, InstanceName, Isolation, PluginCap, PluginName, PluginNetwork,
+    PluginSource, PortName, Program, RemoteSettings, RemoteUrl, Result, Rev, Timeout, TokenSource,
+    Workers, Workspace,
 };
 use toml::Spanned;
 
+use crate::manifest::anchor::table_written_at;
 use crate::manifest::memory::memory_bytes;
 use crate::manifest::root::MANIFEST_FILE;
 use crate::manifest::schema::{
-    ApproverTable, CeilingTable, DeclarationTable, ExecutionTable, PluginTable, Raw, Tabular,
-    WorkspaceTable,
+    ApproverTable, CeilingTable, DeclarationTable, ExecutionTable, PluginTable, Raw, RemoteTable,
+    Tabular, TokenTable, WorkspaceTable,
 };
 use crate::manifest::toml_manifest::DeclarationSettings;
 
@@ -42,6 +44,9 @@ const STATE: &str = ".buildl";
 
 /// The one version of the manifest's own format this code reads.
 const CONFIG: i64 = 1;
+
+/// Why a `remote.token` with both or neither of `env` and `file` is refused.
+const TOKEN_SOURCE: &str = "must name exactly one of env and file";
 
 /// How a ceiling list writes the workspace root.
 const ROOT: &str = ".";
@@ -70,6 +75,7 @@ pub(crate) fn workspace(text: &str, raw: &Raw) -> Result<Workspace> {
         execution: execution(text, &raw.execution)?,
         approver: approver(text, &raw.approver)?,
         plugins: caps(text, &raw.plugins)?,
+        remote: remote(text, raw.remote.as_ref())?,
     })
 }
 
@@ -322,6 +328,89 @@ fn approver(text: &str, table: &ApproverTable) -> Result<ApproverMode> {
     )
 }
 
+/// The `[remote]` table: the cache the workspace names, or `None` when the manifest has no such
+/// table. The table needs a `url`, and a `token` names exactly one of `env` and `file` and only
+/// travels over `grpcs://`.
+fn remote(text: &str, table: Option<&Tabular<RemoteTable>>) -> Result<Option<RemoteSettings>> {
+    let Some(Tabular(table)) = table else {
+        return Ok(None);
+    };
+    let Some(url) = table.url.as_ref() else {
+        return Err(located(
+            text,
+            table_written_at(text, &["remote"]),
+            "remote.url: is required when [remote] is present",
+        ));
+    };
+    let url = RemoteUrl::parse(url.get_ref())
+        .map_err(|reason| refused(text, "remote.url", url, &reason))?;
+    let mut builder = RemoteSettings::builder(url);
+    if let Some(instance) = optional(text, "remote.instance", table.instance.as_ref(), |raw| {
+        InstanceName::parse(raw.as_str())
+    })? {
+        builder = builder.instance(instance);
+    }
+    if let Some(ca) = optional(text, "remote.ca", table.ca.as_ref(), |raw| {
+        HostPath::parse(raw.as_str())
+    })? {
+        builder = builder.ca(ca);
+    }
+    let mut place = None;
+    if let Some(Tabular(token)) = table.token.as_ref() {
+        let (source, written) = token_source(text, token)?;
+        place = Some(written.span());
+        builder = builder.token(source);
+    }
+    if let Some(header) = optional(text, "remote.header", table.header.as_ref(), |raw| {
+        HeaderName::parse(raw.as_str())
+    })? {
+        builder = builder.header(header);
+    }
+    if let Some(timeout) = optional(text, "remote.timeout", table.timeout.as_ref(), |raw| {
+        Timeout::parse(raw)
+    })? {
+        builder = builder.timeout(timeout);
+    }
+    builder
+        .build()
+        .map(Some)
+        .map_err(|reason| located(text, place, &format!("remote.token: {reason}")))
+}
+
+/// Where the token is read from: the one of `env` and `file` `token` names, and the value of
+/// that key, which is where a refusal of the token is placed.
+///
+/// A token naming both is placed at the first of the two written; one naming neither has no
+/// value to be placed at, and is placed where the `token` table is first written.
+fn token_source<'a>(
+    text: &str,
+    token: &'a TokenTable,
+) -> Result<(TokenSource, &'a Spanned<String>)> {
+    match (&token.env, &token.file) {
+        (Some(env), None) => EnvName::parse(env.get_ref().as_str())
+            .map(|name| (TokenSource::Env(name), env))
+            .map_err(|reason| refused(text, "remote.token.env", env, &reason)),
+        (None, Some(file)) => HostPath::parse(file.get_ref().as_str())
+            .map(|path| (TokenSource::File(path), file))
+            .map_err(|reason| refused(text, "remote.token.file", file, &reason)),
+        (Some(env), Some(file)) => Err(refused(
+            text,
+            "remote.token",
+            if env.span().start < file.span().start {
+                env
+            } else {
+                file
+            },
+            &TOKEN_SOURCE,
+        )),
+        (None, None) => Err(located(
+            text,
+            table_written_at(text, &["remote", "token"]),
+            &format!("remote.token: {TOKEN_SOURCE}"),
+        )),
+    }
+}
+
 /// A ceiling of the declaration phase: a whole number, at least 1.
 fn count(written: i64) -> core::result::Result<NonZeroU64, String> {
     u64::try_from(written)
@@ -456,9 +545,12 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use buildl_core::Directory;
+    use buildl_core::{
+        Directory, EnvName, HeaderName, HostPath, InstanceName, RemoteSettings, RemoteUrl, Timeout,
+        TokenSource,
+    };
 
-    use super::{directories, located, out, position, unparsed};
+    use super::{directories, located, out, position, unparsed, workspace};
     use crate::manifest::schema::Raw;
 
     fn raw(text: &str) -> Raw {
@@ -587,6 +679,168 @@ mod tests {
                 error.to_string(),
                 format!("manifest: buildl.toml:2:7: workspace.out: {reason}"),
                 "{written:?}"
+            );
+        }
+    }
+
+    /// The error `workspace` reports for `text`, which must be refused.
+    fn refusal(text: &str) -> String {
+        workspace(text, &raw(text)).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn no_remote_table_means_no_remote() {
+        for text in ["", "[workspace]\nout = \"gen\"\n"] {
+            assert_eq!(
+                workspace(text, &raw(text)).unwrap().remote,
+                None,
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_full_remote_table_is_read() {
+        let text = "[remote]\n\
+            url      = \"grpcs://cache.example.com:443\"\n\
+            instance = \"ci\"\n\
+            ca       = \"certs/ca.pem\"\n\
+            token    = { env = \"BUILDL_REMOTE_TOKEN\" }\n\
+            header   = \"authorization\"\n\
+            timeout  = \"30s\"\n";
+        let expected =
+            RemoteSettings::builder(RemoteUrl::parse("grpcs://cache.example.com:443").unwrap())
+                .instance(InstanceName::parse("ci").unwrap())
+                .ca(HostPath::parse("certs/ca.pem").unwrap())
+                .token(TokenSource::Env(
+                    EnvName::parse("BUILDL_REMOTE_TOKEN").unwrap(),
+                ))
+                .header(HeaderName::parse("authorization").unwrap())
+                .timeout(Timeout::parse("30s").unwrap())
+                .build()
+                .unwrap();
+        assert_eq!(workspace(text, &raw(text)).unwrap().remote, Some(expected));
+
+        let by_file = "[remote]\nurl = \"grpcs://c\"\ntoken.file = \"/run/secrets/cache\"\n";
+        let remote = workspace(by_file, &raw(by_file)).unwrap().remote.unwrap();
+        assert_eq!(
+            remote.token(),
+            Some(&TokenSource::File(
+                HostPath::parse("/run/secrets/cache").unwrap()
+            ))
+        );
+    }
+
+    #[test]
+    fn a_remote_table_without_url_is_refused_at_its_header() {
+        let missing = "remote.url: is required when [remote] is present";
+        let cases = [
+            ("[remote]\ninstance = \"ci\"\n", "1:1"),
+            ("[workspace]\n\n[remote]\n", "3:1"),
+            ("[remote.token]\nenv = \"T\"\n", "1:2"),
+            ("# c\nremote.instance = \"ci\"\n", "2:1"),
+            ("remote = {}\n", "1:1"),
+        ];
+        for (text, place) in cases {
+            assert_eq!(
+                refusal(text),
+                format!("manifest: buildl.toml:{place}: {missing}"),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_unknown_remote_key_is_refused_with_its_position() {
+        let text = "[workspace]\n\n[remote]\nurll = \"grpcs://c\"\n";
+        let error = toml::from_str::<Raw>(text).unwrap_err();
+        assert_eq!(
+            unparsed(text, &error).to_string(),
+            "manifest: buildl.toml:4:1: unknown field `urll`, expected one of `url`, `instance`, `ca`, `token`, `header`, `timeout`"
+        );
+    }
+
+    #[test]
+    fn a_token_with_env_and_file_is_refused() {
+        let text = "[remote]\nurl = \"grpcs://c\"\ntoken = { env = \"T\", file = \"t\" }\n";
+        assert_eq!(
+            refusal(text),
+            "manifest: buildl.toml:3:17: remote.token: must name exactly one of env and file"
+        );
+    }
+
+    #[test]
+    fn a_token_with_neither_is_refused_where_the_token_is_written() {
+        let cases = [
+            ("[remote]\nurl = \"grpcs://c\"\ntoken = {}\n", "3:1"),
+            (
+                "[remote]\nurl = \"grpcs://c\"\ntimeout = \"5s\"\n\n[remote.token]\n",
+                "5:1",
+            ),
+        ];
+        for (text, place) in cases {
+            assert_eq!(
+                refusal(text),
+                format!(
+                    "manifest: buildl.toml:{place}: remote.token: must name exactly one of env and file"
+                ),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_token_with_a_grpc_url_is_refused_with_its_position() {
+        let text = "[remote]\nurl = \"grpc://cache:50051\"\ntoken = { env = \"T\" }\n";
+        assert_eq!(
+            refusal(text),
+            "manifest: buildl.toml:3:17: remote.token: a token would be sent in clear text to grpc://cache:50051; use a grpcs:// URL"
+        );
+    }
+
+    #[test]
+    fn a_bad_timeout_is_refused() {
+        let text = "[remote]\nurl = \"grpcs://c\"\ntimeout = \"30\"\n";
+        let message = refusal(text);
+        assert!(
+            message.starts_with("manifest: buildl.toml:3:11: remote.timeout: "),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn every_refused_remote_value_is_named_with_its_place() {
+        let cases = [
+            (
+                "[remote]\nurl = \"https://cache.example.com\"\n",
+                "2:7: remote.url: invalid remote cache URL: \"https://cache.example.com\" — must start with grpc:// or grpcs://",
+            ),
+            (
+                "[remote]\nurl = \"grpcs://c\"\ninstance = \"a//b\"\n",
+                "3:12: remote.instance: ",
+            ),
+            (
+                "[remote]\nurl = \"grpcs://c\"\nca = \"../ca.pem\"\n",
+                "3:6: remote.ca: ",
+            ),
+            (
+                "[remote]\nurl = \"grpcs://c\"\nheader = \"te\"\n",
+                "3:10: remote.header: ",
+            ),
+            (
+                "[remote]\nurl = \"grpcs://c\"\ntoken.env = \"not valid\"\n",
+                "3:13: remote.token.env: ",
+            ),
+            (
+                "[remote]\nurl = \"grpcs://c\"\ntoken.file = \"\"\n",
+                "3:14: remote.token.file: ",
+            ),
+        ];
+        for (text, expected) in cases {
+            let message = refusal(text);
+            assert!(
+                message.starts_with(&format!("manifest: buildl.toml:{expected}")),
+                "{text:?}: {message}"
             );
         }
     }

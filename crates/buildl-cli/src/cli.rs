@@ -9,7 +9,7 @@
 //! - [`Cli`] and [`Command`] — the commands and the flags of each.
 //! - [`Color`] — when to colour what is printed, as asked for.
 //! - [`GraphArgs`], [`QueryArgs`], [`PlanArgs`], [`BuildArgs`], [`TestArgs`], [`VerifyArgs`],
-//!   [`LogArgs`], [`PluginsArgs`] and [`Selection`] — the arguments of a command.
+//!   [`LogArgs`], [`PluginsArgs`], [`RemoteArgs`] and [`Selection`] — the arguments of a command.
 //! - [`PluginsCommand`] — the commands under `plugins`.
 //! - [`Streams`] — which streams of a run `log` prints.
 //! - [`Override`] and [`overrides`] — `--set NAME=VALUE`, and the settings of one run.
@@ -160,6 +160,23 @@ pub(crate) struct BuildArgs {
     /// Show one running action's output as it is printed
     #[arg(long)]
     pub stream: bool,
+    /// What the run does with the remote cache.
+    #[command(flatten)]
+    pub remote: RemoteArgs,
+}
+
+/// The remote cache flags `build` and `test` share.
+#[derive(Debug, Args)]
+pub(crate) struct RemoteArgs {
+    /// Upload what this run produced to the remote cache
+    #[arg(long = "remote-upload")]
+    pub upload: bool,
+    /// Fail the run when a call to the remote cache fails, instead of warning and building locally
+    #[arg(long = "remote-strict")]
+    pub strict: bool,
+    /// Do not use the remote cache in this run, whatever the variables say
+    #[arg(long = "no-remote")]
+    pub no_remote: bool,
 }
 
 /// The arguments of `test`.
@@ -184,6 +201,9 @@ pub(crate) struct TestArgs {
     /// Show what every test printed, not only what a failing one did
     #[arg(long)]
     pub verbose: bool,
+    /// What the run does with the remote cache.
+    #[command(flatten)]
+    pub remote: RemoteArgs,
 }
 
 /// The arguments of `verify`.
@@ -587,6 +607,33 @@ mod tests {
 
         let named = test(&["test", "//lib:unit", "app", ":docs"]);
         assert_eq!(named.selection.targets, ["//lib:unit", "app", ":docs"]);
+    }
+
+    #[test]
+    fn the_flags_parse_on_build_and_test() {
+        let none = build(&["build"]).remote;
+        assert!(!none.upload && !none.strict && !none.no_remote);
+
+        let upload = build(&["build", "--remote-upload"]).remote;
+        assert!(upload.upload && !upload.strict && !upload.no_remote);
+        let strict = build(&["build", "--remote-strict"]).remote;
+        assert!(!strict.upload && strict.strict && !strict.no_remote);
+        let off = build(&["build", "--no-remote"]).remote;
+        assert!(!off.upload && !off.strict && off.no_remote);
+
+        let none = test(&["test"]).remote;
+        assert!(!none.upload && !none.strict && !none.no_remote);
+        let upload = test(&["test", "--remote-upload"]).remote;
+        assert!(upload.upload && !upload.strict && !upload.no_remote);
+        let strict = test(&["test", "--remote-strict"]).remote;
+        assert!(!strict.upload && strict.strict && !strict.no_remote);
+        let off = test(&["test", "--no-remote", "app"]).remote;
+        assert!(!off.upload && !off.strict && off.no_remote);
+
+        assert_eq!(
+            refused(&["plan", "--remote-upload"]),
+            ErrorKind::UnknownArgument
+        );
     }
 
     #[test]

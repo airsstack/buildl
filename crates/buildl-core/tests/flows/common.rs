@@ -5,7 +5,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use buildl_core::{
     ActionCache, Approval, Approver, Attribution, BuildFile, CacheRow, Ceiling, Clock,
@@ -18,7 +18,10 @@ use buildl_core::{
     StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver,
     WantedSet, Workspace, Written,
 };
-use buildl_core::{ActionOutcome, Pipeline};
+use buildl_core::{
+    ActionOutcome, Blob, BlobSource, Pipeline, RemoteAction, RemoteCache, RemoteHit, RemoteNotice,
+    RemoteOutputFile, RemoteTreeFile, RemoteUpload, RootPath, Uploaded,
+};
 use buildl_core::{
     Captured, Channel, DenialReason, GraphRecord, LiveSink, OutcomeClass, Reporter, Summary,
     TargetGraph, Turn, json,
@@ -322,6 +325,8 @@ pub struct FakeCache {
     pub failing: BTreeSet<Label>,
     /// The targets whose row it fails to forget.
     pub unforgettable: BTreeSet<Label>,
+    /// Where each recorded row is noted.
+    pub trace: Trace,
     recorded: Vec<Label>,
     forgotten: Vec<Label>,
 }
@@ -357,6 +362,7 @@ impl ActionCache for FakeCache {
             });
         }
         self.recorded.push(label.clone());
+        self.trace.note(Step::Recorded(label.clone()));
         self.rows.insert(label, row);
         Ok(())
     }
@@ -1044,6 +1050,8 @@ pub enum Reported {
         /// What it wrote to standard error, as handed over.
         stderr: Vec<u8>,
     },
+    /// `remote`.
+    Remote(RemoteNotice),
     /// `summary`.
     Summary(Summary),
 }
@@ -1084,8 +1092,219 @@ impl Reporter for FakeReporter {
         });
     }
 
+    fn remote(&mut self, notice: &RemoteNotice) {
+        self.calls.push(Reported::Remote(notice.clone()));
+    }
+
     fn summary(&mut self, summary: Summary) {
         self.calls.push(Reported::Summary(summary));
+    }
+}
+
+/// What a [`FakeRemote`] holds for one target.
+#[derive(Debug, Clone)]
+pub struct Held {
+    /// What each output holds, by the output path the target declares.
+    pub outputs: Vec<(OutputPath, Vec<u8>)>,
+    /// What the original run wrote to standard output.
+    pub stdout: Vec<u8>,
+    /// The exit status the original run ended with.
+    pub exit_code: i32,
+}
+
+impl Held {
+    /// A successful run that wrote `stdout` and left `bytes` at the output path `at`.
+    #[must_use]
+    pub fn of(at: OutputPath, bytes: &[u8], stdout: &[u8]) -> Self {
+        Self {
+            outputs: vec![(at, bytes.to_vec())],
+            stdout: stdout.to_vec(),
+            exit_code: 0,
+        }
+    }
+}
+
+/// One thing a build did that the order of matters for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Step {
+    /// The remote cache was sent the result whose first output is at this path.
+    Uploaded(OutputPath),
+    /// The action cache recorded a row for this target.
+    Recorded(Label),
+}
+
+/// The steps of a build, in the order they happened, shared by the fakes that note them.
+#[derive(Debug, Default, Clone)]
+pub struct Trace(Arc<Mutex<Vec<Step>>>);
+
+impl Trace {
+    fn note(&self, step: Step) {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push(step);
+    }
+
+    /// Every step noted so far, in order.
+    #[must_use]
+    pub fn steps(&self) -> Vec<Step> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+/// What a [`FakeRemote`] was asked, behind its lock.
+#[derive(Debug, Default)]
+struct RemoteCalls {
+    lookups: Vec<RemoteAction>,
+    downloads: Vec<Vec<Blob>>,
+    uploads: Vec<(RemoteAction, RemoteUpload)>,
+}
+
+/// A remote cache held in memory: it holds results by the first output path of the action it is
+/// asked about, and keeps every call it receives.
+///
+/// Workers call it from several threads, so what it records sits behind a lock.
+#[derive(Debug, Default)]
+pub struct FakeRemote {
+    /// The results it holds, by the output path of the target they stand for.
+    pub holds: BTreeMap<OutputPath, Held>,
+    /// Whether every lookup fails.
+    pub lookup_fails: bool,
+    /// Whether every download fails.
+    pub download_fails: bool,
+    /// Blobs it serves with other bytes than the ones they are named for, by digest.
+    pub tampered: BTreeMap<Digest, Vec<u8>>,
+    /// Whether every upload fails.
+    pub upload_fails: bool,
+    /// The input file every upload answers has changed since its digest was taken, when set.
+    pub input_changed: Option<RootPath>,
+    /// Where each upload is noted.
+    pub trace: Trace,
+    calls: Mutex<RemoteCalls>,
+}
+
+impl FakeRemote {
+    fn calls(&self) -> MutexGuard<'_, RemoteCalls> {
+        self.calls.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Every action it was asked about, in the order asked.
+    #[must_use]
+    pub fn lookups(&self) -> Vec<RemoteAction> {
+        self.calls().lookups.clone()
+    }
+
+    /// Every set of blobs it was asked for, in the order asked.
+    #[must_use]
+    pub fn downloads(&self) -> Vec<Vec<Blob>> {
+        self.calls().downloads.clone()
+    }
+
+    /// Every upload it received, with the action it was for, in the order received. A failed
+    /// upload is among them.
+    #[must_use]
+    pub fn uploads(&self) -> Vec<(RemoteAction, RemoteUpload)> {
+        self.calls().uploads.clone()
+    }
+
+    /// Whether it received no call at all.
+    #[must_use]
+    pub fn untouched(&self) -> bool {
+        let calls = self.calls();
+        calls.lookups.is_empty() && calls.downloads.is_empty() && calls.uploads.is_empty()
+    }
+
+    /// The bytes it serves under `digest`.
+    fn served(&self, digest: &Digest) -> Option<Vec<u8>> {
+        if let Some(bytes) = self.tampered.get(digest) {
+            return Some(bytes.clone());
+        }
+        self.holds.values().find_map(|held| {
+            held.outputs
+                .iter()
+                .map(|(_, bytes)| bytes)
+                .chain(core::iter::once(&held.stdout))
+                .find(|bytes| Digest::of(bytes) == *digest)
+                .cloned()
+        })
+    }
+}
+
+/// The failure of a remote call, with the text `what`.
+fn remote_failure(what: &str) -> Error {
+    Error::Adapter {
+        port: PortName::RemoteCache,
+        diagnostic: Diagnostic::new(what),
+    }
+}
+
+impl RemoteCache for FakeRemote {
+    fn lookup(&self, action: &RemoteAction) -> Result<Option<RemoteHit>> {
+        self.calls().lookups.push(action.clone());
+        if self.lookup_fails {
+            return Err(remote_failure("the server cannot be reached"));
+        }
+        let Some(held) = action.outputs.first().and_then(|at| self.holds.get(at)) else {
+            return Ok(None);
+        };
+        Ok(Some(RemoteHit {
+            exit_code: held.exit_code,
+            files: held
+                .outputs
+                .iter()
+                .map(|(path, bytes)| RemoteOutputFile {
+                    path: path.to_string(),
+                    blob: Blob::of(bytes),
+                    mode: FileMode::Plain,
+                })
+                .collect(),
+            directories: Vec::new(),
+            symlinks: false,
+            stdout: Some(Blob::of(&held.stdout)),
+            stderr: None,
+        }))
+    }
+
+    fn download(&self, blobs: &[Blob]) -> Result<Vec<Vec<u8>>> {
+        self.calls().downloads.push(blobs.to_vec());
+        if self.download_fails {
+            return Err(remote_failure("the transfer was cut off"));
+        }
+        blobs
+            .iter()
+            .map(|blob| {
+                self.served(&blob.digest)
+                    .ok_or_else(|| remote_failure("the blob is not held"))
+            })
+            .collect()
+    }
+
+    fn decode_tree(&self, _bytes: &[u8]) -> Result<Option<Vec<RemoteTreeFile>>> {
+        Ok(Some(Vec::new()))
+    }
+
+    fn upload(
+        &self,
+        action: &RemoteAction,
+        produced: &RemoteUpload,
+        _blobs: &dyn BlobSource,
+    ) -> Result<Uploaded> {
+        self.calls()
+            .uploads
+            .push((action.clone(), produced.clone()));
+        if let Some(at) = action.outputs.first() {
+            self.trace.note(Step::Uploaded(at.clone()));
+        }
+        if self.upload_fails {
+            return Err(remote_failure("the upload was refused"));
+        }
+        Ok(self
+            .input_changed
+            .clone()
+            .map_or(Uploaded::Done, Uploaded::InputChanged))
     }
 }
 
@@ -1169,6 +1388,7 @@ impl Ports for FakePorts {
     type Graph = FakeGraphRecord;
     type Reporter = FakeReporter;
     type Approver = FakeApprover;
+    type Remote = FakeRemote;
 }
 
 /// A workspace that writes to `out` and `.buildl`, under a ceiling allowing `cc` to run, any
@@ -1187,6 +1407,7 @@ pub fn open_workspace() -> Workspace {
         execution: buildl_core::Execution::default(),
         approver: buildl_core::ApproverMode::Manifest,
         plugins: std::collections::BTreeMap::new(),
+        remote: None,
     }
 }
 
@@ -1222,6 +1443,7 @@ pub fn ports(source: FakeSource) -> PortSet<FakePorts> {
         graph: FakeGraphRecord::default(),
         reporter: FakeReporter::default(),
         approver: FakeApprover::default(),
+        remote: FakeRemote::default(),
     }
 }
 
@@ -1827,6 +2049,7 @@ mod tests {
                 skipped: 0,
                 built: 1,
                 cached: 1,
+                fetched: 0,
             },
             tests: Tally::default(),
         };

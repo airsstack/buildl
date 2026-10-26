@@ -68,6 +68,9 @@ pub enum OutcomeClass {
     Cached,
     /// It ran, exited with status zero, and every output it declares was stored and recorded.
     Built,
+    /// It did not run: its result was fetched from the remote cache, and its outputs are in
+    /// place.
+    Fetched,
     /// It ran and exited with a status other than zero.
     ActionFailure {
         /// The exit status.
@@ -105,11 +108,11 @@ pub enum OutcomeClass {
 }
 
 impl OutcomeClass {
-    /// Whether the target's outputs are in place: true for [`OutcomeClass::Cached`] and
-    /// [`OutcomeClass::Built`], false for every other class.
+    /// Whether the target's outputs are in place: true for [`OutcomeClass::Cached`],
+    /// [`OutcomeClass::Built`] and [`OutcomeClass::Fetched`], false for every other class.
     #[must_use]
     pub const fn succeeded(&self) -> bool {
-        matches!(self, Self::Cached | Self::Built)
+        matches!(self, Self::Cached | Self::Built | Self::Fetched)
     }
 }
 
@@ -146,6 +149,8 @@ pub struct Tally {
     pub built: usize,
     /// Targets that did not need to run.
     pub cached: usize,
+    /// Targets that did not run because their result was fetched from the remote cache.
+    pub fetched: usize,
 }
 
 impl Tally {
@@ -157,6 +162,7 @@ impl Tally {
             match outcome.class {
                 OutcomeClass::Cached => tally.cached += 1,
                 OutcomeClass::Built => tally.built += 1,
+                OutcomeClass::Fetched => tally.fetched += 1,
                 OutcomeClass::ActionFailure { .. }
                 | OutcomeClass::Killed { .. }
                 | OutcomeClass::OutputMissing { .. }
@@ -205,10 +211,11 @@ mod tests {
     use crate::types::{Label, OutputName, TargetRole};
 
     /// One class of every kind, in the order the enum declares them.
-    fn every_class() -> [OutcomeClass; 8] {
+    fn every_class() -> [OutcomeClass; 9] {
         [
             OutcomeClass::Cached,
             OutcomeClass::Built,
+            OutcomeClass::Fetched,
             OutcomeClass::ActionFailure { status: 2 },
             OutcomeClass::Killed { signal: 11 },
             OutcomeClass::OutputMissing {
@@ -246,11 +253,11 @@ mod tests {
     }
 
     #[test]
-    fn only_a_cached_and_a_built_target_succeeded() {
+    fn only_a_cached_a_built_and_a_fetched_target_succeeded() {
         let succeeded = every_class().map(|class| class.succeeded());
         assert_eq!(
             succeeded,
-            [true, true, false, false, false, false, false, false]
+            [true, true, true, false, false, false, false, false, false]
         );
     }
 
@@ -277,6 +284,7 @@ mod tests {
                     skipped: 1,
                     built: 1,
                     cached: 1,
+                    fetched: 1,
                 },
                 tests: Tally::default(),
             }
@@ -311,6 +319,7 @@ mod tests {
                     skipped: 0,
                     built: 3,
                     cached: 1,
+                    fetched: 0,
                 },
                 tests: Tally::default(),
             }
@@ -339,15 +348,41 @@ mod tests {
                     skipped: 1,
                     built: 1,
                     cached: 2,
+                    fetched: 0,
                 },
                 tests: Tally {
                     failed: 1,
                     skipped: 1,
                     built: 0,
                     cached: 1,
+                    fetched: 0,
                 },
             }
         );
+    }
+
+    #[test]
+    fn fetched_is_a_success_whose_outputs_are_in_place() {
+        assert!(OutcomeClass::Fetched.succeeded());
+    }
+
+    #[test]
+    fn fetched_serializes_as_its_name() {
+        let rendered = canonical::to_string(&OutcomeClass::Fetched).unwrap();
+        assert_eq!(rendered, r#""Fetched""#);
+        let read = canonical::from_slice::<OutcomeClass>(rendered.as_bytes()).unwrap();
+        assert_eq!(read, OutcomeClass::Fetched);
+    }
+
+    #[test]
+    fn a_tally_counts_fetched_targets() {
+        let outcomes = [
+            outcome(OutcomeClass::Fetched),
+            outcome(OutcomeClass::Built),
+            outcome(OutcomeClass::Fetched),
+        ];
+        let tally = Tally::of(&outcomes);
+        assert_eq!((tally.fetched, tally.built), (2, 1));
     }
 
     #[test]
@@ -366,7 +401,7 @@ mod tests {
     fn a_class_with_a_field_serializes_as_an_object_of_one_key() {
         let rendered: Vec<String> = every_class()
             .iter()
-            .skip(2)
+            .skip(3)
             .map(|class| canonical::to_string(class).unwrap())
             .collect();
         assert_eq!(

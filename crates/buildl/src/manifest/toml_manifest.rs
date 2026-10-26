@@ -385,7 +385,7 @@ strategy = "bare"
             ),
             (
                 "out = \"out\"\n",
-                "manifest: buildl.toml:1:1: unknown field `out`, expected one of `workspace`, `ceiling`, `declaration`, `execution`, `approver`, `plugins`",
+                "manifest: buildl.toml:1:1: unknown field `out`, expected one of `workspace`, `ceiling`, `declaration`, `execution`, `approver`, `plugins`, `remote`",
             ),
         ];
         for (text, expected) in cases {

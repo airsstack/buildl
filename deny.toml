@@ -43,6 +43,10 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "MIT",
     "Unicode-3.0",
+    # The TLS stack of the remote cache's gRPC client: `ring` (with Apache-2.0), `rustls-webpki`
+    # and `untrusted` are ISC; `subtle` and `matchit` (with MIT) are BSD-3-Clause.
+    "BSD-3-Clause",
+    "ISC",
 ]
 confidence-threshold = 0.8
 exceptions = []
@@ -61,8 +65,8 @@ ignore = false
 
 [bans]
 # Duplicates are denied rather than warned so a second copy of a crate has to
-# be acknowledged here. The `skip` list below is empty, so every duplicate fails
-# until it is added to that list with a reason.
+# be acknowledged here. Every duplicate fails until it is added to the `skip` list
+# below with a reason.
 multiple-versions = "deny"
 # No `version = "*"` dependencies. The root manifest gives every direct one an
 # explicit version requirement.
@@ -103,8 +107,27 @@ deny = [
         architecture.md §6: rayon is confined to the Digester adapter inside buildl""" },
     { crate = "clap", wrappers = ["buildl-cli"], reason = """\
         ABB §1.2 and §4: the argument surface is the binary's alone""" },
+    { crate = "tonic", wrappers = ["buildl", "tonic-prost"], reason = """\
+        the gRPC client is the remote adapter's inside buildl; tonic-prost is tonic's own codec \
+        crate""" },
+    { crate = "prost", wrappers = ["buildl", "prost-types", "tonic-prost"], reason = """\
+        the REAPI messages are the remote adapter's inside buildl; prost-types and tonic-prost \
+        are prost's and tonic's own companions""" },
+    { crate = "uuid", wrappers = ["buildl"], reason = """\
+        only the remote adapter names ByteStream upload resources""" },
 ]
-skip = []
+skip = [
+    { crate = "getrandom@0.2.17", reason = """\
+        ring, the TLS stack of the gRPC client, is on getrandom 0.2, while tempfile and uuid \
+        are on 0.4""" },
+    { crate = "syn@2.0.119", reason = """\
+        prost-derive, pin-project-internal and tracing-attributes, in the gRPC client's tree, \
+        are on syn 2, while serde_derive, thiserror-impl, clap_derive and the tokio macros are \
+        on syn 3; a proc-macro dependency, compiled for the build host alone""" },
+    { crate = "windows-sys@0.52.0", reason = """\
+        ring is on windows-sys 0.52, while the rest of the tree is on 0.61; Windows targets \
+        only""" },
+]
 skip-tree = []
 
 # ---------------------------------------------------------------------------

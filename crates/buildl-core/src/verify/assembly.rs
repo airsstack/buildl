@@ -20,16 +20,18 @@ use std::collections::BTreeSet;
 use super::{Chosen, chosen, first_difference};
 use crate::error::{Error, Result};
 use crate::execute::assembly::{Prepared, made_from, prepared};
-use crate::execute::perform::{Ended, Kept, Performed, Shared, Task, Told, Worked, perform};
+use crate::execute::perform::{
+    Ended, Kept, Performed, RemoteRun, Shared, Task, Told, Worked, perform,
+};
 use crate::execute::record::{restore, shown};
 use crate::execute::settle::restorable;
 use crate::placement::layout::Layout;
 use crate::ports::{
-    ActionCache, Clock, ContentStore, Dispatcher, ExecStrategy, Manifest, PortSet, Ports,
+    ActionCache, Clock, ContentStore, Dispatcher, ExecStrategy, Manifest, NoRemote, PortSet, Ports,
 };
 use crate::types::{
-    ActionKey, CacheRow, Check, Diagnostic, Digest, Label, NodeId, OutputManifest, OutputName,
-    Plan, Sample, TargetGraph, Turn, Verdict, Verification,
+    ActionKey, CacheRow, Check, Diagnostic, Digest, InfraKind, Label, NodeId, OutcomeClass,
+    OutputManifest, OutputName, Plan, Sample, TargetGraph, Turn, Verdict, Verification,
 };
 
 /// Re-runs the cached targets of `graph` and returns one check for each target that was looked at.
@@ -56,7 +58,8 @@ use crate::types::{
 ///
 /// No row is recorded or forgotten, no event is logged, nothing is reported, and what a re-run
 /// produced is never put in place: only the restores place content. Content a re-run stores is
-/// named by no row and no log line.
+/// named by no row and no log line. A re-run never asks the remote cache for a result: the point
+/// is to run the action here.
 ///
 /// # Errors
 ///
@@ -162,25 +165,58 @@ pub fn verify<P: Ports>(
             continue;
         };
         let label = &target.node.label;
-        let check = match done.ended {
-            Ended::Produced { outputs, .. } => {
-                compared(&target.node.outputs, &cached.manifests, &outputs)
-            }
-            Ended::Failed {
-                class,
-                diagnostic,
-                printed,
-            } => Check::Failed {
-                class,
-                diagnostic,
-                stdout: shown(cas, label, printed.map(|printed| printed.stdout))?,
-                stderr: shown(cas, label, printed.map(|printed| printed.stderr))?,
-            },
-        };
+        let check = rechecked(
+            done.ended,
+            &target.node.outputs,
+            &cached.manifests,
+            cas,
+            label,
+        )?;
         checked.push((label.clone(), check));
     }
     checked.append(&mut unplaced);
     Ok(Verification::new(checked, not_cached, left_out))
+}
+
+/// How a re-run that `ended` compares with what was cached: `names` are the outputs the target
+/// declares and `cached` what each was when it was cached.
+///
+/// A re-run never asks the remote cache, so one that ended by fetching or by a failed remote call
+/// is the builder's own failure.
+///
+/// # Errors
+///
+/// Returns whatever the content store returns when what a failed re-run printed cannot be read.
+fn rechecked<C: ContentStore>(
+    ended: Ended,
+    names: &[OutputName],
+    cached: &[OutputManifest],
+    cas: &C,
+    label: &Label,
+) -> Result<Check> {
+    Ok(match ended {
+        Ended::Produced { outputs, .. } => compared(names, cached, &outputs),
+        Ended::Failed {
+            class,
+            diagnostic,
+            printed,
+        } => Check::Failed {
+            class,
+            diagnostic,
+            stdout: shown(cas, label, printed.map(|printed| printed.stdout))?,
+            stderr: shown(cas, label, printed.map(|printed| printed.stderr))?,
+        },
+        Ended::Fetched { .. } | Ended::RemoteFailed(_) => Check::Failed {
+            class: OutcomeClass::InfraFailure {
+                kind: InfraKind::Run,
+            },
+            diagnostic: Some(Diagnostic::new(
+                "the re-run consulted the remote cache, which a verify never does",
+            )),
+            stdout: Vec::new(),
+            stderr: Vec::new(),
+        },
+    })
 }
 
 /// A cached target whose outputs are in place: what it needs to be re-run and compared.
@@ -327,7 +363,17 @@ where
     let mut waiting = tasks;
     let mut performed = Vec::new();
     dispatcher.dispatch(
-        |task, tell| perform(task, strategy, cas, clock, shared, tell),
+        |task, tell| {
+            perform(
+                task,
+                strategy,
+                cas,
+                clock,
+                None::<&RemoteRun<'_, NoRemote>>,
+                shared,
+                tell,
+            )
+        },
         |turn: Turn<Told, Worked>| match turn {
             Turn::Begin => core::mem::take(&mut waiting),
             Turn::Told(_) | Turn::Done(Worked::NotBegun(_)) => Vec::new(),

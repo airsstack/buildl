@@ -124,6 +124,19 @@
 //! for a caller that holds a [`DeclarationSource`], a [`Manifest`], a [`RunHistory`] and a
 //! [`ContentStore`].
 //!
+//! A target no cache row stands for may be served by a cache other machines share, reached
+//! through the [`RemoteCache`] port. [`Pipeline::set_remote`] sets the [`RemotePolicy`] of a
+//! build and a test run: a [`RemoteUse`] and a [`RemoteFailure`]. With the remote on, a worker
+//! asks the port for the result of a [`RemoteAction`] built from the ready action before it runs
+//! anything. A [`RemoteHit`] is used only when it is a clean success for the declared outputs;
+//! every blob is checked against its digest and stored before the row is written, and the target
+//! ends as [`OutcomeClass::Fetched`]. A miss runs the action, and under [`RemoteUse::ReadWrite`]
+//! a run that succeeded is uploaded, its blobs read from the content store through
+//! [`BlobSource`]. A failed call warns once and turns the remote off for the rest of the command
+//! under [`RemoteFailure::Lenient`], and fails the command under [`RemoteFailure::Strict`]; a
+//! result that is not usable is a failure of the same kind. [`NoRemote`] is the port of a
+//! workspace that names none, and every command but `build` and `test` never calls it.
+//!
 //! A verify compares what cached targets produce when re-run with what was cached.
 //! [`Pipeline::verify`] plans as a build does, asks the [`Approver`] as a build does, then
 //! [`verify`](fn@verify) puts the outputs of every target whose last build still stands back in
@@ -155,7 +168,7 @@ pub mod verify;
 
 pub use error::{
     ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
-    EvaluationLimit, NameKind, PortName, Result, TreeFault,
+    EvaluationLimit, NameKind, PortName, RemoteFlagConflict, RemoteVariable, Result, TreeFault,
 };
 pub use execute::execute;
 pub use grants::negotiate;
@@ -164,28 +177,32 @@ pub use load::load;
 pub use pipeline::{Collected, Pipeline, Shown, doctor, gc, log};
 pub use plan::plan;
 pub use ports::{
-    ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
-    ExecStrategy, GraphRecord, Host, Manifest, PortSet, Ports, Reporter, RunHistory, StatCache,
-    Sweep, ToolResolver,
+    ActionCache, Approver, BlobSource, Clock, ContentStore, DeclarationSource, Digester,
+    Dispatcher, EventLog, ExecStrategy, GraphRecord, Host, Manifest, NoRemote, PortSet, Ports,
+    RemoteCache, Reporter, RunHistory, StatCache, Sweep, ToolResolver,
 };
 pub use resolve::{narrow, reach, resolve};
 pub use types::{
-    Action, ActionKey, ActionOutcome, Alias, Approval, ApproverMode, Argument, Attribution,
+    Action, ActionKey, ActionOutcome, Alias, Approval, ApproverMode, Argument, Attribution, Blob,
     BuildFile, CacheRow, Captured, Ceiling, Channel, Check, Checkup, Command, CommitId,
     Declaration, DeclarationOrder, Declared, DenialReason, DepProducts, Description, Diagnostic,
     Difference, Digest, Direction, Directory, DirtyReason, Discovered, EntryChange, EntryName,
     EnvName, EnvValue, Evaluated, Execution, Exit, ExpandedDescription, FieldName, FileChange,
-    FileMode, FileStat, Found, FoundEntry, FoundKind, Freshness, GitUrl, Hasher, InfraKind,
-    InputDigest, InputKind, InputStat, Isolation, KeyComponents, Label, LiveOutput, LiveSink,
-    Loaded, LogLine, LoggedRun, NetworkAccess, Node, NodeId, OnFailure, Origin, OutcomeClass,
-    OutcomeEvent, OutputDifference, OutputManifest, OutputName, OutputPath, OutputRefusal,
-    OwnComponents, Plan, PlannedKey, Platform, PluginCap, PluginChain, PluginName, PluginNetwork,
-    PluginRef, PluginSource, PluginVersion, PluginViolation, Produced, Program, Provenance,
-    Purpose, Query, RawOutcome, ReadyAction, Rerun, Rev, Rule, Sample, Scope, Setting, SettingName,
-    SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
-    StagedSetting, StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, TagName, Tally,
-    Target, TargetGraph, TargetName, TargetRole, Timeout, Timestamp, ToolIdentity, Tree, TreeEntry,
-    TreePath, Turn, Unfinished, Verdict, Verification, Want, WantedSet, Workers, Workspace,
-    Written,
+    FileMode, FileStat, Found, FoundEntry, FoundKind, Freshness, GitUrl, Hasher, HeaderName,
+    HostPath, InfraKind, InputDigest, InputKind, InputStat, InstanceName, Isolation, KeyComponents,
+    Label, LiveOutput, LiveSink, Loaded, LogLine, LoggedRun, NetworkAccess, Node, NodeId,
+    OnFailure, Origin, OutcomeClass, OutcomeEvent, OutputDifference, OutputManifest, OutputName,
+    OutputPath, OutputRefusal, OwnComponents, Plan, PlannedKey, Platform, PluginCap, PluginChain,
+    PluginName, PluginNetwork, PluginRef, PluginSource, PluginVersion, PluginViolation, Produced,
+    Program, Provenance, Purpose, Query, RawOutcome, ReadyAction, RemoteAction, RemoteCall,
+    RemoteContent, RemoteFailure, RemoteFile, RemoteHit, RemoteNotice, RemoteOutput,
+    RemoteOutputDirectory, RemoteOutputFile, RemotePlatform, RemotePolicy, RemoteScheme,
+    RemoteSettings, RemoteSettingsBuilder, RemoteSwitch, RemoteTree, RemoteTreeFile, RemoteUpload,
+    RemoteUrl, RemoteUse, Rerun, Rev, RootPath, Rule, RunChoices, Sample, Scope, Setting,
+    SettingName, SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem,
+    StagedRule, StagedSetting, StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, TagName,
+    Tally, Target, TargetGraph, TargetName, TargetRole, Timeout, Timestamp, TokenSource,
+    ToolIdentity, Tree, TreeEntry, TreePath, Turn, Unfinished, Uploaded, Verdict, Verification,
+    Want, WantedSet, Workers, Workspace, Written,
 };
 pub use verify::verify;

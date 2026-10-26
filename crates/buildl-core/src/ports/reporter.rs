@@ -13,7 +13,7 @@
 //! A reporter borrowed mutably is a reporter too, so a caller that keeps its reporter can lend
 //! it to one build.
 
-use crate::types::{Captured, Channel, Label, OutcomeEvent, ReadyAction, Summary};
+use crate::types::{Captured, Channel, Label, OutcomeEvent, ReadyAction, RemoteNotice, Summary};
 
 /// Is told how a build goes, one call at a time.
 ///
@@ -23,10 +23,10 @@ use crate::types::{Captured, Channel, Label, OutcomeEvent, ReadyAction, Summary}
 /// stores or returns.
 ///
 /// One build makes its calls in this order: one [`begun`], any number of [`started`],
-/// [`printed`] and [`finished`], then one [`summary`]. A build that is refused before it runs
-/// anything makes no call, and one that ends in an error after that calls [`summary`] never.
-/// A command that builds discovery targets first makes that sequence for them, and again for
-/// the build or test run that follows.
+/// [`printed`], [`finished`] and [`remote`], then one [`summary`]. A build that is refused
+/// before it runs anything makes no call, and one that ends in an error after that calls
+/// [`summary`] never. A command that builds discovery targets first makes that sequence for
+/// them, and again for the build or test run that follows.
 ///
 /// From the first [`printed`] for a target until that target's [`finished`], no [`printed`] and
 /// no [`finished`] is about another target: what one action prints is never interleaved with
@@ -36,6 +36,7 @@ use crate::types::{Captured, Channel, Label, OutcomeEvent, ReadyAction, Summary}
 /// [`started`]: Reporter::started
 /// [`printed`]: Reporter::printed
 /// [`finished`]: Reporter::finished
+/// [`remote`]: Reporter::remote
 /// [`summary`]: Reporter::summary
 pub trait Reporter {
     /// A build of `targets` targets is about to hand out its first action: everything that can
@@ -60,6 +61,13 @@ pub trait Reporter {
     /// now; and nothing for a target whose output was shown live, or that has none stored.
     fn finished(&mut self, event: &OutcomeEvent, printed: Captured<'_>);
 
+    /// The build tells of the remote cache: a call to it failed and the build went on without
+    /// it, or a target's result was not uploaded because an input changed meanwhile and the
+    /// remote stays in use. Called at most once per command for a failed call, once per affected
+    /// target for a changed input, and at any point between [`begun`](Reporter::begun) and
+    /// [`summary`](Reporter::summary).
+    fn remote(&mut self, notice: &RemoteNotice);
+
     /// Every target has its outcome, counted in `summary`. Called once, last.
     fn summary(&mut self, summary: Summary);
 }
@@ -81,6 +89,10 @@ impl<R: Reporter + ?Sized> Reporter for &mut R {
         (**self).finished(event, printed);
     }
 
+    fn remote(&mut self, notice: &RemoteNotice) {
+        (**self).remote(notice);
+    }
+
     fn summary(&mut self, summary: Summary) {
         (**self).summary(summary);
     }
@@ -98,8 +110,9 @@ mod tests {
 
     use super::Reporter;
     use crate::types::{
-        ActionOutcome, Argument, Captured, Channel, Command, Directory, Label, NetworkAccess,
-        OutcomeClass, OutcomeEvent, Provenance, ReadyAction, Summary, Tally, TargetRole, Timestamp,
+        ActionOutcome, Argument, Captured, Channel, Command, Diagnostic, Directory, Label,
+        NetworkAccess, OutcomeClass, OutcomeEvent, Provenance, ReadyAction, RemoteCall,
+        RemoteNotice, Summary, Tally, TargetRole, Timestamp,
     };
 
     /// Keeps the name of each call it receives, in order.
@@ -121,6 +134,10 @@ mod tests {
 
         fn finished(&mut self, _event: &OutcomeEvent, _printed: Captured<'_>) {
             self.0.push("finished");
+        }
+
+        fn remote(&mut self, _notice: &RemoteNotice) {
+            self.0.push("remote");
         }
 
         fn summary(&mut self, _summary: Summary) {
@@ -164,12 +181,17 @@ mod tests {
             },
             Captured::default(),
         );
+        reporter.remote(&RemoteNotice::Failed {
+            call: RemoteCall::Lookup,
+            diagnostic: Diagnostic::new("unreachable"),
+        });
         reporter.summary(Summary {
             all: Tally {
                 failed: 0,
                 skipped: 0,
                 built: 1,
                 cached: 0,
+                fetched: 0,
             },
             tests: Tally::default(),
         });
@@ -181,7 +203,9 @@ mod tests {
         report_once(&mut names);
         assert_eq!(
             names.0,
-            ["begun", "started", "printed", "finished", "summary"]
+            [
+                "begun", "started", "printed", "finished", "remote", "summary"
+            ]
         );
     }
 }

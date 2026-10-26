@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 use buildl_core::{
     ApproverMode, Diagnostic, Directory, EntryName, Error, Isolation, Manifest, Pipeline, PortName,
-    PortSet, Ports, Reporter, Result, Want,
+    PortSet, Ports, RemotePolicy, Reporter, Result, Want,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -34,6 +34,7 @@ use crate::host::LocalHost;
 use crate::log::LocalLog;
 use crate::manifest::{TomlManifest, WorkspaceRoot};
 use crate::plugins::{Lock, check};
+use crate::remote::Remote;
 use crate::search_path::SearchPath;
 use crate::statcache::LocalStatCache;
 use crate::state::{LockError, Scratch, StateLayout, StateLock};
@@ -63,6 +64,7 @@ impl<R: Reporter, C: Console> Ports for LocalPorts<R, C> {
     type Graph = GraphFile;
     type Reporter = R;
     type Approver = LocalApprover<C>;
+    type Remote = Remote;
 }
 
 /// The pipeline over the real adapters.
@@ -257,6 +259,12 @@ impl Wiring {
         &self.workspace.out
     }
 
+    /// Whether `buildl.toml` has a `[remote]` table.
+    #[must_use]
+    pub const fn names_remote(&self) -> bool {
+        self.workspace.remote.is_some()
+    }
+
     /// The output directory, after holding it to the ceiling.
     ///
     /// # Errors
@@ -354,24 +362,29 @@ impl Wiring {
     /// that refuses to run anything, so that `plan` works under every strategy. The program
     /// lookup and the strategy are handed one search path, so the file that is run is the file that
     /// was fingerprinted. The approver is the one the manifest's `[approver]` table names; `console`
-    /// is the one it asks on, and the other two never use it.
+    /// is the one it asks on, and the other two never use it. The remote cache is the one the
+    /// manifest's `[remote]` table names when `remote` consults it and the manifest names one, and
+    /// none otherwise; making it reads its token and sends nothing.
     ///
     /// # Errors
     ///
     /// Returns whatever an adapter returns when it is made: the host's, the stat cache's and the
     /// action cache's own errors, unchanged. Returns what [`Wiring::source`] returns first, when
-    /// a plugin the manifest names is not there to use.
+    /// a plugin the manifest names is not there to use, and
+    /// [`Error::RemoteToken`](buildl_core::Error::RemoteToken) when the remote's token cannot be
+    /// read.
     pub fn ports<R: Reporter, C: Console>(
         &self,
         lock: &StateLock,
         reporter: R,
         console: C,
+        remote: RemotePolicy,
     ) -> Result<PortSet<LocalPorts<R, C>>> {
-        self.assemble(lock, reporter, console, self.strategy(lock))
+        self.assemble(lock, reporter, console, self.strategy(lock), remote)
     }
 
     /// Every port, for one verify: the ports of [`Wiring::ports`], with the input sandbox as
-    /// the strategy and the output paths left as the last build placed them.
+    /// the strategy, the output paths left as the last build placed them, and no remote cache.
     ///
     /// A verify re-runs actions to compare them with the cache, so what it re-runs must not
     /// clear or make the real output paths. These ports always use the input sandbox, whatever
@@ -392,6 +405,7 @@ impl Wiring {
             reporter,
             console,
             Local::Sandbox(self.sandbox(lock, OutPaths::Untouched)),
+            RemotePolicy::OFF,
         )
     }
 
@@ -410,13 +424,14 @@ impl Wiring {
     }
 
     /// The adapters of [`Wiring::ports`] and [`Wiring::verify_ports`], which differ only in the
-    /// strategy they are given.
+    /// strategy they are given and in whether the remote cache is consulted.
     fn assemble<R: Reporter, C: Console>(
         &self,
         lock: &StateLock,
         reporter: R,
         console: C,
         strategy: Local,
+        remote: RemotePolicy,
     ) -> Result<PortSet<LocalPorts<R, C>>> {
         let layout = lock.layout();
         let root = self.root.as_path();
@@ -436,6 +451,7 @@ impl Wiring {
             graph: GraphFile::new(layout),
             reporter,
             approver: self.approver(console),
+            remote: Remote::of(self.workspace.remote.as_ref(), remote, root)?,
         })
     }
 }
@@ -453,7 +469,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use buildl_core::{
-        Directory, Error, Isolation, Pipeline, PortName, Scope, Timeout, Verdict, Want, Workers,
+        Directory, Error, Isolation, Pipeline, PortName, RemotePolicy, Scope, Timeout, Verdict,
+        Want, Workers,
     };
     use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -583,6 +600,15 @@ mod tests {
             none.source().unwrap(),
             LuaSource::new(&root, defaults, skipped, BTreeMap::new())
         );
+    }
+
+    #[test]
+    fn the_manifest_names_a_remote_only_with_a_remote_table() {
+        let (_dir, without) = workspace("");
+        let (_other, named) = workspace("[remote]\nurl = \"grpc://127.0.0.1:1\"\n");
+
+        assert!(!Wiring::read(&without).unwrap().names_remote());
+        assert!(Wiring::read(&named).unwrap().names_remote());
     }
 
     #[test]
@@ -847,7 +873,9 @@ mod tests {
                 .with_data_dir(root.join("data"));
             let lock = wiring.lock().unwrap();
 
-            let ports = wiring.ports(&lock, Silent, NoTerminal).unwrap();
+            let ports = wiring
+                .ports(&lock, Silent, NoTerminal, RemotePolicy::OFF)
+                .unwrap();
 
             let named = match ports.approver {
                 LocalApprover::Manifest(_) => "Manifest",
@@ -867,7 +895,9 @@ mod tests {
         let layout = lock.layout();
         let search = wiring.search.clone();
 
-        let ports = wiring.ports(&lock, Silent, NoTerminal).unwrap();
+        let ports = wiring
+            .ports(&lock, Silent, NoTerminal, RemotePolicy::OFF)
+            .unwrap();
 
         assert_eq!(ports.source, wiring.source().unwrap());
         assert_eq!(ports.manifest, TomlManifest::read(wiring.root()).unwrap());
@@ -906,7 +936,9 @@ mod tests {
         let (_dir, root) = workspace(&format!("{CEILING}[execution]\ntimeout = \"7s\"\n"));
         let wiring = Wiring::read(&root).unwrap();
         let lock = wiring.lock().unwrap();
-        let ports = wiring.ports(&lock, Silent, NoTerminal).unwrap();
+        let ports = wiring
+            .ports(&lock, Silent, NoTerminal, RemotePolicy::OFF)
+            .unwrap();
         assert_eq!(
             format!("{:?}", ports.strategy),
             format!(
@@ -928,7 +960,9 @@ mod tests {
         ));
         let wiring = Wiring::read(&root).unwrap();
         let lock = wiring.lock().unwrap();
-        let ports = wiring.ports(&lock, Silent, NoTerminal).unwrap();
+        let ports = wiring
+            .ports(&lock, Silent, NoTerminal, RemotePolicy::OFF)
+            .unwrap();
         assert_eq!(
             format!("{:?}", ports.strategy),
             format!("{:?}", Local::Refused(Isolation::OsSandbox))
@@ -967,7 +1001,9 @@ mod tests {
         let lock = wiring.lock().unwrap();
         fs::write(lock.layout().cache(), "{} ").unwrap();
 
-        let error = wiring.ports(&lock, Silent, NoTerminal).unwrap_err();
+        let error = wiring
+            .ports(&lock, Silent, NoTerminal, RemotePolicy::OFF)
+            .unwrap_err();
 
         assert!(
             matches!(&error, Error::CorruptState { file, .. } if *file == root.join(".buildl/cache.json")),
@@ -987,8 +1023,11 @@ mod tests {
         let wiring = Wiring::read(&root).unwrap();
         let lock = wiring.lock().unwrap();
 
-        let mut pipeline: LocalPipeline<Silent, NoTerminal> =
-            Pipeline::new(wiring.ports(&lock, Silent, NoTerminal).unwrap());
+        let mut pipeline: LocalPipeline<Silent, NoTerminal> = Pipeline::new(
+            wiring
+                .ports(&lock, Silent, NoTerminal, RemotePolicy::OFF)
+                .unwrap(),
+        );
         let plan = pipeline
             .plan(wiring.entry(), &Scope::Workspace, &BTreeMap::new())
             .unwrap();

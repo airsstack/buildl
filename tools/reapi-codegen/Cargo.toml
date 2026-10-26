@@ -1,0 +1,22 @@
+# Generates the Rust for the vendored REAPI v2 and ByteStream protos into
+# `crates/buildl/generated/reapi/`. A package of its own with an empty `[workspace]`
+# and listed under `exclude` in the root manifest, so protox, prost-build and their
+# trees never enter the workspace's `cargo deny` graph; it is built only when
+# someone regenerates (`cargo make reapi-codegen`).
+[package]
+name         = "reapi-codegen"
+version      = "0.0.0"
+edition      = "2024"
+rust-version = "1.94"
+license      = "Apache-2.0"
+publish      = false
+
+[workspace]
+
+[dependencies]
+# A pure-Rust protobuf compiler: parses the vendored protos into descriptors with no
+# `protoc` binary on the machine.
+protox            = "0.10"
+# Turns the descriptors into prost messages and tonic client and server code. Version
+# 0.14 matches the `tonic` and `prost` the generated code is compiled against.
+tonic-prost-build = "0.14"

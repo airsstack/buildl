@@ -48,6 +48,8 @@ pub struct PortSet<P: Ports> {
     pub reporter: P::Reporter,
     /// Says whether a build may do what it wants.
     pub approver: P::Approver,
+    /// Looks results up in, and stores them to, a cache shared between machines.
+    pub remote: P::Remote,
 }
 
 /// Written by hand because a derive would require the bundle type itself to be `Debug`, and a
@@ -69,6 +71,7 @@ where
     P::Graph: fmt::Debug,
     P::Reporter: fmt::Debug,
     P::Approver: fmt::Debug,
+    P::Remote: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("PortSet")
@@ -87,6 +90,7 @@ where
             .field("graph", &self.graph)
             .field("reporter", &self.reporter)
             .field("approver", &self.approver)
+            .field("remote", &self.remote)
             .finish()
     }
 }
@@ -104,14 +108,15 @@ mod tests {
     use crate::error::Result;
     use crate::ports::{
         ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher,
-        EventLog, ExecStrategy, GraphRecord, Host, Manifest, Ports, Reporter, RunHistory,
+        EventLog, ExecStrategy, GraphRecord, Host, Manifest, NoRemote, Ports, Reporter, RunHistory,
         StatCache, ToolResolver,
     };
     use crate::types::{
         Approval, Attribution, BuildFile, CacheRow, Captured, Ceiling, Channel, Digest, Directory,
         Discovered, EnvName, EnvValue, Evaluated, Exit, FileMode, Found, InputStat, Label,
         LiveSink, LogLine, OutcomeEvent, OutputPath, Platform, Program, RawOutcome, ReadyAction,
-        SourcePath, StatEntry, Summary, TargetGraph, Timestamp, Turn, WantedSet, Workspace,
+        RemoteNotice, SourcePath, StatEntry, Summary, TargetGraph, Timestamp, Turn, WantedSet,
+        Workspace,
     };
 
     /// One port type answering that there is nothing, standing in for every port.
@@ -138,6 +143,7 @@ mod tests {
                 execution: crate::types::Execution::default(),
                 approver: crate::types::ApproverMode::Manifest,
                 plugins: std::collections::BTreeMap::new(),
+                remote: None,
             })
         }
     }
@@ -290,6 +296,8 @@ mod tests {
 
         fn finished(&mut self, _event: &OutcomeEvent, _printed: Captured<'_>) {}
 
+        fn remote(&mut self, _notice: &RemoteNotice) {}
+
         fn summary(&mut self, _summary: Summary) {}
     }
 
@@ -325,6 +333,7 @@ mod tests {
         type Graph = Stub;
         type Reporter = Stub;
         type Approver = Stub;
+        type Remote = NoRemote;
     }
 
     #[test]
@@ -345,6 +354,7 @@ mod tests {
             graph: Stub,
             reporter: Stub,
             approver: Stub,
+            remote: NoRemote,
         };
 
         let text = format!("{set:?}");
@@ -372,5 +382,9 @@ mod tests {
                 "field `{field}` missing from: {text}"
             );
         }
+        assert!(
+            text.contains("remote: NoRemote"),
+            "field `remote` missing from: {text}"
+        );
     }
 }

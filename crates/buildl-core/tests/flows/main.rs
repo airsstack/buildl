@@ -16,6 +16,7 @@ mod load;
 mod log;
 mod plan;
 mod query;
+mod remote;
 mod report;
 mod test;
 mod verify;

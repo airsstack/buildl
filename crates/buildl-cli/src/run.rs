@@ -23,6 +23,7 @@ use buildl::approver::Console;
 use buildl::buildl_core::json::canonical;
 use buildl::buildl_core::{Error, Scope};
 use buildl::plugins::FetchStatus;
+use buildl::remote::token_is_present;
 use buildl::report::{
     Mode, Paint, Report, TerminalReporter, check_line, clean_line, damage, error_text, gc_line,
     graph_dot, header, not_run_lines, plan_text, query_text, verify_text,
@@ -35,8 +36,9 @@ use crate::cli::{
     BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, PluginsArgs, PluginsCommand, QueryArgs,
     Streams, TestArgs, VerifyArgs, overrides,
 };
-use crate::doctor_text::doctor_text;
+use crate::doctor_text::{RemoteReport, TokenState, doctor_text};
 use crate::exit::Exit;
+use crate::remote_switches::{RemoteSwitches, RemoteTable};
 use crate::terminal::Terminal;
 
 /// Why a command stopped before its end.
@@ -73,14 +75,15 @@ impl From<io::Error> for Stop {
 ///
 /// `start` is the directory the command was started in, as the process read it: the workspace
 /// is the nearest one at or above it, and a target named without its directory is read against
-/// it. `terminal` is what is known of where standard error goes. What the command was asked
-/// for is written to `stdout`, and everything about how it went to `stderr`. `console` is
-/// where a workspace whose approver is `interactive` asks about what a build, a test run or a
-/// verify wants.
+/// it. `terminal` is what is known of where standard error goes, and `remote` what this
+/// machine's variables say about the remote cache. What the command was asked for is written
+/// to `stdout`, and everything about how it went to `stderr`. `console` is where a workspace
+/// whose approver is `interactive` asks about what a build, a test run or a verify wants.
 pub(crate) fn run<A, O, E, C>(
     args: A,
     start: io::Result<PathBuf>,
     terminal: &Terminal,
+    remote: &RemoteSwitches,
     stdout: &mut O,
     stderr: &mut E,
     console: &mut C,
@@ -112,10 +115,26 @@ where
         Command::Graph(args) => graph(&start, &args, stdout, stderr),
         Command::Query(args) => query(&start, &args, stdout, stderr),
         Command::Plan(args) => plan(&start, args, stdout),
-        Command::Build(args) => build(&start, args, terminal.mode(), paint, stderr, console),
-        Command::Test(args) => test(&start, args, terminal.mode(), paint, stderr, console),
+        Command::Build(args) => build(
+            &start,
+            args,
+            remote,
+            terminal.mode(),
+            paint,
+            stderr,
+            console,
+        ),
+        Command::Test(args) => test(
+            &start,
+            args,
+            remote,
+            terminal.mode(),
+            paint,
+            stderr,
+            console,
+        ),
         Command::Verify(args) => verify(&start, args, paint, stderr, console),
-        Command::Doctor => doctor(&start, stdout, stderr),
+        Command::Doctor => doctor(&start, remote, stdout, stderr),
         Command::Log(args) => log(&start, &args, stdout, stderr),
         Command::Clean => clean(&start, stderr),
         Command::Gc => gc(&start, stderr),
@@ -282,13 +301,30 @@ fn query<O: Write, E: Write>(
     Ok(Exit::Success)
 }
 
-/// `doctor`: writes to `stdout` what the workspace allows and what its build wants. Wants
-/// outside the ceiling or not approved are reported, and the command succeeded. Which discovery
-/// targets have not run is said on `stderr`.
-fn doctor<O: Write, E: Write>(start: &Path, stdout: &mut O, stderr: &mut E) -> Result<Exit, Stop> {
+/// `doctor`: writes to `stdout` what the workspace allows and what its build wants, and the
+/// remote cache it names with what `remote` says of this machine. Wants outside the ceiling or
+/// not approved are reported, and the command succeeded. Which discovery targets have not run
+/// is said on `stderr`. It connects to no remote cache; a named token is read only to see that
+/// a build could, and is never shown.
+fn doctor<O: Write, E: Write>(
+    start: &Path,
+    remote: &RemoteSwitches,
+    stdout: &mut O,
+    stderr: &mut E,
+) -> Result<Exit, Stop> {
     let (doctor, missing) = Workspace::open(start)?.doctor()?;
     let _ = stderr.write_all(not_run_lines(&missing).as_bytes());
-    product(stdout, doctor_text(&doctor).as_bytes())?;
+    let token = match doctor.checkup().workspace().remote.as_ref() {
+        Some(settings) if settings.token().is_none() => TokenState::Unnamed,
+        Some(settings) if token_is_present(settings, doctor.root()) => TokenState::Set,
+        _ => TokenState::Missing,
+    };
+    let report = RemoteReport {
+        token,
+        upload: remote.upload_switch(),
+        strict: remote.strict_switch(),
+    };
+    product(stdout, doctor_text(&doctor, &report).as_bytes())?;
     Ok(Exit::Success)
 }
 
@@ -310,11 +346,21 @@ fn plan<O: Write>(start: &Path, args: PlanArgs, stdout: &mut O) -> Result<Exit, 
     Ok(Exit::Success)
 }
 
+/// Whether `workspace` names a remote cache, as the switches need to know it.
+const fn remote_table(workspace: &Workspace) -> RemoteTable {
+    if workspace.names_remote() {
+        RemoteTable::Named
+    } else {
+        RemoteTable::Absent
+    }
+}
+
 /// `build`: builds, showing on `stderr` how it goes, and returns the status of the most severe
-/// way a target ended.
+/// way a target ended. The remote cache is used as `remote` and the flags say.
 fn build<E: Write, C: Console>(
     start: &Path,
     args: BuildArgs,
+    remote: &RemoteSwitches,
     mode: Mode,
     paint: Paint,
     stderr: &mut E,
@@ -323,12 +369,13 @@ fn build<E: Write, C: Console>(
     let (on_failure, live) = (args.on_failure(), args.live());
     let settings = overrides(args.selection.overrides)?;
     let workspace = Workspace::open(start)?;
+    let policy = remote.resolve(&args.remote, remote_table(&workspace))?;
     let scope = scope(&workspace, &args.selection.targets)?;
     let mut reporter = TerminalReporter::new(&mut *stderr, mode, paint, Report::Build);
     let built = workspace.build(
         &scope,
         &settings,
-        RunOptions::new(on_failure, live),
+        RunOptions::new(on_failure, live).with_remote(policy),
         &mut reporter,
         console,
     );
@@ -345,6 +392,7 @@ fn build<E: Write, C: Console>(
 fn test<E: Write, C: Console>(
     start: &Path,
     args: TestArgs,
+    remote: &RemoteSwitches,
     mode: Mode,
     paint: Paint,
     stderr: &mut E,
@@ -357,12 +405,13 @@ fn test<E: Write, C: Console>(
     };
     let settings = overrides(args.selection.overrides)?;
     let workspace = Workspace::open(start)?;
+    let policy = remote.resolve(&args.remote, remote_table(&workspace))?;
     let scope = scope(&workspace, &args.selection.targets)?;
     let mut reporter = TerminalReporter::new(&mut *stderr, mode, paint, report);
     let tested = workspace.test(
         &scope,
         &settings,
-        RunOptions::new(on_failure, live),
+        RunOptions::new(on_failure, live).with_remote(policy),
         rerun,
         &mut reporter,
         console,
@@ -450,6 +499,7 @@ mod tests {
     use super::{Stop, run, told};
     use crate::cli::Cli;
     use crate::exit::Exit;
+    use crate::remote_switches::RemoteSwitches;
     use crate::terminal::Terminal;
 
     /// The manifest text up to the `strategy` line: allows a build to write its outputs and its
@@ -530,6 +580,7 @@ mod tests {
             iter::once(&"buildl").chain(args),
             Ok(start.to_path_buf()),
             terminal,
+            &RemoteSwitches::default(),
             &mut stdout,
             &mut stderr,
             &mut NoTerminal,
@@ -567,11 +618,25 @@ mod tests {
             ["buildl", "graph"],
             Ok(start.to_path_buf()),
             &piped(),
+            &RemoteSwitches::default(),
             &mut Failing(kind),
             &mut stderr,
             &mut NoTerminal,
         );
         (exit, String::from_utf8(stderr).unwrap())
+    }
+
+    #[test]
+    fn a_remote_flag_in_a_workspace_without_a_remote_table_is_a_usage_error() {
+        let (_dir, root) = copying();
+
+        let build = ran(&root, &["build", "--remote-upload"]);
+        let test = ran(&root, &["test", "--remote-strict"]);
+
+        assert_eq!(build.exit, Exit::Usage, "{}", build.stderr);
+        assert_eq!(test.exit, Exit::Usage, "{}", test.stderr);
+        assert!(build.stderr.contains("[remote]"), "{}", build.stderr);
+        assert!(!root.join("out").exists(), "something was built");
     }
 
     #[test]
@@ -801,6 +866,7 @@ mod tests {
             ["buildl", "log", "both"],
             Ok(root),
             &piped(),
+            &RemoteSwitches::default(),
             &mut Failing(io::ErrorKind::BrokenPipe),
             &mut stderr,
             &mut NoTerminal,
@@ -957,6 +1023,7 @@ mod tests {
             ["buildl", "check"],
             Err(io::Error::from(io::ErrorKind::NotFound)),
             &piped(),
+            &RemoteSwitches::default(),
             &mut stdout,
             &mut stderr,
             &mut NoTerminal,
@@ -977,6 +1044,7 @@ mod tests {
             ["buildl", "--version"],
             Err(io::Error::from(io::ErrorKind::NotFound)),
             &piped(),
+            &RemoteSwitches::default(),
             &mut stdout,
             &mut stderr,
             &mut NoTerminal,

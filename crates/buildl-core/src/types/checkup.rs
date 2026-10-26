@@ -104,6 +104,7 @@ mod tests {
             execution: Execution::default(),
             approver: ApproverMode::Deny,
             plugins: std::collections::BTreeMap::new(),
+            remote: None,
         };
         let wanted = WantedSet {
             programs: BTreeSet::from([Program::parse("cc").unwrap()]),

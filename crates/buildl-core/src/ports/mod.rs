@@ -24,6 +24,9 @@
 //! - [`GraphRecord`] — the graph a build resolved, kept where a later reader finds it.
 //! - [`Reporter`] — showing a person what a build is doing.
 //! - [`Approver`] — saying whether a build may do what it wants.
+//! - [`RemoteCache`] — a cache of results shared between machines, asked and filled by the action
+//!   that made them; [`BlobSource`] — where the bytes an upload names are read from;
+//!   [`NoRemote`] — the remote cache of a build that has none.
 //! - [`Ports`] — the bundle naming one implementation of each port, so a pipeline takes one type
 //!   parameter instead of one per port.
 //! - [`PortSet`] — one instance of each port a bundle names, so a pipeline is built from one
@@ -47,7 +50,9 @@ pub mod exec_strategy;
 pub mod graph_record;
 pub mod host;
 pub mod manifest;
+pub mod no_remote;
 pub mod port_set;
+pub mod remote_cache;
 pub mod reporter;
 pub mod run_history;
 pub mod stat_cache;
@@ -67,7 +72,9 @@ pub use exec_strategy::ExecStrategy;
 pub use graph_record::GraphRecord;
 pub use host::Host;
 pub use manifest::Manifest;
+pub use no_remote::NoRemote;
 pub use port_set::PortSet;
+pub use remote_cache::{BlobSource, RemoteCache};
 pub use reporter::Reporter;
 pub use run_history::RunHistory;
 pub use stat_cache::StatCache;

@@ -135,6 +135,7 @@ mod tests {
                 .into_iter()
                 .map(|(name, cap)| (PluginName::parse(name).unwrap(), cap))
                 .collect(),
+            remote: None,
         }
     }
 

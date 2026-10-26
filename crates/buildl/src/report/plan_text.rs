@@ -142,12 +142,12 @@ mod tests {
         Declared, DepProducts, Diagnostic, Digest, Digester, Directory, DirtyReason, Discovered,
         Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy, Execution,
         FileMode, FileStat, Found, Freshness, GraphRecord, Host, InputDigest, InputStat,
-        KeyComponents, Label, LiveSink, LogLine, Manifest, NetworkAccess, Origin, OutcomeEvent,
-        OutputName, OutputPath, OwnComponents, Plan, PlannedKey, Platform, PluginCap, PluginName,
-        PluginRef, PluginVersion, PortName, PortSet, Ports, Produced, Program, Provenance,
-        RawOutcome, ReadyAction, Rerun, Result, RunHistory, Setting, SettingName, SettingValue,
-        SourcePath, StatCache, StatEntry, Target, TargetGraph, TargetRole, Timestamp, ToolIdentity,
-        ToolResolver, Turn, Verdict, WantedSet, Workspace, plan, resolve,
+        KeyComponents, Label, LiveSink, LogLine, Manifest, NetworkAccess, NoRemote, Origin,
+        OutcomeEvent, OutputName, OutputPath, OwnComponents, Plan, PlannedKey, Platform, PluginCap,
+        PluginName, PluginRef, PluginVersion, PortName, PortSet, Ports, Produced, Program,
+        Provenance, RawOutcome, ReadyAction, Rerun, Result, RunHistory, Setting, SettingName,
+        SettingValue, SourcePath, StatCache, StatEntry, Target, TargetGraph, TargetRole, Timestamp,
+        ToolIdentity, ToolResolver, Turn, Verdict, WantedSet, Workspace, plan, resolve,
     };
 
     use super::{plan_text, reason_text};
@@ -178,6 +178,7 @@ mod tests {
                         ..PluginCap::default()
                     },
                 )]),
+                remote: None,
             })
         }
     }
@@ -378,6 +379,7 @@ mod tests {
         type Graph = Unused;
         type Reporter = Silent;
         type Approver = Unused;
+        type Remote = NoRemote;
     }
 
     /// The plan of `graph` on the machine, against what `rows` recorded.
@@ -398,6 +400,7 @@ mod tests {
             graph: Unused,
             reporter: Silent,
             approver: Unused,
+            remote: NoRemote,
         };
         plan(graph, &BTreeMap::new(), Rerun::Off, &mut ports).unwrap()
     }

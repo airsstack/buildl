@@ -14,7 +14,8 @@
 use std::collections::BTreeMap;
 
 use crate::types::{
-    ApproverMode, Ceiling, Directory, Isolation, PluginCap, PluginName, Timeout, Workers,
+    ApproverMode, Ceiling, Directory, Isolation, PluginCap, PluginName, RemoteSettings, Timeout,
+    Workers,
 };
 
 /// A workspace as its manifest describes it.
@@ -34,6 +35,8 @@ pub struct Workspace {
     /// What the workspace lets each plugin have, by plugin name. A plugin with no entry has the
     /// empty cap.
     pub plugins: BTreeMap<PluginName, PluginCap>,
+    /// The remote cache server the workspace names. `None`: the workspace names no server.
+    pub remote: Option<RemoteSettings>,
 }
 
 /// How a workspace wants its actions run: the manifest's `[execution]` table.

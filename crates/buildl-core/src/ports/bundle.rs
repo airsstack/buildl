@@ -13,7 +13,8 @@
 
 use crate::ports::{
     ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
-    ExecStrategy, GraphRecord, Host, Manifest, Reporter, RunHistory, StatCache, ToolResolver,
+    ExecStrategy, GraphRecord, Host, Manifest, RemoteCache, Reporter, RunHistory, StatCache,
+    ToolResolver,
 };
 
 /// One implementation of each port, chosen together.
@@ -31,9 +32,9 @@ use crate::ports::{
 ///     Channel, Clock, ContentStore, DeclarationSource, Diagnostic, Digest, Digester, Directory,
 ///     Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy,
 ///     FileMode, Found, GraphRecord, Host, InputStat, Label, LiveSink, LogLine, Manifest,
-///     OutcomeEvent, OutputPath, Platform, PortName, Ports, Program, RawOutcome, ReadyAction,
-///     Reporter, Result, RunHistory, SourcePath, StatCache, StatEntry, Summary, TargetGraph,
-///     Timestamp, ToolResolver, Turn, WantedSet, Workspace,
+///     NoRemote, OutcomeEvent, OutputPath, Platform, PortName, Ports, Program, RawOutcome,
+///     ReadyAction, RemoteNotice, Reporter, Result, RunHistory, SourcePath, StatCache, StatEntry,
+///     Summary, TargetGraph, Timestamp, ToolResolver, Turn, WantedSet, Workspace,
 /// };
 ///
 /// /// Every port at once, each answering that there is nothing.
@@ -67,6 +68,7 @@ use crate::ports::{
 ///             execution: buildl_core::Execution::default(),
 ///             approver: buildl_core::ApproverMode::Manifest,
 ///             plugins: std::collections::BTreeMap::new(),
+///             remote: None,
 ///         })
 ///     }
 /// }
@@ -228,6 +230,8 @@ use crate::ports::{
 ///
 ///     fn finished(&mut self, _event: &OutcomeEvent, _printed: Captured<'_>) {}
 ///
+///     fn remote(&mut self, _notice: &RemoteNotice) {}
+///
 ///     fn summary(&mut self, _summary: Summary) {}
 /// }
 ///
@@ -262,6 +266,7 @@ use crate::ports::{
 ///     type Graph = Nothing;
 ///     type Reporter = Nothing;
 ///     type Approver = Nothing;
+///     type Remote = NoRemote;
 /// }
 /// ```
 pub trait Ports {
@@ -297,4 +302,7 @@ pub trait Ports {
     /// How a build is asked whether it may do what it wants. Called only from the thread that
     /// called the build.
     type Approver: Approver;
+    /// Where results shared between machines are looked up and stored. Called from the threads
+    /// that run actions.
+    type Remote: RemoteCache;
 }

@@ -18,8 +18,8 @@
 use std::io::Write;
 
 use buildl_core::{
-    Captured, Channel, Label, OutcomeClass, OutcomeEvent, ReadyAction, Reporter, Rerun, Summary,
-    Tally, TargetRole,
+    Captured, Channel, Label, OutcomeClass, OutcomeEvent, ReadyAction, RemoteNotice, Reporter,
+    Rerun, Summary, Tally, TargetRole,
 };
 
 use crate::report::block::{block, header, summary_line, test_line, trailer};
@@ -62,9 +62,9 @@ pub enum Report {
 /// Which tests of a test run get a block: those that failed, or every one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestBlocks {
-    /// Only a test that failed. A test that was built or cached shows nothing.
+    /// Only a test that failed. A test that was built, cached or fetched shows nothing.
     Failed,
-    /// Every test, a passing one with what it printed and a cached one marked as such.
+    /// Every test, a passing one with what it printed, and a cached or fetched one marked as such.
     Every,
 }
 
@@ -151,7 +151,7 @@ impl<W: Write> TerminalReporter<W> {
         ) && event.outcome.role == TargetRole::Test
             && matches!(
                 event.outcome.class,
-                OutcomeClass::Built | OutcomeClass::Cached
+                OutcomeClass::Built | OutcomeClass::Cached | OutcomeClass::Fetched
             )
     }
 
@@ -196,6 +196,18 @@ impl<W: Write> TerminalReporter<W> {
         {
             self.broken = true;
         }
+    }
+}
+
+/// The line that tells of `notice`.
+fn warning(notice: &RemoteNotice) -> String {
+    match notice {
+        RemoteNotice::Failed { call, diagnostic } => format!(
+            "warning: remote cache {call} failed: {diagnostic}; the build goes on without it\n"
+        ),
+        RemoteNotice::InputChanged { label, path } => format!(
+            "warning: remote cache: {path} changed while {label} ran; its result was not uploaded\n"
+        ),
     }
 }
 
@@ -264,6 +276,20 @@ impl<W: Write> Reporter for TerminalReporter<W> {
         self.emit(&frame);
     }
 
+    /// Writes one warning line, after ending a line left open and erasing the status line, and
+    /// draws the status line again.
+    fn remote(&mut self, notice: &RemoteNotice) {
+        let mut frame = Vec::new();
+        self.erase(&mut frame);
+        if self.mid_line {
+            frame.push(b'\n');
+            self.mid_line = false;
+        }
+        frame.extend_from_slice(warning(notice).as_bytes());
+        self.draw(&mut frame);
+        self.emit(&frame);
+    }
+
     /// Erases the status line and writes the summary line: the count of targets for a build, the
     /// count of tests for a test run.
     ///
@@ -301,7 +327,8 @@ mod tests {
     use buildl_core::{
         ActionOutcome, Argument, Captured, Channel, Command, Diagnostic, ExpandedDescription,
         InfraKind, Label, NetworkAccess, OutcomeClass, OutcomeEvent, OutputName, Provenance,
-        ReadyAction, Reporter, Rerun, Summary, Tally, TargetRole, Timestamp,
+        ReadyAction, RemoteCall, RemoteNotice, Reporter, Rerun, Summary, Tally, TargetRole,
+        Timestamp,
     };
 
     use super::{Mode, Report, TerminalReporter, TestBlocks, block};
@@ -397,12 +424,14 @@ mod tests {
                 skipped,
                 built,
                 cached,
+                fetched: 0,
             },
             tests: Tally {
                 failed: 0,
                 skipped: 0,
                 built: 0,
                 cached: 0,
+                fetched: 0,
             },
         }
     }
@@ -595,6 +624,7 @@ mod tests {
             skipped: 0,
             built: 1,
             cached: 0,
+            fetched: 0,
         };
         reporter.summary(summary);
         assert_eq!(written(&mut reporter), b"tests: 1 passed, 1 failed\n");
@@ -606,6 +636,16 @@ mod tests {
         reporter.begun(1);
         reporter.summary(counts(0, 0, 1, 0));
         assert_eq!(written(&mut reporter), b"1 built\n");
+    }
+
+    #[test]
+    fn the_summary_line_counts_fetched() {
+        let mut reporter = reporter(Mode::Plain, Paint::Plain);
+        reporter.begun(3);
+        let mut summary = counts(0, 0, 1, 0);
+        summary.all.fetched = 2;
+        reporter.summary(summary);
+        assert_eq!(written(&mut reporter), b"1 built, 2 fetched\n");
     }
 
     #[test]
@@ -626,6 +666,7 @@ mod tests {
             skipped: 0,
             built: 0,
             cached: 1,
+            fetched: 0,
         };
         reporter.summary(summary);
         assert_eq!(written(&mut reporter), b"tests: 1 passed (1 cached)\n");
@@ -641,6 +682,7 @@ mod tests {
             skipped: 0,
             built: 1,
             cached: 0,
+            fetched: 0,
         };
         reporter.summary(summary);
         assert_eq!(written(&mut reporter), b"tests (rerun): 1 passed\n");
@@ -701,6 +743,40 @@ mod tests {
                 "    command: cc -c lib/text.c -o out/lib/text\n",
                 "2 failed, 1 skipped, 1 cached\n",
             )
+        );
+    }
+
+    #[test]
+    fn a_remote_failure_is_one_warning_line_naming_the_call_and_the_diagnostic() {
+        let mut reporter = reporter(Mode::Plain, Paint::Plain);
+        reporter.begun(1);
+        reporter.remote(&RemoteNotice::Failed {
+            call: RemoteCall::Lookup,
+            diagnostic: Diagnostic::new("the server cannot be reached"),
+        });
+        assert_eq!(
+            String::from_utf8(written(&mut reporter)).unwrap(),
+            "warning: remote cache lookup failed: the server cannot be reached; the build goes on without it\n"
+        );
+    }
+
+    #[test]
+    fn a_warning_ends_a_line_left_open_and_keeps_the_status_line_below_it() {
+        let mut reporter = reporter(Mode::Live, Paint::Plain);
+        reporter.begun(1);
+        reporter.started(&action("//lib:text", None));
+        reporter.printed(&label("//lib:text"), Channel::Stdout, b"partial");
+        let _ = written(&mut reporter);
+        reporter.remote(&RemoteNotice::Failed {
+            call: RemoteCall::Download,
+            diagnostic: Diagnostic::new("reset"),
+        });
+        let text = String::from_utf8(written(&mut reporter)).unwrap();
+        assert!(
+            text.starts_with(
+                "\nwarning: remote cache download failed: reset; the build goes on without it\n"
+            ),
+            "{text:?}"
         );
     }
 

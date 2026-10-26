@@ -128,3 +128,44 @@ jobs:
       # likely to appear. `+<version>` overrides rust-toolchain.toml's `stable` pin.
       - name: cargo check on the declared floor
         run: cargo +${{ steps.msrv.outputs.version }} check --workspace --all-targets --all-features
+
+  reapi-codegen:
+    name: Generated REAPI code
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # `crates/buildl/generated/reapi/` is committed, not built, so nothing in the
+    # gate notices it drifting from the vendored protos or from the generator. This
+    # job regenerates it and fails on any difference, then checks the files still
+    # ship in the published crate, without which `buildl` would not compile from
+    # crates.io.
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the latest stable Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: reapi-codegen
+          workspaces: |
+            .
+            tools/reapi-codegen
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make
+
+      - name: Regenerate the REAPI code
+        run: cargo make reapi-codegen
+
+      - name: The committed code matches the generator
+        run: git diff --exit-code crates/buildl/generated
+
+      - name: The generated code is in the published crate
+        run: |
+          cargo package -p buildl --list --allow-dirty > package-files.txt
+          grep -q '^generated/reapi/' package-files.txt || {
+            echo "generated/reapi/ is missing from the buildl package" >&2
+            exit 1
+          }

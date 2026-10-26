@@ -46,9 +46,10 @@ impl Exit {
     /// that failure decides the status. A class this binary has no row for is buildl's fault.
     pub(crate) const fn of_class(class: &OutcomeClass) -> Self {
         match class {
-            OutcomeClass::Cached | OutcomeClass::Built | OutcomeClass::Skipped { .. } => {
-                Self::Success
-            }
+            OutcomeClass::Cached
+            | OutcomeClass::Built
+            | OutcomeClass::Fetched
+            | OutcomeClass::Skipped { .. } => Self::Success,
             OutcomeClass::ActionFailure { .. }
             | OutcomeClass::Killed { .. }
             | OutcomeClass::OutputMissing { .. }
@@ -99,7 +100,11 @@ impl Exit {
             | Error::UnknownTarget { .. }
             | Error::InvalidQuery { .. }
             | Error::NoRun { .. }
-            | Error::NotATest { .. } => Self::Usage,
+            | Error::NotATest { .. }
+            | Error::UploadUnsandboxed
+            | Error::RemoteToken { .. }
+            | Error::RemoteSwitch { .. }
+            | Error::RemoteFlags { .. } => Self::Usage,
             Error::MissingTool { .. } | Error::MissingOutput { .. } | Error::PluginFetch { .. } => {
                 Self::Infrastructure
             }
@@ -179,8 +184,9 @@ mod tests {
         DeclarationSite, DeclaredKind, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
         Error, EvaluationFailure, FileChange, InfraKind, InputKind, Label, Origin, OutcomeClass,
         OutputDifference, OutputName, OutputPath, OutputRefusal, PluginName, PluginRef,
-        PluginVersion, PluginViolation, PortName, Program, Provenance, SettingName, SourcePath,
-        TargetRole, TreeFault, Verification, Want, WantedSet,
+        PluginVersion, PluginViolation, PortName, Program, Provenance, RemoteFlagConflict,
+        RemoteVariable, SettingName, SourcePath, TargetRole, TokenSource, TreeFault, Verification,
+        Want, WantedSet,
     };
 
     use super::Exit;
@@ -243,6 +249,17 @@ mod tests {
                 asked: label("//:app"),
                 declared_with: TargetRole::Build,
                 site: Box::new(site()),
+            },
+            Error::UploadUnsandboxed,
+            Error::RemoteToken {
+                from: TokenSource::Env(EnvName::parse("CACHE_TOKEN").unwrap()),
+            },
+            Error::RemoteSwitch {
+                name: RemoteVariable::Upload,
+                value: "yes".to_owned(),
+            },
+            Error::RemoteFlags {
+                conflict: RemoteFlagConflict::NoRemoteWithSwitch,
             },
         ]
     }
@@ -522,6 +539,7 @@ mod tests {
         vec![
             (OutcomeClass::Cached, Exit::Success),
             (OutcomeClass::Built, Exit::Success),
+            (OutcomeClass::Fetched, Exit::Success),
             (
                 OutcomeClass::Skipped {
                     because: label("//:lib"),
@@ -589,6 +607,25 @@ mod tests {
             site: Box::new(site()),
         };
         assert_eq!(Exit::of_error(&error), Exit::Usage);
+    }
+
+    #[test]
+    fn the_three_errors_exit_as_usage() {
+        let errors = [
+            Error::RemoteToken {
+                from: TokenSource::Env(EnvName::parse("CACHE_TOKEN").unwrap()),
+            },
+            Error::RemoteSwitch {
+                name: RemoteVariable::Strict,
+                value: "yes".to_owned(),
+            },
+            Error::RemoteFlags {
+                conflict: RemoteFlagConflict::SwitchWithoutRemote,
+            },
+        ];
+        for error in &errors {
+            assert_eq!(Exit::of_error(error), Exit::Usage, "{error}");
+        }
     }
 
     #[test]
@@ -677,12 +714,12 @@ mod tests {
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [5, 4, 3, 20, 4, 7]);
+        assert_eq!(counts, [9, 4, 3, 20, 4, 7]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 43, "a variant is listed twice");
+        assert_eq!(variants.len(), 47, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");
@@ -706,6 +743,7 @@ mod tests {
             PortName::GraphRecord,
             PortName::RunHistory,
             PortName::PluginStore,
+            PortName::RemoteCache,
         ] {
             assert_eq!(
                 Exit::of_error(&adapter(port)),

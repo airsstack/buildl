@@ -10,6 +10,7 @@
 //! adapter that runs actions; this crate reads no clock.
 
 use core::fmt;
+use core::num::NonZeroU64;
 use core::str::FromStr;
 use core::time::Duration;
 
@@ -98,6 +99,14 @@ impl Timeout {
         }
     }
 
+    /// The timeout of `secs` whole seconds. It cannot fail, because a length of zero is not
+    /// representable in the argument; a count too large for milliseconds to hold stops at the
+    /// longest length there is.
+    #[must_use]
+    pub const fn from_secs(secs: NonZeroU64) -> Self {
+        Self(secs.get().saturating_mul(1_000))
+    }
+
     /// The timeout as a length of time.
     #[must_use]
     pub const fn as_duration(self) -> Duration {
@@ -139,9 +148,18 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use core::num::NonZeroU64;
     use core::time::Duration;
 
     use super::Timeout;
+
+    #[test]
+    fn a_whole_number_of_seconds_states_a_timeout_without_parsing() {
+        let timeout = Timeout::from_secs(NonZeroU64::new(90).unwrap());
+        assert_eq!(timeout.as_duration(), Duration::from_secs(90));
+        assert_eq!(timeout, Timeout::parse("90s").unwrap());
+        assert_eq!(timeout.to_string(), "90s");
+    }
 
     #[test]
     fn a_number_and_a_unit_state_a_length_of_time() {

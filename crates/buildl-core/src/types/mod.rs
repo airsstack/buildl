@@ -40,6 +40,20 @@
 //!   [`ApproverMode`] — which approver a workspace names.
 //! - [`Checkup`] — what a workspace allows and wants, as `doctor` reports it.
 //! - [`Workspace`] — what a workspace's manifest tells the pipeline.
+//! - [`Blob`] — a digest with the size of what it digests; [`RootPath`] — a file of the input
+//!   root a remote action is given.
+//! - [`RemoteAction`], [`RemoteFile`] and [`RemotePlatform`] — the action a remote cache is
+//!   asked about; [`RemoteHit`] with [`RemoteOutputFile`], [`RemoteOutputDirectory`] and
+//!   [`RemoteTreeFile`] — the result it answers with, unchecked; [`RemoteUpload`] with
+//!   [`RemoteOutput`], [`RemoteContent`] and [`RemoteTree`], and [`Uploaded`] — what a run stores
+//!   there and how that ended.
+//! - [`RemoteUse`], [`RemoteFailure`] and [`RemotePolicy`] — what a run does with the remote;
+//!   [`RemoteCall`] and [`RemoteNotice`] — what a build says about it; [`RemoteSwitch`] — whether
+//!   a failed call has turned it off; [`RunChoices`] — those and the other choices a command
+//!   makes about one run.
+//! - [`RemoteSettings`] — the remote cache a workspace names, built through
+//!   [`RemoteSettingsBuilder`], with its parts [`RemoteUrl`], [`RemoteScheme`], [`InstanceName`],
+//!   [`HostPath`], [`TokenSource`] and [`HeaderName`].
 //! - [`PluginName`], [`PluginVersion`], [`PluginRef`], [`PluginCap`] and [`PluginNetwork`] — a
 //!   plugin, what its manifest asks for, and what the workspace lets it have; [`PluginChain`]
 //!   — the plugins that made a declaration; [`Origin`] — whose
@@ -93,6 +107,7 @@ pub mod approver_mode;
 pub mod argument;
 pub mod attribution;
 pub mod authority;
+pub mod blob;
 pub mod build_file;
 pub mod cache_row;
 pub mod captured;
@@ -137,7 +152,16 @@ pub mod purpose;
 pub mod query;
 pub mod raw_outcome;
 pub mod ready_action;
+pub mod remote_action;
+pub mod remote_hit;
+pub mod remote_notice;
+pub mod remote_policy;
+pub mod remote_settings;
+pub mod remote_switch;
+pub mod remote_upload;
 pub mod rerun;
+pub mod root_path;
+pub mod run_choices;
 pub mod sample;
 pub mod scope;
 pub mod setting;
@@ -163,6 +187,7 @@ pub use approver_mode::ApproverMode;
 pub use argument::{Argument, Command};
 pub use attribution::Attribution;
 pub use authority::{Ceiling, Want, WantedSet};
+pub use blob::Blob;
 pub use build_file::{
     BuildFile, DeclarationOrder, Evaluated, StagedAlias, StagedDeclaration, StagedFile, StagedItem,
     StagedRule, StagedSetting, StagedSubdir, StagedTarget,
@@ -216,7 +241,19 @@ pub use purpose::Purpose;
 pub use query::{Direction, Query};
 pub use raw_outcome::{Exit, RawOutcome};
 pub use ready_action::ReadyAction;
+pub use remote_action::{RemoteAction, RemoteFile, RemotePlatform};
+pub use remote_hit::{RemoteHit, RemoteOutputDirectory, RemoteOutputFile, RemoteTreeFile};
+pub use remote_notice::{RemoteCall, RemoteNotice};
+pub use remote_policy::{RemoteFailure, RemotePolicy, RemoteUse};
+pub use remote_settings::{
+    HeaderName, HostPath, InstanceName, RemoteScheme, RemoteSettings, RemoteSettingsBuilder,
+    RemoteUrl, TokenSource,
+};
+pub use remote_switch::RemoteSwitch;
+pub use remote_upload::{RemoteContent, RemoteOutput, RemoteTree, RemoteUpload, Uploaded};
 pub use rerun::Rerun;
+pub use root_path::RootPath;
+pub use run_choices::RunChoices;
 pub use sample::Sample;
 pub use scope::Scope;
 pub use setting::{SettingName, SettingValue};

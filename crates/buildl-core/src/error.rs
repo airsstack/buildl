@@ -18,6 +18,8 @@
 //!   declaration holding a bad reference, one target on a dependency cycle, one declaration of a
 //!   duplicated label, or the target a test run named that is not a test.
 //! - [`PortName`] — which port an [`Error::Adapter`] came through.
+//! - [`RemoteVariable`] and [`RemoteFlagConflict`] — which switch variable an
+//!   [`Error::RemoteSwitch`] refused, and which flag combination an [`Error::RemoteFlags`] did.
 //! - [`TreeFault`] — why a list of files an [`Error::InvalidTree`] is about is not a tree.
 //! - [`Result`] — the crate-wide alias.
 //!
@@ -31,7 +33,8 @@ use std::path::PathBuf;
 use crate::types::{
     Ceiling, Declaration, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
     FieldName, InputKind, Label, Node, Origin, OutputPath, PluginName, PluginViolation, Program,
-    Provenance, SettingName, SourcePath, TargetRole, TreePath, Want, WantedSet, Written,
+    Provenance, RemoteUrl, SettingName, SourcePath, TargetRole, TokenSource, TreePath, Want,
+    WantedSet, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -52,6 +55,12 @@ pub enum Error {
         value: String,
         /// Why the grammar rejected it.
         reason: &'static str,
+    },
+    /// A remote cache is given a token but named by a `grpc://` URL, which sends it unencrypted.
+    #[error("a token would be sent in clear text to {url}; use a grpcs:// URL")]
+    InsecureToken {
+        /// The remote cache's URL.
+        url: RemoteUrl,
     },
     /// A declaration holds a value its kind of target does not take.
     #[error("{reason}")]
@@ -393,6 +402,43 @@ pub enum Error {
     /// A plan was handed over with a graph it was not made from.
     #[error("the plan was not made from this graph")]
     ForeignPlan,
+    /// Uploading to the remote cache was asked for, and actions run bare.
+    ///
+    /// A bare action can read files it did not declare, so a result it produced is not known to
+    /// depend only on its declared inputs, and no one else could trust it.
+    #[error(
+        "uploading to the remote cache needs actions to run in the input sandbox, \
+         but strategy is \"bare\"; set strategy to \"sandbox\", or stop uploading by \
+         unsetting BUILDL_REMOTE_UPLOAD or dropping --remote-upload"
+    )]
+    UploadUnsandboxed,
+    /// The remote cache's token is named, and cannot be used: the variable is unset or not text,
+    /// the file is unreadable, or the token holds a character a header cannot carry.
+    ///
+    /// The error names where the token should have come from and never holds the token itself.
+    #[error(
+        "the remote cache token from {} cannot be used: it is missing or unreadable, \
+         or it holds a character a header cannot carry",
+        token_source(.from)
+    )]
+    RemoteToken {
+        /// The variable or file the token was to come from.
+        from: TokenSource,
+    },
+    /// A remote cache switch variable holds something other than `1` or `0`.
+    #[error("{name} is {value:?}, and must be 1 or 0")]
+    RemoteSwitch {
+        /// The variable.
+        name: RemoteVariable,
+        /// What it holds, as text.
+        value: String,
+    },
+    /// The remote cache flags of a run contradict each other or the workspace.
+    #[error("{conflict}")]
+    RemoteFlags {
+        /// What is wrong with the combination.
+        conflict: RemoteFlagConflict,
+    },
     /// Two outputs would be written to one place: the same path, or a path that another output
     /// needs as a directory.
     #[error(
@@ -514,6 +560,14 @@ fn lost_by_the_dispatcher(targets: &[Label]) -> String {
         PortName::Dispatcher,
         labels.join(", ")
     )
+}
+
+/// Where a token is read from, as a phrase: `environment variable NAME` or `file PATH`.
+fn token_source(from: &TokenSource) -> String {
+    match from {
+        TokenSource::Env(name) => format!("environment variable {name}"),
+        TokenSource::File(path) => format!("file {path}"),
+    }
 }
 
 /// The suffix naming who required a missing build file.
@@ -760,6 +814,8 @@ pub enum PortName {
     Approver,
     /// Where plugins are fetched to and the lock that pins them.
     PluginStore,
+    /// The cache of results shared between machines.
+    RemoteCache,
 }
 
 impl fmt::Display for PortName {
@@ -780,6 +836,7 @@ impl fmt::Display for PortName {
             Self::Sweep => "sweep",
             Self::Approver => "approver",
             Self::PluginStore => "plugin store",
+            Self::RemoteCache => "remote cache",
         })
     }
 }
@@ -925,6 +982,54 @@ impl fmt::Display for ActionFound {
     }
 }
 
+/// The variable of a remote cache switch.
+///
+/// Non-exhaustive for the same reason [`Error`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RemoteVariable {
+    /// `BUILDL_REMOTE_UPLOAD`, which turns uploading on.
+    Upload,
+    /// `BUILDL_REMOTE_STRICT`, which makes a remote failure fail the build.
+    Strict,
+}
+
+impl fmt::Display for RemoteVariable {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Upload => "BUILDL_REMOTE_UPLOAD",
+            Self::Strict => "BUILDL_REMOTE_STRICT",
+        })
+    }
+}
+
+/// A combination of remote cache flags that an [`Error::RemoteFlags`] refuses.
+///
+/// Non-exhaustive for the same reason [`Error`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum RemoteFlagConflict {
+    /// `--no-remote` together with `--remote-upload` or `--remote-strict`.
+    NoRemoteWithSwitch,
+    /// `--remote-upload` or `--remote-strict` in a workspace whose `buildl.toml` has no
+    /// `[remote]` table.
+    SwitchWithoutRemote,
+}
+
+impl fmt::Display for RemoteFlagConflict {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::NoRemoteWithSwitch => {
+                "--no-remote cannot be combined with --remote-upload or --remote-strict"
+            }
+            Self::SwitchWithoutRemote => {
+                "--remote-upload and --remote-strict need a [remote] table in buildl.toml, \
+                 and this workspace has none"
+            }
+        })
+    }
+}
+
 /// Which domain name an [`Error::InvalidName`] is about.
 ///
 /// A type rather than a string so classification is read as a field. Non-exhaustive for the same
@@ -988,6 +1093,14 @@ pub enum NameKind {
     TagName,
     /// The URL of a git repository.
     GitUrl,
+    /// The URL of a remote cache.
+    RemoteUrl,
+    /// The instance name a remote cache is addressed under.
+    InstanceName,
+    /// A path to a file the host reads, such as a certificate or a token.
+    HostPath,
+    /// The name of the request header a remote cache's token is sent in.
+    HeaderName,
 }
 
 impl fmt::Display for NameKind {
@@ -1021,6 +1134,10 @@ impl fmt::Display for NameKind {
             Self::CommitId => "commit id",
             Self::TagName => "tag name",
             Self::GitUrl => "git URL",
+            Self::RemoteUrl => "remote cache URL",
+            Self::InstanceName => "instance name",
+            Self::HostPath => "host path",
+            Self::HeaderName => "header name",
         })
     }
 }
@@ -1062,13 +1179,14 @@ mod tests {
 
     use super::{
         ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
-        EvaluationLimit, NameKind, PortName, TreeFault,
+        EvaluationLimit, NameKind, PortName, RemoteFlagConflict, RemoteVariable, TreeFault,
     };
     use crate::types::{
         Argument, Ceiling, Command, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName,
-        EnvValue, FieldName, Freshness, InputKind, Label, NetworkAccess, Node, Origin, OutputName,
-        OutputPath, PluginName, PluginRef, PluginVersion, PluginViolation, Program, Provenance,
-        SettingName, SourcePath, TargetName, TargetRole, TreePath, Want, WantedSet, Written,
+        EnvValue, FieldName, Freshness, HostPath, InputKind, Label, NetworkAccess, Node, Origin,
+        OutputName, OutputPath, PluginName, PluginRef, PluginVersion, PluginViolation, Program,
+        Provenance, RemoteUrl, SettingName, SourcePath, TargetName, TargetRole, TokenSource,
+        TreePath, Want, WantedSet, Written,
     };
 
     fn lib_file() -> Provenance {
@@ -1686,6 +1804,68 @@ mod tests {
     }
 
     #[test]
+    fn an_unreadable_token_names_where_it_was_to_come_from() {
+        let env = Error::RemoteToken {
+            from: TokenSource::Env(EnvName::parse("CACHE_TOKEN").unwrap()),
+        };
+        assert_eq!(
+            env.to_string(),
+            "the remote cache token from environment variable CACHE_TOKEN cannot be used: \
+             it is missing or unreadable, or it holds a character a header cannot carry"
+        );
+        let file = Error::RemoteToken {
+            from: TokenSource::File(HostPath::parse("secrets/token").unwrap()),
+        };
+        assert_eq!(
+            file.to_string(),
+            "the remote cache token from file secrets/token cannot be used: \
+             it is missing or unreadable, or it holds a character a header cannot carry"
+        );
+    }
+
+    #[test]
+    fn a_bad_switch_names_the_variable_and_what_it_holds() {
+        let err = Error::RemoteSwitch {
+            name: RemoteVariable::Upload,
+            value: "yes".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "BUILDL_REMOTE_UPLOAD is \"yes\", and must be 1 or 0"
+        );
+        assert_eq!(RemoteVariable::Strict.to_string(), "BUILDL_REMOTE_STRICT");
+    }
+
+    #[test]
+    fn refused_flags_say_why() {
+        let combined = Error::RemoteFlags {
+            conflict: RemoteFlagConflict::NoRemoteWithSwitch,
+        };
+        let unnamed = Error::RemoteFlags {
+            conflict: RemoteFlagConflict::SwitchWithoutRemote,
+        };
+        assert_eq!(
+            combined.to_string(),
+            "--no-remote cannot be combined with --remote-upload or --remote-strict"
+        );
+        assert_eq!(
+            unnamed.to_string(),
+            "--remote-upload and --remote-strict need a [remote] table in buildl.toml, \
+             and this workspace has none"
+        );
+    }
+
+    #[test]
+    fn an_unsandboxed_upload_says_how_to_sandbox_or_stop_uploading() {
+        assert_eq!(
+            Error::UploadUnsandboxed.to_string(),
+            "uploading to the remote cache needs actions to run in the input sandbox, \
+             but strategy is \"bare\"; set strategy to \"sandbox\", or stop uploading by \
+             unsetting BUILDL_REMOTE_UPLOAD or dropping --remote-upload"
+        );
+    }
+
+    #[test]
     fn not_a_test_names_the_target_and_its_file() {
         let err = Error::NotATest {
             asked: label("//:default"),
@@ -1943,10 +2123,21 @@ mod tests {
             (PortName::Sweep, "sweep"),
             (PortName::Approver, "approver"),
             (PortName::PluginStore, "plugin store"),
+            (PortName::RemoteCache, "remote cache"),
         ];
         for (port, rendered) in cases {
             assert_eq!(port.to_string(), rendered);
         }
+    }
+
+    #[test]
+    fn the_remote_cache_port_is_named_in_errors() {
+        let err = Error::Adapter {
+            port: PortName::RemoteCache,
+            diagnostic: Diagnostic::new("connection refused"),
+        };
+        assert_eq!(PortName::RemoteCache.to_string(), "remote cache");
+        assert_eq!(err.to_string(), "remote cache: connection refused");
     }
 
     #[test]
@@ -1976,6 +2167,19 @@ mod tests {
         assert_eq!(NameKind::PluginName.to_string(), "plugin name");
         assert_eq!(NameKind::PluginVersion.to_string(), "plugin version");
         assert_eq!(NameKind::PluginChain.to_string(), "plugin chain");
+        assert_eq!(NameKind::RemoteUrl.to_string(), "remote cache URL");
+        assert_eq!(NameKind::InstanceName.to_string(), "instance name");
+        assert_eq!(NameKind::HostPath.to_string(), "host path");
+        assert_eq!(NameKind::HeaderName.to_string(), "header name");
+    }
+
+    #[test]
+    fn an_insecure_token_names_the_url_and_the_fix() {
+        let url = RemoteUrl::parse("grpc://cache:50051").unwrap();
+        assert_eq!(
+            Error::InsecureToken { url }.to_string(),
+            "a token would be sent in clear text to grpc://cache:50051; use a grpcs:// URL"
+        );
     }
 
     #[test]
