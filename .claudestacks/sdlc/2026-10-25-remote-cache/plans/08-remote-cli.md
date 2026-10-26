@@ -12,8 +12,9 @@ built-on: 5ec007f25407
 **Architecture:** `LocalPorts` (`local_ports.rs:50`) names `type Remote = remote::Remote`, an
 enum of the `buildl` adapter that is `Off` (behaving as `NoRemote`) or `Reapi(Reapi)`, built by
 `Wiring::ports` (`local_ports.rs:364`) from `Workspace.remote` (plan 01) when the policy reads,
-with the channel connecting lazily so a server that is down is a lenient failure at its first
-call, not a startup error. The switches are resolved in `buildl-cli`: `main.rs` reads
+built with `Reapi::new(&settings, root)`, whose client reads the token at construction and connects
+on its first call (plan 07), so a server that is down is a lenient failure at its first call,
+not a startup error. The switches are resolved in `buildl-cli`: `main.rs` reads
 `BUILDL_REMOTE_UPLOAD` and `BUILDL_REMOTE_STRICT` beside `TERM` and `NO_COLOR` (`main.rs:96-101`),
 a new `remote_switches.rs` combines them with the flags into a `RemotePolicy`, and `RunOptions`
 (`workspace.rs:38`) carries it to the pipeline. `doctor` prints the settings and the switches.
@@ -84,8 +85,8 @@ flag, is `Error::RemoteFlags` (spec §6). Reading with upload → `ReadWrite`; s
 `tests/e2e/remote.rs`, `tests/e2e/main.rs`.
 
 **Change:** `Remote::of` returns `Off` when the policy is `OFF` or the workspace names no
-remote, and otherwise connects a `Client` lazily and reads the token, so a missing token is an
-error before anything runs (spec §6). `RunOptions` carries the policy; `build`/`test` hand it
+remote, and otherwise builds `Reapi::new(&settings, root)`, which reads the token (so a missing
+token is an error before anything runs, spec §6) and connects on its first call (plan 07). `RunOptions` carries the policy; `build`/`test` hand it
 to the pipeline with `Pipeline::set_remote(policy)` before running (`RemotePolicy::OFF` until now). `plan`, `verify`,
 `query`, `graph`, `check`, `log`, `clean`, `gc` and `doctor` keep `RemotePolicy::OFF` and never
 build a `Reapi`.

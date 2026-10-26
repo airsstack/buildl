@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-25
 depends-on: [02, 06]
 built-on: 5ec007f25407
@@ -34,6 +34,11 @@ crates/buildl/src/remote/input_tree.rs  — [create] the Directory messages of a
 crates/buildl/src/remote/encode.rs      — [create] RemoteAction → Command, Platform, Action; RemoteUpload → ActionResult and Trees; ActionResult → RemoteHit; Tree → RemoteTreeFiles; unit tests
 crates/buildl/src/remote/reapi.rs       — [create] Reapi: the RemoteCache implementation over Client; tests against TestServer
 crates/buildl/src/remote/mod.rs         — [modify] declare them; export Reapi
+crates/buildl/src/remote/client.rs      — [modify] connect on the first call; a failed connect kept, later calls `Unusable`
+crates/buildl/src/remote/channel.rs     — [modify] `prepare` (read the CA, check the address) and `Pending::open` (connect, bounded)
+crates/buildl/src/remote/transfer.rs    — [modify] `FindMissingBlobs` chunked under the message cap
+crates/buildl/src/remote/error.rs       — [modify] `TooLarge`; `Blob` names its call
+crates/buildl/src/remote/vocabulary.rs  — [modify] no `unreachable_pub` with the feature off
 ```
 
 ## Order of work
@@ -98,15 +103,20 @@ flatten it to `RemoteTreeFile`s; `None` when it holds a symlink, an empty direct
 
 **Files:** `remote/reapi.rs`, `remote/mod.rs`.
 
-**Change:** `Reapi::new(client, root)` implements `RemoteCache`:
-- `lookup` — encode the action, `get_action_result`, `hit`; `NOT_FOUND` → `Ok(None)`.
+**Change:** `Reapi::new(&RemoteSettings, root)` (the client is crate-private, so a public
+constructor takes the settings) implements `RemoteCache`; its client reads the token at
+construction and connects on its first call, so a server that is down is that call's failure:
+- `lookup` — encode the action, `get_action_result`, `hit`; `NOT_FOUND` → `Ok(None)`; an input
+  missing from disk → `Ok(None)` with no call.
 - `download` — the blobs through the client's batch or ByteStream reads, in the order asked.
 - `decode_tree` — `tree_files`.
-- `upload` — read each input file from disk and hash it as it is read; a file whose digest no
+- `upload` — read each input file from disk and hash it as it is read, keeping the size and mode
+  measured on that handle for the input tree; a file whose digest no
   longer matches → `Ok(Uploaded::InputChanged(path))` with nothing written (spec §3). Otherwise
-  `FindMissingBlobs` over the input files, the output files (bytes from the `BlobSource`), each
-  `Tree`, stdout, stderr, every input-root `Directory`, the `Command` and the `Action`; upload
-  the missing ones; then `update_action_result` (P2-P4).
+  `FindMissingBlobs` (chunked) over the input files, the output files (bytes from the `BlobSource`),
+  each `Tree`, stdout, stderr, every input-root `Directory`, the `Command` and the `Action`; upload
+  the missing ones in groups of at most 32 MiB, re-hashing each input as it is sent; then
+  `update_action_result` (P2-P4).
 Every failure is `Error::Adapter` naming the remote cache, the server's url and the call.
 
 **Proof:** written first, seen failing, then passing (against `TestServer`, `--all-features`) —
@@ -138,3 +148,32 @@ Every failure is `Error::Adapter` naming the remote cache, the server's url and 
 `cargo make dod`, `cargo deny check` and `cargo make guard-adapter-isolation` green; against
 the test server, an upload followed by a lookup of the same action finds the uploaded result,
 and the server holds every blob the `Action` names.
+
+## Review findings
+
+- strict-quality — `vocabulary::{Method, Updates}` warned `unreachable_pub` with `test-server` off (the shipped binary's build) — fixed: `cfg_attr(not(feature), expect(unreachable_pub))`; `cargo check -p buildl` clean (blocking)
+- records — the constructor, the lazy connect and the extra tests were not in the plan; plan 06's "connect is eager" and plan 08 Task 2's "connects lazily" out of date — fixed: plans 06, 07 and 08 amended (blocking)
+- security — `tree_files` expanded a Tree as a graph, so a small hostile Tree hangs the client — fixed: capped at 2^18 entries, `None` past it; 2^40-path test
+- strong types — `wire_digest` clamped a too-large size — fixed: fallible, `RemoteError::TooLarge`
+- M-PUBLIC-DEBUG — `Reapi` had no `Debug` — fixed: url and root only; token never shown (tested)
+- doc — write-group doc overstated the memory bound — fixed: flush before a blob that would pass 32 MiB; doc says what stays held
+- error text — url twice in a connect failure; ByteStream errors labelled with batch calls — fixed: url once, `ByteStream.Write`/`Read` named
+- correctness — input-tree, store and io failures named no url or call; an input deleted before lookup turned the remote off — fixed: every failure names url and call; a missing input at lookup is a miss with no call (tested)
+- test coverage — no test for a file changed between hash and send, nor for more than one write group — fixed: both, each seen failing with its guard removed
+- correctness — the upload's input tree re-stat'ed sizes after hashing — fixed: `Input { file, size, mode }` from the hashed handle; `input_tree` does no I/O
+- spec §3 — blob order put stdout/stderr before Trees — fixed
+- robustness — one `FindMissingBlobs` for every digest could pass 4 MiB — fixed: chunked at `BATCH_BUDGET / 80`; 60,000-digest test (failed before: `decoded message length too large`)
+- dead code — `Link::Failed` unreachable — fixed: removed, doc corrected
+- test robustness — tight wall-clock bounds (`channel` connect test measured 2.4 s against a 2 s bound under load) — fixed: generous bounds or server-recorded counts
+- Fix round gates (run by the fix coders): `cargo make guard-adapter-isolation` → `OK (37 edges)`; `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`; `cargo +1.94 check -p buildl --all-targets --all-features` and `cargo check -p buildl` → `Finished`, no warning; `cargo make dod` → `Build Done in 48.83 seconds` (exit 0)
+
+## Probe results
+
+- Risk "Task 2's digests": reviewed against spec §2 and the vendored proto — names sorted by bytes, environment by name, platform by name then value, fields in tag order (P7, P8), salt the 32 key bytes, `Tree.children` depth-first pre-order by name; `an_action_digest_is_stable` and `the_command_matches_spec_section_2` pin it. The outside check is plan 08 Task 4.
+- `Action.timeout` is always set: the execution timeout has a default (plan 02).
+
+## Deviations
+
+- 2026-10-26 — Tasks 1 and 2 built in parallel (disjoint files, both modules declared first); committed separately.
+- 2026-10-26 — Task 3: `Reapi::new(&RemoteSettings, root)`; the client's lazy connect moved here from plan 08 Task 2.
+- 2026-10-26 — one reviewer pass reading the diff only, then one fix round and a test-hardening pass, committed together.

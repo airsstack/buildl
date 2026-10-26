@@ -169,5 +169,5 @@ and timeout behaves as spec §5 says.
 ## Deviations
 
 - 2026-10-25 — Task 2: `Error::RemoteToken { from }`, since thiserror reads a field named `source` as the cause; `exit.rs` mapped here rather than in plan 08.
-- 2026-10-25 — Task 3: `error.rs` and `vocabulary.rs` added; connect is eager, so an untrusted certificate fails in `connect`.
+- 2026-10-25 — Task 3: `error.rs` and `vocabulary.rs` added; connect was eager, so an untrusted certificate failed in `connect`; plan 07 Task 3 made it lazy (first call).
 - 2026-10-26 — one reviewer pass reading the diff only (gates run once, by the coder), then one fix commit `7a77b03`.
