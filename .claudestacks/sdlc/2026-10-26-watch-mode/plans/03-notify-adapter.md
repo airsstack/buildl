@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-26
 depends-on: [01]
 built-on: a08d695c7505
@@ -128,3 +128,22 @@ Commit `feat(buildl): watch a workspace's files through notify`.
 
 `cargo deny check` and `cargo make dod` green, with `guard-adapter-isolation` and
 `guard-crate-edges`; `cargo test -p buildl -- watch::` covers spec §8's adapter row.
+
+## Review findings
+
+- correctness — a rescan event (inotify queue overflow, FSEvents MustScanSubDirs; notify 8.2.1 `inotify.rs:212-213`, `fsevent.rs:115-116`, `EventKind::Other` + `Flag::Rescan`, no paths) was dropped silently, so changes the system lost were never reported — `crates/buildl/src/watch/notify_changes.rs`. Fixed and verified: `next` returns `Error::Adapter { port: PortName::Changes, … }` ("the operating system dropped file events under <root>; changes may have been missed"); `gather_fails_when_the_system_dropped_events` failed before the fix (closed-channel error instead), passes after; `cargo make dod` green (fix coder, run once, workspace-wide).
+- unit-test-mandate — "a batch empty after dropping keeps waiting", "a notify `Err` is the Changes error" and "a closed channel is the Changes error" had no test — `notify_changes.rs`. Fixed and verified: gathering moved into private `gather(root, &Receiver<Delivery>)`, fed by hand-made channels in `gather_keeps_waiting_after_a_batch_that_drops_to_nothing`, `gather_collects_every_event_of_a_burst`, `gather_fails_on_a_watcher_error`, `gather_fails_when_the_channel_is_closed`; same `cargo make dod` run, green.
+- spec §8 adapter row — `a_burst_is_one_batch` wrote before `next` started, duplicating `writes_while_nobody_asks_drain_into_one_batch` — `notify_changes.rs`. Fixed: `next` starts on the helper thread first, then the five writes; same gate run, green.
+- doc-comment-discipline — docs named only "a path outside the root" as dropped — `notify_changes.rs`, `watch/mod.rs`. Fixed: they name the root itself and an invalid changed path too, and the rescan error.
+
+## Probe results
+
+- notify 8.2.1 version, MSRV 1.85, CC0-1.0 licence and the `deny.toml` exception were proven at spec time (spec P1–P3) and re-shown by Task 1's gate: `cargo deny check` — advisories, bans, licenses, sources ok, no `skip` needed; `cargo tree -p buildl -e normal -i notify` — `notify v8.2.1` under `buildl` only; `cargo make guard-crate-edges` ok.
+- `Cargo.lock` additions (reviewer read): inotify, inotify-sys, kqueue, kqueue-sys, notify 8.2.1, notify-types, objc2-core-foundation, objc2-core-services; the rest of notify's tree was already present.
+- Task 2's file-system tests ran red (7 of 10 against a stub) then green on macOS; Linux is proven by CI (risk 1, still to run on push).
+
+## Deviations
+
+- 2026-10-26 — Rescan events are treated as a watcher failure (exit 3 through the Changes error) rather than dropped. The plan and spec §5 did not name them; spec §6 makes a watcher failure the exit, and dropping them would miss changes silently. Decided by the orchestrator, no spec text contradicted.
+- 2026-10-26 — Gathering lives in a private `gather` over the channel (with free functions `take` and `closed`) so its error and empty-batch paths are unit-tested without the file system; `Changes::next` calls it.
+- 2026-10-26 — File-system tests assert `contains` (extra paths allowed), since FSEvents may report a directory beside the written file.

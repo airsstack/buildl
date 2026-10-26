@@ -200,6 +200,7 @@ pub mod search_path;
 pub mod statcache;
 pub mod state;
 pub mod tools;
+pub mod watch;
 
 mod local_ports;
 mod workspace;
