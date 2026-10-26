@@ -1,6 +1,6 @@
 # buildl — architecture building blocks
 
-**Status: built for the core pipeline, for `verify`, which re-runs cached actions and compares what they produce with the cache, for grant negotiation: the `Approver` port, the `grants` logic and `doctor`, and for plugins and discovery targets: an origin on every declaration, the plugin check in Plan, attribution, the `plugins` module of `buildl`, and a second load of the build files that reads the results of the discovery targets.** What this document describes exists, except what arrives with a later item of design §13. There is no `Grants` value: failure is closed, so a wanted set inside the ceiling is the whole grant, and the approver answers yes or no. Companion to [`design.md`](./design.md) and [`architecture.md`](./architecture.md): `design.md` says _what buildl is and why_, `architecture.md` says _how each part works_ — algorithms, types, determinism rules, runtime decision records — and this document says _how the parts are put together_: the C4 views of the system [2], the four crates, the ports between them, and the dependency rules that keep the logic of a build testable without any concrete implementation. It is the building block view of the architecture [8] and owns the workspace layout; `architecture.md` §1 defers to it.
+**Status: built for the core pipeline, for `verify`, which re-runs cached actions and compares what they produce with the cache, for grant negotiation: the `Approver` port, the `grants` logic and `doctor`, and for plugins and discovery targets: an origin on every declaration, the plugin check in Plan, attribution, the `plugins` module of `buildl`, and a second load of the build files that reads the results of the discovery targets, and for the remote cache: the `RemoteCache` port, the worker's lookup and upload steps in `execute`, and the `remote` module of `buildl`, which speaks the Remote Execution API.** What this document describes exists, except what arrives with a later item of design §13. There is no `Grants` value: failure is closed, so a wanted set inside the ceiling is the whole grant, and the approver answers yes or no. Companion to [`design.md`](./design.md) and [`architecture.md`](./architecture.md): `design.md` says _what buildl is and why_, `architecture.md` says _how each part works_ — algorithms, types, determinism rules, runtime decision records — and this document says _how the parts are put together_: the C4 views of the system [2], the four crates, the ports between them, and the dependency rules that keep the logic of a build testable without any concrete implementation. It is the building block view of the architecture [8] and owns the workspace layout; `architecture.md` §1 defers to it.
 
 **Author:** rstlix0x0 · **Date:** 2026-09-13 · **Reviewers:** —
 
@@ -67,13 +67,13 @@ graph TD
     BUILDL["[Software system]<br/>buildl<br/>sandboxed, deterministic build system:<br/>Lua declares, Rust executes"]
     WS["[External system]<br/>Workspace filesystem<br/>sources, out/"]
     TOOLS["[External system]<br/>Toolchains<br/>go, cargo, bun, docker"]
-    REMOTE["[External system, later]<br/>Remote cache — REAPI<br/>b.fetch sources"]
+    REMOTE["[External system]<br/>Remote cache — REAPI over gRPC<br/>action results shared between machines"]
     GIT["[External system]<br/>Plugin repositories<br/>read by buildl plugins fetch"]
     AUTHOR -->|"writes build files, invokes commands"| BUILDL
     CI -->|"invokes build and plan"| BUILDL
     BUILDL -->|"reads, writes"| WS
     BUILDL -->|"spawns, no shell"| TOOLS
-    BUILDL -.->|"later"| REMOTE
+    BUILDL -->|"looks results up; stores them when asked"| REMOTE
     BUILDL -->|"fetches a pinned revision, through the system git"| GIT
 ```
 
@@ -105,11 +105,11 @@ Inside the CLI process. Arrows point at the dependency: every adapter depends on
 %% C4 level 3 — components inside the CLI process
 graph TD
     CLI["[Component: crate] buildl-cli<br/>clap argument surface<br/>maps outcome classes and<br/>error variants to exit codes"]
-    LIB["[Component: crate] buildl — composition root<br/>adapters: manifest, host, digest, tools,<br/>cas, cache, log, statcache, graph,<br/>exec, dispatch, clock, report, approver<br/>no port: plugins — lock, check, fetch<br/>shared: state, search_path<br/>assembly: LocalPorts, Workspace facade"]
+    LIB["[Component: crate] buildl — composition root<br/>adapters: manifest, host, digest, tools,<br/>cas, cache, log, statcache, graph,<br/>exec, dispatch, clock, report, approver, remote<br/>no port: plugins — lock, check, fetch<br/>shared: state, search_path<br/>assembly: LocalPorts, Workspace facade"]
     LUA["[Component: crate] buildl-lua<br/>implements DeclarationSource<br/>airsl Engine per build file<br/>buildl HostModule bound as a global<br/>buildl.use: one plugin instance per chain"]
     subgraph CORE["[Component: crate] buildl-core — no I/O, no Lua, no threads"]
-        DATA["domain data<br/>Label, Digest, NodeId, Provenance<br/>Declaration, Origin, Discovered<br/>TargetGraph, Plan, Attribution<br/>KeyComponents, ActionKey<br/>ActionOutcome, OutcomeClass"]
-        PORTS["ports — traits<br/>DeclarationSource, Manifest, Host<br/>Digester, StatCache, ToolResolver<br/>ContentStore, ActionCache, EventLog<br/>RunHistory, Sweep, ExecStrategy, Dispatcher<br/>Clock, GraphRecord, Reporter<br/>Approver"]
+        DATA["domain data<br/>Label, Digest, NodeId, Provenance<br/>Declaration, Origin, Discovered<br/>TargetGraph, Plan, Attribution<br/>KeyComponents, ActionKey<br/>RemoteAction, RemoteHit, RemoteUpload<br/>ActionOutcome, OutcomeClass"]
+        PORTS["ports — traits<br/>DeclarationSource, Manifest, Host<br/>Digester, StatCache, ToolResolver<br/>ContentStore, ActionCache, EventLog<br/>RunHistory, Sweep, ExecStrategy, Dispatcher<br/>Clock, GraphRecord, Reporter<br/>Approver, RemoteCache"]
         LOGIC["pure logic<br/>load, resolve, placement, plan, grants<br/>discovery, Schedule, record, verify<br/>canonical JSON"]
     end
     AIRSL["[External crate] airsl<br/>Engine, Policy, HostModule"]
@@ -128,10 +128,10 @@ graph TD
 |---|---|---|---|
 |`buildl-core`|domain data, ports, the pure logic of every phase|`serde`, `serde_json`, `thiserror`, `sha2`|any buildl crate, `airsl`, any I/O API|
 |`buildl-lua`|the `DeclarationSource` adapter: evaluates one build file through airsl, and loads the plugins it uses|`buildl-core`, `airsl`|`buildl`|
-|`buildl`|every other adapter; the `plugins` module; `LocalPorts`; the `Workspace` facade; re-exports `buildl-core` as `buildl::buildl_core`|`buildl-core`, `buildl-lua`, `toml`, `rayon`, `serde`, `thiserror`, `tempfile`|— (composition root, §7)|
+|`buildl`|every other adapter; the `plugins` module; `LocalPorts`; the `Workspace` facade; re-exports `buildl-core` as `buildl::buildl_core`|`buildl-core`, `buildl-lua`, `toml`, `toml_edit`, `rayon`, `serde`, `thiserror`, `tempfile`, `tonic`, `tonic-prost`, `prost`, `prost-types`, `tokio`, `uuid`|— (composition root, §7)|
 |`buildl-cli`|argument surface and exit codes|`buildl`, `clap`|`buildl-core` and `buildl-lua` directly|
 
-Each adapter dependency has its reason recorded in the workspace `Cargo.toml`: `toml` reads `buildl.toml`; `rayon` hashes files, in the `Digester` adapter and nowhere else; `serde` derives the manifest's tables and the two lines the state adapters write; `thiserror` derives the state lock's error; and `tempfile` gives the temp-file-then-rename that every state file and blob is written by.
+Each adapter dependency has its reason recorded in the workspace `Cargo.toml`: `toml` reads `buildl.toml`; `rayon` hashes files, in the `Digester` adapter and nowhere else; `serde` derives the manifest's tables and the two lines the state adapters write; `thiserror` derives the state lock's error; and `tempfile` gives the temp-file-then-rename that every state file and blob is written by. `toml_edit` places a refusal of a whole `[remote]` table, where `toml` keeps no position. The remote cache's gRPC client is `tonic`, with `tonic-prost`, `prost` and `prost-types` for the messages it sends, `tokio` for the runtime the client needs, and `uuid` for the names of ByteStream uploads. They are named by the `remote` module and by no other, and `deny.toml` lets only `buildl` (and tonic's and prost's own companion crates) depend on `tonic`, `prost` and `uuid` (§7). `tokio` is not banned by name, since its direct dependents are tonic's own transport crates and its confinement follows from tonic's.
 
 Inside `buildl` there is one module per adapter, `plugins`, which serves no port but is isolated as an adapter is, two shared modules that implement no port, and two composition modules (§7 rule 2):
 
@@ -151,6 +151,7 @@ Inside `buildl` there is one module per adapter, `plugins`, which serves no port
 |`clock`|the system clock|`Clock`|
 |`report`|terminal output, and every rendering of a value into text|`Reporter`|
 |`approver`|the three approvers a manifest can name and `LocalApprover`, which picks one; the `Console` an interactive one asks on; the approvals it remembers, outside the workspace|`Approver`|
+|`remote`|the remote cache over the Remote Execution API [9]: the tokio runtime that drives a gRPC client, the channel, the login, the cache's capabilities, blob transfer, the input tree, the encoding of buildl's remote values as REAPI messages, `Reapi` and `Remote`, the cache a run is given, and `token_is_present`, which `doctor` asks; behind the `test-server` feature, an in-memory server for tests. The generated REAPI types are `include!`d from `generated/reapi/`|`RemoteCache`|
 |`plugins`|`buildl.lock`; the digest of a plugin's files; the check that every plugin `buildl.toml` names is there and unchanged; fetching git plugins into `<state>/plugins` through the system `git`. It names `state` and `search_path` and no other module, and `manifest` and it share only values in `buildl-core`|— (`local_ports` runs its `check`, `workspace` its `fetch`)|
 |`state`|shared: where each state file is, the state lock, writing a file whole, clearing a path, the scratch directory the sandbox runs actions in|—|
 |`search_path`|shared: the lookup of a program name|—|
@@ -181,6 +182,7 @@ Every value is a validated newtype or a serializable handoff; field-level detail
 |Authority|`Ceiling`, `WantedSet`, `Want`, `Workspace`; `Approval` and `DenialReason` — an approver's answer — `ApproverMode` — which approver the manifest names — `Attribution` — which plugins' targets are behind each want, shown to an approver and never part of the wanted set — and `Checkup` — what `doctor` reports, plugin violations included|
 |Plugins|`PluginName`, `PluginVersion` and `PluginRef` — a plugin and what its own manifest allows — `PluginChain` — the plugins that made a declaration, outermost first, never empty — `Origin` — a build file, or a plugin chain, carried by every `Declaration` and `Node` and by no key — `PluginCap` and `PluginNetwork` — what a workspace lets one plugin have — `PluginViolation` — a want a plugin does not allow — `PluginSource`, `GitUrl`, `Rev`, `TagName` and `CommitId` — where a plugin's files come from|
 |Discovery|`Discovered` — the last result of each discovery target, shared behind an `Arc` and handed to every evaluation — `Loaded` — a load's declarations and the discovery targets with no result — and `TargetRole::Discovery`|
+|Remote cache|`RemoteSettings` — the manifest's `[remote]` table, held in `Workspace`, with `RemoteUrl`, `RemoteScheme`, `InstanceName`, `HostPath`, `TokenSource` and `HeaderName`, each validated at construction — `RemoteAction`, `RemoteFile` and `RemotePlatform` — a task as the cache is asked about it — `RemoteHit`, `RemoteOutputFile`, `RemoteOutputDirectory` and `RemoteTreeFile` — the result it answers with, unchecked — `RemoteUpload`, `RemoteOutput`, `RemoteContent`, `RemoteTree` and `Uploaded` — what a run stores — `Blob` — a digest with its size — `RemoteUse`, `RemoteFailure` and `RemotePolicy` — what a run does with the cache and what a failure does, enums and not flags — `RemoteSwitch` — whether a failed call has turned the cache off for the command — `RemoteCall` and `RemoteNotice` — what a build says about it|
 |Execution settings|`Execution` — the manifest's `[execution]` table, held in `Workspace` — with `Workers`, `Timeout` and `Isolation`, each validated at construction; none is a key component (`architecture.md` §6)|
 |A run and what it shows|`Scope` — what a run was asked for: the workspace, or named targets — `Purpose` — whether the run builds or tests — `Rerun` — whether a run runs its tests again whatever their keys say — `LiveOutput` — whether one action is shown as it prints — `Channel`, `LiveSink` and `Captured` — which stream an action wrote to, where its bytes go as they are read, and what it printed — `Turn` — what a dispatcher hands the scheduling thread|
 |Inputs|`InputStat` and `InputKind` — what stands at an input's path: nothing, a regular file, or a link, a directory or a special file; `Hasher` — `Digest::of` for bytes handed over in pieces|
@@ -338,8 +340,11 @@ pub trait Reporter {
     /// The action shown live wrote `bytes`.
     fn printed(&mut self, label: &Label, channel: Channel, bytes: &[u8]);
     /// A target has its outcome. `printed` is what it wrote that was not shown live:
-    /// for a cached target, what it wrote when it last ran.
+    /// for a cached or a fetched target, what it wrote when it last ran.
     fn finished(&mut self, event: &OutcomeEvent, printed: Captured<'_>);
+    /// A call to the remote cache failed and the build went on without it, or a target's
+    /// result was not uploaded because an input changed meanwhile.
+    fn remote(&mut self, notice: &RemoteNotice);
     /// Every target has its outcome.
     fn summary(&mut self, summary: Summary);
 }
@@ -351,6 +356,34 @@ pub trait Approver {
     /// `attribution` says which plugins' targets are behind the wants: it explains the set
     /// and never changes it, so what is remembered or refused is decided on `wanted`.
     fn approve(&mut self, wanted: &WantedSet, attribution: &Attribution) -> Result<Approval>;
+}
+
+/// A cache of results shared between machines, asked and filled by the action that made them.
+/// Blocking, and called from several worker threads at once. A miss is `Ok(None)`; every other
+/// failure is an `Error::Adapter` naming `PortName::RemoteCache`. What it answers is not yet
+/// checked: the phase that executes checks every answer before it uses one.
+pub trait RemoteCache: Send + Sync {
+    /// The result stored for `action`, as stored; `None` when there is none.
+    fn lookup(&self, action: &RemoteAction) -> Result<Option<RemoteHit>>;
+    /// The bytes of each of `blobs`, in the same order.
+    fn download(&self, blobs: &[Blob]) -> Result<Vec<Vec<u8>>>;
+    /// The files of a directory tree the cache stores, in path order; `None` when it holds a
+    /// symlink or an empty directory, which a build cannot place.
+    fn decode_tree(&self, bytes: &[u8]) -> Result<Option<Vec<RemoteTreeFile>>>;
+    /// Stores what a run produced as the result for `action`, with the input files and the
+    /// blobs it names; the output and log blobs are read from `blobs`.
+    fn upload(
+        &self,
+        action: &RemoteAction,
+        produced: &RemoteUpload,
+        blobs: &dyn BlobSource,
+    ) -> Result<Uploaded>;
+}
+
+/// Where the bytes of the blobs an upload names are read from: the local content store, which
+/// the remote adapter may not import. The only `dyn` in the ports.
+pub trait BlobSource: Sync {
+    fn read(&self, digest: &Digest) -> Result<Option<Vec<u8>>>;
 }
 ```
 
@@ -380,11 +413,12 @@ pub trait Ports {
     type Graph: GraphRecord;
     type Reporter: Reporter;
     type Approver: Approver;
+    type Remote: RemoteCache;   // lookup before an action runs, upload after; NoRemote when there is none
 }
 
 /// One instance of each port the bundle names, with a public field per port: `source`,
 /// `manifest`, `host`, `digester`, `stat_cache`, `tools`, `cache`, `cas`, `log`, `strategy`,
-/// `dispatcher`, `clock`, `graph`, `reporter` and `approver`.
+/// `dispatcher`, `clock`, `graph`, `reporter`, `approver` and `remote`.
 pub struct PortSet<P: Ports> { pub source: P::Source, pub manifest: P::Manifest, /* ... */ }
 
 pub struct Pipeline<P: Ports> { /* ports: PortSet<P> */ }
@@ -394,7 +428,7 @@ pub struct LocalPorts<R, C>(PhantomData<fn() -> (R, C)>);
 pub type LocalPipeline<R, C> = Pipeline<LocalPorts<R, C>>;
 ```
 
-`Ports::Log` is bound by `EventLog + RunHistory`: `Pipeline::plan`, `Pipeline::verify`, `Pipeline::build` and `Pipeline::test` read the last result of each discovery target from the log they append to, and the log adapter implements both traits. The two stay separate traits, since a writer and a reader never share a method, and a caller that only reads names `RunHistory` alone.
+`Ports::Remote` is bound by `RemoteCache`, which only `build` and `test` ever call: every other command, a workspace with no `[remote]` table and a run under `RemotePolicy::OFF` hold a cache that is never asked, `NoRemote` in the core's flows and `Remote::Off` in `LocalPorts`. `Pipeline::set_remote` chooses the policy of the `build` and `test` calls that follow it. `Ports::Log` is bound by `EventLog + RunHistory`: `Pipeline::plan`, `Pipeline::verify`, `Pipeline::build` and `Pipeline::test` read the last result of each discovery target from the log they append to, and the log adapter implements both traits. The two stay separate traits, since a writer and a reader never share a method, and a caller that only reads names `RunHistory` alone.
 
 ```mermaid
 %% C4 level 4 — the Ports bundle and its two implementations
@@ -424,6 +458,7 @@ classDiagram
         Graph: GraphRecord
         Reporter: Reporter
         Approver: Approver
+        Remote: RemoteCache
     }
     class LocalPorts {
         crate buildl
@@ -450,7 +485,7 @@ classDiagram
 |reach|`TargetGraph` and a `Query` → the targets the query reaches from its target, following dependencies or the reverse edges any number of steps, without that target and without aliases, as a `BTreeSet<Label>`; a label nothing declares is `Error::UnknownTarget`|—|
 |plan|`TargetGraph`, setting overrides and the run's `Rerun` → `Plan` (the settings in force, every output placed and every command expanded, the plugin check before the ceiling check, the ceiling check with programs a dependency built exempt, attribution, key assembly, a verdict per target; the plan carries the settings it was made with, as `Plan::settings()`)|`Manifest`, `Host`, `Digester`, `StatCache`, `ToolResolver`, `ActionCache`|
 |grants|a plan's `WantedSet` and `Attribution` → go on, or `Error::NotApproved` (`negotiate`, run by `build`, `test` and `verify` after Plan and before anything runs); what of a graph's wants its plugins do not allow (`plugin_violations`), which Plan stops at the first of and `doctor` lists whole; which plugins' targets are behind each want (`attribution`); the "built" rule Plan and Execute share; a graph's wanted set (`wanted`), which Plan and `doctor` share, and what of it lies outside the ceiling (`outside`), which `doctor` reports. The ceiling check stays Plan's: no `Grants` value is handed on|`Approver`|
-|execute|the whole `TargetGraph`, the narrowed one, its `Plan`, the failure policy, `LiveOutput` and the run's `Rerun` → `Vec<ActionOutcome>` (output layout, checked over the whole graph and used for the narrowed one; placeholder expansion of commands and descriptions under the plan's settings, the program check, the `Schedule` state machine, cached or run, what an action left judged into one manifest per output, then cas, row, log, with each step shown through the reporter; an outcome per target of the narrowed graph, or `Error::DispatcherFault`)|`Manifest`, `Dispatcher`, `ExecStrategy`, `ContentStore`, `ActionCache`, `EventLog`, `Clock`, `Reporter`|
+|execute|the whole `TargetGraph`, the narrowed one, its `Plan`, the failure policy, `LiveOutput` and the run's `Rerun` → `Vec<ActionOutcome>` (output layout, checked over the whole graph and used for the narrowed one; placeholder expansion of commands and descriptions under the plan's settings, the program check, the `Schedule` state machine, cached or run, what an action left judged into one manifest per output, then cas, row, log, with each step shown through the reporter; with a remote cache, a lookup before an action runs and an upload after, each answer checked here and never by the adapter (`architecture.md` §3.4, §3.8); an outcome per target of the narrowed graph, or `Error::DispatcherFault`)|`Manifest`, `Dispatcher`, `ExecStrategy`, `ContentStore`, `ActionCache`, `EventLog`, `Clock`, `Reporter`, `RemoteCache`|
 |last_run|`[LogLine]` and a `Label` → the newest run of the label that stored both its output digests, the class of each newer line that stored none, and the damaged lines; or `Error::NoRun`, suggesting the nearest label that has a run|—|
 |verify|the whole `TargetGraph`, the narrowed one, its `Plan` and a `Sample` → `Verification` (each clean target's outputs put back under `out/` in graph order; the `Sample` of candidates, lowest key digest first; each chosen action re-run through the same `perform` as `execute` and its output manifests compared with the cached ones, in declared order, to the first difference; a target whose dependency is not cached or not placed is skipped; no row, no event and no placed output)|`Manifest`, `ActionCache`, `ContentStore`, `ExecStrategy`, `Dispatcher`, `Clock`|
 |canonical JSON|value → sorted-key bytes; those bytes, and no others, → the value|—|
@@ -459,7 +494,7 @@ classDiagram
 
 ## 6. Port catalog
 
-"Since" is the item of design §13 an adapter arrives with; item 1 is built, and so is each item-2 row listed here (today `RunHistory` and `Sweep`), the item-3 row, `InputSandbox`, and the item-4 row, `Approver`; a row with a later item describes what is designed. Item 5, plugins and discovery targets, adds no port: it gives two ports an argument (`DeclarationSource::evaluate`, `Approver::approve`), one bundle a bound (`Ports::Log`), and `buildl` the `plugins` module, which serves none (§4).
+"Since" is the item of design §13 an adapter arrives with; item 1 is built, and so is each item-2 row listed here (today `RunHistory` and `Sweep`), the item-3 row, `InputSandbox`, the item-4 row, `Approver`, and the item-6 row, `RemoteCache`; a row with a later item describes what is designed. Item 5, plugins and discovery targets, adds no port: it gives two ports an argument (`DeclarationSource::evaluate`, `Approver::approve`), one bundle a bound (`Ports::Log`), and `buildl` the `plugins` module, which serves none (§4). Item 6, the remote cache, adds one: `RemoteCache`, with the `Remote` type of the bundle and a `remote` call on `Reporter`.
 
 |Port|`buildl-core` uses it for|v1 adapter|Crate|Since|
 |---|---|---|---|---|
@@ -478,9 +513,10 @@ classDiagram
 |`ExecStrategy`|the same, in a directory of its own outside the workspace that holds copies of the action's declared inputs and its dependencies' outputs and nothing else of the workspace, with `TZ`, `LC_ALL` and `SOURCE_DATE_EPOCH` pinned|`InputSandbox` (tier 2), the default. `Local` is the one strategy `LocalPorts` names: `Bare`, `InputSandbox`, or `Refused` for `os-sandbox` and `container`, which `build` and `test` refuse before anything runs|`buildl`|3|
 |`Dispatcher`|evaluating build files and running ready actions in parallel, and carrying what a running action says to the scheduling thread|std scoped threads + `mpsc`, started as tasks need them|`buildl`|1|
 |`Approver`|whether a build whose wants are inside the ceiling may run, asked by `build`, `test` and `verify` after Plan, with the attribution of the wants|`LocalApprover`, the one the manifest's `[approver]` table names: `ManifestApprover` (yes), `DenyApprover` (no), or `InteractiveApprover`, which asks once on a `Console`, naming the plugins behind each want it asks about, and remembers a yes in the user's data directory, outside the workspace|`buildl`|4|
+|`RemoteCache`|results shared between machines: the result stored for an action, the blobs it names, a directory tree read into files, and a run's result stored with everything it names. Blocking, called from the worker threads, and checked by the core, never trusted|`remote`: a gRPC client over the Remote Execution API [9], with a tokio runtime owned by the adapter and reached through `block_on`; `grpcs` for TLS, a token in a header. `NoRemote` for a run without one|`buildl`|6|
 |`Clock`|log timestamps and durations|system clock|`buildl`|1|
 |`GraphRecord`|keeping the graph a build resolved|`.buildl/graph.json`: the canonical bytes, written whole by every build|`buildl`|1|
-|`Reporter`|output blocks and the status line|one terminal reporter with a live and a plain mode|`buildl`|1|
+|`Reporter`|output blocks, the status line, and the warnings about the remote cache|one terminal reporter with a live and a plain mode|`buildl`|1|
 
 The `Clock` port is `architecture.md` §5 rule 4's quarantine of the wall clock. The crate boundary does not enforce it — `std::time` is in scope for every crate — so `crates/buildl-core/clippy.toml` bans `Instant`, `SystemTime` and `SystemTimeError` by name, and `cargo make guard-core-purity` fails the gate when one is used, when a ban stops resolving, when a source file suppresses the lint, and on three further ways the bans can be switched off that the task itself enumerates.
 
@@ -490,10 +526,11 @@ The `Clock` port is `architecture.md` §5 rule 4's quarantine of the wall clock.
 2. **Adapters depend on `buildl-core`.** `buildl-lua` never depends on `buildl`; inside `buildl`, adapter modules never import each other. What several adapters need lives in two shared modules, `state` and `search_path`, which implement no port and name no module of the crate; adapters meet only in the two composition modules, `local_ports` and `workspace`. `plugins`, which implements no port, is held to the same rule: it names `state` and `search_path`, `local_ports` calls its `check` and `workspace` its `fetch`, and the `manifest` adapter, which reads which plugins a workspace names, shares with it values in `buildl-core` and no code.
 3. **`buildl` is the single composition root** — the only adapter crate that depends on another adapter crate (`buildl-lua`), and the only code that names more than one concrete adapter, through `LocalPorts`. This is dependency inversion applied, not violated: the principle constrains the logic, and a composition root is where concrete choices are made [3].
 4. **`buildl-cli` reaches core types through `buildl`'s re-exports**, so the binary has one library dependency.
+5. **The remote cache's gRPC client, its protobuf messages and its async runtime are the `remote` module's, in `buildl`.** `tonic`, `prost` and `uuid` have `buildl` as the one crate that may depend on them, beside their own companion crates; `tokio` follows `tonic`, whose transport crates are its only direct dependents. Nothing outside the module names tokio, and the runtime is reached through `block_on`, so `buildl-core`, the `Dispatcher` and every other adapter stay synchronous (`architecture.md` §6). `deny.toml` holds the crate edge; that no other module of `buildl` names them is the module layout's doing, as it is for `rayon` in `digest`.
 
 |Rule|Enforced by|
 |---|---|
-|the dependency half of 1, rule 4, and the cross-crate half of 2|`deny.toml`'s `[bans].deny` wrapper lists, which name the only direct parents a crate may have, plus `cargo make guard-crate-edges`, which diffs every member's direct dependencies against `crates/expected-edges.txt`. The compiler covers only imports: it stops a crate using what its `[dependencies]` omits, but not a dependency being added, and not one being removed.|
+|the dependency half of 1, rules 4 and 5, and the cross-crate half of 2|`deny.toml`'s `[bans].deny` wrapper lists, which name the only direct parents a crate may have, `tonic`, `prost` and `uuid` among them, plus `cargo make guard-crate-edges`, which diffs every member's direct dependencies against `crates/expected-edges.txt`. The compiler covers only imports: it stops a crate using what its `[dependencies]` omits, but not a dependency being added, and not one being removed.|
 |the "no I/O API" half of 1|`crates/buildl-core/clippy.toml`, an enumerated ban on the filesystem, process, thread, network, environment, standard-stream and clock APIs, asserted by `cargo make guard-core-purity`|
 |"no phase module names another" (`architecture.md` §1.1)|`crates/expected-module-edges.txt`, a committed list of `buildl-core`'s module-to-module imports, which also holds the edges of `history`, `suggest`, `verify`, `placement`, `grants` and `discovery`, six modules that are not phases, diffed by `cargo make guard-module-edges`. A grouped `crate::{…}` import, a `super::` that climbs to the crate root and an item named through the crate root's re-export (`crate::<Item>`) are refused outright, because the listing cannot read them|
 |adapter isolation inside `buildl`|`cargo make guard-adapter-isolation`, which reads every file under `crates/buildl/src` but `lib.rs`, test code included: an adapter module may name `crate::state` and `crate::search_path` and no other module of the crate, the two shared modules name none, and only `local_ports` and `workspace` name any module they like. A grouped `crate::{…}` import, `super::super`, a `super::` in a `mod.rs` or in a module that is one file, and an item named through the crate root (`crate::<Item>`) are refused outright, because each would hide an edge|
@@ -520,7 +557,7 @@ The four layers that touch real I/O, in `buildl` and `buildl-cli`:
 |CLI unit|`crates/buildl-cli/src`, beside the code|argument parsing, the exit mapping, terminal detection, a command's flow over byte buffers and a temp workspace|a process; a terminal|
 |CLI binary|`crates/buildl-cli/tests/cli`|the built binary, with a chosen working directory and environment and its output piped|`buildl` internals; a terminal|
 
-The tools these tests run are system tools — `sh`, `cp`, `sort`, `true`, `false`, `sleep` and their like — run by argv; `sh -c` appears in tests only, never in buildl. There is no compiled helper program and no shared kit of fakes (§10, §11).
+The tools these tests run are system tools — `sh`, `cp`, `sort`, `true`, `false`, `sleep` and their like — run by argv; `sh -c` appears in tests only, never in buildl. There is no compiled helper program and no shared kit of fakes (§10, §11). The one thing the layers share is a server: the remote cache's adapter tests, `buildl`'s end-to-end tests and `buildl-cli`'s binary tests all talk to the in-memory REAPI server that `buildl`'s `test-server` feature builds, on loopback, so no test reaches the internet and the shipped binary does not hold the server.
 
 The fakes live in `buildl-core`'s integration tests (`crates/buildl-core/tests/flows/common.rs`), not under `#[cfg(test)]`. They implement the public traits through the public API alone, so whatever a fake does an adapter crate can do too, and the compiler checks that on every test build. A port no flow reaches yet keeps a unit-test fake beside its trait; `Clock` still has the one it had before a build read it:
 
@@ -543,6 +580,7 @@ The fakes live in `buildl-core`'s integration tests (`crates/buildl-core/tests/f
 |`GraphRecord`|the graphs recorded, and whether to fail|a filesystem|
 |`Reporter`|every call kept as an owned value, in order|a terminal|
 |`Approver`|one answer, given every time; each set it was asked about, and the attribution given with it|a terminal, a data directory|
+|`RemoteCache`|`FakeRemote`: results held in memory by the output path of the target, lookups, downloads and uploads kept in the order received, and it can be told to fail any call, serve tampered bytes or answer that an input changed|a network, a server|
 
 Flows that run entirely in `buildl-core`'s tests:
 
@@ -575,6 +613,14 @@ Flows that run entirely in `buildl-core`'s tests:
 |a discovery target fails|the build stops with its failure and loads nothing more|
 |a discovery result the store cannot read after the target ran|an infrastructure error naming the log or the store, not a build with targets missing|
 |`plan` over a workspace with a discovery target that is not clean|the plan lists that discovery target and not what it depends on|
+|a target the fake remote holds|it ends `Fetched` and the strategy is never called; the row is written after the content; the target is not reported as started|
+|a miss; the `Off` policy|a miss runs the action; under `Off` the port is never called|
+|a dependency fetched, and a graph the remote holds entirely|its dependents get the keys a local build would give them; the graph finishes with no strategy call|
+|the same plan with the remote off, and reading from an empty one|byte-identical keys and rows|
+|a hit that is unusable, a blob that differs from its digest, a tree blob included|a remote failure: the result is not stored|
+|a lookup, a download or an upload fails|lenient: one warning, the target runs or stays built, the remote is off for the rest of the command, also across the passes of a discovery build; strict: the build fails|
+|a run with uploading on|the upload follows the run and precedes the row; a failed action, a restored target and a fetched target are not uploaded; `bare` is refused before the approver is asked|
+|the fake answers that an input changed|a notice for that target and the remote stays on|
 
 
 The same promises against the real adapters, through the `Workspace` facade (`crates/buildl/tests/e2e`):
@@ -617,6 +663,9 @@ The same promises against the real adapters, through the `Workspace` facade (`cr
 |a fixture with a discovery target: `graph`, `build`, `graph`|the first notes that the target has not run and makes no `.buildl/`; after the build the targets declared from its result are in the graph, `gc` keeps them, and the next build is all cached|
 |a discovery target not up to date, then `plan`|the plan notes that the targets declared from it may change|
 |`check` over a damaged log|it works: an unreadable result is no result|
+|a second checkout of the same sources, against the in-test server a first build uploaded to|every target fetched, no action run, outputs byte-identical|
+|a server that is down; a missing token; `verify`|one warning and every target built; the build refused before anything runs; the server sees no call|
+|sixteen threads turning the remote off at once|one notice|
 
 ## 9. Publishing
 
@@ -638,7 +687,7 @@ graph LR
 Nothing is published yet. Four rules keep publishing possible, and every change to the workspace follows them:
 
 1. Every dependency between members is `{ workspace = true }`, and no member depends, dev-dependencies included, on a member later in the publish order: `cargo package` fails on one, and a dev-dependency given by path alone is silently dropped from the packaged manifest.
-2. The workspace has no fifth member, and `buildl` gains no `[[bin]]`, `[[example]]` or `[features]` for the sake of tests.
+2. The workspace has no fifth member (the REAPI code generator is a package outside the workspace, `architecture.md` §3.8), and `buildl` gains no `[[bin]]` or `[[example]]` for the sake of tests. Its one `[features]` entry, `test-server`, builds the in-memory server the remote cache's tests talk to: off by default, enabled by `buildl-cli` only as a dev-dependency, so the shipped binary does not hold the server.
 3. Fixtures and golden files live inside the package whose tests read them, reached through `CARGO_MANIFEST_DIR` or `include_str!`; no test reads another package's directory.
 4. No fixture path holds a component named `target` or `debug`.
 
@@ -670,9 +719,11 @@ Once published, the ports are a semver contract:
 |When ports are wired|**Per `plan`, `build`, `test`, `verify` or `gc` call; a source of build files, the log and the cas for `check`, `graph` and `query`, and with the manifest for `doctor`; the log and the cas alone for `log`; none for `clean`**|`Pipeline` needs every port, and a command that reads only build files and the results of discovery targets must not need, lock or be stopped by a state file: a corrupt `cache.json` does not stop `check`, and a log that will not parse only means no result. The state lock is held for one call, so an embedder that keeps a `Workspace` open does not hold the directory while idle.|
 |Who owns the reporter|**The caller: `Workspace::build` is lent `&mut R` for one build**|Only `build` reports, and an embedder supplies its own reporter. `LocalPorts<R, C>` is generic over it, and `&mut R` is a `Reporter` when `R` is, so the bundle needs no bound beyond that. The `Console` an interactive approver asks on is lent the same way, as `C`.|
 |Tools in tests|**System tools by argv; no compiled helper, no published kit of fakes**|Cargo sets `CARGO_BIN_EXE_<name>` only for integration tests of the package that owns the binary, so a helper would cost the published `buildl` crate a `[[bin]]` or a feature, or the workspace a fifth member (§9).|
-|Adapter isolation|**Checked by `cargo make guard-adapter-isolation`**|Fifteen modules — fourteen adapters, and `plugins`, which serves no port — in one crate is where a cross-import slips in. What they share lives in `state` and `search_path`, which implement no port (§7 rule 2).|
+|Adapter isolation|**Checked by `cargo make guard-adapter-isolation`**|Sixteen modules — fifteen adapters, and `plugins`, which serves no port — in one crate is where a cross-import slips in. What they share lives in `state` and `search_path`, which implement no port (§7 rule 2).|
 |Reaching discovery results|**A second argument of `DeclarationSource::evaluate`, a `Discovered` that Load passes unchanged to every evaluation**|An evaluation stays a function of its file and that one value, wherever and whenever it runs on the dispatcher's workers. Nothing is published (§9), so the port's signature changes in place, and the compiler names every implementor.|
 |What an approver is told|**`Approver::approve(wanted, attribution)`; the attribution explains, the wanted set decides**|An approval is remembered on the wanted set alone, so an approver that ignores the attribution (`ManifestApprover` and `DenyApprover` do) is correct, and one that shows it (`InteractiveApprover`) cannot change what a yes covers.|
+|The remote cache's port|**`RemoteCache`, blocking, with the checks in the core and `BlobSource` the one `dyn`**|Workers on plain threads call it concurrently, and a blocking port keeps the scheduler and the core synchronous whatever the adapter needs underneath (`architecture.md` §6). The core judges every answer, so each check is tested against a fake port and the adapter only moves and encodes. The adapter may not import the content store (§7 rule 2), so an upload names the blobs it needs through a callback the core hands across the port, which is the one place a trait object is passed.|
+|Where the test server lives|**A `test-server` feature of `buildl`, off by default**|The adapter's tests, the end-to-end tests and the binary's tests all need the same REAPI server, and an integration test or another crate can reach a library's code only through its public API. One feature builds it once for the three; the shipped binary does not enable it, and `buildl-cli` takes it as a dev-dependency only (§9 rule 2).|
 |The plugin lock and store|**`plugins`, a module of `buildl` that serves no port**|Plan never reads the lock or the store, so no trait stands between the core and them: `local_ports` runs the check once and hands the directories to the declaration source, and `workspace` runs the fetch. The module is isolated like an adapter (§7 rule 2).|
 
 ## 11. Open questions
@@ -690,3 +741,4 @@ Once published, the ports are a semver contract:
 6. The Cargo team. _The Cargo Book — Publishing on crates.io_. URL: [https://doc.rust-lang.org/cargo/reference/publishing.html](https://doc.rust-lang.org/cargo/reference/publishing.html)
 7. Microsoft. _Pragmatic Rust Guidelines_. URL: [https://microsoft.github.io/rust-guidelines/](https://microsoft.github.io/rust-guidelines/)
 8. arc42. _Building block view_. URL: [https://docs.arc42.org/section-5/](https://docs.arc42.org/section-5/)
+9. Bazel authors. _remote-apis — `build/bazel/remote/execution/v2/remote_execution.proto`, at commit `c2c07e3d718d3d490a4958344d9c3e47de0bfaf3`_. GitHub. URL: [https://github.com/bazelbuild/remote-apis/tree/c2c07e3d718d3d490a4958344d9c3e47de0bfaf3](https://github.com/bazelbuild/remote-apis/tree/c2c07e3d718d3d490a4958344d9c3e47de0bfaf3)
