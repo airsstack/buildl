@@ -55,14 +55,22 @@ pub(crate) enum RemoteError {
     #[error("the remote cache does not accept uploads: it reports action cache updates disabled")]
     UpdatesDisabled,
     /// One blob of a transfer failed.
-    #[error("blob {}/{} failed with {code:?}: {message}", .digest.hash, .digest.size_bytes)]
+    #[error("{call}: blob {}/{} failed with {code:?}: {message}", .digest.hash, .digest.size_bytes)]
     Blob {
+        /// The call that carried the blob.
+        call: Method,
         /// The blob.
         digest: Digest,
         /// The status the cache gave the blob.
         code: tonic::Code,
         /// The cache's explanation.
         message: String,
+    },
+    /// A blob is larger than the protocol's digest can state.
+    #[error("a blob of {size} bytes is larger than a digest can name")]
+    TooLarge {
+        /// The blob's size in bytes.
+        size: u64,
     },
     /// The cache's answer breaks the protocol.
     #[error("{call} was answered wrongly: {detail}")]

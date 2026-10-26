@@ -7,6 +7,13 @@
 use std::fmt;
 
 /// A call of the REAPI that buildl makes.
+///
+/// Public only so the test server can re-export it; without that feature nothing outside the
+/// crate can name it.
+#[cfg_attr(
+    not(feature = "test-server"),
+    expect(unreachable_pub, reason = "re-exported only by the test server")
+)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Method {
     /// `Capabilities.GetCapabilities`.
@@ -29,6 +36,10 @@ pub enum Method {
 
 impl Method {
     /// The call as `Service.Method`.
+    #[cfg_attr(
+        not(feature = "test-server"),
+        expect(unreachable_pub, reason = "re-exported only by the test server")
+    )]
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
@@ -51,6 +62,13 @@ impl fmt::Display for Method {
 }
 
 /// Whether a cache lets a client write action results and blobs.
+///
+/// Public only so the test server can re-export it; without that feature nothing outside the
+/// crate can name it.
+#[cfg_attr(
+    not(feature = "test-server"),
+    expect(unreachable_pub, reason = "re-exported only by the test server")
+)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Updates {
     /// `update_enabled` is advertised and `UpdateActionResult` is accepted.

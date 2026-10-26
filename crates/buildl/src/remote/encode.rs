@@ -44,6 +44,15 @@ impl Encoded {
             bytes,
         }
     }
+
+    /// The protocol's digest of the encoding.
+    pub(crate) fn digest(&self) -> wire::Digest {
+        wire::Digest {
+            hash: self.blob.digest.to_string(),
+            // A `Vec` holds at most `isize::MAX` bytes, so the length of `bytes` is below `i64::MAX`.
+            size_bytes: self.blob.size.cast_signed(),
+        }
+    }
 }
 
 /// What an upload sends as the result of an action: the `ActionResult`, and the `Tree` of each
@@ -57,11 +66,18 @@ pub(crate) struct ResultMessages {
 }
 
 /// `blob` as the protocol's digest.
-pub(crate) fn wire_digest(blob: &Blob) -> wire::Digest {
-    wire::Digest {
+///
+/// # Errors
+///
+/// Returns [`RemoteError::TooLarge`] when the blob is larger than the protocol's signed size can
+/// state.
+pub(crate) fn wire_digest(blob: &Blob) -> Result<wire::Digest, RemoteError> {
+    let size_bytes =
+        i64::try_from(blob.size).map_err(|_| RemoteError::TooLarge { size: blob.size })?;
+    Ok(wire::Digest {
         hash: blob.digest.to_string(),
-        size_bytes: i64::try_from(blob.size).unwrap_or(i64::MAX),
-    }
+        size_bytes,
+    })
 }
 
 /// The answer broke the protocol in the way `detail` says.
@@ -167,38 +183,43 @@ struct Node {
 
 /// `node` as a `Directory`, with every directory below it appended to `below` parents first, in
 /// name order.
-fn directory(node: &Node, below: &mut Vec<wire::Directory>) -> wire::Directory {
+fn directory(
+    node: &Node,
+    below: &mut Vec<wire::Directory>,
+) -> Result<wire::Directory, RemoteError> {
     let files = node
         .files
         .iter()
-        .map(|(name, (blob, mode))| wire::FileNode {
-            name: name.clone(),
-            digest: Some(wire_digest(blob)),
-            is_executable: *mode == FileMode::Executable,
-            ..wire::FileNode::default()
+        .map(|(name, (blob, mode))| {
+            Ok(wire::FileNode {
+                name: name.clone(),
+                digest: Some(wire_digest(blob)?),
+                is_executable: *mode == FileMode::Executable,
+                ..wire::FileNode::default()
+            })
         })
-        .collect();
+        .collect::<Result<_, RemoteError>>()?;
     let mut directories = Vec::new();
     for (name, child) in &node.directories {
         let mut deeper = Vec::new();
-        let message = directory(child, &mut deeper);
+        let message = directory(child, &mut deeper)?;
         directories.push(wire::DirectoryNode {
             name: name.clone(),
-            digest: Some(wire_digest(&Encoded::of(&message).blob)),
+            digest: Some(Encoded::of(&message).digest()),
         });
         below.push(message);
         below.append(&mut deeper);
     }
-    wire::Directory {
+    Ok(wire::Directory {
         files,
         directories,
         ..wire::Directory::default()
-    }
+    })
 }
 
 /// The `Tree` holding `files`: the root directory, and every directory below it parents first
 /// and in name order, so the same files always give the same bytes.
-fn tree(files: &[RemoteTreeFile]) -> wire::Tree {
+fn tree(files: &[RemoteTreeFile]) -> Result<wire::Tree, RemoteError> {
     let mut root = Node::default();
     for file in files {
         let mut node = &mut root;
@@ -213,17 +234,21 @@ fn tree(files: &[RemoteTreeFile]) -> wire::Tree {
         }
     }
     let mut children = Vec::new();
-    let root = directory(&root, &mut children);
-    wire::Tree {
+    let root = directory(&root, &mut children)?;
+    Ok(wire::Tree {
         root: Some(root),
         children,
-    }
+    })
 }
 
 /// The `ActionResult` that stores what `upload` holds, with the `Tree` of each directory output.
 ///
 /// The exit code is 0: only an action that succeeded is uploaded.
-pub(crate) fn action_result(upload: &RemoteUpload) -> ResultMessages {
+///
+/// # Errors
+///
+/// Returns [`RemoteError::TooLarge`] when a blob of the upload is larger than a digest can name.
+pub(crate) fn action_result(upload: &RemoteUpload) -> Result<ResultMessages, RemoteError> {
     let mut output_files = Vec::new();
     let mut output_directories = Vec::new();
     let mut trees = Vec::new();
@@ -232,32 +257,32 @@ pub(crate) fn action_result(upload: &RemoteUpload) -> ResultMessages {
         match &output.content {
             RemoteContent::File { blob, mode } => output_files.push(wire::OutputFile {
                 path,
-                digest: Some(wire_digest(blob)),
+                digest: Some(wire_digest(blob)?),
                 is_executable: *mode == FileMode::Executable,
                 ..wire::OutputFile::default()
             }),
             RemoteContent::Tree(files) => {
-                let encoded = Encoded::of(&tree(files.files()));
+                let encoded = Encoded::of(&tree(files.files())?);
                 output_directories.push(wire::OutputDirectory {
                     path,
-                    tree_digest: Some(wire_digest(&encoded.blob)),
+                    tree_digest: Some(encoded.digest()),
                     ..wire::OutputDirectory::default()
                 });
                 trees.push(encoded);
             }
         }
     }
-    ResultMessages {
+    Ok(ResultMessages {
         result: wire::ActionResult {
             output_files,
             output_directories,
             exit_code: 0,
-            stdout_digest: Some(wire_digest(&upload.stdout)),
-            stderr_digest: Some(wire_digest(&upload.stderr)),
+            stdout_digest: Some(wire_digest(&upload.stdout)?),
+            stderr_digest: Some(wire_digest(&upload.stderr)?),
             ..wire::ActionResult::default()
         },
         trees,
-    }
+    })
 }
 
 /// Whether `result` names an output symlink in any of the three lists that can hold one.
@@ -325,11 +350,19 @@ pub(crate) fn hit(result: &wire::ActionResult) -> Result<RemoteHit, RemoteError>
     })
 }
 
+/// The most files and directories a `Tree` may expand to.
+///
+/// A `Tree` names its children by digest, so several directories may point at one child, and a
+/// small tree can expand to far more paths than it holds messages. Past this many the tree is
+/// not used.
+const MAX_TREE_ENTRIES: usize = 1 << 18;
+
 /// The regular files of the `Tree` that `bytes` encode, in path order.
 ///
 /// `None` when the tree cannot be used as a directory of files: `bytes` are not a `Tree`, it
 /// holds a symlink or an empty directory below the root, it refers to a directory it does not
-/// hold, or a name in it is not one `TreePath` takes.
+/// hold, a name in it is not one `TreePath` takes, or it expands to more than
+/// [`MAX_TREE_ENTRIES`] files and directories.
 pub(crate) fn tree_files(bytes: &[u8]) -> Option<Vec<RemoteTreeFile>> {
     let tree = wire::Tree::decode(bytes).ok()?;
     let by_blob: BTreeMap<Blob, &wire::Directory> = tree
@@ -339,13 +372,16 @@ pub(crate) fn tree_files(bytes: &[u8]) -> Option<Vec<RemoteTreeFile>> {
         .collect();
     let mut files = Vec::new();
     let mut pending = vec![(String::new(), tree.root.as_ref()?, true)];
+    // The root, and then every file and directory as it is queued.
+    let mut expanded = 1_usize;
     while let Some((prefix, directory, is_root)) = pending.pop() {
         let empty = directory.files.is_empty() && directory.directories.is_empty();
         if !directory.symlinks.is_empty() || (empty && !is_root) {
             return None;
         }
         for file in &directory.files {
-            if file.name.contains('/') {
+            expanded += 1;
+            if file.name.contains('/') || expanded > MAX_TREE_ENTRIES {
                 return None;
             }
             files.push(RemoteTreeFile {
@@ -355,7 +391,8 @@ pub(crate) fn tree_files(bytes: &[u8]) -> Option<Vec<RemoteTreeFile>> {
             });
         }
         for node in &directory.directories {
-            if node.name.contains('/') {
+            expanded += 1;
+            if node.name.contains('/') || expanded > MAX_TREE_ENTRIES {
                 return None;
             }
             let child = by_blob.get(&blob_of(node.digest.as_ref(), &node.name).ok()?)?;
@@ -382,7 +419,10 @@ mod tests {
     };
     use prost::Message;
 
-    use super::{Encoded, action, action_result, command, hit, platform, tree_files, wire_digest};
+    use super::{
+        Encoded, RemoteError, action, action_result, command, hit, platform, tree_files,
+        wire_digest,
+    };
     use crate::remote::proto::build::bazel::remote::execution::v2 as wire;
 
     fn output_path(name: &str) -> OutputPath {
@@ -419,7 +459,7 @@ mod tests {
     }
 
     fn digest_of(bytes: &[u8]) -> wire::Digest {
-        wire_digest(&Blob::of(bytes))
+        wire_digest(&Blob::of(bytes)).unwrap()
     }
 
     fn tree_file(path: &str, bytes: &[u8], mode: FileMode) -> RemoteTreeFile {
@@ -529,7 +569,7 @@ mod tests {
                 content: RemoteContent::Tree(RemoteTree::new(files)),
             },
         ]);
-        let built = action_result(&upload);
+        let built = action_result(&upload).unwrap();
         assert_eq!(built.trees.len(), 1);
         let result = hit(&built.result).unwrap();
         assert_eq!(result.exit_code, 0);
@@ -558,13 +598,16 @@ mod tests {
             path: output_path("dir"),
             content: RemoteContent::Tree(tree.clone()),
         }]);
-        let built = action_result(&upload);
+        let built = action_result(&upload).unwrap();
         assert_eq!(
             tree_files(&built.trees[0].bytes),
             Some(tree.files().to_vec())
         );
         // the same files encode to the same tree every time
-        assert_eq!(action_result(&upload).trees[0].bytes, built.trees[0].bytes);
+        assert_eq!(
+            action_result(&upload).unwrap().trees[0].bytes,
+            built.trees[0].bytes
+        );
     }
 
     #[test]
@@ -594,7 +637,7 @@ mod tests {
                 files: vec![file("a")],
                 directories: vec![wire::DirectoryNode {
                     name: "empty".to_owned(),
-                    digest: Some(wire_digest(&Blob::of(&empty_child.encode_to_vec()))),
+                    digest: Some(digest_of(&empty_child.encode_to_vec())),
                 }],
                 ..wire::Directory::default()
             }),
@@ -610,6 +653,54 @@ mod tests {
             children: Vec::new(),
         };
         assert_eq!(tree_files(&bad_name.encode_to_vec()), None);
+    }
+
+    #[test]
+    fn a_tree_whose_directories_share_children_is_not_expanded_without_bound() {
+        // Each level holds two directories that name the one level below, so the tree has 40
+        // messages and 2^40 paths.
+        let file = wire::FileNode {
+            name: "leaf".to_owned(),
+            digest: Some(digest_of(b"leaf")),
+            ..wire::FileNode::default()
+        };
+        let mut children = vec![wire::Directory {
+            files: vec![file],
+            ..wire::Directory::default()
+        }];
+        for _ in 0..40 {
+            let below = Encoded::of(children.last().unwrap()).digest();
+            let node = |name: &str| wire::DirectoryNode {
+                name: name.to_owned(),
+                digest: Some(below.clone()),
+            };
+            children.push(wire::Directory {
+                directories: vec![node("a"), node("b")],
+                ..wire::Directory::default()
+            });
+        }
+        let root = children.pop();
+        let tree = wire::Tree { root, children };
+
+        assert_eq!(tree_files(&tree.encode_to_vec()), None);
+    }
+
+    #[test]
+    fn a_blob_larger_than_a_digest_can_name_is_refused() {
+        let huge = Blob {
+            digest: Digest::of(b"x"),
+            size: u64::MAX,
+        };
+
+        let error = wire_digest(&huge).unwrap_err();
+
+        assert!(matches!(error, RemoteError::TooLarge { size: u64::MAX }));
+        let upload = RemoteUpload {
+            outputs: Vec::new(),
+            stdout: huge,
+            stderr: Blob::of(b""),
+        };
+        assert!(action_result(&upload).is_err());
     }
 
     #[test]

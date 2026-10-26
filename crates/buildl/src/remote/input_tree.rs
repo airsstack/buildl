@@ -5,20 +5,24 @@
 //! subdirectory named by the digest of its child's encoding. The digest of the root `Directory`
 //! is the action's `input_root_digest`.
 //!
-//! Responsibilities: [`input_tree`] and the [`InputTree`] it returns.
+//! The tree is built from the sizes and modes of the files as the caller measured them, so a file
+//! that changes afterwards cannot make a `Directory` name a size that was never measured.
+//!
+//! Responsibilities: [`measure`], [`input_tree`] and the [`InputTree`] it returns.
 //!
 //! Non-responsibilities: uploading the `Directory` messages, and checking that the bytes of a
 //! file still match the digest it was given.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
+use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
-use buildl_core::{Blob, Diagnostic, Error, FileMode, PortName, RemoteFile};
-use prost::Message;
+use buildl_core::{FileMode, RemoteFile, RootPath};
 
-use super::encode::wire_digest;
+use super::encode::Encoded;
+use super::error::RemoteError;
 use super::proto::build::bazel::remote::execution::v2::{
     Digest, Directory, DirectoryNode, FileNode,
 };
@@ -30,6 +34,68 @@ pub(crate) struct InputTree {
     pub root: Digest,
     /// Every distinct `Directory` of the tree, each with its encoding, children before parents.
     pub directories: Vec<(Digest, Vec<u8>)>,
+}
+
+/// An input file with the size and mode it was measured to have.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Input<'a> {
+    /// The file and the digest its bytes are expected to have.
+    pub(crate) file: &'a RemoteFile,
+    /// The length of the file in bytes.
+    pub(crate) size: u64,
+    /// Whether the file is executable.
+    pub(crate) mode: FileMode,
+}
+
+impl<'a> Input<'a> {
+    /// `file` with `size` bytes and the permission bits `unix_mode`.
+    ///
+    /// The mode is the file's own [`FileMode`] when it has one, and otherwise executable when
+    /// any execute bit of `unix_mode` is set.
+    pub(crate) fn new(file: &'a RemoteFile, size: u64, unix_mode: u32) -> Self {
+        Self {
+            file,
+            size,
+            mode: file
+                .mode
+                .unwrap_or_else(|| FileMode::of_unix_bits(unix_mode)),
+        }
+    }
+}
+
+/// A file that could not be measured.
+#[derive(Debug)]
+pub(crate) struct Unreadable<'a> {
+    /// The file.
+    pub(crate) path: &'a RootPath,
+    /// Why it could not be read.
+    pub(crate) source: io::Error,
+}
+
+/// The size and mode of each of `files`, which sit under `root` on disk.
+///
+/// # Errors
+///
+/// Returns the first file that cannot be read from disk.
+pub(crate) fn measure<'a>(
+    root: &Path,
+    files: &'a [RemoteFile],
+) -> Result<Vec<Input<'a>>, Unreadable<'a>> {
+    files
+        .iter()
+        .map(|file| {
+            let metadata =
+                fs::metadata(root.join(file.path.as_str())).map_err(|source| Unreadable {
+                    path: &file.path,
+                    source,
+                })?;
+            Ok(Input::new(
+                file,
+                metadata.len(),
+                metadata.permissions().mode(),
+            ))
+        })
+        .collect()
 }
 
 /// One directory of the input root before it is encoded.
@@ -72,61 +138,45 @@ impl Node {
             symlinks: Vec::new(),
             node_properties: None,
         };
-        let bytes = directory.encode_to_vec();
-        let digest = wire_digest(&Blob::of(&bytes));
+        let encoded = Encoded::of(&directory);
+        let digest = encoded.digest();
         if seen.insert(digest.hash.clone()) {
-            out.push((digest.clone(), bytes));
+            out.push((digest.clone(), encoded.bytes));
         }
         digest
     }
 }
 
-/// Builds the `Directory` tree of `files`, which sit under `root` on disk.
+/// Builds the `Directory` tree of `inputs`.
 ///
-/// A file's size is read from disk. Its executable bit is the file's [`FileMode`] when it has
-/// one, and otherwise comes from the file's permissions on disk: executable when any execute
-/// bit is set.
+/// Each file's size and mode are the ones in its [`Input`]; the disk is not read.
 ///
 /// # Errors
 ///
-/// [`Error::Adapter`] naming the remote cache and the path when a file cannot be read from disk
-/// under `root`.
-pub(crate) fn input_tree(root: &Path, files: &[RemoteFile]) -> Result<InputTree, Error> {
+/// Returns [`RemoteError::TooLarge`] when a file is larger than a digest can name.
+pub(crate) fn input_tree(inputs: &[Input<'_>]) -> Result<InputTree, RemoteError> {
     let mut top = Node::default();
-    for file in files {
-        let names: Vec<&str> = file.path.as_str().split('/').collect();
-        top.insert(&names, file_node(root, file, names.last().copied())?);
+    for input in inputs {
+        let names: Vec<&str> = input.file.path.as_str().split('/').collect();
+        top.insert(&names, file_node(input, names.last().copied())?);
     }
     let mut directories = Vec::new();
     let root = top.encode(&mut directories, &mut BTreeSet::new());
     Ok(InputTree { root, directories })
 }
 
-fn file_node(root: &Path, file: &RemoteFile, name: Option<&str>) -> Result<FileNode, Error> {
-    let path = file.path.as_str();
-    let metadata = fs::metadata(root.join(path))
-        .map_err(|error| failure(&format!("cannot read input file {path}: {error}")))?;
-    let size_bytes = i64::try_from(metadata.len())
-        .map_err(|_| failure(&format!("input file {path} is too large")))?;
-    let mode = file
-        .mode
-        .unwrap_or_else(|| FileMode::of_unix_bits(metadata.permissions().mode()));
+fn file_node(input: &Input<'_>, name: Option<&str>) -> Result<FileNode, RemoteError> {
+    let size_bytes =
+        i64::try_from(input.size).map_err(|_| RemoteError::TooLarge { size: input.size })?;
     Ok(FileNode {
         name: name.unwrap_or_default().to_owned(),
         digest: Some(Digest {
-            hash: file.digest.to_string(),
+            hash: input.file.digest.to_string(),
             size_bytes,
         }),
-        is_executable: mode == FileMode::Executable,
+        is_executable: input.mode == FileMode::Executable,
         node_properties: None,
     })
-}
-
-fn failure(text: &str) -> Error {
-    Error::Adapter {
-        port: PortName::RemoteCache,
-        diagnostic: Diagnostic::new(text),
-    }
 }
 
 #[cfg(test)]
@@ -137,13 +187,15 @@ mod tests {
     )]
 
     use std::fs;
+    use std::io;
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
 
     use buildl_core::{FileMode, RemoteFile, RootPath, SourcePath};
     use prost::Message;
 
-    use super::{InputTree, input_tree};
+    use super::{Input, InputTree, input_tree, measure};
+    use crate::remote::error::RemoteError;
     use crate::remote::proto::build::bazel::remote::execution::v2::{Digest, Directory};
 
     fn write(root: &Path, path: &str, bytes: &[u8], mode: u32) -> RemoteFile {
@@ -156,6 +208,11 @@ mod tests {
             digest: buildl_core::Digest::of(bytes),
             mode: None,
         }
+    }
+
+    /// The tree of `files` as they are on disk now.
+    fn tree_of(root: &Path, files: &[RemoteFile]) -> InputTree {
+        input_tree(&measure(root, files).unwrap()).unwrap()
     }
 
     fn decode(tree: &InputTree, digest: &Digest) -> Directory {
@@ -179,7 +236,7 @@ mod tests {
             write(dir.path(), "a.c", b"a", 0o644),
             write(dir.path(), "Z.c", b"ZZZ", 0o644),
         ];
-        let tree = input_tree(dir.path(), &files).unwrap();
+        let tree = tree_of(dir.path(), &files);
         let root = root_of(&tree);
         let names: Vec<_> = root.files.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["Z.c", "a.c", "b.c"]);
@@ -198,7 +255,7 @@ mod tests {
             write(dir.path(), "src/lib/b.c", b"b", 0o644),
             write(dir.path(), "src/a.c", b"a", 0o644),
         ];
-        let tree = input_tree(dir.path(), &files).unwrap();
+        let tree = tree_of(dir.path(), &files);
 
         let root = root_of(&tree);
         assert_eq!(root.files.len(), 1);
@@ -227,7 +284,7 @@ mod tests {
             write(dir.path(), "run.sh", b"#!/bin/sh", 0o755),
             write(dir.path(), "data.txt", b"x", 0o644),
         ];
-        let root = root_of(&input_tree(dir.path(), &files).unwrap());
+        let root = root_of(&tree_of(dir.path(), &files));
         let flags: Vec<_> = root
             .files
             .iter()
@@ -243,7 +300,7 @@ mod tests {
         run.mode = Some(FileMode::Executable);
         let mut data = write(dir.path(), "data", b"d", 0o755);
         data.mode = Some(FileMode::Plain);
-        let root = root_of(&input_tree(dir.path(), &[run, data]).unwrap());
+        let root = root_of(&tree_of(dir.path(), &[run, data]));
         let flags: Vec<_> = root
             .files
             .iter()
@@ -259,9 +316,36 @@ mod tests {
             write(dir.path(), "src/a.c", b"a", 0o644),
             write(dir.path(), "b.c", b"b", 0o755),
         ];
-        let first = input_tree(dir.path(), &files).unwrap();
-        let second = input_tree(dir.path(), &files).unwrap();
+        let first = tree_of(dir.path(), &files);
+        let second = tree_of(dir.path(), &files);
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn the_sizes_are_the_ones_given_and_not_the_ones_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let files = vec![write(dir.path(), "a.c", b"a", 0o644)];
+        let measured = measure(dir.path(), &files).unwrap();
+        fs::write(dir.path().join("a.c"), b"grown since").unwrap();
+
+        let tree = input_tree(&measured).unwrap();
+
+        let size = root_of(&tree).files[0].digest.as_ref().unwrap().size_bytes;
+        assert_eq!(size, 1);
+    }
+
+    #[test]
+    fn a_file_too_large_for_a_digest_is_refused() {
+        let file = RemoteFile {
+            path: RootPath::from(&SourcePath::parse("big").unwrap()),
+            digest: buildl_core::Digest::of(b"big"),
+            mode: None,
+        };
+        let input = Input::new(&file, u64::MAX, 0o644);
+
+        let error = input_tree(&[input]).unwrap_err();
+
+        assert!(matches!(error, RemoteError::TooLarge { size: u64::MAX }));
     }
 
     #[test]
@@ -273,9 +357,8 @@ mod tests {
             digest: buildl_core::Digest::of(b"gone"),
             mode: None,
         });
-        let error = input_tree(dir.path(), &files).unwrap_err();
-        let text = error.to_string();
-        assert!(text.starts_with("remote cache:"), "{text}");
-        assert!(text.contains("src/gone.c"), "{text}");
+        let error = measure(dir.path(), &files).unwrap_err();
+        assert_eq!(error.path.as_str(), "src/gone.c");
+        assert_eq!(error.source.kind(), io::ErrorKind::NotFound);
     }
 }

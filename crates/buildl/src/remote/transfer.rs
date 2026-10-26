@@ -134,9 +134,10 @@ fn size_of(digest: &Digest, call: Method) -> Result<usize, RemoteError> {
     })
 }
 
-/// The failure of one blob, as the status the cache gave it.
-fn blob_failure(digest: &Digest, code: Code, message: &str) -> RemoteError {
+/// The failure of one blob carried by `call`, as the status the cache gave it.
+fn blob_failure(call: Method, digest: &Digest, code: Code, message: &str) -> RemoteError {
     RemoteError::Blob {
+        call,
         digest: digest.clone(),
         code,
         message: message.to_owned(),
@@ -146,38 +147,56 @@ fn blob_failure(digest: &Digest, code: Code, message: &str) -> RemoteError {
 /// Re-reads a failed status of a call about `digest` as the failure of that blob.
 fn naming(digest: &Digest) -> impl FnOnce(RemoteError) -> RemoteError + '_ {
     move |error| match error {
-        RemoteError::Status { source, .. } => blob_failure(digest, source.code(), source.message()),
+        RemoteError::Status { call, source } => {
+            blob_failure(call, digest, source.code(), source.message())
+        }
         other => other,
     }
 }
 
-/// Fails with the blob's status when `status` is not OK; an absent status is OK.
-fn check(digest: &Digest, status: Option<&rpc::Status>) -> Result<(), RemoteError> {
+/// Fails with the blob's status in the answer to `call` when `status` is not OK; an absent
+/// status is OK.
+fn check(call: Method, digest: &Digest, status: Option<&rpc::Status>) -> Result<(), RemoteError> {
     status.map_or(Ok(()), |status| match Code::from(status.code) {
         Code::Ok => Ok(()),
-        code => Err(blob_failure(digest, code, &status.message)),
+        code => Err(blob_failure(call, digest, code, &status.message)),
     })
 }
 
-/// The members of `digests` the cache does not hold.
+/// What one digest of a `FindMissingBlobs` request weighs at most on the wire: 64 hex digits and
+/// a size of up to ten varint bytes, with the framing of the digest and of its place in the list.
+const FIND_ENTRY: usize = 80;
+
+/// The most digests one `FindMissingBlobs` request carries, so that it stays under the batch
+/// budget.
+const FIND_CHUNK: usize = BATCH_BUDGET / FIND_ENTRY;
+
+/// The members of `digests` the cache does not hold, in the order they were given.
+///
+/// The digests go to the cache in as many calls as it takes to keep each request under the
+/// message cap.
 ///
 /// # Errors
 ///
-/// Returns the call's failure.
+/// Returns the failure of a call.
 pub(super) async fn find_missing(
     wire: &Wire<'_>,
     digests: &[Digest],
 ) -> Result<Vec<Digest>, RemoteError> {
-    let mut client = wire.cas();
-    let request = FindMissingBlobsRequest {
-        instance_name: wire.instance().to_owned(),
-        blob_digests: digests.to_vec(),
-        digest_function: digest_function::Value::Sha256 as i32,
-    };
-    let response = wire
-        .bounded(Method::FindMissingBlobs, client.find_missing_blobs(request))
-        .await?;
-    Ok(response.into_inner().missing_blob_digests)
+    let mut missing = Vec::new();
+    for chunk in digests.chunks(FIND_CHUNK) {
+        let mut client = wire.cas();
+        let request = FindMissingBlobsRequest {
+            instance_name: wire.instance().to_owned(),
+            blob_digests: chunk.to_vec(),
+            digest_function: digest_function::Value::Sha256 as i32,
+        };
+        let response = wire
+            .bounded(Method::FindMissingBlobs, client.find_missing_blobs(request))
+            .await?;
+        missing.extend(response.into_inner().missing_blob_digests);
+    }
+    Ok(missing)
 }
 
 /// Reads the blobs `digests` name, in the same order.
@@ -258,7 +277,7 @@ async fn batch_read(wire: &Wire<'_>, digests: &[&Digest]) -> Result<Vec<Vec<u8>>
                 call: Method::BatchReadBlobs,
                 detail: format!("no answer for the blob {}", label(digest)),
             })?;
-        check(digest, answer.status.as_ref())?;
+        check(Method::BatchReadBlobs, digest, answer.status.as_ref())?;
         if usize::try_from(digest.size_bytes) != Ok(answer.data.len()) {
             return Err(RemoteError::Protocol {
                 call: Method::BatchReadBlobs,
@@ -384,7 +403,7 @@ async fn batch_write(wire: &Wire<'_>, blobs: &[&(Digest, Vec<u8>)]) -> Result<()
     let mut answered = BTreeSet::new();
     for answer in &response.responses {
         if let Some(digest) = &answer.digest {
-            check(digest, answer.status.as_ref())?;
+            check(Method::BatchUpdateBlobs, digest, answer.status.as_ref())?;
             answered.insert(key(digest));
         }
     }
@@ -453,15 +472,21 @@ async fn stream_write(wire: &Wire<'_>, digest: &Digest, data: &[u8]) -> Result<(
 
 #[cfg(test)]
 mod tests {
+    use prost::Message;
+    use tonic::Code;
     use uuid::Uuid;
 
-    use prost::Message;
-
-    use super::{BATCH_BUDGET, ENTRY_OVERHEAD, Split, read_resource, split, write_resource};
+    use super::{
+        BATCH_BUDGET, ENTRY_OVERHEAD, FIND_CHUNK, Split, blob_failure, read_resource, split,
+        write_resource,
+    };
+    use crate::remote::capabilities::MESSAGE_CAP;
     use crate::remote::proto::build::bazel::remote::execution::v2::{
-        Digest, batch_read_blobs_response, batch_update_blobs_request,
+        Digest, FindMissingBlobsRequest, batch_read_blobs_response, batch_update_blobs_request,
+        digest_function,
     };
     use crate::remote::proto::google::rpc;
+    use crate::remote::vocabulary::Method;
 
     fn digest() -> Digest {
         Digest {
@@ -575,6 +600,35 @@ mod tests {
                 batches: vec![vec![0]],
                 streamed: vec![],
             }
+        );
+    }
+
+    #[test]
+    fn a_full_find_missing_request_stays_under_the_batch_budget() {
+        let largest = Digest {
+            hash: "f".repeat(64),
+            size_bytes: i64::MAX,
+        };
+        let request = FindMissingBlobsRequest {
+            instance_name: "i".repeat(256),
+            blob_digests: vec![largest; FIND_CHUNK],
+            digest_function: digest_function::Value::Sha256 as i32,
+        };
+
+        assert!(request.encoded_len() <= BATCH_BUDGET + 256 + 8);
+        assert!(request.encoded_len() < MESSAGE_CAP);
+    }
+
+    #[test]
+    fn a_blob_failure_names_the_call_that_carried_it() {
+        let error = blob_failure(Method::Write, &digest(), Code::Aborted, "stop");
+
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "ByteStream.Write: blob {}/7 failed with Aborted: stop",
+                digest().hash
+            )
         );
     }
 

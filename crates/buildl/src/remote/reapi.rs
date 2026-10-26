@@ -12,8 +12,10 @@
 //! messages' shape, which `encode` and `input_tree` decide.
 
 use std::collections::BTreeSet;
+use std::fmt;
 use std::fs::{self, File};
 use std::io;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
@@ -25,7 +27,7 @@ use buildl_core::{
 use super::client::Client;
 use super::encode::{self, Encoded, wire_digest};
 use super::error::RemoteError;
-use super::input_tree::{InputTree, input_tree};
+use super::input_tree::{Input, InputTree, Unreadable, input_tree, measure};
 use super::proto::build::bazel::remote::execution::v2 as wire;
 use super::vocabulary::Method;
 
@@ -33,6 +35,17 @@ use super::vocabulary::Method;
 pub struct Reapi {
     client: Client,
     root: PathBuf,
+    write_group: usize,
+}
+
+/// The cache's address and the workspace root; the login token is never shown.
+impl fmt::Debug for Reapi {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Reapi")
+            .field("url", &self.client.url())
+            .field("root", &self.root)
+            .finish_non_exhaustive()
+    }
 }
 
 impl Reapi {
@@ -50,10 +63,20 @@ impl Reapi {
             Ok(client) => Ok(Self {
                 client,
                 root: root.to_path_buf(),
+                write_group: WRITE_GROUP,
             }),
             Err(RemoteError::Token(error)) => Err(error),
             Err(error) => Err(adapter(format!("{}: {error}", settings.url()))),
         }
+    }
+}
+
+#[cfg(all(test, feature = "test-server"))]
+impl Reapi {
+    /// This adapter, writing its groups of blobs at `bytes` and not at the usual size.
+    const fn with_write_group(mut self, bytes: usize) -> Self {
+        self.write_group = bytes;
+        self
     }
 }
 
@@ -65,7 +88,12 @@ fn adapter(text: String) -> Error {
     }
 }
 
-/// The most bytes of blobs read into memory before they are written.
+/// The most bytes of blobs, read from the content store or the workspace, held together before
+/// they are written.
+///
+/// A group is written before a blob that would carry it past this size, so a blob larger than
+/// this goes alone. The encoded messages of an upload are held in memory from the start, outside
+/// the group.
 const WRITE_GROUP: usize = 32 * 1024 * 1024;
 
 /// Where the bytes of a blob an upload sends come from.
@@ -93,18 +121,57 @@ impl Parcel {
     }
 
     fn add_message(&mut self, message: Encoded) {
-        self.add(wire_digest(&message.blob), Source::Message(message.bytes));
+        self.add(message.digest(), Source::Message(message.bytes));
     }
 
-    fn add_stored(&mut self, blob: &Blob) {
-        self.add(wire_digest(blob), Source::Store(blob.digest));
+    fn add_stored(&mut self, blob: &Blob) -> std::result::Result<(), RemoteError> {
+        self.add(wire_digest(blob)?, Source::Store(blob.digest));
+        Ok(())
+    }
+
+    /// The blobs of the upload up to the input-root `Directory` messages, in the order the
+    /// protocol is told them: the input files, the output files, the `Tree` of each directory
+    /// output, stdout and stderr, then `directories`.
+    fn of(
+        inputs: &[Input<'_>],
+        produced: &RemoteUpload,
+        trees: Vec<Encoded>,
+        directories: Vec<(wire::Digest, Vec<u8>)>,
+    ) -> std::result::Result<Self, RemoteError> {
+        let mut parcel = Self::default();
+        for input in inputs {
+            let blob = Blob {
+                digest: input.file.digest,
+                size: input.size,
+            };
+            parcel.add(wire_digest(&blob)?, Source::Input(input.file.path.clone()));
+        }
+        for output in &produced.outputs {
+            match &output.content {
+                RemoteContent::File { blob, .. } => parcel.add_stored(blob)?,
+                RemoteContent::Tree(tree) => {
+                    for file in tree.files() {
+                        parcel.add_stored(&file.blob)?;
+                    }
+                }
+            }
+        }
+        for tree in trees {
+            parcel.add_message(tree);
+        }
+        parcel.add_stored(&produced.stdout)?;
+        parcel.add_stored(&produced.stderr)?;
+        for (digest, bytes) in directories {
+            parcel.add(digest, Source::Message(bytes));
+        }
+        Ok(parcel)
     }
 }
 
 /// What reading the input files of an action found.
-enum Inputs {
-    /// Every file holds what its digest says; these are the files' digests with their sizes.
-    Held(Vec<wire::Digest>),
+enum Inputs<'a> {
+    /// Every file holds what its digest says; these are the files as they were read.
+    Held(Vec<Input<'a>>),
     /// This file no longer holds what its digest says.
     Changed(RootPath),
 }
@@ -129,15 +196,18 @@ impl io::Write for Hashing {
     }
 }
 
-/// The digest and size of the file at `path`, hashed as it is read.
-fn digest_file(path: &Path) -> io::Result<Blob> {
+/// The digest and size of the file at `path`, hashed as it is read, and its permission bits as
+/// the open file reports them.
+fn digest_file(path: &Path) -> io::Result<(Blob, u32)> {
     let mut file = File::open(path)?;
+    let mode = file.metadata()?.permissions().mode();
     let mut sink = Hashing(Hasher::new());
     let size = io::copy(&mut file, &mut sink)?;
-    Ok(Blob {
+    let blob = Blob {
         digest: sink.0.finish(),
         size,
-    })
+    };
+    Ok((blob, mode))
 }
 
 /// The action, its command and the input root, encoded.
@@ -151,30 +221,40 @@ impl Reapi {
     /// The error for `error`, which came from `call`: an adapter error whose text begins with
     /// the cache's address and names the call.
     ///
-    /// The core puts the name of the operation in front of the text.
+    /// A failure that names its own call is not given another. The core puts the name of the
+    /// operation in front of the text.
     fn failed(&self, call: Method, error: RemoteError) -> Error {
         let url = self.client.url();
         match error {
             RemoteError::Token(error) => error,
             error @ (RemoteError::Status { .. }
             | RemoteError::TimedOut { .. }
-            | RemoteError::Protocol { .. }) => adapter(format!("{url}: {error}")),
+            | RemoteError::Protocol { .. }
+            | RemoteError::Blob { .. }) => adapter(format!("{url}: {error}")),
             error => adapter(format!("{url}: {call}: {error}")),
         }
     }
 
-    fn io_failure(&self, what: &str, path: &RootPath, error: &io::Error) -> Error {
+    /// The error for a local `error` that kept `call` from being made: `what` could not be done
+    /// to `path`.
+    fn io_failure(&self, call: Method, what: &str, path: &RootPath, error: &io::Error) -> Error {
         adapter(format!(
-            "{}: cannot {what} {path}: {error}",
+            "{}: {call}: cannot {what} {path}: {error}",
             self.client.url()
         ))
     }
 
-    /// `action` as the messages that name it to the cache.
-    fn describe(&self, action: &RemoteAction) -> Result<Described> {
+    /// `action`, whose input files were measured as `inputs`, as the messages that name it to
+    /// the cache. `call` is the first call the caller goes on to make.
+    fn describe(
+        &self,
+        call: Method,
+        action: &RemoteAction,
+        inputs: &[Input<'_>],
+    ) -> Result<Described> {
         let command = Encoded::of(&encode::command(action));
-        let tree = input_tree(&self.root, &action.files)?;
-        let message = encode::action(&wire_digest(&command.blob), &tree.root, action);
+        let tree = input_tree(inputs).map_err(|error| self.failed(call, error))?;
+        let message = encode::action(&command.digest(), &tree.root, action);
         Ok(Described {
             command,
             tree,
@@ -183,16 +263,25 @@ impl Reapi {
     }
 
     /// Hashes each input file as it is read from the workspace.
-    fn read_inputs(&self, files: &[RemoteFile]) -> Result<Inputs> {
+    fn read_inputs<'a>(&self, files: &'a [RemoteFile]) -> Result<Inputs<'a>> {
         let mut held = Vec::with_capacity(files.len());
         for file in files {
             match digest_file(&self.root.join(file.path.as_str())) {
-                Ok(blob) if blob.digest == file.digest => held.push(wire_digest(&blob)),
+                Ok((blob, mode)) if blob.digest == file.digest => {
+                    held.push(Input::new(file, blob.size, mode));
+                }
                 Ok(_) => return Ok(Inputs::Changed(file.path.clone())),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {
                     return Ok(Inputs::Changed(file.path.clone()));
                 }
-                Err(error) => return Err(self.io_failure("read input file", &file.path, &error)),
+                Err(error) => {
+                    return Err(self.io_failure(
+                        Method::FindMissingBlobs,
+                        "read input file",
+                        &file.path,
+                        &error,
+                    ));
+                }
             }
         }
         Ok(Inputs::Held(held))
@@ -216,8 +305,9 @@ impl Reapi {
             Source::Message(bytes) => Ok(Loaded::Bytes(bytes)),
             Source::Store(held) => blobs.read(&held)?.map(Loaded::Bytes).ok_or_else(|| {
                 adapter(format!(
-                    "{}: the content store holds no blob {held}",
-                    self.client.url()
+                    "{}: {}: the content store holds no blob {held}",
+                    self.client.url(),
+                    Method::BatchUpdateBlobs
                 ))
             }),
             Source::Input(path) => match fs::read(self.root.join(path.as_str())) {
@@ -226,7 +316,9 @@ impl Reapi {
                 }
                 Ok(_) => Ok(Loaded::Changed(path)),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Loaded::Changed(path)),
-                Err(error) => Err(self.io_failure("read input file", &path, &error)),
+                Err(error) => {
+                    Err(self.io_failure(Method::BatchUpdateBlobs, "read input file", &path, &error))
+                }
             },
         }
     }
@@ -234,10 +326,26 @@ impl Reapi {
 
 impl RemoteCache for Reapi {
     fn lookup(&self, action: &RemoteAction) -> Result<Option<RemoteHit>> {
-        let described = self.describe(action)?;
+        let inputs = match measure(&self.root, &action.files) {
+            Ok(inputs) => inputs,
+            // An input that is gone is a target the cache cannot hold a result for, not a
+            // fault of the cache.
+            Err(Unreadable { source, .. }) if source.kind() == io::ErrorKind::NotFound => {
+                return Ok(None);
+            }
+            Err(Unreadable { path, source }) => {
+                return Err(self.io_failure(
+                    Method::GetActionResult,
+                    "read input file",
+                    path,
+                    &source,
+                ));
+            }
+        };
+        let described = self.describe(Method::GetActionResult, action, &inputs)?;
         let found = self
             .client
-            .get_action_result(&wire_digest(&described.action.blob))
+            .get_action_result(&described.action.digest())
             .map_err(|error| self.failed(Method::GetActionResult, error))?;
         found
             .map(|result| encode::hit(&result))
@@ -249,7 +357,11 @@ impl RemoteCache for Reapi {
         if blobs.is_empty() {
             return Ok(Vec::new());
         }
-        let digests: Vec<wire::Digest> = blobs.iter().map(wire_digest).collect();
+        let digests = blobs
+            .iter()
+            .map(wire_digest)
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|error| self.failed(Method::BatchReadBlobs, error))?;
         self.client
             .read_blobs(&digests)
             .map_err(|error| self.failed(Method::BatchReadBlobs, error))
@@ -269,33 +381,19 @@ impl RemoteCache for Reapi {
             Inputs::Held(inputs) => inputs,
             Inputs::Changed(path) => return Ok(Uploaded::InputChanged(path)),
         };
-        let described = self.describe(action)?;
-        let messages = encode::action_result(produced);
+        let described = self.describe(Method::FindMissingBlobs, action, &inputs)?;
+        let messages = encode::action_result(produced)
+            .map_err(|error| self.failed(Method::FindMissingBlobs, error))?;
 
-        let mut parcel = Parcel::default();
-        for (file, digest) in action.files.iter().zip(inputs) {
-            parcel.add(digest, Source::Input(file.path.clone()));
-        }
-        for output in &produced.outputs {
-            match &output.content {
-                RemoteContent::File { blob, .. } => parcel.add_stored(blob),
-                RemoteContent::Tree(tree) => {
-                    for file in tree.files() {
-                        parcel.add_stored(&file.blob);
-                    }
-                }
-            }
-        }
-        parcel.add_stored(&produced.stdout);
-        parcel.add_stored(&produced.stderr);
-        for tree in messages.trees {
-            parcel.add_message(tree);
-        }
-        for (digest, bytes) in described.tree.directories {
-            parcel.add(digest, Source::Message(bytes));
-        }
+        let mut parcel = Parcel::of(
+            &inputs,
+            produced,
+            messages.trees,
+            described.tree.directories,
+        )
+        .map_err(|error| self.failed(Method::FindMissingBlobs, error))?;
         parcel.add_message(described.command);
-        let action_digest = wire_digest(&described.action.blob);
+        let action_digest = described.action.digest();
         parcel.add_message(described.action);
 
         let named: Vec<wire::Digest> = parcel.entries.iter().map(|(d, _)| d.clone()).collect();
@@ -317,13 +415,13 @@ impl RemoteCache for Reapi {
                 Loaded::Bytes(bytes) => bytes,
                 Loaded::Changed(path) => return Ok(Uploaded::InputChanged(path)),
             };
-            held += bytes.len();
-            group.push((digest, bytes));
-            if held >= WRITE_GROUP {
+            if !group.is_empty() && held.saturating_add(bytes.len()) > self.write_group {
                 self.write(&group)?;
                 group.clear();
                 held = 0;
             }
+            held += bytes.len();
+            group.push((digest, bytes));
         }
         if !group.is_empty() {
             self.write(&group)?;
@@ -347,19 +445,21 @@ mod tests {
     use std::fs;
     use std::net::TcpListener;
     use std::path::Path;
+    use std::thread;
+    use std::time::Duration;
 
     use buildl_core::{
-        Argument, Blob, BlobSource, Command, Digest, Directory, Error, FileMode, Label, OutputName,
-        OutputPath, Platform, PortName, RemoteAction, RemoteCache, RemoteContent, RemoteFile,
-        RemoteOutput, RemoteOutputDirectory, RemoteOutputFile, RemotePlatform, RemoteSettings,
-        RemoteTree, RemoteTreeFile, RemoteUpload, RemoteUrl, Result, RootPath, SourcePath, Timeout,
-        TreePath, Uploaded,
+        Argument, Blob, BlobSource, Command, Digest, Directory, Error, FileMode, HostPath, Label,
+        OutputName, OutputPath, Platform, PortName, RemoteAction, RemoteCache, RemoteContent,
+        RemoteFile, RemoteOutput, RemoteOutputDirectory, RemoteOutputFile, RemotePlatform,
+        RemoteSettings, RemoteTree, RemoteTreeFile, RemoteUpload, RemoteUrl, Result, RootPath,
+        SourcePath, Timeout, TokenSource, TreePath, Uploaded,
     };
 
     use super::Reapi;
-    use crate::remote::encode::{self, Encoded, wire_digest};
-    use crate::remote::input_tree::input_tree;
-    use crate::remote::test_server::{Fault, Method, TestServer};
+    use crate::remote::encode::{self, Encoded};
+    use crate::remote::input_tree::{InputTree, input_tree, measure};
+    use crate::remote::test_server::{Fault, Method, ServerOptions, TestServer};
 
     const SOURCE: &[u8] = b"int main(void) { return 0; }\n";
     const HEADER: &[u8] = b"#define ONE 1\n";
@@ -467,6 +567,11 @@ mod tests {
         Reapi::new(&settings_for(server.address()), root).unwrap()
     }
 
+    /// The input tree of `files` as they are on disk now.
+    fn tree_of(root: &Path, files: &[RemoteFile]) -> InputTree {
+        input_tree(&measure(root, files).unwrap()).unwrap()
+    }
+
     #[test]
     fn a_lookup_of_an_unknown_action_misses() {
         let server = TestServer::start().unwrap();
@@ -488,7 +593,7 @@ mod tests {
         let found = remote.lookup(&action()).unwrap().unwrap();
 
         assert_eq!(stored, Uploaded::Done);
-        let tree = encode::action_result(&sent).trees.remove(0);
+        let tree = encode::action_result(&sent).unwrap().trees.remove(0);
         assert_eq!(found.exit_code, 0);
         assert_eq!(
             found.files,
@@ -524,8 +629,8 @@ mod tests {
         remote.upload(&described, &produced(), &store()).unwrap();
 
         let command = Encoded::of(&encode::command(&described));
-        let tree = input_tree(dir.path(), &described.files).unwrap();
-        let message = encode::action(&wire_digest(&command.blob), &tree.root, &described);
+        let tree = tree_of(dir.path(), &described.files);
+        let message = encode::action(&command.digest(), &tree.root, &described);
         let action_blob = Encoded::of(&message);
         assert_eq!(
             server.blob(&command.blob.digest).as_deref(),
@@ -567,7 +672,7 @@ mod tests {
                 "an input file"
             );
         }
-        let tree = input_tree(dir.path(), &described.files).unwrap();
+        let tree = tree_of(dir.path(), &described.files);
         assert_ne!(tree.directories.len(), 0);
         for (digest, bytes) in &tree.directories {
             let held = server.blob(&Digest::from_hex(&digest.hash).unwrap());
@@ -610,6 +715,131 @@ mod tests {
         assert_eq!(server.calls_to(Method::BatchUpdateBlobs).len(), 0);
         assert_eq!(server.calls_to(Method::Write).len(), 0);
         assert_eq!(server.calls_to(Method::UpdateActionResult).len(), 0);
+    }
+
+    #[test]
+    fn an_input_changed_between_the_hash_and_the_send_is_reported() {
+        let server = TestServer::start().unwrap();
+        server.stall(Method::FindMissingBlobs, Duration::from_millis(600));
+        let dir = workspace();
+        let remote = reapi(&server, dir.path());
+        let header = dir.path().join("src/one.h");
+
+        let outcome = thread::scope(|scope| {
+            let upload = scope.spawn(|| remote.upload(&action(), &produced(), &store()));
+            // The upload has hashed the file by the time it asks which blobs are missing.
+            while server.calls_to(Method::FindMissingBlobs).is_empty() {
+                thread::sleep(Duration::from_millis(5));
+            }
+            fs::write(&header, b"#define ONE 3\n").unwrap();
+            upload.join().unwrap().unwrap()
+        });
+
+        assert_eq!(
+            outcome,
+            Uploaded::InputChanged(RootPath::from(&SourcePath::parse("src/one.h").unwrap()))
+        );
+        assert_eq!(server.calls_to(Method::UpdateActionResult).len(), 0);
+    }
+
+    #[test]
+    fn an_upload_of_several_write_groups_writes_everything() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let remote = reapi(&server, dir.path()).with_write_group(1);
+        let described = action();
+
+        let outcome = remote.upload(&described, &produced(), &store()).unwrap();
+
+        assert_eq!(outcome, Uploaded::Done);
+        let writes = server.calls_to(Method::BatchUpdateBlobs).len();
+        assert!(writes > 1, "one write for each blob, got {writes}");
+        for bytes in [SOURCE, HEADER, OBJECT, LOG, b"".as_slice()] {
+            assert_eq!(
+                server.blob(&Digest::of(bytes)).as_deref(),
+                Some(bytes),
+                "{}",
+                String::from_utf8_lossy(bytes)
+            );
+        }
+        let tree = encode::action_result(&produced()).unwrap().trees.remove(0);
+        assert_eq!(
+            server.blob(&tree.blob.digest).as_deref(),
+            Some(tree.bytes.as_slice())
+        );
+        for (digest, bytes) in &tree_of(dir.path(), &described.files).directories {
+            let held = server.blob(&Digest::from_hex(&digest.hash).unwrap());
+            assert_eq!(held.as_deref(), Some(bytes.as_slice()));
+        }
+        assert!(remote.lookup(&described).unwrap().is_some());
+    }
+
+    #[test]
+    fn a_lookup_with_an_input_gone_from_disk_misses_and_asks_nothing() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        fs::remove_file(dir.path().join("src/one.h")).unwrap();
+
+        let found = reapi(&server, dir.path()).lookup(&action()).unwrap();
+
+        assert_eq!(found, None);
+        assert_eq!(server.calls_to(Method::GetActionResult).len(), 0);
+    }
+
+    #[test]
+    fn an_input_that_cannot_be_read_at_lookup_names_the_url_and_the_call() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        // A path through a regular file fails with "not a directory", which is not "not found".
+        let mut broken = action();
+        broken.files = vec![RemoteFile {
+            path: RootPath::from(&SourcePath::parse("src/main.c/inner.c").unwrap()),
+            digest: Digest::of(SOURCE),
+            mode: None,
+        }];
+
+        let error = reapi(&server, dir.path()).lookup(&broken).unwrap_err();
+
+        let text = error.to_string();
+        assert!(text.contains(&server.address().to_string()), "{text}");
+        assert!(text.contains("GetActionResult"), "{text}");
+        assert!(text.contains("src/main.c/inner.c"), "{text}");
+    }
+
+    #[test]
+    fn a_write_that_streams_names_the_stream_and_not_the_batch() {
+        let server = TestServer::start_with(ServerOptions {
+            max_batch_total_size_bytes: 10,
+            ..ServerOptions::default()
+        })
+        .unwrap();
+        server.fail(Method::Write, Fault::Internal);
+        let dir = workspace();
+
+        let error = reapi(&server, dir.path())
+            .upload(&action(), &produced(), &store())
+            .unwrap_err();
+
+        let text = error.to_string();
+        assert!(text.contains("ByteStream.Write"), "{text}");
+        assert!(!text.contains("BatchUpdateBlobs"), "{text}");
+        assert!(text.contains(&server.address().to_string()), "{text}");
+    }
+
+    #[test]
+    fn the_debug_text_of_an_adapter_leaves_the_token_out() {
+        let dir = workspace();
+        fs::write(dir.path().join("token"), "s3cret-token").unwrap();
+        let url = RemoteUrl::parse("grpcs://127.0.0.1:1").unwrap();
+        let settings = RemoteSettings::builder(url)
+            .token(TokenSource::File(HostPath::parse("token").unwrap()))
+            .build()
+            .unwrap();
+
+        let shown = format!("{:?}", Reapi::new(&settings, dir.path()).unwrap());
+
+        assert!(!shown.contains("s3cret-token"), "{shown}");
+        assert!(shown.contains("127.0.0.1:1"), "{shown}");
     }
 
     #[test]
@@ -661,17 +891,16 @@ mod tests {
             unreachable!("expected an adapter error, got {error:?}");
         };
         assert_eq!(port, PortName::RemoteCache);
-        assert!(
-            diagnostic.to_string().contains(&address.to_string()),
-            "{diagnostic}"
-        );
+        let text = diagnostic.to_string();
+        assert_eq!(text.matches(&address.to_string()).count(), 1, "{text}");
+        assert!(text.contains("GetActionResult: cannot connect"), "{text}");
     }
 
     #[test]
     fn a_tree_decodes_to_its_files() {
         let server = TestServer::start().unwrap();
         let dir = workspace();
-        let tree = encode::action_result(&produced()).trees.remove(0);
+        let tree = encode::action_result(&produced()).unwrap().trees.remove(0);
 
         let files = reapi(&server, dir.path()).decode_tree(&tree.bytes).unwrap();
 
