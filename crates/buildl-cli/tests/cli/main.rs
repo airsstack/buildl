@@ -14,3 +14,4 @@ mod exit_codes;
 mod output;
 mod remote;
 mod verify;
+mod watch;

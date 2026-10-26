@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-26
 depends-on: [03, 04]
 built-on: a08d695c7505
@@ -136,3 +136,23 @@ and the stack's Definition of Done is green. Commit `test(buildl-cli): run build
 `cargo make dod` green; `cargo test -p buildl-cli` covers spec §8's CLI row; a manual
 `cargo run -p buildl-cli -- watch` in `crates/buildl/tests/fixtures/chain` (copied out first)
 shows spec §7's lines.
+
+## Review findings
+
+- correctness — the trigger line was built from the unfiltered batch, so the first build's own writes, delivered late by the OS and coalesced with an edit, made it read `watch: .buildl and 23 more changed` instead of `watch: a.txt changed` — `crates/buildl-core/src/watch/run.rs`, `react.rs`. Found by Task 3's `an_edit_rebuilds` (red: left `["watch: .buildl and 23 more changed", "1 built", "watch: waiting for changes"]`). Fixed and verified: new `kept` drops out/state/`.git` paths first; the loop runs nothing on an empty remainder and passes `Trigger::Changed(kept)`; `the_trigger_names_only_the_paths_kept` failed before the fix (named `.buildl` with all 3 paths), passes after; `kept_holds_the_paths_outside_the_ignored_directories`, `kept_is_none_when_every_path_is_dropped` added; `cargo test -p buildl-cli --test cli watch` 4 passed; `cargo make dod` green (fix coder, run once).
+- unit-test-mandate — `watch_ended` had no test, so dropping the `watch: ` prefix or the error's exit code would go unseen — `crates/buildl-cli/src/run.rs`. Fixed and verified: `a_watch_that_ends_says_why_and_exits_with_the_error_status` (failed against a wrong expectation first); `cargo test -p buildl-cli` 108 unit, 122 cli passed; `cargo make dod` green.
+- doc-comment-discipline — `watch`'s doc named only the watcher failure as an end; the comment above `reporter.close()` claimed the watch ended mid-line — `run.rs`. Fixed: the doc names the watch-layout error before the first build; the comment calls the close a safeguard.
+- test strength — `sigint_ends_watch_without_a_summary` missed a `nothing to build` line; `a_usage_error_exits_2` passed on any usage error — `crates/buildl-cli/tests/cli/watch.rs`. Fixed: asserts nothing more was printed, and the `--no-remote cannot be combined with --remote-upload or --remote-strict` text.
+- style — doc lines over 100 columns in `buildl-core/src/watch/{run.rs,react.rs}`, `buildl/src/report/mod.rs`. Fixed: reflowed.
+- design note — the batch is filtered twice (`kept`, then `react`). No change: `react` is public and stays whole on its own (spec §3 places the drop there); the second pass costs nothing.
+
+## Probe results
+
+- No throwaway probe: SIGINT ending the process by signal (Risk 1) and the status-line ordering (Risk 3) are exercised by Task 3's `sigint_ends_watch_without_a_summary` and Task 1's `watch_lines_start_on_a_row_of_their_own`, both green. Painting: `summary_line` is unpainted too and `Paint` styles only headers and failure words, so unpainted watch lines match "as its other lines do" (reviewer read).
+- `an_edit_rebuilds` came out against plan 01's loop (see Review findings, first line); with a 4 s pause before the edit (manual run) the line was `watch: a.txt changed`, so it is a race between the first build's file events and the edit.
+
+## Deviations
+
+- 2026-10-26 — `buildl-core`'s `watch/react.rs` and `watch/run.rs` changed (the `kept` fix), files outside this plan's list; recorded here, committed separately as `fix(buildl-core): name only the kept paths of a batch`.
+- 2026-10-26 — `no_command_prints_the_short_help_on_stderr` (`tests/cli/arguments.rs`) also lists the commands and gained `watch`.
+- 2026-10-26 — Task 1 added `a_watch_line_ends_a_line_a_live_action_left_open` beside the named tests; `close` was split into `closing` and `say`.
