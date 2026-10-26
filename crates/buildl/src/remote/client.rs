@@ -3,12 +3,13 @@
 //! A [`Client`] owns a runtime, the way to the cache and the login every call carries, and
 //! exposes the calls of the REAPI that buildl makes as plain blocking methods over the
 //! generated message types: any thread may call them, any number at once. The channel to the
-//! cache is connected by the first call that needs it, and a failed connect is kept, so a cache
-//! that is down fails the first call with the reason and every later one at once. The cache's
-//! capabilities are asked for before the first call that needs them and kept, a failed ask
-//! included, so a cache that does not answer is found down once and not once per caller. Every
-//! unary call is bounded whole by the settings' timeout, each message of a `ByteStream` read by
-//! the same timeout, and a `ByteStream` write by the same timeout for each chunk the cache takes.
+//! cache is connected by the first call that needs it, together with the ask for the cache's
+//! capabilities: the two are one unit that is tried again while the cache may recover, and the
+//! outcome is kept, a failed one included, so a cache that is down fails the first call with the
+//! reason and every later one at once. Every unary call is bounded whole by the settings'
+//! timeout, each message of a `ByteStream` read by the same timeout, and a `ByteStream` write by
+//! the same timeout for each chunk the cache takes. A call that fails with a status the cache
+//! may recover from is made again, as many times as the settings allow.
 
 use std::future::Future;
 use std::path::Path;
@@ -23,7 +24,7 @@ use tonic::transport::Channel;
 use tonic::{Code, Status};
 
 use super::capabilities::Capabilities;
-use super::channel::{self, Pending};
+use super::channel::{self, ChannelError, Pending};
 use super::error::RemoteError;
 use super::login::Login;
 use super::proto::build::bazel::remote::execution::v2::action_cache_client::ActionCacheClient;
@@ -33,6 +34,7 @@ use super::proto::build::bazel::remote::execution::v2::{
     ActionResult, Digest, GetActionResultRequest, UpdateActionResultRequest, digest_function,
 };
 use super::proto::google::bytestream::byte_stream_client::ByteStreamClient;
+use super::retry::Retry;
 use super::runtime::Runtime;
 use super::transfer;
 use super::vocabulary::Method;
@@ -68,7 +70,8 @@ impl Progress {
     }
 }
 
-/// What one call needs: the channel, the login, the instance name and the time allowed.
+/// What one call needs: the channel, the login, the instance name, the time allowed and the
+/// rule for a call that fails.
 ///
 /// It is made by the [`Client`] for the length of a call, and builds the generated service
 /// clients, which are cheap to make.
@@ -78,9 +81,15 @@ pub(super) struct Wire<'a> {
     login: &'a Login,
     instance: Option<&'a InstanceName>,
     timeout: Duration,
+    retry: Retry,
 }
 
 impl Wire<'_> {
+    /// The rule that decides whether a failed call is made again.
+    pub(super) const fn retry(&self) -> &Retry {
+        &self.retry
+    }
+
     /// The instance name, empty when the settings name none.
     pub(super) fn instance(&self) -> &str {
         self.instance.map_or("", InstanceName::as_str)
@@ -177,6 +186,7 @@ pub(crate) struct Client {
     login: Login,
     instance: Option<InstanceName>,
     timeout: Duration,
+    retry: Retry,
     /// The outcome of asking for the cache's capabilities, once asked.
     capabilities: Mutex<Option<Asked>>,
 }
@@ -203,6 +213,7 @@ impl Client {
             login,
             instance: settings.instance().cloned(),
             timeout: settings.timeout().as_duration(),
+            retry: Retry::new(settings.retries()),
             capabilities: Mutex::new(None),
         })
     }
@@ -212,35 +223,55 @@ impl Client {
         &self.url
     }
 
-    /// What one call needs, connecting the channel if no call has yet.
+    /// The channel to the cache, connecting it if no call has yet.
     ///
-    /// A failed connect is not remembered here: every call asks [`Client::capabilities`] first,
-    /// which keeps the failure of its first ask and so keeps this method from being reached
-    /// again.
-    fn wire(&self) -> Result<Wire<'_>, RemoteError> {
-        let mut link = self.link.lock().unwrap_or_else(PoisonError::into_inner);
-        let channel = match &*link {
-            Link::Open(channel) => channel.clone(),
-            Link::Pending(pending) => {
-                let channel = pending.open(&self.runtime)?;
-                *link = Link::Open(channel.clone());
-                channel
+    /// A failed connect leaves the channel unconnected, so the next try connects again.
+    async fn open(&self) -> Result<Channel, ChannelError> {
+        let pending = {
+            let link = self.link.lock().unwrap_or_else(PoisonError::into_inner);
+            match &*link {
+                Link::Open(channel) => return Ok(channel.clone()),
+                Link::Pending(pending) => pending.as_ref().clone(),
             }
         };
-        drop(link);
-        Ok(Wire {
+        let channel = pending.connect().await?;
+        *self.link.lock().unwrap_or_else(PoisonError::into_inner) = Link::Open(channel.clone());
+        Ok(channel)
+    }
+
+    /// What one call needs over `channel`.
+    const fn wire_over(&self, channel: Channel) -> Wire<'_> {
+        Wire {
             channel,
             login: &self.login,
             instance: self.instance.as_ref(),
             timeout: self.timeout,
-        })
+            retry: self.retry,
+        }
+    }
+
+    /// What one call needs.
+    ///
+    /// Every call asks [`Client::capabilities`] first, which connects the channel, so the
+    /// channel is open here; if it were not, this would connect it without a retry. Must not be
+    /// called from within the runtime.
+    fn wire(&self) -> Result<Wire<'_>, RemoteError> {
+        let channel = self.runtime.block_on(self.open())?;
+        Ok(self.wire_over(channel))
+    }
+
+    /// Connects the channel and asks the cache for its capabilities, once.
+    async fn fetch_capabilities(&self) -> Result<Capabilities, RemoteError> {
+        let channel = self.open().await?;
+        Capabilities::fetch(&self.wire_over(channel)).await
     }
 
     /// The cache's capabilities, asked for on the first call and kept.
     ///
+    /// The channel is connected and the ask made as one unit, tried again as the rule allows.
     /// A failed ask is kept too. The first caller gets the failure itself; callers that were
     /// waiting, and every later one, get [`RemoteError::Unusable`] at once, so a cache that
-    /// does not answer costs one timeout and not one per caller.
+    /// does not answer costs one timeout, or one run of retries, and not one per caller.
     fn capabilities(&self) -> Result<Capabilities, RemoteError> {
         let mut held = self
             .capabilities
@@ -251,10 +282,10 @@ impl Client {
             Some(Asked::Failed(reason)) => return Err(RemoteError::Unusable { reason }),
             None => {}
         }
-        let asked = match self.wire() {
-            Ok(wire) => self.runtime.block_on(Capabilities::fetch(&wire)),
-            Err(error) => Err(error),
-        };
+        let asked = self
+            .runtime
+            .block_on(self.retry.run(|_| self.fetch_capabilities()))
+            .map_err(RemoteError::from);
         *held = Some(match &asked {
             Ok(known) => Asked::Known(*known),
             Err(error) => Asked::Failed(error.to_string()),
@@ -325,19 +356,25 @@ impl Client {
             digest_function: digest_function::Value::Sha256 as i32,
             ..GetActionResultRequest::default()
         };
-        self.runtime.block_on(async {
-            let mut client = wire.cache();
-            match wire
-                .bounded(Method::GetActionResult, client.get_action_result(request))
-                .await
-            {
-                Ok(found) => Ok(Some(found.into_inner())),
-                Err(RemoteError::Status { source, .. }) if source.code() == Code::NotFound => {
-                    Ok(None)
+        let (wire, request) = (&wire, &request);
+        self.runtime
+            .block_on(self.retry.run(|_| async move {
+                let mut client = wire.cache();
+                match wire
+                    .bounded(
+                        Method::GetActionResult,
+                        client.get_action_result(request.clone()),
+                    )
+                    .await
+                {
+                    Ok(found) => Ok(Some(found.into_inner())),
+                    Err(RemoteError::Status { source, .. }) if source.code() == Code::NotFound => {
+                        Ok(None)
+                    }
+                    Err(other) => Err(other),
                 }
-                Err(other) => Err(other),
-            }
-        })
+            }))
+            .map_err(RemoteError::from)
     }
 
     /// Stores `result` as the result of `action` and returns what the cache keeps.
@@ -360,15 +397,18 @@ impl Client {
             digest_function: digest_function::Value::Sha256 as i32,
             ..UpdateActionResultRequest::default()
         };
-        self.runtime.block_on(async {
-            let mut client = wire.cache();
-            wire.bounded(
-                Method::UpdateActionResult,
-                client.update_action_result(request),
-            )
-            .await
-            .map(tonic::Response::into_inner)
-        })
+        let (wire, request) = (&wire, &request);
+        self.runtime
+            .block_on(self.retry.run(|_| async move {
+                let mut client = wire.cache();
+                wire.bounded(
+                    Method::UpdateActionResult,
+                    client.update_action_result(request.clone()),
+                )
+                .await
+                .map(tonic::Response::into_inner)
+            }))
+            .map_err(RemoteError::from)
     }
 }
 
@@ -383,21 +423,31 @@ mod tests {
     use std::thread;
     use std::time::{Duration, Instant};
 
-    use buildl_core::{HostPath, InstanceName, RemoteSettings, RemoteUrl, Timeout, TokenSource};
+    use buildl_core::{
+        HostPath, InstanceName, RemoteSettings, RemoteUrl, RetryCount, Timeout, TokenSource,
+    };
     use uuid::Uuid;
 
     use super::Client;
     use crate::remote::channel::ChannelError;
     use crate::remote::error::RemoteError;
     use crate::remote::proto::build::bazel::remote::execution::v2::{ActionResult, Digest};
+    use crate::remote::retry::Retry;
     use crate::remote::test_server::{Fault, Hashing, Method, ServerOptions, TestServer, Updates};
     use crate::remote::tls_fixture::root;
 
     const MIB: usize = 1024 * 1024;
 
+    fn count(retries: i64) -> RetryCount {
+        RetryCount::from_integer(retries).unwrap()
+    }
+
+    /// Settings that allow no retries, so a failure ends a call at once.
     fn settings(server: &TestServer, instance: Option<&str>, timeout: &str) -> RemoteSettings {
         let url = RemoteUrl::parse(&format!("grpc://{}", server.address())).unwrap();
-        let mut builder = RemoteSettings::builder(url).timeout(Timeout::parse(timeout).unwrap());
+        let mut builder = RemoteSettings::builder(url)
+            .timeout(Timeout::parse(timeout).unwrap())
+            .retries(count(0));
         if let Some(instance) = instance {
             builder = builder.instance(InstanceName::parse(instance).unwrap());
         }
@@ -406,6 +456,18 @@ mod tests {
 
     fn client(server: &TestServer) -> Client {
         Client::new(&settings(server, None, "30s"), root()).unwrap()
+    }
+
+    /// A client of `settings` that allows `retries` retries and never pauses between them.
+    fn retrying(settings: &RemoteSettings, retries: i64) -> Client {
+        let mut client = Client::new(settings, root()).unwrap();
+        client.retry = Retry::without_delay(count(retries));
+        client
+    }
+
+    /// A client of `server` that allows `retries` retries and never pauses between them.
+    fn retrying_server(server: &TestServer, retries: i64) -> Client {
+        retrying(&settings(server, None, "30s"), retries)
     }
 
     fn server_with(limit: i64) -> TestServer {
@@ -448,6 +510,7 @@ mod tests {
         let url = RemoteUrl::parse(&format!("grpc://{address}")).unwrap();
         RemoteSettings::builder(url)
             .timeout(Timeout::parse(timeout).unwrap())
+            .retries(count(0))
             .build()
             .unwrap()
     }
@@ -921,5 +984,275 @@ mod tests {
 
         assert_eq!(server.calls_to(Method::GetCapabilities).len(), 1);
         assert_eq!(errors.len(), 4);
+    }
+
+    #[test]
+    fn a_call_that_fails_unavailable_twice_then_succeeds_succeeds() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 5);
+        let action = digest_of(b"action");
+        let result = ActionResult {
+            exit_code: 4,
+            ..ActionResult::default()
+        };
+        client
+            .update_action_result(&action, result.clone())
+            .unwrap();
+        server.fail_times(Method::GetActionResult, Fault::Unavailable, 2);
+
+        let found = client.get_action_result(&action).unwrap();
+
+        assert_eq!(found, Some(result));
+        assert_eq!(server.calls_to(Method::GetActionResult).len(), 3);
+    }
+
+    #[test]
+    fn each_transient_code_is_retried() {
+        for fault in [
+            Fault::Unavailable,
+            Fault::ResourceExhausted,
+            Fault::Aborted,
+            Fault::Cancelled,
+        ] {
+            let server = TestServer::start().unwrap();
+            let client = retrying_server(&server, 3);
+            server.fail_times(Method::GetActionResult, fault, 1);
+
+            let found = client.get_action_result(&digest_of(b"action")).unwrap();
+
+            assert_eq!(found, None, "{fault:?}");
+            assert_eq!(
+                server.calls_to(Method::GetActionResult).len(),
+                2,
+                "{fault:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_permanent_code_fails_at_once() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 5);
+        server.fail(Method::GetActionResult, Fault::PermissionDenied);
+
+        let error = client.get_action_result(&digest_of(b"action")).unwrap_err();
+
+        assert!(matches!(error, RemoteError::Status { .. }), "{error:?}");
+        assert_eq!(server.calls_to(Method::GetActionResult).len(), 1);
+    }
+
+    #[test]
+    fn retries_zero_makes_one_call() {
+        let server = TestServer::start().unwrap();
+        let client = client(&server);
+        server.fail_times(Method::GetActionResult, Fault::Unavailable, 1);
+
+        let error = client.get_action_result(&digest_of(b"action")).unwrap_err();
+
+        assert!(matches!(error, RemoteError::Status { .. }), "{error:?}");
+        assert_eq!(server.calls_to(Method::GetActionResult).len(), 1);
+    }
+
+    #[test]
+    fn the_error_after_the_last_retry_says_how_many_calls_were_made() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 2);
+        server.fail(Method::GetActionResult, Fault::Unavailable);
+
+        let error = client.get_action_result(&digest_of(b"action")).unwrap_err();
+
+        assert!(
+            matches!(error, RemoteError::GaveUp { calls: 3, .. }),
+            "{error:?}"
+        );
+        assert!(error.to_string().contains("after 3 calls"), "{error}");
+        assert_eq!(server.calls_to(Method::GetActionResult).len(), 3);
+    }
+
+    #[test]
+    fn a_streamed_write_is_retried_whole() {
+        let server = server_with(1024);
+        let client = retrying_server(&server, 3);
+        let data = bytes(4096, 13);
+        let digest = digest_of(&data);
+        server.fail_times(Method::Write, Fault::Unavailable, 1);
+
+        client.write_blobs(&[(digest, data.clone())]).unwrap();
+
+        assert_eq!(server.calls_to(Method::Write).len(), 2);
+        let stored = server.blob(&buildl_core::Digest::of(&data));
+        assert_eq!(stored.as_ref(), Some(&data));
+    }
+
+    #[test]
+    fn a_streamed_read_is_retried_whole() {
+        let server = server_with(1024);
+        let client = retrying_server(&server, 3);
+        let data = bytes(4096, 14);
+        let digests = put_all(&server, std::slice::from_ref(&data));
+        server.fail_times(Method::Read, Fault::Unavailable, 1);
+
+        let read = client.read_blobs(&digests).unwrap();
+
+        assert_eq!(read, [data]);
+        assert_eq!(server.calls_to(Method::Read).len(), 2);
+    }
+
+    #[test]
+    fn a_streamed_write_that_keeps_failing_is_given_up_after_its_retries() {
+        let server = server_with(1024);
+        let client = retrying_server(&server, 3);
+        let data = bytes(4096, 16);
+        let digest = digest_of(&data);
+        server.fail(Method::Write, Fault::Unavailable);
+
+        let error = client.write_blobs(&[(digest, data)]).unwrap_err();
+
+        assert!(
+            matches!(error, RemoteError::GaveUp { calls: 4, .. }),
+            "{error:?}"
+        );
+        assert_eq!(server.calls_to(Method::Write).len(), 4);
+    }
+
+    #[test]
+    fn a_streamed_read_that_keeps_failing_is_given_up_after_its_retries() {
+        let server = server_with(1024);
+        let client = retrying_server(&server, 3);
+        let data = bytes(4096, 17);
+        let digests = put_all(&server, std::slice::from_ref(&data));
+        server.fail(Method::Read, Fault::Unavailable);
+
+        let error = client.read_blobs(&digests).unwrap_err();
+
+        assert!(
+            matches!(error, RemoteError::GaveUp { calls: 4, .. }),
+            "{error:?}"
+        );
+        assert_eq!(server.calls_to(Method::Read).len(), 4);
+    }
+
+    #[test]
+    fn an_action_result_update_is_retried() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 3);
+        let action = digest_of(b"action");
+        let result = ActionResult {
+            exit_code: 6,
+            ..ActionResult::default()
+        };
+        server.fail_times(Method::UpdateActionResult, Fault::Unavailable, 1);
+
+        client
+            .update_action_result(&action, result.clone())
+            .unwrap();
+
+        assert_eq!(server.calls_to(Method::UpdateActionResult).len(), 2);
+        assert_eq!(client.get_action_result(&action).unwrap(), Some(result));
+    }
+
+    #[test]
+    fn a_batch_write_is_retried() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 3);
+        let data = bytes(10, 18);
+        let digest = digest_of(&data);
+        server.fail_times(Method::BatchUpdateBlobs, Fault::Unavailable, 1);
+
+        client.write_blobs(&[(digest, data.clone())]).unwrap();
+
+        assert_eq!(server.calls_to(Method::BatchUpdateBlobs).len(), 2);
+        assert_eq!(
+            server.blob(&buildl_core::Digest::of(&data)).as_ref(),
+            Some(&data)
+        );
+    }
+
+    #[test]
+    fn a_batch_read_whose_entries_fail_transiently_is_retried_whole() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 3);
+        let data = bytes(10, 19);
+        let digests = put_all(&server, std::slice::from_ref(&data));
+        server.fail_entries(Method::BatchReadBlobs, Fault::Unavailable, 1);
+
+        let read = client.read_blobs(&digests).unwrap();
+
+        assert_eq!(read, [data]);
+        assert_eq!(server.calls_to(Method::BatchReadBlobs).len(), 2);
+    }
+
+    #[test]
+    fn a_batch_write_whose_entries_fail_transiently_is_retried_whole() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 3);
+        let data = bytes(10, 20);
+        let digest = digest_of(&data);
+        server.fail_entries(Method::BatchUpdateBlobs, Fault::ResourceExhausted, 1);
+
+        client.write_blobs(&[(digest, data.clone())]).unwrap();
+
+        assert_eq!(server.calls_to(Method::BatchUpdateBlobs).len(), 2);
+        assert_eq!(
+            server.blob(&buildl_core::Digest::of(&data)).as_ref(),
+            Some(&data)
+        );
+    }
+
+    #[test]
+    fn a_batch_call_is_retried() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 3);
+        let data = bytes(10, 15);
+        let digests = put_all(&server, std::slice::from_ref(&data));
+        server.fail_times(Method::BatchReadBlobs, Fault::Aborted, 1);
+        server.fail_times(Method::FindMissingBlobs, Fault::Aborted, 1);
+
+        let read = client.read_blobs(&digests).unwrap();
+        let missing = client.find_missing_blobs(&digests).unwrap();
+
+        assert_eq!(read, [data]);
+        assert_eq!(missing, []);
+        assert_eq!(server.calls_to(Method::BatchReadBlobs).len(), 2);
+        assert_eq!(server.calls_to(Method::FindMissingBlobs).len(), 2);
+    }
+
+    #[test]
+    fn capabilities_are_retried_before_they_are_kept() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 3);
+        server.fail_times(Method::GetCapabilities, Fault::Unavailable, 1);
+
+        client.find_missing_blobs(&[]).unwrap();
+        client.find_missing_blobs(&[]).unwrap();
+
+        assert_eq!(server.calls_to(Method::GetCapabilities).len(), 2);
+    }
+
+    #[test]
+    fn a_lookup_miss_is_not_retried() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 5);
+
+        let found = client.get_action_result(&digest_of(b"unknown")).unwrap();
+
+        assert_eq!(found, None);
+        assert_eq!(server.calls_to(Method::GetActionResult).len(), 1);
+    }
+
+    #[test]
+    fn a_connection_that_cannot_be_made_is_retried() {
+        let client = retrying(&dead_settings("2s"), 2);
+
+        let error = client.find_missing_blobs(&[]).unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                RemoteError::GaveUp { calls: 3, last }
+                    if matches!(**last, RemoteError::Channel(ChannelError::Connect { .. }))
+            ),
+            "{error:?}"
+        );
     }
 }

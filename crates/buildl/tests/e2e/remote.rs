@@ -129,6 +129,7 @@ fn a_server_that_is_down_warns_and_builds_locally() {
     let url = format!("grpc://{}", closed.local_addr().unwrap());
     drop(closed);
     let fixture = checkout(&url);
+    fixture.append("buildl.toml", b"retries = 0\n");
 
     let mut recorder = Recorder::default();
     let built = build(&fixture, UPLOADING, &mut recorder).unwrap();

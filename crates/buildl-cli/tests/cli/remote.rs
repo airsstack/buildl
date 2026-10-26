@@ -159,7 +159,10 @@ fn no_remote_builds_without_connecting() {
 
 #[test]
 fn a_strict_failure_exits_as_infrastructure() {
-    let (_dir, root) = sandboxed(&closed_url());
+    let (_dir, root) = checkout(
+        &sandboxed_manifest(&["cp"]),
+        &format!("url = \"{}\"\nretries = 0\n", closed_url()),
+    );
 
     let built = run(&root, &["build", "--remote-strict"], &[]);
 
@@ -321,7 +324,7 @@ fn the_token_appears_in_no_output_and_not_in_the_log() {
     let (_down_dir, down) = checkout(
         &sandboxed_manifest(&["cp"]),
         &format!(
-            "url = \"grpcs://{}\"\ntoken = {{ env = \"{TOKEN_VARIABLE}\" }}\n",
+            "url = \"grpcs://{}\"\nretries = 0\ntoken = {{ env = \"{TOKEN_VARIABLE}\" }}\n",
             closed_url().trim_start_matches("grpc://")
         ),
     );

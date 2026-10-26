@@ -68,6 +68,12 @@ const READ_CHUNK: usize = 256 * 1024;
 pub enum Fault {
     /// `UNAVAILABLE`.
     Unavailable,
+    /// `RESOURCE_EXHAUSTED`.
+    ResourceExhausted,
+    /// `ABORTED`.
+    Aborted,
+    /// `CANCELLED`.
+    Cancelled,
     /// `UNAUTHENTICATED`.
     Unauthenticated,
     /// `PERMISSION_DENIED`.
@@ -79,15 +85,21 @@ pub enum Fault {
 }
 
 impl Fault {
-    fn status(self) -> Status {
-        let code = match self {
+    const fn code(self) -> Code {
+        match self {
             Self::Unavailable => Code::Unavailable,
+            Self::ResourceExhausted => Code::ResourceExhausted,
+            Self::Aborted => Code::Aborted,
+            Self::Cancelled => Code::Cancelled,
             Self::Unauthenticated => Code::Unauthenticated,
             Self::PermissionDenied => Code::PermissionDenied,
             Self::NotFound => Code::NotFound,
             Self::Internal => Code::Internal,
-        };
-        Status::new(code, "scripted failure")
+        }
+    }
+
+    fn status(self) -> Status {
+        Status::new(self.code(), "scripted failure")
     }
 }
 
@@ -242,7 +254,38 @@ impl TestServer {
 
     /// Makes every later call to `method` fail with `fault`, after any stall.
     pub fn fail(&self, method: Method, fault: Fault) {
-        self.shared.lock().failures.insert(method, fault);
+        self.shared.lock().failures.insert(
+            method,
+            Failing {
+                fault,
+                remaining: None,
+            },
+        );
+    }
+
+    /// Makes the next `times` calls to `method` fail with `fault`, after any stall, and answers
+    /// the calls after them as usual.
+    pub fn fail_times(&self, method: Method, fault: Fault, times: u32) {
+        self.shared.lock().failures.insert(
+            method,
+            Failing {
+                fault,
+                remaining: Some(times),
+            },
+        );
+    }
+
+    /// Makes the next `times` calls to `method`, which is `BatchReadBlobs` or
+    /// `BatchUpdateBlobs`, succeed as calls but carry `fault` as the status of every entry of
+    /// their answer, and answers the calls after them as usual.
+    pub fn fail_entries(&self, method: Method, fault: Fault, times: u32) {
+        self.shared.lock().entry_failures.insert(
+            method,
+            Failing {
+                fault,
+                remaining: Some(times),
+            },
+        );
     }
 
     /// Makes every later call to `method` wait `delay` before it is answered.
@@ -273,6 +316,29 @@ impl TestServer {
     }
 }
 
+/// A scripted failure of a method: how it fails and for how many more calls.
+#[derive(Clone, Copy, Debug)]
+struct Failing {
+    fault: Fault,
+    /// The calls left to fail; `None` fails every call.
+    remaining: Option<u32>,
+}
+
+impl Failing {
+    /// The fault the arriving call is to fail with, counting the call off; `None` once the
+    /// scripted calls have all failed.
+    const fn next(&mut self) -> Option<Fault> {
+        match &mut self.remaining {
+            None => Some(self.fault),
+            Some(0) => None,
+            Some(left) => {
+                *left -= 1;
+                Some(self.fault)
+            }
+        }
+    }
+}
+
 /// What the server holds and what it has been told to do.
 #[derive(Debug, Default)]
 struct State {
@@ -281,7 +347,9 @@ struct State {
     /// Action results by the hash of the action digest.
     results: BTreeMap<String, ActionResult>,
     calls: Vec<Call>,
-    failures: BTreeMap<Method, Fault>,
+    failures: BTreeMap<Method, Failing>,
+    /// The batch methods whose answers carry a failed status on each entry.
+    entry_failures: BTreeMap<Method, Failing>,
     stalls: BTreeMap<Method, Duration>,
     /// The wait before each message of a `ByteStream` read answer.
     stream_delay: Duration,
@@ -300,6 +368,14 @@ impl Shared {
     /// plain data that no half-finished update leaves inconsistent.
     fn lock(&self) -> MutexGuard<'_, State> {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The fault the entries of the arriving `method` call are to carry, counting the call off.
+    fn entry_fault(&self, method: Method) -> Option<Fault> {
+        self.lock()
+            .entry_failures
+            .get_mut(&method)
+            .and_then(Failing::next)
     }
 
     /// Records a call, then holds it for its scripted stall and fails it if so scripted.
@@ -324,7 +400,7 @@ impl Shared {
             (
                 index,
                 state.stalls.get(&method).copied(),
-                state.failures.get(&method).copied(),
+                state.failures.get_mut(&method).and_then(Failing::next),
             )
         };
         let guard = InFlight {
@@ -529,14 +605,18 @@ impl ContentAddressableStorage for Service {
         let message = request.into_inner();
         let total = message.requests.iter().map(|each| each.data.len()).sum();
         check_batch_limit(self.shared.options.max_batch_total_size_bytes, total)?;
+        let entry_fault = self.shared.entry_fault(Method::BatchUpdateBlobs);
 
         let mut state = self.shared.lock();
         let responses = message
             .requests
             .into_iter()
             .map(|each| {
-                let status = match each.digest.as_ref() {
-                    Some(digest) if usize::try_from(digest.size_bytes) == Ok(each.data.len()) => {
+                let status = match (entry_fault, each.digest.as_ref()) {
+                    (Some(fault), _) => status_of(fault.code(), "scripted failure"),
+                    (None, Some(digest))
+                        if usize::try_from(digest.size_bytes) == Ok(each.data.len()) =>
+                    {
                         state.blobs.insert(digest.hash.clone(), each.data);
                         status_of(Code::Ok, "")
                     }
@@ -562,6 +642,7 @@ impl ContentAddressableStorage for Service {
             .shared
             .begin(Method::BatchReadBlobs, headers_of(&request), None)
             .await?;
+        let entry_fault = self.shared.entry_fault(Method::BatchReadBlobs);
         let state = self.shared.lock();
         let responses: Vec<_> = request
             .get_ref()
@@ -572,10 +653,11 @@ impl ContentAddressableStorage for Service {
                 batch_read_blobs_response::Response {
                     digest: Some(digest.clone()),
                     data: blob.cloned().unwrap_or_default(),
-                    status: Some(blob.map_or_else(
-                        || status_of(Code::NotFound, "no such blob"),
-                        |_| status_of(Code::Ok, ""),
-                    )),
+                    status: Some(match (entry_fault, blob) {
+                        (Some(fault), _) => status_of(fault.code(), "scripted failure"),
+                        (None, None) => status_of(Code::NotFound, "no such blob"),
+                        (None, Some(_)) => status_of(Code::Ok, ""),
+                    }),
                     ..batch_read_blobs_response::Response::default()
                 }
             })
@@ -1071,6 +1153,32 @@ mod tests {
                 .block_on(storage.find_missing_blobs(FindMissingBlobsRequest::default()))
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn a_failure_scripted_for_some_calls_ends_after_them() {
+        let fixture = Fixture::new();
+        fixture
+            .server
+            .fail_times(Method::GetCapabilities, Fault::Aborted, 2);
+        let mut client = CapabilitiesClient::new(fixture.channel.clone());
+
+        let codes: Vec<_> = (0..3)
+            .map(|_| {
+                fixture
+                    .runtime
+                    .block_on(client.get_capabilities(GetCapabilitiesRequest::default()))
+                    .map(|_| ())
+                    .map_err(|status| status.code())
+            })
+            .collect();
+
+        assert_eq!(
+            codes,
+            [Err(Code::Aborted), Err(Code::Aborted), Ok(())],
+            "two scripted failures, then the server answers"
+        );
+        assert_eq!(fixture.server.calls_to(Method::GetCapabilities).len(), 3);
     }
 
     #[test]

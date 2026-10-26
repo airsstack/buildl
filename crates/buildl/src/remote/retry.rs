@@ -5,14 +5,6 @@
 //! once. A stream that delivers messages is moving, so a try that recorded a message on its
 //! [`Progress`] starts the count over: only a stream that stops uses its retries up.
 
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the client reaches the rule through its calls; until they do, only the tests use it"
-    )
-)]
-
 use std::collections::hash_map::RandomState;
 use std::future::Future;
 use std::hash::{BuildHasher, Hasher};

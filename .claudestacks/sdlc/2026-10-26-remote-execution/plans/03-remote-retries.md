@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-26
 depends-on: [01]
 built-on: 4704ec60505e
@@ -31,9 +31,13 @@ crates/buildl/src/remote/retry.rs        — [create] Retry: transient codes, de
 crates/buildl/src/remote/mod.rs          — [modify] declare retry (private)
 crates/buildl/src/remote/client.rs       — [modify] Client holds a Retry; every method (:243-364) runs its call through it; tests
 crates/buildl/src/remote/transfer.rs     — [modify] batch and ByteStream calls (:207-455) run through the Retry they are handed; a ByteStream write is retried whole under a fresh upload UUID
-crates/buildl/src/remote/capabilities.rs — [modify] fetch (:66) is retried before its answer is kept
+crates/buildl/src/remote/capabilities.rs — unchanged: the client retries the connect and the fetch as one unit, in client.rs
+crates/buildl/src/remote/channel.rs      — [modify] Pending::open(runtime) becomes async Pending::connect, so a retried connect never nests block_on
+crates/buildl/src/remote/login.rs        — [modify] test helper uses connect
+crates/buildl/src/remote/reapi.rs        — [modify] failed() names a call once after retries; test settings use retries = 0
+crates/buildl/tests/e2e/remote.rs        — [modify] the server-down test sets retries = 0
 crates/buildl/src/remote/error.rs        — [modify] RemoteError (:17) says whether it is transient (Status by code, TimedOut, a connection that failed); Retried { attempts } wording
-crates/buildl/src/remote/test_server.rs  — [modify] Fault (:68) gains ResourceExhausted, Aborted, Cancelled; fail_times(method, fault, n)
+crates/buildl/src/remote/test_server.rs  — [modify] Fault (:68) gains ResourceExhausted, Aborted, Cancelled; fail_times(method, fault, n); a scripted transient status for one batch entry
 ```
 
 ## Order of work
@@ -97,7 +101,7 @@ schedule (light machine load).
 - `a_streamed_write_is_retried_whole` — `fail_times(Write, Unavailable, 1)` on a blob over the batch threshold; the blob reaches the server
 - `capabilities_are_retried_before_they_are_kept` — `fail_times(GetCapabilities, Unavailable, 1)`; the first lookup succeeds
 - `a_lookup_miss_is_not_retried` — an unknown action: one `GetActionResult`, `None`
-- the existing `a_cache_that_is_down_fails_the_first_call_and_not_the_adapter` (`reapi.rs:880`) still passes, now after the retries
+- the existing `a_cache_that_is_down_fails_the_first_call_and_not_the_adapter` (`reapi.rs:880`) still passes; its settings use `retries = 0` so it does not wait out the schedule, and `a_connection_that_cannot_be_made_is_retried` (`client.rs`) proves the connect is retried
 
 **Done when:** `cargo test -p buildl remote` passes; `cargo make dod` and `cargo deny check`
 green. Commit `feat(buildl): retry every remote call on a transient failure`.
@@ -113,3 +117,33 @@ green. Commit `feat(buildl): retry every remote call on a transient failure`.
 ## Proof
 
 `cargo make dod`, `cargo deny check`; `cargo test -p buildl remote` includes every test named.
+
+## Review findings
+
+Task 1:
+- modularity — a second `Progress` type beside `client::Progress` — `remote/retry.rs` — fixed: the rule hands each try a fresh `client::Progress`; verified by `cargo test -p buildl remote::retry` → `9 passed; 0 failed`
+- test-coverage — removing the sleep left every test green — `remote/retry.rs` — fixed: `each_retry_waits_out_its_pause` (1 ms base, 3 retries, elapsed ≥ 7 ms)
+- docs — `mod.rs:6` over-long line — fixed
+- strong-types — test-only zeroing fields on `Retry` — kept: test-only constructor, no production setting
+
+Task 2:
+- bug — ByteStream tries recorded progress, so a cache that kept refusing a write or a read reset the count and was retried forever (spec §5 resets only on `Execute`/`WaitExecution` messages) — `remote/transfer.rs` — fixed: stream calls run as `run(|_| …)` with their own `Progress` for the timeout; verified by `a_streamed_write_that_keeps_failing_is_given_up_after_its_retries` and `a_streamed_read_that_keeps_failing_is_given_up_after_its_retries` (`GaveUp { calls: 4 }` at 3 retries); `cargo test -p buildl --all-features remote` → `177 passed` lib, `7 passed` e2e
+- bug — after retries the call name was printed twice — `remote/reapi.rs` `failed` — fixed: `names_own_call` looks through `GaveUp.last`; test `a_call_given_up_after_retries_is_named_once`
+- test-coverage — no test for the retry of `UpdateActionResult` and `BatchUpdateBlobs` — fixed: `an_action_result_update_is_retried`, `a_batch_write_is_retried`
+- test-coverage — no test for a batch whose entries carry a transient code — fixed: `TestServer::fail_entries`; `a_batch_read_whose_entries_fail_transiently_is_retried_whole`, `a_batch_write_whose_entries_fail_transiently_is_retried_whole`
+- question — a readable but wrong `ca` fails the TLS handshake, which is a connect failure and is retried — kept: the plan excludes only a channel that cannot be set up (an unreadable `ca`); a handshake failure is a connect failure
+- spec — file list and the reapi down-cache proof did not match what was built — fixed: plan amended
+- gates after the fix round: `cargo test --workspace --all-targets --all-features --no-fail-fast` → all passed (698, 145, 108, 9, 20, 2); `cargo make dod` passes fmt, clippy and doc, and its test step stopped twice on `watch::an_edit_rebuilds`, a file-watcher timing test with no remote code in it, which passes alone; `cargo deny check` → ok
+
+## Probe results
+
+- the four transient codes and the delay schedule match Buck2 — `b2src/.../re_grpc/src/client.rs:604-612, 668-680` → `Unavailable | ResourceExhausted | Aborted | Cancelled`; 100 ms initial, 5 s max, jitter `0..50` ms — as planned
+- tokio has no `test-util` — `Cargo.toml:90` → `features = ["rt", "rt-multi-thread", "time"]` — as planned
+- how tonic reports a refused connection — temporary test → `Channel(Connect { reason: "transport error: tcp connect error: tcp connect error: Connection refused (os error 61)" })` — not an `Unavailable` status, so `Channel(Connect)` maps to `Unavailable` explicitly
+- `Pending::open(runtime)` calls `block_on` itself, so a retried connect inside `block_on` would nest — reviewer's reading of `channel.rs:132` — **against the plan's silence**: connect made async (`Pending::connect`)
+
+## Deviations
+
+- 2026-10-26 — the connect is async (`Pending::connect`) and is retried with `GetCapabilities` as one unit inside `capabilities()`; `capabilities.rs` is unchanged. Plan amended.
+- 2026-10-26 — after more than one call the error is `RemoteError::GaveUp { calls, last }`, shown as `<last> (after N calls)`; a call made once keeps its own error.
+- 2026-10-26 — `crates/buildl/tests/e2e/remote.rs` and the reapi test settings use `retries = 0`. Plan amended.

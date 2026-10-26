@@ -196,6 +196,19 @@ impl io::Write for Hashing {
     }
 }
 
+/// Whether the text of `error` says which call failed, a call made again included: the text of
+/// a failure that gave up is that of its last try.
+fn names_own_call(error: &RemoteError) -> bool {
+    match error {
+        RemoteError::Status { .. }
+        | RemoteError::TimedOut { .. }
+        | RemoteError::Protocol { .. }
+        | RemoteError::Blob { .. } => true,
+        RemoteError::GaveUp { last, .. } => names_own_call(last),
+        _ => false,
+    }
+}
+
 /// The digest and size of the file at `path`, hashed as it is read, and its permission bits as
 /// the open file reports them.
 fn digest_file(path: &Path) -> io::Result<(Blob, u32)> {
@@ -227,10 +240,7 @@ impl Reapi {
         let url = self.client.url();
         match error {
             RemoteError::Token(error) => error,
-            error @ (RemoteError::Status { .. }
-            | RemoteError::TimedOut { .. }
-            | RemoteError::Protocol { .. }
-            | RemoteError::Blob { .. }) => adapter(format!("{url}: {error}")),
+            error if names_own_call(&error) => adapter(format!("{url}: {error}")),
             error => adapter(format!("{url}: {call}: {error}")),
         }
     }
@@ -560,6 +570,7 @@ mod tests {
         let url = RemoteUrl::parse(&format!("grpc://{address}")).unwrap();
         RemoteSettings::builder(url)
             .timeout(Timeout::parse("5s").unwrap())
+            .retries(buildl_core::RetryCount::from_integer(0).unwrap())
             .build()
             .unwrap()
     }
@@ -892,6 +903,31 @@ mod tests {
         let text = diagnostic.to_string();
         assert!(text.contains(&server.address().to_string()), "{text}");
         assert!(text.contains("GetActionResult"), "{text}");
+    }
+
+    #[test]
+    fn a_call_given_up_after_retries_is_named_once() {
+        let server = TestServer::start().unwrap();
+        server.fail(Method::GetActionResult, Fault::Unavailable);
+        let dir = workspace();
+        let url = RemoteUrl::parse(&format!("grpc://{}", server.address())).unwrap();
+        let settings = RemoteSettings::builder(url)
+            .timeout(Timeout::parse("5s").unwrap())
+            .retries(buildl_core::RetryCount::from_integer(1).unwrap())
+            .build()
+            .unwrap();
+
+        let error = Reapi::new(&settings, dir.path())
+            .unwrap()
+            .lookup(&action())
+            .unwrap_err();
+
+        let Error::Adapter { diagnostic, .. } = error else {
+            unreachable!("expected an adapter error, got {error:?}");
+        };
+        let text = diagnostic.to_string();
+        assert_eq!(text.matches("GetActionResult").count(), 1, "{text}");
+        assert!(text.contains("after 2 calls"), "{text}");
     }
 
     #[test]
