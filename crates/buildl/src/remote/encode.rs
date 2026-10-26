@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 use buildl_core::{
     Blob, Digest, FileMode, RemoteAction, RemoteContent, RemoteHit, RemoteOutputDirectory,
-    RemoteOutputFile, RemoteTreeFile, RemoteUpload, Timeout, TreePath,
+    RemoteOutputFile, RemotePlatform, RemoteTreeFile, RemoteUpload, Timeout, TreePath,
 };
 use prost::Message;
 
@@ -139,8 +139,11 @@ pub(crate) fn platform(action: &RemoteAction) -> wire::Platform {
         value: value.to_owned(),
     };
     let mut properties = vec![
-        property("ISA", action.platform.isa()),
-        property("OSFamily", action.platform.os_family()),
+        property(RemotePlatform::ISA_PROPERTY, action.platform.isa()),
+        property(
+            RemotePlatform::OS_FAMILY_PROPERTY,
+            action.platform.os_family(),
+        ),
     ];
     properties.sort_by(|left, right| (&left.name, &left.value).cmp(&(&right.name, &right.value)));
     wire::Platform { properties }

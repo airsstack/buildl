@@ -37,6 +37,12 @@ pub struct RemotePlatform {
 }
 
 impl RemotePlatform {
+    /// The name of the property that carries the operating system family.
+    pub const OS_FAMILY_PROPERTY: &'static str = "OSFamily";
+
+    /// The name of the property that carries the instruction set.
+    pub const ISA_PROPERTY: &'static str = "ISA";
+
     /// The machine `platform` names, in the words a remote cache uses: the operating system is
     /// kept as it is, and `aarch64` and `x86_64` become `arm-a64` and `x86-64`. Any other
     /// architecture is kept as it is.

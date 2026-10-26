@@ -1,12 +1,13 @@
 //! The remote cache a workspace names, validated at construction.
 //!
-//! One file for the settings and the six values they hold, because each part is meaningless
+//! One file for the settings and the values they hold, because each part is meaningless
 //! alone and the settings' one cross-field rule — a token never travels over plain `grpc://` —
 //! needs the URL and the token source side by side. Every part is parsed once, where
 //! `buildl.toml` names it, so no later phase re-checks a URL, an instance name or a header.
 //!
 //! Responsibilities: [`RemoteSettings`], [`RemoteSettingsBuilder`], [`RemoteUrl`], [`RemoteScheme`], [`InstanceName`],
-//! [`HostPath`], [`TokenSource`] and [`HeaderName`], their constructors, and their rendering.
+//! [`HostPath`], [`TokenSource`], [`HeaderName`], [`RemoteJobs`], [`RetryCount`],
+//! [`PlatformPropertyName`] and [`PlatformProperties`], their constructors, and their rendering.
 //!
 //! Non-responsibilities: connecting to the cache, reading a certificate or a token, and reading
 //! the environment. A [`HostPath`] and an [`EnvName`] are names; nothing here opens a file or
@@ -15,9 +16,10 @@
 use core::fmt;
 use core::num::NonZeroU64;
 use core::str::FromStr;
+use std::collections::BTreeMap;
 
 use crate::error::{Error, NameKind, Result};
-use crate::types::{EnvName, Timeout};
+use crate::types::{EnvName, RemotePlatform, Timeout};
 
 /// The path segments an instance name may not use, because the remote cache's resource names
 /// give them their own meaning.
@@ -37,6 +39,31 @@ const DEFAULT_HEADER: &str = "authorization";
 /// How long one request to the remote cache may take unless the workspace says otherwise: 30
 /// seconds.
 const DEFAULT_TIMEOUT: Timeout = Timeout::from_secs(NonZeroU64::MIN.saturating_add(29));
+
+/// How long a remote execution may wait in the cache's queue unless the workspace says
+/// otherwise: one hour.
+const DEFAULT_QUEUE_TIMEOUT: Timeout = Timeout::from_secs(NonZeroU64::MIN.saturating_add(3_599));
+
+/// The fewest remote calls that may run at once.
+const MIN_JOBS: u16 = 1;
+
+/// The most remote calls that may run at once.
+const MAX_JOBS: u16 = 1024;
+
+/// How many remote calls run at once unless the workspace says otherwise.
+const DEFAULT_JOBS: u16 = 128;
+
+/// The most retries after a first call.
+const MAX_RETRIES: u8 = 10;
+
+/// How many retries follow a failed first call unless the workspace says otherwise.
+const DEFAULT_RETRIES: u8 = 5;
+
+/// The platform property names buildl sends itself, which a workspace may not replace.
+const RESERVED_PROPERTIES: [&str; 2] = [
+    RemotePlatform::OS_FAMILY_PROPERTY,
+    RemotePlatform::ISA_PROPERTY,
+];
 
 /// The refusal of `raw` as a value of `kind`.
 fn invalid(kind: NameKind, raw: &str, reason: &'static str) -> Error {
@@ -388,7 +415,236 @@ impl fmt::Display for HeaderName {
     }
 }
 
-/// The remote cache a workspace names: where it is, how to reach it, and how to sign in.
+/// The reason a job count is refused.
+const JOBS_REASON: &str = "must be a whole number from 1 to 1024";
+
+/// How many remote calls a run keeps in flight at once: a whole number from 1 to 1024.
+///
+/// The default is 128.
+///
+/// # Examples
+///
+/// ```
+/// use buildl_core::RemoteJobs;
+///
+/// assert_eq!(RemoteJobs::parse("64")?.get(), 64);
+/// assert_eq!(RemoteJobs::default().get(), 128);
+/// assert!(RemoteJobs::parse("0").is_err());
+/// assert!(RemoteJobs::from_integer(1025).is_err());
+/// # Ok::<(), buildl_core::Error>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RemoteJobs(u16);
+
+impl RemoteJobs {
+    /// Reads the count a manifest states as the integer `count`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidName`] when `count` is below 1 or above 1024.
+    pub fn from_integer(count: i64) -> Result<Self> {
+        u16::try_from(count)
+            .ok()
+            .filter(|count| (MIN_JOBS..=MAX_JOBS).contains(count))
+            .map(Self)
+            .ok_or_else(|| invalid(NameKind::RemoteJobs, &count.to_string(), JOBS_REASON))
+    }
+
+    /// Reads the count a flag states as the text `raw`: a whole number in decimal digits.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidName`] when `raw` is empty, holds anything but ASCII digits — a
+    /// sign and a space included — or is below 1 or above 1024.
+    pub fn parse(raw: &str) -> Result<Self> {
+        if raw.is_empty() || !raw.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(invalid(NameKind::RemoteJobs, raw, JOBS_REASON));
+        }
+        raw.parse::<i64>()
+            .ok()
+            .and_then(|count| Self::from_integer(count).ok())
+            .ok_or_else(|| invalid(NameKind::RemoteJobs, raw, JOBS_REASON))
+    }
+
+    /// The count.
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0
+    }
+}
+
+impl Default for RemoteJobs {
+    fn default() -> Self {
+        Self(DEFAULT_JOBS)
+    }
+}
+
+impl fmt::Display for RemoteJobs {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// How many times a failed remote call is tried again after the first: a whole number from 0
+/// to 10, where `0` turns retrying off.
+///
+/// The default is 5.
+///
+/// # Examples
+///
+/// ```
+/// use buildl_core::RetryCount;
+///
+/// assert_eq!(RetryCount::from_integer(0)?.get(), 0);
+/// assert_eq!(RetryCount::default().get(), 5);
+/// assert!(RetryCount::from_integer(11).is_err());
+/// # Ok::<(), buildl_core::Error>(())
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RetryCount(u8);
+
+impl RetryCount {
+    /// Reads the count a manifest states as the integer `count`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidName`] when `count` is below 0 or above 10.
+    pub fn from_integer(count: i64) -> Result<Self> {
+        u8::try_from(count)
+            .ok()
+            .filter(|count| *count <= MAX_RETRIES)
+            .map(Self)
+            .ok_or_else(|| {
+                invalid(
+                    NameKind::RetryCount,
+                    &count.to_string(),
+                    "must be a whole number from 0 to 10",
+                )
+            })
+    }
+
+    /// The count.
+    #[must_use]
+    pub const fn get(self) -> u8 {
+        self.0
+    }
+}
+
+impl Default for RetryCount {
+    fn default() -> Self {
+        Self(DEFAULT_RETRIES)
+    }
+}
+
+impl fmt::Display for RetryCount {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// The grammar of a platform property name, or the reason a candidate is rejected.
+fn property_name_grammar(raw: &str) -> core::result::Result<(), &'static str> {
+    if raw.is_empty() {
+        return Err("must not be empty");
+    }
+    if RESERVED_PROPERTIES.contains(&raw) {
+        return Err("must not be OSFamily or ISA, which buildl sends itself");
+    }
+    Ok(())
+}
+
+/// The name of one platform property a workspace asks the remote executor for, such as `pool`.
+///
+/// Non-empty, and neither `OSFamily` nor `ISA`, which buildl sends itself. Names are compared as
+/// written, so `osfamily` is a different name from `OSFamily`.
+///
+/// # Examples
+///
+/// ```
+/// use buildl_core::PlatformPropertyName;
+///
+/// assert_eq!(PlatformPropertyName::parse("pool")?.as_str(), "pool");
+/// assert!(PlatformPropertyName::parse("OSFamily").is_err());
+/// assert!(PlatformPropertyName::parse("").is_err());
+/// # Ok::<(), buildl_core::Error>(())
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PlatformPropertyName(String);
+
+impl PlatformPropertyName {
+    /// Validates `raw` and wraps it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidName`] when `raw` is empty, or is exactly `OSFamily` or `ISA`.
+    pub fn parse(raw: impl Into<String>) -> Result<Self> {
+        let raw = raw.into();
+        match property_name_grammar(&raw) {
+            Ok(()) => Ok(Self(raw)),
+            Err(reason) => Err(invalid(NameKind::PlatformProperty, &raw, reason)),
+        }
+    }
+
+    /// The name as a string slice.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for PlatformPropertyName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// The platform properties a workspace asks the remote executor for, sorted by name.
+///
+/// Built from a map, so each name appears once and the order is settled at construction rather
+/// than by whoever reads the list.
+///
+/// # Examples
+///
+/// ```
+/// use std::collections::BTreeMap;
+///
+/// use buildl_core::{PlatformPropertyName, PlatformProperties};
+///
+/// let properties = PlatformProperties::new(BTreeMap::from([
+///     (PlatformPropertyName::parse("z")?, "1".to_owned()),
+///     (PlatformPropertyName::parse("a")?, "2".to_owned()),
+/// ]));
+/// let names: Vec<&str> = properties.iter().map(|(name, _)| name.as_str()).collect();
+/// assert_eq!(names, ["a", "z"]);
+/// # Ok::<(), buildl_core::Error>(())
+/// ```
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlatformProperties(Vec<(PlatformPropertyName, String)>);
+
+impl PlatformProperties {
+    /// The properties in `map`, listed in the map's order: by name.
+    #[must_use]
+    pub fn new(map: BTreeMap<PlatformPropertyName, String>) -> Self {
+        Self(map.into_iter().collect())
+    }
+
+    /// The properties, by name, each with its value.
+    pub fn iter(&self) -> impl Iterator<Item = (&PlatformPropertyName, &str)> {
+        self.0.iter().map(|(name, value)| (name, value.as_str()))
+    }
+
+    /// Whether there is no property.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// The remote cache a workspace names: where it is, how to reach it, and how it is used.
+///
+/// Besides the address and the sign-in, it holds whether the cache also runs actions, how many
+/// calls run at once, how long an execution may queue, how often a failed call is retried, and
+/// which platform properties are asked for.
 ///
 /// A token is only accepted over `grpcs://`, so a credential never crosses the network in clear
 /// text.
@@ -415,6 +671,11 @@ pub struct RemoteSettings {
     token: Option<TokenSource>,
     header: HeaderName,
     timeout: Timeout,
+    execute: bool,
+    jobs: RemoteJobs,
+    queue_timeout: Timeout,
+    retries: RetryCount,
+    properties: PlatformProperties,
 }
 
 impl RemoteSettings {
@@ -427,6 +688,11 @@ impl RemoteSettings {
             token: None,
             header: None,
             timeout: None,
+            execute: false,
+            jobs: None,
+            queue_timeout: None,
+            retries: None,
+            properties: None,
         }
     }
 
@@ -465,6 +731,36 @@ impl RemoteSettings {
     pub const fn timeout(&self) -> Timeout {
         self.timeout
     }
+
+    /// Whether the cache also runs the actions it has no result for.
+    #[must_use]
+    pub const fn execute(&self) -> bool {
+        self.execute
+    }
+
+    /// How many remote calls run at once.
+    #[must_use]
+    pub const fn jobs(&self) -> RemoteJobs {
+        self.jobs
+    }
+
+    /// How long an execution may wait in the cache's queue.
+    #[must_use]
+    pub const fn queue_timeout(&self) -> Timeout {
+        self.queue_timeout
+    }
+
+    /// How many times a failed call is tried again after the first.
+    #[must_use]
+    pub const fn retries(&self) -> RetryCount {
+        self.retries
+    }
+
+    /// The platform properties asked of the remote executor.
+    #[must_use]
+    pub const fn properties(&self) -> &PlatformProperties {
+        &self.properties
+    }
 }
 
 /// The parts of a [`RemoteSettings`] as they are stated, before the defaults are filled in and
@@ -478,6 +774,11 @@ pub struct RemoteSettingsBuilder {
     token: Option<TokenSource>,
     header: Option<HeaderName>,
     timeout: Option<Timeout>,
+    execute: bool,
+    jobs: Option<RemoteJobs>,
+    queue_timeout: Option<Timeout>,
+    retries: Option<RetryCount>,
+    properties: Option<PlatformProperties>,
 }
 
 impl RemoteSettingsBuilder {
@@ -511,8 +812,40 @@ impl RemoteSettingsBuilder {
         self
     }
 
-    /// Assembles the settings, filling the header with `authorization` and the timeout with
-    /// 30 seconds when they are not given.
+    /// Sets whether the cache also runs the actions it has no result for, instead of `false`.
+    pub const fn execute(mut self, execute: bool) -> Self {
+        self.execute = execute;
+        self
+    }
+
+    /// Sets how many remote calls run at once, instead of 128.
+    pub const fn jobs(mut self, jobs: RemoteJobs) -> Self {
+        self.jobs = Some(jobs);
+        self
+    }
+
+    /// Sets how long an execution may wait in the cache's queue, instead of one hour.
+    pub const fn queue_timeout(mut self, queue_timeout: Timeout) -> Self {
+        self.queue_timeout = Some(queue_timeout);
+        self
+    }
+
+    /// Sets how many times a failed call is tried again, instead of 5.
+    pub const fn retries(mut self, retries: RetryCount) -> Self {
+        self.retries = Some(retries);
+        self
+    }
+
+    /// Names the platform properties to ask of the remote executor, instead of none.
+    pub fn properties(mut self, properties: PlatformProperties) -> Self {
+        self.properties = Some(properties);
+        self
+    }
+
+    /// Assembles the settings, filling every part that is not given with its default: the
+    /// header with `authorization`, the timeout with 30 seconds, `execute` with `false`, the
+    /// job count with 128, the queue timeout with one hour, the retries with 5, and the
+    /// properties with none.
     ///
     /// # Errors
     ///
@@ -528,6 +861,11 @@ impl RemoteSettingsBuilder {
             token: self.token,
             header: self.header.unwrap_or_default(),
             timeout: self.timeout.unwrap_or(DEFAULT_TIMEOUT),
+            execute: self.execute,
+            jobs: self.jobs.unwrap_or_default(),
+            queue_timeout: self.queue_timeout.unwrap_or(DEFAULT_QUEUE_TIMEOUT),
+            retries: self.retries.unwrap_or_default(),
+            properties: self.properties.unwrap_or_default(),
         })
     }
 }
@@ -540,11 +878,12 @@ mod tests {
     )]
 
     use core::time::Duration;
+    use std::collections::BTreeMap;
 
     use crate::error::{Error, NameKind};
     use crate::types::{
-        EnvName, HeaderName, HostPath, InstanceName, RemoteScheme, RemoteSettings, RemoteUrl,
-        Timeout, TokenSource,
+        EnvName, HeaderName, HostPath, InstanceName, PlatformProperties, PlatformPropertyName,
+        RemoteJobs, RemoteScheme, RemoteSettings, RemoteUrl, RetryCount, Timeout, TokenSource,
     };
 
     fn settings(url: &str, token: Option<TokenSource>) -> crate::error::Result<RemoteSettings> {
@@ -721,5 +1060,160 @@ mod tests {
         assert_eq!(settings.token(), Some(&token()));
         assert_eq!(settings.header().as_str(), "x-api-key");
         assert_eq!(settings.timeout().as_duration(), Duration::from_secs(5));
+    }
+
+    #[test]
+    fn jobs_reads_one_to_1024() {
+        assert_eq!(RemoteJobs::from_integer(1).unwrap().get(), 1);
+        assert_eq!(RemoteJobs::from_integer(1024).unwrap().get(), 1024);
+        assert_eq!(RemoteJobs::parse("1").unwrap().get(), 1);
+        assert_eq!(RemoteJobs::parse("1024").unwrap().get(), 1024);
+        for raw in ["0", "1025", "-1", "", "+1", "1 ", "99999999999999999999"] {
+            let err = RemoteJobs::parse(raw).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    Error::InvalidName {
+                        kind: NameKind::RemoteJobs,
+                        ..
+                    }
+                ),
+                "{raw:?} should be refused as a job count"
+            );
+        }
+        for count in [0, 1025, -1, i64::MAX, i64::MIN] {
+            let err = RemoteJobs::from_integer(count).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    Error::InvalidName {
+                        kind: NameKind::RemoteJobs,
+                        ..
+                    }
+                ),
+                "{count} should be refused as a job count"
+            );
+        }
+    }
+
+    #[test]
+    fn retries_reads_zero_to_ten() {
+        assert_eq!(RetryCount::from_integer(0).unwrap().get(), 0);
+        assert_eq!(RetryCount::from_integer(10).unwrap().get(), 10);
+        for count in [11, -1, i64::MAX, i64::MIN] {
+            let err = RetryCount::from_integer(count).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    Error::InvalidName {
+                        kind: NameKind::RetryCount,
+                        ..
+                    }
+                ),
+                "{count} should be refused as a retry count"
+            );
+        }
+    }
+
+    #[test]
+    fn a_property_named_like_a_platform_key_is_refused() {
+        for raw in ["OSFamily", "ISA"] {
+            let err = PlatformPropertyName::parse(raw).unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    Error::InvalidName {
+                        kind: NameKind::PlatformProperty,
+                        ..
+                    }
+                ),
+                "{raw:?} should be refused as a property name"
+            );
+        }
+        assert_eq!(
+            PlatformPropertyName::parse("osfamily").unwrap().as_str(),
+            "osfamily"
+        );
+        assert_eq!(
+            PlatformPropertyName::parse("pool").unwrap().as_str(),
+            "pool"
+        );
+    }
+
+    #[test]
+    fn an_empty_property_name_is_refused() {
+        let err = PlatformPropertyName::parse("").unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidName {
+                kind: NameKind::PlatformProperty,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn properties_are_sorted_by_name() {
+        let map = BTreeMap::from([
+            (PlatformPropertyName::parse("z").unwrap(), "1".to_owned()),
+            (PlatformPropertyName::parse("a").unwrap(), "2".to_owned()),
+        ]);
+        let properties = PlatformProperties::new(map);
+        let listed: Vec<(&str, &str)> = properties
+            .iter()
+            .map(|(name, value)| (name.as_str(), value))
+            .collect();
+        assert_eq!(listed, [("a", "2"), ("z", "1")]);
+        assert!(!properties.is_empty());
+        assert!(PlatformProperties::default().is_empty());
+    }
+
+    #[test]
+    fn the_execution_settings_have_their_defaults() {
+        let settings = settings("grpcs://cache", None).unwrap();
+        assert!(!settings.execute());
+        assert_eq!(settings.jobs().get(), 128);
+        assert_eq!(settings.jobs(), RemoteJobs::default());
+        assert_eq!(
+            settings.queue_timeout().as_duration(),
+            Duration::from_secs(3600)
+        );
+        assert_eq!(settings.retries().get(), 5);
+        assert_eq!(settings.retries(), RetryCount::default());
+        assert!(settings.properties().is_empty());
+    }
+
+    #[test]
+    fn the_execution_values_render_as_plain_text() {
+        assert_eq!(RemoteJobs::from_integer(64).unwrap().to_string(), "64");
+        assert_eq!(RetryCount::from_integer(3).unwrap().to_string(), "3");
+        assert_eq!(
+            PlatformPropertyName::parse("pool").unwrap().to_string(),
+            "pool"
+        );
+    }
+
+    #[test]
+    fn stated_execution_values_override_the_defaults() {
+        let properties = PlatformProperties::new(BTreeMap::from([(
+            PlatformPropertyName::parse("pool").unwrap(),
+            "large".to_owned(),
+        )]));
+        let settings = RemoteSettings::builder(RemoteUrl::parse("grpcs://cache").unwrap())
+            .execute(true)
+            .jobs(RemoteJobs::from_integer(8).unwrap())
+            .queue_timeout(Timeout::parse("2m").unwrap())
+            .retries(RetryCount::from_integer(0).unwrap())
+            .properties(properties.clone())
+            .build()
+            .unwrap();
+        assert!(settings.execute());
+        assert_eq!(settings.jobs().get(), 8);
+        assert_eq!(
+            settings.queue_timeout().as_duration(),
+            Duration::from_secs(120)
+        );
+        assert_eq!(settings.retries().get(), 0);
+        assert_eq!(settings.properties(), &properties);
     }
 }

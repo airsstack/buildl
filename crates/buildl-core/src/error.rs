@@ -1106,6 +1106,12 @@ pub enum NameKind {
     HeaderName,
     /// A workspace-relative path a file event named.
     ChangedPath,
+    /// How many remote calls a run keeps in flight at once.
+    RemoteJobs,
+    /// How many times a failed remote call is tried again.
+    RetryCount,
+    /// The name of a platform property asked of the remote executor.
+    PlatformProperty,
 }
 
 impl fmt::Display for NameKind {
@@ -1144,6 +1150,9 @@ impl fmt::Display for NameKind {
             Self::HostPath => "host path",
             Self::HeaderName => "header name",
             Self::ChangedPath => "changed path",
+            Self::RemoteJobs => "remote job count",
+            Self::RetryCount => "retry count",
+            Self::PlatformProperty => "platform property name",
         })
     }
 }
@@ -2179,6 +2188,12 @@ mod tests {
         assert_eq!(NameKind::HostPath.to_string(), "host path");
         assert_eq!(NameKind::HeaderName.to_string(), "header name");
         assert_eq!(NameKind::ChangedPath.to_string(), "changed path");
+        assert_eq!(NameKind::RemoteJobs.to_string(), "remote job count");
+        assert_eq!(NameKind::RetryCount.to_string(), "retry count");
+        assert_eq!(
+            NameKind::PlatformProperty.to_string(),
+            "platform property name"
+        );
     }
 
     #[test]

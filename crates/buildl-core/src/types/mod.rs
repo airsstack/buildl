@@ -55,7 +55,8 @@
 //!   makes about one run.
 //! - [`RemoteSettings`] — the remote cache a workspace names, built through
 //!   [`RemoteSettingsBuilder`], with its parts [`RemoteUrl`], [`RemoteScheme`], [`InstanceName`],
-//!   [`HostPath`], [`TokenSource`] and [`HeaderName`].
+//!   [`HostPath`], [`TokenSource`], [`HeaderName`], [`RemoteJobs`], [`RetryCount`],
+//!   [`PlatformPropertyName`] and [`PlatformProperties`].
 //! - [`PluginName`], [`PluginVersion`], [`PluginRef`], [`PluginCap`] and [`PluginNetwork`] — a
 //!   plugin, what its manifest asks for, and what the workspace lets it have; [`PluginChain`]
 //!   — the plugins that made a declaration; [`Origin`] — whose
@@ -261,8 +262,8 @@ pub use remote_hit::{RemoteHit, RemoteOutputDirectory, RemoteOutputFile, RemoteT
 pub use remote_notice::{RemoteCall, RemoteNotice};
 pub use remote_policy::{RemoteFailure, RemotePolicy, RemoteUse};
 pub use remote_settings::{
-    HeaderName, HostPath, InstanceName, RemoteScheme, RemoteSettings, RemoteSettingsBuilder,
-    RemoteUrl, TokenSource,
+    HeaderName, HostPath, InstanceName, PlatformProperties, PlatformPropertyName, RemoteJobs,
+    RemoteScheme, RemoteSettings, RemoteSettingsBuilder, RemoteUrl, RetryCount, TokenSource,
 };
 pub use remote_switch::RemoteSwitch;
 pub use remote_upload::{RemoteContent, RemoteOutput, RemoteTree, RemoteUpload, Uploaded};
