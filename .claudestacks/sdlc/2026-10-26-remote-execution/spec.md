@@ -196,7 +196,7 @@ messages describing the resulting execution, with eventual response ExecuteRespo
 |---|---|
 | `status` OK, `cached_result` true, exit code 0 | `Executed::Cached(hit)`: checked as a fetch; the target ends `fetched` |
 | `status` OK, `cached_result` false, exit code 0, every output as declared | `Executed::Ran(hit)`: checked as a fetch, outputs placed; the target ends `remote` |
-| `status` OK, exit code 0, an output missing, extra, a symbolic link, or a directory where a discovery target needs a file | the action ran and failed: the target ends `OutputMissing` or `OutputRefused`, the classes a local run gets for the same outputs (`crates/buildl-core/src/execute/perform.rs:589-598`, `collected`). Not a failed call, so the remote stays on |
+| `status` OK, exit code 0, an output missing, a symbolic link, or a directory where a discovery target needs a file | the action ran and failed: the target ends `OutputMissing` or `OutputRefused`, the classes a local run gets for the same outputs (`crates/buildl-core/src/execute/perform.rs:589-598`, `collected`). Not a failed call, so the remote stays on |
 | `status` OK, exit code not 0, `cached_result` either way | `Executed::Ran(hit)`: stdout and stderr downloaded, checked and stored; the target ends `ActionFailure { status }` as a local run with that exit would. Not cached (`REAPI:1677`) |
 | `status` `DEADLINE_EXCEEDED` | `Executed::TimedOut { stdout, stderr }`: "if the operation times out during execution, the status will have a DEADLINE_EXCEEDED code" (`REAPI:1672-1673`). The target fails with the class a local timeout gets, and is not run locally: Bazel likewise falls back "`!RemoteRetrierUtils.causedByExecTimeout(cause)`" only (`RemoteSpawnRunner.java:594`) |
 | `status` `UNAVAILABLE`, `RESOURCE_EXHAUSTED`, `ABORTED` or `CANCELLED` | retried as a call error with that code is (§5). "Errors that occurred while running the action will be reported in the status field of the ExecuteResponse" (`REAPI:81-84`), and of `UNAVAILABLE` "The client should retry" (`REAPI:93-95`). Pants reads this field with the rules it applies to call errors (`pants/remote.rs:647-687`) |
@@ -204,7 +204,9 @@ messages describing the resulting execution, with eventual response ExecuteRespo
 | any other non-OK `status`, or a retried one after its last try | a failed call (§6) |
 
 A blob of the answer that fails its length or SHA-256 check is a failed call, as in milestone 6:
-the server, not the action, gave bad bytes.
+the server, not the action, gave bad bytes. So is an `ActionResult` that names a path the
+`Command` did not list in `output_paths`: the action could not have written it there, so the
+server answered for something else.
 
 `Action.timeout` already carries `[execution] timeout` (`crates/buildl-core/src/execute/remote_action.rs:87`),
 so the server enforces the action's own limit.
