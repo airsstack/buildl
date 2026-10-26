@@ -1101,6 +1101,8 @@ pub enum NameKind {
     HostPath,
     /// The name of the request header a remote cache's token is sent in.
     HeaderName,
+    /// A workspace-relative path a file event named.
+    ChangedPath,
 }
 
 impl fmt::Display for NameKind {
@@ -1138,6 +1140,7 @@ impl fmt::Display for NameKind {
             Self::InstanceName => "instance name",
             Self::HostPath => "host path",
             Self::HeaderName => "header name",
+            Self::ChangedPath => "changed path",
         })
     }
 }
@@ -2171,6 +2174,7 @@ mod tests {
         assert_eq!(NameKind::InstanceName.to_string(), "instance name");
         assert_eq!(NameKind::HostPath.to_string(), "host path");
         assert_eq!(NameKind::HeaderName.to_string(), "header name");
+        assert_eq!(NameKind::ChangedPath.to_string(), "changed path");
     }
 
     #[test]

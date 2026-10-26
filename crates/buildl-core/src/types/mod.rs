@@ -7,6 +7,8 @@
 //!
 //! Responsibilities:
 //!
+//! - [`ChangedPath`] — a workspace-relative path a file event named; [`ChangeBatch`] — the paths
+//!   one burst of file events named.
 //! - [`Digest`] — the single SHA-256 identity for files, outputs, keys and log blobs.
 //! - [`Hasher`] — that digest, taken over bytes handed in pieces.
 //! - [`Directory`] — a workspace-relative directory path.
@@ -111,6 +113,8 @@ pub mod blob;
 pub mod build_file;
 pub mod cache_row;
 pub mod captured;
+pub mod change_batch;
+pub mod changed_path;
 pub mod channel;
 pub mod check;
 pub mod checkup;
@@ -194,6 +198,8 @@ pub use build_file::{
 };
 pub use cache_row::CacheRow;
 pub use captured::Captured;
+pub use change_batch::ChangeBatch;
+pub use changed_path::ChangedPath;
 pub use channel::Channel;
 pub use check::{Check, EntryChange, FileChange, OutputDifference};
 pub use checkup::Checkup;
