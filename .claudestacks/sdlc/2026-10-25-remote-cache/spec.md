@@ -68,7 +68,7 @@ crosses into `buildl-core`.
 |`Command.output_paths`|the target's output paths, sorted and deduplicated (P6)|
 |`Command.working_directory`|empty: the input root is the workspace root, as every path is workspace-relative (P24)|
 |`Action.input_root_digest`|a canonical `Directory` tree (P6) of every declared input at its path and every file of every dependency's outputs at its path|
-|`Action.timeout`|`[execution] timeout` when set, otherwise unset|
+|`Action.timeout`|`[execution] timeout`, which always has a value (its default when `buildl.toml` sets none)|
 |`Action.platform`|`OSFamily` = the OS half of buildl's platform; `ISA` = `arm-a64` for `aarch64`, `x86-64` for `x86_64`, the arch half unchanged otherwise (P14, P15)|
 |`Action.salt`|the 32 bytes of the target's buildl action key|
 
@@ -228,8 +228,9 @@ timeout  = "30s"                          # optional
 ## 7. Errors and exit codes
 
 A manifest, variable or flag error is the existing usage/manifest error. A strict remote
-failure is a build error with `PortName::RemoteCache`, exiting as other port failures do.
-Nothing else in the exit code table changes.
+failure is a build error with `PortName::RemoteCache`, exiting as other port failures do, and so
+is a remote cache that cannot be set up before the build starts (an unreadable `ca`, say),
+strict or not. Nothing else in the exit code table changes.
 
 ## 8. Dependencies
 

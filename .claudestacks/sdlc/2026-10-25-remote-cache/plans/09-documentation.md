@@ -1,8 +1,8 @@
 ---
-status: executing
+status: done
 created: 2026-10-25
 depends-on: [08]
-built-on: 5ec007f25407
+built-on: 0c4fd0bb55e2
 ---
 
 # Documentation Implementation Plan
@@ -71,3 +71,27 @@ own terms; the crate docs mention the port and the adapter.
 
 `cargo make dod` green; the documents, README and CLAUDE.md agree with each other and with the
 built behaviour.
+
+## Review findings
+
+- consistency — CLAUDE.md "Settled decisions" still said no async runtime; CLAUDE.md said uploading under `bare` is skipped (it is refused, exit 2) — fixed (blocking)
+- accuracy — "the only `dyn`" in the ports and the decision record (`Dispatcher::dispatch` takes a closure trait object, `ports/dispatcher.rs:53`) — fixed: one of the two (blocking)
+- CLAUDE.md rule — architecture.md §3.8 diagram was ASCII — fixed: Mermaid (blocking)
+- accuracy — "an upload reads each input once"; "groups of at most 32 MiB" — fixed: hashed once, the server's missing ones re-read and re-checked; a blob over 32 MiB is its own group (blocking)
+- accuracy — design §7 said a failed upload leaves the local result standing either way (strict fails before the row) and exit 3 omitted a remote cache that cannot be set up — fixed in §7 and the exit table (blocking)
+- accuracy — tokio's direct dependents and what keeps other members off it — fixed: the `Cargo.lock` set; `guard-crate-edges` named
+- accuracy — design §4 `header` refusals, §7 variables not read under `--no-remote` or their own flag, `doctor` defaults, §12 `timeout` and pinned env splitting remote entries — fixed
+- accuracy — README named servers never run; its exit codes 2 and 3 omitted the remote causes — fixed: only bazel-remote 2.6.4 named as run; causes listed
+- records — spec §2 `Action.timeout` and §7 exit 3 differed from the build — fixed: spec amended (user's yes, 2026-10-26), this plan re-pointed
+- Gate: `cargo make dod` → `Build Done in 154.99 seconds` (exit 0), run once after the crate-doc edits; the fix round changed no Rust
+
+## Probe results
+
+- `grep -n "later" docs/architecture-building-blocks.md` — three generic hits (:3, :497, :689), none for the remote cache
+- every `§` reference added resolves; the only new headings are architecture.md §3.8 and README "The remote cache"; nothing renumbered
+
+## Deviations
+
+- 2026-10-26 — Tasks 1 and 2 ran in parallel (disjoint files); only Task 2 touched Rust, so only it ran the gate.
+- 2026-10-26 — Task 1 also corrected text the remote cache made stale outside the listed sections (building-blocks §8, §9 rule 2, §10; architecture §3.8, §4).
+- 2026-10-26 — one reviewer pass reading only, then one fix commit `a2dd9da`.
