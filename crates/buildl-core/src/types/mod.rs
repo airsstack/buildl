@@ -93,6 +93,9 @@
 //!   damaged line.
 //! - [`Turn`] — what a dispatcher hands the thread that schedules a build, each time it hands
 //!   it something.
+//! - [`WatchLayout`], [`Built`] and [`Reference`] — what a watching run compares each cycle
+//!   against; [`Reaction`] — what a cycle does about a batch of changes; [`Trigger`] — what
+//!   started it; [`Watched`] and [`Cycle`] — what it ended with.
 //!
 //! Non-responsibilities: decisions between different concepts. A type here validates and renders
 //! itself, and may combine values of its own kind; logic that needs two different concepts to
@@ -118,6 +121,7 @@ pub mod changed_path;
 pub mod channel;
 pub mod check;
 pub mod checkup;
+pub mod cycle;
 pub mod declaration;
 pub mod description;
 pub mod diagnostic;
@@ -155,6 +159,7 @@ pub mod provenance;
 pub mod purpose;
 pub mod query;
 pub mod raw_outcome;
+pub mod reaction;
 pub mod ready_action;
 pub mod remote_action;
 pub mod remote_hit;
@@ -177,8 +182,10 @@ pub mod timeout;
 pub mod timestamp;
 pub mod tree;
 pub mod tree_path;
+pub mod trigger;
 pub mod turn;
 pub mod verification;
+pub mod watch_reference;
 pub mod workers;
 pub mod workspace;
 pub mod written;
@@ -203,6 +210,7 @@ pub use changed_path::ChangedPath;
 pub use channel::Channel;
 pub use check::{Check, EntryChange, FileChange, OutputDifference};
 pub use checkup::Checkup;
+pub use cycle::{Cycle, Watched};
 pub use declaration::{
     Action, Alias, Declaration, Declared, Freshness, NetworkAccess, Rule, Setting, Target,
     TargetRole,
@@ -246,6 +254,7 @@ pub use provenance::Provenance;
 pub use purpose::Purpose;
 pub use query::{Direction, Query};
 pub use raw_outcome::{Exit, RawOutcome};
+pub use reaction::Reaction;
 pub use ready_action::ReadyAction;
 pub use remote_action::{RemoteAction, RemoteFile, RemotePlatform};
 pub use remote_hit::{RemoteHit, RemoteOutputDirectory, RemoteOutputFile, RemoteTreeFile};
@@ -271,8 +280,10 @@ pub use timeout::Timeout;
 pub use timestamp::Timestamp;
 pub use tree::{Tree, TreeEntry};
 pub use tree_path::TreePath;
+pub use trigger::Trigger;
 pub use turn::Turn;
 pub use verification::Verification;
+pub use watch_reference::{Built, Reference, WatchLayout};
 pub use workers::Workers;
 pub use workspace::{Execution, Workspace};
 pub use written::Written;
