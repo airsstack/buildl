@@ -15,8 +15,9 @@
 //! - [`trailer`] — what closes the report of a failed target.
 //! - [`block`] — everything shown for one target once it has its outcome.
 //! - [`TerminalReporter`] — the reporter that writes blocks, a status line and the summary to a
-//!   stream it is given, with [`Mode`] saying whether a status line is kept, [`Report`] what kind
-//!   of run it shows and [`TestBlocks`] which tests of a test run get a block.
+//!   stream it is given, and the lines of a watch as the watch report, with [`Mode`] saying
+//!   whether a status line is kept, [`Report`] what kind of run it shows and [`TestBlocks`] which
+//!   tests of a test run get a block.
 //! - [`Silent`] — the reporter that shows nothing.
 //! - [`plan_text`] — a plan as lines for a person.
 //! - [`query_text`] — the answer to a query as lines for a person.
@@ -26,6 +27,8 @@
 //! - [`clean_line`] — what cleaning the output directory says.
 //! - [`gc_line`] — what collecting the store says.
 //! - [`error_text`] — an error as a command shows it.
+//! - [`building_line`], [`waiting_line`], [`watch_error_line`] — the lines a watch says about
+//!   itself.
 //! - [`utc`] — an instant as `YYYY-MM-DD HH:MM:SS UTC`.
 //! - [`header`] — the line that heads a last run.
 //! - [`damage`] — the warning for damaged lines of the build log.
@@ -46,6 +49,7 @@ mod query_text;
 mod silent;
 mod terminal;
 mod verify_text;
+mod watch_text;
 
 pub use block::{block, command_text, summary_line, test_line, trailer};
 pub use dot::graph_dot;
@@ -57,3 +61,4 @@ pub use query_text::query_text;
 pub use silent::Silent;
 pub use terminal::{Mode, Report, TerminalReporter, TestBlocks};
 pub use verify_text::verify_text;
+pub use watch_text::{building_line, waiting_line, watch_error_line};

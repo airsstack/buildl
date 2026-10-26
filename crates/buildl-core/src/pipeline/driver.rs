@@ -5,10 +5,11 @@
 //! Execute, and hands a verify the plan to re-run.
 //!
 //! Responsibilities: [`Pipeline`], its ports, [`Pipeline::check`], [`Pipeline::graph`],
-//! [`Pipeline::query`], [`Pipeline::plan`], [`Pipeline::build`], [`Pipeline::test`] and
-//! [`Pipeline::verify`], with the run of discovery targets that `build` and `test` begin with; and
-//! [`check`], [`graph`] and [`query`], the three commands that reach only build files and the
-//! state that holds discovery results, for a caller that holds only those ports.
+//! [`Pipeline::query`], [`Pipeline::plan`], [`Pipeline::build`], [`Pipeline::build_watched`],
+//! [`Pipeline::test`] and [`Pipeline::verify`], with the run of discovery targets that `build`
+//! and `test` begin with; and [`check`], [`graph`] and [`query`], the three commands that reach
+//! only build files and the state that holds discovery results, for a caller that holds only
+//! those ports.
 //!
 //! Non-responsibilities: the phases' own logic, which each phase's module holds.
 
@@ -29,11 +30,13 @@ use crate::ports::{
 };
 use crate::resolve::{narrow, reach, resolve};
 use crate::types::{
-    ActionOutcome, Declaration, Diagnostic, Discovered, EntryName, Label, LiveOutput, Loaded,
-    NodeId, OnFailure, Plan, Purpose, Query, RemotePolicy, RemoteSwitch, Rerun, RunChoices, Sample,
-    Scope, SettingName, SettingValue, TargetGraph, TargetRole, Verdict, Verification,
+    ActionOutcome, Built, Declaration, Diagnostic, Discovered, EntryName, Label, LiveOutput,
+    Loaded, NodeId, OnFailure, Plan, Purpose, Query, RemotePolicy, RemoteSwitch, Rerun, RunChoices,
+    Sample, Scope, SettingName, SettingValue, TargetGraph, TargetRole, Verdict, Verification,
+    Watched,
 };
 use crate::verify::verify;
+use crate::watch::watched_inputs;
 
 /// What a command that runs targets holds once its discovery targets have run.
 struct Prepared {
@@ -408,18 +411,66 @@ impl<P: Ports> Pipeline<P> {
         on_failure: OnFailure,
         live: LiveOutput,
     ) -> Result<Vec<ActionOutcome>> {
+        self.build_watched(entry, scope, overrides, on_failure, live)
+            .ended
+    }
+
+    /// Builds as [`Pipeline::build`] does, and hands back the graph and the input set the build
+    /// ran on along with its outcomes or error.
+    ///
+    /// The steps and their order are `build`'s, and so are the outcomes and the error in
+    /// [`Watched::ended`]. [`Watched::built`] holds the graph of the whole workspace and the
+    /// files a watcher must see change, [`Built::inputs`]: the declared inputs of the targets
+    /// `scope` selects and of every discovery target, with what each needs. It is `None` when the
+    /// build ended before that graph was resolved and narrowed to `scope`: a load or resolve
+    /// failure, a discovery target that did not succeed, or a label of `scope` that names
+    /// nothing. It is `Some` from then on, whatever the planning, the approver or the run
+    /// returned, so a build the ceiling refused still says what to watch.
+    pub fn build_watched(
+        &mut self,
+        entry: &EntryName,
+        scope: &Scope,
+        overrides: &BTreeMap<SettingName, SettingValue>,
+        on_failure: OnFailure,
+        live: LiveOutput,
+    ) -> Watched {
         let choices = self.choices(on_failure, live, Rerun::Off);
         let remote_off = RemoteSwitch::new();
+        let unbuilt = |ended| Watched { built: None, ended };
+        // 1. Load, and run the discovery targets.
         let Prepared {
             whole,
             mut outcomes,
-        } = match self.prepare(entry, overrides, choices, &remote_off)? {
-            ControlFlow::Break(stopped) => return Ok(stopped),
-            ControlFlow::Continue(prepared) => prepared,
+        } = match self.prepare(entry, overrides, choices, &remote_off) {
+            Err(error) => return unbuilt(Err(error)),
+            Ok(ControlFlow::Break(stopped)) => return unbuilt(Ok(stopped)),
+            Ok(ControlFlow::Continue(prepared)) => prepared,
         };
-        let graph = narrow(&whole, scope, Purpose::Build)?;
-        outcomes.extend(self.run(&whole, &graph, overrides, choices, &remote_off)?);
-        Ok(outcomes)
+        // 2. Narrow the whole graph to `scope`.
+        let graph = match narrow(&whole, scope, Purpose::Build) {
+            Ok(graph) => graph,
+            Err(error) => return unbuilt(Err(error)),
+        };
+        // 3. Gather the files the build reads.
+        let inputs = match watched_inputs(&whole, &graph) {
+            Ok(inputs) => inputs,
+            Err(error) => return unbuilt(Err(error)),
+        };
+        // 4. Plan, approve and run.
+        let ended = self
+            .run(&whole, &graph, overrides, choices, &remote_off)
+            .map(|ran| {
+                outcomes.extend(ran);
+                outcomes
+            });
+        // 5. Only now does the graph move, so it is never copied.
+        Watched {
+            built: Some(Built {
+                graph: whole,
+                inputs,
+            }),
+            ended,
+        }
     }
 
     /// Loads the workspace, builds its discovery targets first when it declares any, resolves it,

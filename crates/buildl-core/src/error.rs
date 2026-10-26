@@ -816,6 +816,8 @@ pub enum PortName {
     PluginStore,
     /// The cache of results shared between machines.
     RemoteCache,
+    /// What reports changed files in the workspace.
+    Changes,
 }
 
 impl fmt::Display for PortName {
@@ -837,6 +839,7 @@ impl fmt::Display for PortName {
             Self::Approver => "approver",
             Self::PluginStore => "plugin store",
             Self::RemoteCache => "remote cache",
+            Self::Changes => "file watcher",
         })
     }
 }
@@ -1101,6 +1104,8 @@ pub enum NameKind {
     HostPath,
     /// The name of the request header a remote cache's token is sent in.
     HeaderName,
+    /// A workspace-relative path a file event named.
+    ChangedPath,
 }
 
 impl fmt::Display for NameKind {
@@ -1138,6 +1143,7 @@ impl fmt::Display for NameKind {
             Self::InstanceName => "instance name",
             Self::HostPath => "host path",
             Self::HeaderName => "header name",
+            Self::ChangedPath => "changed path",
         })
     }
 }
@@ -2124,6 +2130,7 @@ mod tests {
             (PortName::Approver, "approver"),
             (PortName::PluginStore, "plugin store"),
             (PortName::RemoteCache, "remote cache"),
+            (PortName::Changes, "file watcher"),
         ];
         for (port, rendered) in cases {
             assert_eq!(port.to_string(), rendered);
@@ -2171,6 +2178,7 @@ mod tests {
         assert_eq!(NameKind::InstanceName.to_string(), "instance name");
         assert_eq!(NameKind::HostPath.to_string(), "host path");
         assert_eq!(NameKind::HeaderName.to_string(), "header name");
+        assert_eq!(NameKind::ChangedPath.to_string(), "changed path");
     }
 
     #[test]

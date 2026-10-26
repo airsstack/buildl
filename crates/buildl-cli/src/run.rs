@@ -26,8 +26,9 @@ use buildl::plugins::FetchStatus;
 use buildl::remote::token_is_present;
 use buildl::report::{
     Mode, Paint, Report, TerminalReporter, check_line, clean_line, damage, error_text, gc_line,
-    graph_dot, header, not_run_lines, plan_text, query_text, verify_text,
+    graph_dot, header, not_run_lines, plan_text, query_text, verify_text, watch_error_line,
 };
+use buildl::watch::NotifyChanges;
 use buildl::{RunOptions, Workspace};
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
@@ -116,6 +117,15 @@ where
         Command::Query(args) => query(&start, &args, stdout, stderr),
         Command::Plan(args) => plan(&start, args, stdout),
         Command::Build(args) => build(
+            &start,
+            args,
+            remote,
+            terminal.mode(),
+            paint,
+            stderr,
+            console,
+        ),
+        Command::Watch(args) => watch(
             &start,
             args,
             remote,
@@ -386,6 +396,49 @@ fn build<E: Write, C: Console>(
     Ok(Exit::of_outcomes(&built?))
 }
 
+/// `watch`: builds as `build` does, then again each time a file the build reads changes, until
+/// the file watcher fails or the watch cannot read its layout before the first build, and returns
+/// the status of that error after writing it to `stderr`.
+fn watch<E: Write, C: Console>(
+    start: &Path,
+    args: BuildArgs,
+    remote: &RemoteSwitches,
+    mode: Mode,
+    paint: Paint,
+    stderr: &mut E,
+    console: &mut C,
+) -> Result<Exit, Stop> {
+    let (on_failure, live) = (args.on_failure(), args.live());
+    let settings = overrides(args.selection.overrides)?;
+    let workspace = Workspace::open(start)?;
+    let policy = remote.resolve(&args.remote, remote_table(&workspace))?;
+    let scope = scope(&workspace, &args.selection.targets)?;
+    let mut changes = match NotifyChanges::start(workspace.root()) {
+        Ok(changes) => changes,
+        Err(error) => return Ok(watch_ended(&error, paint, stderr)),
+    };
+    let mut reporter = TerminalReporter::new(&mut *stderr, mode, paint, Report::Build);
+    let error = workspace.watch(
+        &mut changes,
+        &scope,
+        &settings,
+        RunOptions::new(on_failure, live).with_remote(policy),
+        &mut reporter,
+        console,
+    );
+    // The loop returns after closing its own row; this guarantees the error starts on a row of
+    // its own whatever the reporter was left holding.
+    reporter.close();
+    Ok(watch_ended(&error, paint, stderr))
+}
+
+/// Writes the error that ended a watch to `stderr` and returns the status it ends the process
+/// with.
+fn watch_ended<E: Write>(error: &Error, paint: Paint, stderr: &mut E) -> Exit {
+    let _ = stderr.write_all(watch_error_line(error, paint).as_bytes());
+    Exit::of_error(error)
+}
+
 /// `test`: builds what the selected tests need and runs them, showing on `stderr` how it goes
 /// and ending with a line that counts the tests, and returns the status of the most severe way a
 /// target ended.
@@ -493,10 +546,11 @@ mod tests {
     use buildl::Workspace;
     use buildl::approver::NoTerminal;
     use buildl::buildl_core::json::canonical;
-    use buildl::buildl_core::{Error, Scope};
+    use buildl::buildl_core::{Diagnostic, Error, PortName, Scope};
+    use buildl::report::{Paint, error_text};
     use clap::Parser;
 
-    use super::{Stop, run, told};
+    use super::{Stop, run, told, watch_ended};
     use crate::cli::Cli;
     use crate::exit::Exit;
     use crate::remote_switches::RemoteSwitches;
@@ -1091,6 +1145,20 @@ mod tests {
         assert_eq!(told(&error, &mut stdout, &mut stderr), Exit::Usage);
         assert!(!stderr.contains(&0x1b));
         assert_eq!(stdout, b"");
+    }
+
+    #[test]
+    fn a_watch_that_ends_says_why_and_exits_with_the_error_status() {
+        let error = Error::Adapter {
+            port: PortName::Changes,
+            diagnostic: Diagnostic::new("the watcher stopped"),
+        };
+        let mut stderr = Vec::new();
+        let exit = watch_ended(&error, Paint::Plain, &mut stderr);
+        let expected = format!("watch: {}", error_text(&error, Paint::Plain));
+        assert_eq!(String::from_utf8(stderr).unwrap(), expected);
+        assert_eq!(exit, Exit::of_error(&error));
+        assert_eq!(exit, Exit::Infrastructure);
     }
 
     #[test]

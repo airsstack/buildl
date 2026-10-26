@@ -90,6 +90,10 @@ prost-types = "0.14.4"
 tokio       = { version = "1.54.1", default-features = false, features = ["rt", "rt-multi-thread", "time"] }
 # Version 4 UUIDs naming a ByteStream upload's resource (`uploads/<uuid>/blobs/...`).
 uuid        = { version = "1.29.0", default-features = false, features = ["v4"] }
+# The file events of `buildl watch`: the operating system's own notification of a change
+# under the workspace root. Named by the `watch` adapter module of `buildl` only. Default
+# features are kept: FSEvents on macOS, inotify on Linux.
+notify      = "8.2.1"
 # Internal workspace members, in dependency order — path for local builds, version
 # for publish-readiness. Members inherit these with `{ workspace = true }`. Cargo
 # strips the path and keeps the version when packaging, so a published crate

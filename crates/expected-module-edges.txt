@@ -32,6 +32,7 @@ pipeline -> ports
 pipeline -> resolve
 pipeline -> types
 pipeline -> verify
+pipeline -> watch
 placement -> error
 placement -> types
 plan -> error
@@ -51,3 +52,8 @@ verify -> execute
 verify -> placement
 verify -> ports
 verify -> types
+watch -> error
+watch -> grants
+watch -> ports
+watch -> resolve
+watch -> types

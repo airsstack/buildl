@@ -20,3 +20,4 @@ mod remote;
 mod report;
 mod test;
 mod verify;
+mod watch;

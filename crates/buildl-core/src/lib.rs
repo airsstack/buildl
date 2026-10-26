@@ -34,6 +34,7 @@
 //! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command, and the commands that need only some of the ports as functions over those ports alone: the three that reach only build files and the state that holds discovery results, `doctor`, and `log` |
 //! | [`history`] | the read side of the build log: the newest run of a target that left output |
 //! | [`verify`](mod@verify) | verify, which serves one command and is not a phase: cached targets put back in place, a sample of them re-run, and each re-run compared with what was cached |
+//! | [`watch`](mod@watch) | what a watching run decides from the changes it sees: what a batch of changed paths starts, and the loop that builds, waits and reacts; serves one command and is not a phase |
 //! | `discovery` | the last result of each discovery target, read back from the build log and the content store for a second load of the build files; several pipeline functions use it, and it is not a phase |
 //! | `suggest` | the nearest declared name to one that names nothing, for any module that refuses a name |
 //!
@@ -42,7 +43,7 @@
 //!
 //! 1. No phase module names another. Phases communicate through values, and [`pipeline`] owns
 //!    the sequence, so a phase that imported the next would be bypassing it. [`history`],
-//!    [`verify`](mod@verify) and `discovery` are not phases: each serves a command, or several,
+//!    [`verify`](mod@verify), [`watch`](mod@watch) and `discovery` are not phases: each serves a command, or several,
 //!    and may name a phase's internals. `placement` and [`grants`] are neither: several phases
 //!    name them, and they name no phase.
 //! 2. [`types`] holds no decisions between *different* concepts. A type there may decide things
@@ -165,6 +166,7 @@ pub mod resolve;
 mod suggest;
 pub mod types;
 pub mod verify;
+pub mod watch;
 
 pub use error::{
     ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
@@ -177,32 +179,34 @@ pub use load::load;
 pub use pipeline::{Collected, Pipeline, Shown, doctor, gc, log};
 pub use plan::plan;
 pub use ports::{
-    ActionCache, Approver, BlobSource, Clock, ContentStore, DeclarationSource, Digester,
-    Dispatcher, EventLog, ExecStrategy, GraphRecord, Host, Manifest, NoRemote, PortSet, Ports,
-    RemoteCache, Reporter, RunHistory, StatCache, Sweep, ToolResolver,
+    ActionCache, Approver, BlobSource, Changes, Clock, ContentStore, Cycles, DeclarationSource,
+    Digester, Dispatcher, EventLog, ExecStrategy, GraphRecord, Host, Manifest, NoRemote, PortSet,
+    Ports, RemoteCache, Reporter, RunHistory, StatCache, Sweep, ToolResolver, WatchReport,
 };
 pub use resolve::{narrow, reach, resolve};
 pub use types::{
     Action, ActionKey, ActionOutcome, Alias, Approval, ApproverMode, Argument, Attribution, Blob,
-    BuildFile, CacheRow, Captured, Ceiling, Channel, Check, Checkup, Command, CommitId,
-    Declaration, DeclarationOrder, Declared, DenialReason, DepProducts, Description, Diagnostic,
-    Difference, Digest, Direction, Directory, DirtyReason, Discovered, EntryChange, EntryName,
-    EnvName, EnvValue, Evaluated, Execution, Exit, ExpandedDescription, FieldName, FileChange,
-    FileMode, FileStat, Found, FoundEntry, FoundKind, Freshness, GitUrl, Hasher, HeaderName,
-    HostPath, InfraKind, InputDigest, InputKind, InputStat, InstanceName, Isolation, KeyComponents,
-    Label, LiveOutput, LiveSink, Loaded, LogLine, LoggedRun, NetworkAccess, Node, NodeId,
-    OnFailure, Origin, OutcomeClass, OutcomeEvent, OutputDifference, OutputManifest, OutputName,
-    OutputPath, OutputRefusal, OwnComponents, Plan, PlannedKey, Platform, PluginCap, PluginChain,
-    PluginName, PluginNetwork, PluginRef, PluginSource, PluginVersion, PluginViolation, Produced,
-    Program, Provenance, Purpose, Query, RawOutcome, ReadyAction, RemoteAction, RemoteCall,
-    RemoteContent, RemoteFailure, RemoteFile, RemoteHit, RemoteNotice, RemoteOutput,
-    RemoteOutputDirectory, RemoteOutputFile, RemotePlatform, RemotePolicy, RemoteScheme,
-    RemoteSettings, RemoteSettingsBuilder, RemoteSwitch, RemoteTree, RemoteTreeFile, RemoteUpload,
-    RemoteUrl, RemoteUse, Rerun, Rev, RootPath, Rule, RunChoices, Sample, Scope, Setting,
-    SettingName, SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem,
-    StagedRule, StagedSetting, StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, TagName,
-    Tally, Target, TargetGraph, TargetName, TargetRole, Timeout, Timestamp, TokenSource,
-    ToolIdentity, Tree, TreeEntry, TreePath, Turn, Unfinished, Uploaded, Verdict, Verification,
-    Want, WantedSet, Workers, Workspace, Written,
+    BuildFile, Built, CacheRow, Captured, Ceiling, ChangeBatch, ChangedPath, Channel, Check,
+    Checkup, Command, CommitId, Cycle, Declaration, DeclarationOrder, Declared, DenialReason,
+    DepProducts, Description, Diagnostic, Difference, Digest, Direction, Directory, DirtyReason,
+    Discovered, EntryChange, EntryName, EnvName, EnvValue, Evaluated, Execution, Exit,
+    ExpandedDescription, FieldName, FileChange, FileMode, FileStat, Found, FoundEntry, FoundKind,
+    Freshness, GitUrl, Hasher, HeaderName, HostPath, InfraKind, InputDigest, InputKind, InputStat,
+    InstanceName, Isolation, KeyComponents, Label, LiveOutput, LiveSink, Loaded, LogLine,
+    LoggedRun, NetworkAccess, Node, NodeId, OnFailure, Origin, OutcomeClass, OutcomeEvent,
+    OutputDifference, OutputManifest, OutputName, OutputPath, OutputRefusal, OwnComponents, Plan,
+    PlannedKey, Platform, PluginCap, PluginChain, PluginName, PluginNetwork, PluginRef,
+    PluginSource, PluginVersion, PluginViolation, Produced, Program, Provenance, Purpose, Query,
+    RawOutcome, Reaction, ReadyAction, Reference, RemoteAction, RemoteCall, RemoteContent,
+    RemoteFailure, RemoteFile, RemoteHit, RemoteNotice, RemoteOutput, RemoteOutputDirectory,
+    RemoteOutputFile, RemotePlatform, RemotePolicy, RemoteScheme, RemoteSettings,
+    RemoteSettingsBuilder, RemoteSwitch, RemoteTree, RemoteTreeFile, RemoteUpload, RemoteUrl,
+    RemoteUse, Rerun, Rev, RootPath, Rule, RunChoices, Sample, Scope, Setting, SettingName,
+    SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
+    StagedSetting, StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, TagName, Tally,
+    Target, TargetGraph, TargetName, TargetRole, Timeout, Timestamp, TokenSource, ToolIdentity,
+    Tree, TreeEntry, TreePath, Trigger, Turn, Unfinished, Uploaded, Verdict, Verification, Want,
+    WantedSet, WatchLayout, Watched, Workers, Workspace, Written,
 };
 pub use verify::verify;
+pub use watch::{react, watch};

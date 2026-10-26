@@ -6,17 +6,20 @@
 //!
 //! Responsibilities: [`LocalPorts`], the choice of an adapter for every port;
 //! [`LocalPipeline`], the pipeline over that choice; and [`Wiring`], a workspace whose manifest
-//! has been read, which makes the adapters from it.
+//! has been read, which makes the adapters from it, reads itself again from the manifest as it
+//! now is, and names the layout a watch compares each cycle against.
 //!
 //! Non-responsibilities: running a command, which is the caller's; and anything an adapter does
 //! once it is made.
 
 use core::marker::PhantomData;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
-    ApproverMode, Diagnostic, Directory, EntryName, Error, Isolation, Manifest, Pipeline, PortName,
-    PortSet, Ports, RemotePolicy, Reporter, Result, Want,
+    ApproverMode, ChangedPath, Diagnostic, Directory, EntryName, Error, Isolation, Manifest,
+    Pipeline, PluginSource, PortName, PortSet, Ports, RemotePolicy, Reporter, Result, Want,
+    WatchLayout,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -105,6 +108,67 @@ impl Wiring {
             search: SearchPath::from_process(),
             scratch,
             data: DataDir::User,
+        })
+    }
+
+    /// Reads the workspace again from its root: a new wiring from the manifest as it is now.
+    ///
+    /// The manifest must still be at the root itself. A root whose `buildl.toml` is gone is not
+    /// replaced by a workspace around it.
+    ///
+    /// What the first reading was told rather than read stays: the directory approvals are kept
+    /// in, and the search path. Nothing else is carried over, so a change to `buildl.toml` since
+    /// the first reading is in the result and not in `self`.
+    ///
+    /// # Errors
+    ///
+    /// Returns what [`Wiring::read`] returns for the root, and refuses a root that holds no
+    /// manifest even when one is found above it.
+    pub fn reopened(&self) -> Result<Self> {
+        let mut again = Self::read(self.root.as_path())?;
+        if again.root.as_path() != self.root.as_path() {
+            return Err(Error::Adapter {
+                port: PortName::Manifest,
+                diagnostic: Diagnostic::new(format!(
+                    "no buildl.toml in {}",
+                    self.root.as_path().display()
+                )),
+            });
+        }
+        again.data = self.data.clone();
+        again.search = self.search.clone();
+        Ok(again)
+    }
+
+    /// What a watch compares each cycle against: the output and state directories this
+    /// manifest names, and the files whose content decides the workspace's settings.
+    ///
+    /// Those files are `buildl.toml`, `buildl.lock`, and the `extension.toml` of each plugin
+    /// kept in the workspace; a plugin fetched from git adds none, its files live in the state
+    /// directory. Naming them reads and touches nothing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::InvalidName`] when a plugin directory and its file name do not make a
+    /// workspace-relative path, which a directory the manifest accepted never does.
+    pub fn watch_layout(&self) -> Result<WatchLayout> {
+        let mut config = BTreeSet::from([
+            ChangedPath::parse("buildl.lock")?,
+            ChangedPath::parse("buildl.toml")?,
+        ]);
+        for source in self.manifest.plugins().values() {
+            if let PluginSource::Path(dir) = source {
+                config.insert(ChangedPath::parse(if dir.is_root() {
+                    "extension.toml".to_owned()
+                } else {
+                    format!("{dir}/extension.toml")
+                })?);
+            }
+        }
+        Ok(WatchLayout {
+            out: self.workspace.out.clone(),
+            state: self.workspace.state.clone(),
+            config,
         })
     }
 
@@ -485,6 +549,7 @@ mod tests {
     use crate::log::LocalLog;
     use crate::manifest::TomlManifest;
     use crate::report::Silent;
+    use crate::search_path::SearchPath;
     use crate::tools::PathTools;
 
     /// A temporary workspace whose `buildl.toml` holds `manifest`, and its canonical root.
@@ -1037,6 +1102,129 @@ mod tests {
             matches!(plan.verdicts(), [Verdict::Dirty { .. }]),
             "{:?}",
             plan.verdicts()
+        );
+    }
+
+    /// The files `layout` names as configuration, as text.
+    fn config(layout: &buildl_core::WatchLayout) -> Vec<&str> {
+        layout
+            .config
+            .iter()
+            .map(buildl_core::ChangedPath::as_str)
+            .collect()
+    }
+
+    #[test]
+    fn watch_layout_names_out_state_and_the_two_root_files() {
+        let (_dir, root) = workspace("");
+
+        let layout = Wiring::read(&root).unwrap().watch_layout().unwrap();
+
+        assert_eq!(layout.out.as_str(), "out");
+        assert_eq!(layout.state.as_str(), ".buildl");
+        assert_eq!(config(&layout), ["buildl.lock", "buildl.toml"]);
+    }
+
+    #[test]
+    fn watch_layout_names_a_path_plugins_extension_toml() {
+        let (_dir, root) = workspace(
+            "[plugins.ourgo]\npath = \"plugins/ourgo\"\n\n[plugins.theirs]\ngit = \"https://example.com/acme/theirs.git\"\nrev = \"v1.2.0\"\n",
+        );
+
+        let layout = Wiring::read(&root).unwrap().watch_layout().unwrap();
+
+        assert_eq!(
+            config(&layout),
+            ["buildl.lock", "buildl.toml", "plugins/ourgo/extension.toml"]
+        );
+    }
+
+    #[test]
+    fn watch_layout_follows_a_custom_out() {
+        let (_dir, root) = workspace("[workspace]\nout = \"build\"\n");
+
+        let layout = Wiring::read(&root).unwrap().watch_layout().unwrap();
+
+        assert_eq!(layout.out.as_str(), "build");
+    }
+
+    #[test]
+    fn reopened_reads_the_manifest_again() {
+        let (_dir, root) = workspace("");
+        let first = Wiring::read(&root).unwrap();
+        assert_eq!(first.watch_layout().unwrap().out.as_str(), "out");
+
+        fs::write(root.join("buildl.toml"), "[workspace]\nout = \"build\"\n").unwrap();
+        let again = first.reopened().unwrap();
+
+        assert_eq!(again.watch_layout().unwrap().out.as_str(), "build");
+        // The wiring it was reopened from still holds what it read.
+        assert_eq!(first.watch_layout().unwrap().out.as_str(), "out");
+    }
+
+    #[test]
+    fn reopened_keeps_the_data_dir_and_the_search_path() {
+        let (_dir, root) = workspace("");
+        let first = Wiring::read(&root)
+            .unwrap()
+            .with_data_dir(root.join("data"));
+
+        let again = first.reopened().unwrap();
+
+        assert_eq!(again.data, DataDir::At(root.join("data")));
+    }
+
+    #[test]
+    fn reopened_keeps_the_search_path_it_was_given() {
+        let (_dir, root) = workspace("");
+        let mut first = Wiring::read(&root).unwrap();
+        first.search = SearchPath::new([root.join("tools")]);
+
+        let again = first.reopened().unwrap();
+
+        assert_eq!(again.search, SearchPath::new([root.join("tools")]));
+    }
+
+    #[test]
+    fn a_manifest_that_is_gone_fails_the_reopening() {
+        let (_dir, root) = workspace("");
+        let first = Wiring::read(&root).unwrap();
+        fs::remove_file(root.join("buildl.toml")).unwrap();
+
+        let error = first.reopened().unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                Error::Adapter {
+                    port: PortName::Manifest,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_manifest_gone_from_a_nested_root_does_not_open_the_one_around_it() {
+        let (_dir, outer) = workspace("");
+        let inner = outer.join("inner");
+        fs::create_dir(&inner).unwrap();
+        fs::write(inner.join("buildl.toml"), "").unwrap();
+        let first = Wiring::read(&inner).unwrap();
+        fs::remove_file(inner.join("buildl.toml")).unwrap();
+
+        let error = first.reopened().unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                Error::Adapter {
+                    port: PortName::Manifest,
+                    ..
+                }
+            ),
+            "{error:?}"
         );
     }
 }

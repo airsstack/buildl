@@ -5,7 +5,8 @@
 //! needs of the workspace is decided here.
 //!
 //! Responsibilities: [`Workspace`]: opening one, reading a target or a query as a person writes
-//! it, and the commands; [`RunOptions`], a caller's choices for one run; and [`Doctor`], what
+//! it, and the commands; `watch`, which builds again on each batch of changes and lives in the
+//! `watching` child; [`RunOptions`], a caller's choices for one run; and [`Doctor`], what
 //! `doctor` reports.
 //!
 //! Non-responsibilities: the sequence of phases, which is the pipeline's; making the adapters,
@@ -18,7 +19,7 @@ use buildl_core::{
     ActionOutcome, ApproverMode, Checkup, Collected, Diagnostic, Directory, Error, Label,
     LiveOutput, Loaded, OnFailure, Pipeline, Plan, PortName, Query, RemotePolicy, Reporter, Rerun,
     Result, Sample, Scope, SettingName, SettingValue, Shown, TargetGraph, Verification, WantedSet,
-    pipeline,
+    Watched, pipeline,
 };
 
 use crate::approver::{Console, NoTerminal};
@@ -29,6 +30,8 @@ use crate::log::LocalLog;
 use crate::plugins::{Fetched, fetch};
 use crate::report::Silent;
 use crate::state::{Cleaned, clear_out};
+
+mod watching;
 
 /// The choices a caller makes about one build or test run that are neither in the workspace nor
 /// part of any key.
@@ -394,15 +397,42 @@ impl Workspace {
         reporter: &mut R,
         console: &mut C,
     ) -> Result<Vec<ActionOutcome>> {
-        self.wiring.runs()?;
-        let lock = self.wiring.lock()?;
-        let mut pipeline =
-            Pipeline::new(
-                self.wiring
-                    .ports(&lock, reporter, console, options.remote)?,
-            );
+        self.build_watched(scope, overrides, options, reporter, console)
+            .ended
+    }
+
+    /// Builds as [`Workspace::build`] does, and hands back the graph and input set the build ran
+    /// on along with its outcomes or error.
+    ///
+    /// A build that ended before it had a graph, whether for a refused strategy, a lock or a
+    /// load failure, has no [`Watched::built`]. The rows are folded as `build` folds them, and the
+    /// fold's error is [`Watched::ended`] for a build that succeeded.
+    fn build_watched<R: Reporter, C: Console>(
+        &self,
+        scope: &Scope,
+        overrides: &BTreeMap<SettingName, SettingValue>,
+        options: RunOptions,
+        reporter: &mut R,
+        console: &mut C,
+    ) -> Watched {
+        let unbuilt = |error| Watched {
+            built: None,
+            ended: Err(error),
+        };
+        if let Err(error) = self.wiring.runs() {
+            return unbuilt(error);
+        }
+        let lock = match self.wiring.lock() {
+            Ok(lock) => lock,
+            Err(error) => return unbuilt(error),
+        };
+        let ports = match self.wiring.ports(&lock, reporter, console, options.remote) {
+            Ok(ports) => ports,
+            Err(error) => return unbuilt(error),
+        };
+        let mut pipeline = Pipeline::new(ports);
         pipeline.set_remote(self.remote_policy(options));
-        let built = pipeline.build(
+        let watched = pipeline.build_watched(
             self.wiring.entry(),
             scope,
             overrides,
@@ -412,7 +442,10 @@ impl Workspace {
         let folded = pipeline.ports_mut().cache.fold();
         // The adapters are let go before the lock that kept the directory theirs.
         drop(pipeline);
-        concluded(built, folded)
+        Watched {
+            built: watched.built,
+            ended: concluded(watched.ended, folded),
+        }
     }
 
     /// Re-runs the cached targets of `scope` that `sample` picks, in the input sandbox, and
@@ -1121,6 +1154,54 @@ mod tests {
             "{error:?}"
         );
         assert!(!root.join("out").exists());
+    }
+
+    #[test]
+    fn build_watched_on_a_held_lock_has_no_graph() {
+        let (_dir, root) = copying();
+        let workspace = Workspace::open(&root).unwrap();
+        let _held = workspace.wiring.lock().unwrap();
+
+        let watched = workspace.build_watched(
+            &Scope::Workspace,
+            &BTreeMap::new(),
+            RunOptions::new(OnFailure::Stop, LiveOutput::Off),
+            &mut Silent,
+            &mut NoTerminal,
+        );
+
+        assert!(watched.built.is_none());
+        let error = watched.ended.unwrap_err();
+        assert!(
+            matches!(
+                &error,
+                Error::Adapter {
+                    port: PortName::ActionCache,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn build_watched_returns_the_graph_it_built() {
+        let (_dir, root) = copying();
+        let workspace = Workspace::open(&root).unwrap();
+
+        let watched = workspace.build_watched(
+            &Scope::Workspace,
+            &BTreeMap::new(),
+            RunOptions::new(OnFailure::Stop, LiveOutput::Off),
+            &mut Silent,
+            &mut NoTerminal,
+        );
+
+        assert_eq!(watched.ended.unwrap().len(), 1);
+        let built = watched.built.unwrap();
+        assert!(built.graph.id_of(&label("//:copy")).is_some());
+        // The directory was let go when the build returned.
+        workspace.wiring.lock().unwrap();
     }
 
     #[test]

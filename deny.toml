@@ -49,7 +49,11 @@ allow = [
     "ISC",
 ]
 confidence-threshold = 0.8
-exceptions = []
+exceptions = [
+    # `notify` alone carries CC0-1.0, a public-domain dedication. It stays off the general
+    # `allow` list so no other crate arrives under it.
+    { crate = "notify", allow = ["CC0-1.0"] },
+]
 # An allowance no crate in the graph uses fails the check, so the allow list
 # never grows past what the dependency graph actually needs.
 unused-allowed-license = "deny"
@@ -94,9 +98,10 @@ deny = [
     { crate = "toml", wrappers = ["airsl", "buildl"], reason = """\
         ABB §1.2: buildl-core must never depend on toml; §6 places buildl.toml parsing in the \
         Manifest adapter inside buildl""" },
-    { crate = "walkdir", wrappers = ["airsl", "buildl-lua"], reason = """\
+    { crate = "walkdir", wrappers = ["airsl", "buildl-lua", "notify"], reason = """\
         ABB §1.2: buildl-core does no filesystem traversal; buildl-lua walks the declaring \
-        directory for b.sources()""" },
+        directory for b.sources(); notify walks a directory to watch it, inside the watch \
+        adapter of buildl""" },
     { crate = "tempfile", wrappers = ["airsl", "buildl-lua", "buildl", "buildl-cli"], reason = """\
         ABB §1.2: temp-file-then-rename is a storage concern of buildl's shared state module; \
         buildl-lua, buildl and buildl-cli also use it for the temp workspaces of their tests""" },
@@ -115,6 +120,8 @@ deny = [
         are prost's and tonic's own companions""" },
     { crate = "uuid", wrappers = ["buildl"], reason = """\
         only the remote adapter names ByteStream upload resources""" },
+    { crate = "notify", wrappers = ["buildl"], reason = """\
+        only the watch adapter inside buildl names the operating system's file events""" },
 ]
 skip = [
     { crate = "getrandom@0.2.17", reason = """\
