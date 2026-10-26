@@ -5,7 +5,8 @@
 //! needs of the workspace is decided here.
 //!
 //! Responsibilities: [`Workspace`]: opening one, reading a target or a query as a person writes
-//! it, and the commands; [`RunOptions`], a caller's choices for one run; and [`Doctor`], what
+//! it, and the commands; `watch`, which builds again on each batch of changes and lives in the
+//! `watching` child; [`RunOptions`], a caller's choices for one run; and [`Doctor`], what
 //! `doctor` reports.
 //!
 //! Non-responsibilities: the sequence of phases, which is the pipeline's; making the adapters,
@@ -29,6 +30,8 @@ use crate::log::LocalLog;
 use crate::plugins::{Fetched, fetch};
 use crate::report::Silent;
 use crate::state::{Cleaned, clear_out};
+
+mod watching;
 
 /// The choices a caller makes about one build or test run that are neither in the workspace nor
 /// part of any key.
