@@ -16,5 +16,6 @@ mod inputs;
 mod react;
 mod run;
 
+pub(crate) use inputs::watched_inputs;
 pub use react::react;
 pub use run::watch;

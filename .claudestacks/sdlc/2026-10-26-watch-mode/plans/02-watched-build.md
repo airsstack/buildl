@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-26
 depends-on: [01]
 built-on: a08d695c7505
@@ -110,3 +110,19 @@ Done is green. Commit `feat(buildl-core): hand back the graph a build ran on`.
 ## Proof
 
 `cargo make dod` green; `cargo test -p buildl-core` covers spec §8's core `pipeline` row.
+
+## Review findings
+
+- test-coverage — the call `watched_inputs(&whole, &graph)` in `Pipeline::build_watched` was unguarded: swapping or doubling its two `&TargetGraph` arguments would drop an out-of-scope discovery target's inputs, and no test failed (spec §8 core `pipeline` row) — `crates/buildl-core/tests/flows/watch.rs`. Fixed and verified: `a_discovery_target_outside_the_scope_still_has_its_inputs_watched` added; with the call changed to `watched_inputs(&graph, &graph)` it failed (left `{main.c}`, right `{main.c, pkgs.in}`), restored it passes; `cargo test -p buildl-core --test flows` 281 passed, clippy `-p buildl-core -D warnings` clean (fix coder, run once).
+
+## Probe results
+
+- Every asserted fact was exercised by the task's own named tests, red then green (`inputs` unit tests against an empty-set stub; flow tests before `build_watched` existed). None came out against the plan. The existing `tests/flows/build.rs` and `discovery.rs` pass unchanged (280 flows before the fix round).
+
+## Deviations
+
+- 2026-10-26 — Task 1: `watched_inputs` carried `#[cfg_attr(not(test), expect(dead_code, …))]` until Task 2 called it; Task 2 removed it.
+- 2026-10-26 — Task 1: the `inputs` unit tests build graphs with `crate::grants::fixtures` (as `plan/` tests do), since `resolve::fixtures` is private; this adds the module edge `watch -> grants` beside the real `watch -> resolve` (`narrow`) in `crates/expected-module-edges.txt`.
+- 2026-10-26 — Task 2: `watch/mod.rs` gained `pub(crate) use inputs::watched_inputs;` (not in the task's file list) so the driver can import it; module edge `pipeline -> watch` added.
+- 2026-10-26 — Task 2 added a seventh flow test, `the_inputs_are_those_of_the_scope_and_what_it_needs`, beyond the six named.
+- 2026-10-26 — Task 2's gate ran scoped to `buildl-core` while another coder edited `crates/buildl`; the workspace-wide gate runs once at the end of the run.

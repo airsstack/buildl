@@ -25,13 +25,6 @@ use crate::types::{Label, Purpose, Scope, SourcePath, TargetGraph, TargetRole};
 ///
 /// Returns whatever [`narrow`](fn@crate::narrow) returns for the discovery targets; their labels
 /// come from `whole`, so a graph that holds them gives none.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the watched build that gathers the input set is the only caller"
-    )
-)]
 pub(crate) fn watched_inputs(
     whole: &TargetGraph,
     scoped: &TargetGraph,

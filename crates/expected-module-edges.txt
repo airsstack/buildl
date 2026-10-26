@@ -32,6 +32,7 @@ pipeline -> ports
 pipeline -> resolve
 pipeline -> types
 pipeline -> verify
+pipeline -> watch
 placement -> error
 placement -> types
 plan -> error
