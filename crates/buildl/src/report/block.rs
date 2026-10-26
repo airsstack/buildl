@@ -138,13 +138,14 @@ const fn refusal_text(refusal: OutputRefusal) -> &'static str {
 }
 
 /// How a failed target ended, in words; `None` for a target that did not fail: one that was
-/// built, cached, fetched or skipped. The [`trailer`] of a failed target and the header of a
-/// last run word a failure with it alike.
+/// built, cached, fetched, run on the remote or skipped. The [`trailer`] of a failed target and
+/// the header of a last run word a failure with it alike.
 pub(crate) fn failure_text(class: &OutcomeClass) -> Option<String> {
     match class {
         OutcomeClass::Cached
         | OutcomeClass::Built
         | OutcomeClass::Fetched
+        | OutcomeClass::Remote
         | OutcomeClass::Skipped { .. } => None,
         OutcomeClass::ActionFailure { status } => {
             Some(format!("action failure (exit status {status})"))
@@ -250,7 +251,7 @@ mod tests {
         TargetRole, Timestamp,
     };
 
-    use super::{block, command_text, summary_line, test_line, trailer};
+    use super::{block, command_text, failure_text, summary_line, test_line, trailer};
     use crate::report::paint::Paint;
 
     fn command(arguments: &[&str]) -> Command {
@@ -431,10 +432,20 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_target_has_no_failure_text() {
+        assert_eq!(failure_text(&OutcomeClass::Remote), None);
+        assert_eq!(
+            trailer(&event(OutcomeClass::Remote, None), Paint::Plain),
+            ""
+        );
+    }
+
+    #[test]
     fn a_target_that_did_not_fail_has_no_trailer() {
         for class in [
             OutcomeClass::Built,
             OutcomeClass::Cached,
+            OutcomeClass::Remote,
             OutcomeClass::Skipped {
                 because: Label::parse("//:docs").unwrap(),
             },

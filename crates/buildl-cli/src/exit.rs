@@ -49,6 +49,7 @@ impl Exit {
             OutcomeClass::Cached
             | OutcomeClass::Built
             | OutcomeClass::Fetched
+            | OutcomeClass::Remote
             | OutcomeClass::Skipped { .. } => Self::Success,
             OutcomeClass::ActionFailure { .. }
             | OutcomeClass::Killed { .. }
@@ -542,6 +543,7 @@ mod tests {
             (OutcomeClass::Cached, Exit::Success),
             (OutcomeClass::Built, Exit::Success),
             (OutcomeClass::Fetched, Exit::Success),
+            (OutcomeClass::Remote, Exit::Success),
             (
                 OutcomeClass::Skipped {
                     because: label("//:lib"),
@@ -781,6 +783,16 @@ mod tests {
                 "{class:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_remote_class_exits_as_success() {
+        assert_eq!(Exit::of_class(&OutcomeClass::Remote), Exit::Success);
+        assert_eq!(
+            Exit::of_outcomes(&[ended(OutcomeClass::Remote), ended(OutcomeClass::Built)]),
+            Exit::Success
+        );
+        assert_eq!(verified_as(failed_as(OutcomeClass::Remote)), Exit::Success);
     }
 
     #[test]

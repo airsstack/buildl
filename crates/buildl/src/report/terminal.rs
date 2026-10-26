@@ -64,7 +64,8 @@ pub enum Report {
 /// Which tests of a test run get a block: those that failed, or every one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestBlocks {
-    /// Only a test that failed. A test that was built, cached or fetched shows nothing.
+    /// Only a test that failed. A test that was built, cached, fetched or run on the remote
+    /// shows nothing.
     Failed,
     /// Every test, a passing one with what it printed, and a cached or fetched one marked as such.
     Every,
@@ -168,7 +169,10 @@ impl<W: Write> TerminalReporter<W> {
         ) && event.outcome.role == TargetRole::Test
             && matches!(
                 event.outcome.class,
-                OutcomeClass::Built | OutcomeClass::Cached | OutcomeClass::Fetched
+                OutcomeClass::Built
+                    | OutcomeClass::Cached
+                    | OutcomeClass::Fetched
+                    | OutcomeClass::Remote
             )
     }
 
@@ -587,6 +591,17 @@ mod tests {
         reporter.begun(1);
         reporter.finished(
             &test_event("//:check", OutcomeClass::Cached),
+            on_stdout(b"ok\n"),
+        );
+        assert_eq!(written(&mut reporter), b"");
+    }
+
+    #[test]
+    fn a_passed_remote_test_is_hidden_when_only_failures_are_shown() {
+        let mut reporter = test_reporter(TestBlocks::Failed, Rerun::Off);
+        reporter.begun(1);
+        reporter.finished(
+            &test_event("//:check", OutcomeClass::Remote),
             on_stdout(b"ok\n"),
         );
         assert_eq!(written(&mut reporter), b"");
