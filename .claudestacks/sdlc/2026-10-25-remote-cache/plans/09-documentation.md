@@ -22,10 +22,10 @@ new sections are added without renumbering existing ones, and Mermaid blocks sta
 ## Files that change
 
 ```
-docs/design.md                        — [modify] §4 the [remote] table; §7 the switches and `fetched`; §11.2 the remote cache built; §13 item 6 built
+docs/design.md                        — [modify] §4 the [remote] table; §7 the switches, `fetched` and `doctor`'s remote section; §11.2 the remote cache built; §13 item 6 built
 docs/architecture.md                  — [modify] status line; §3.4 the worker's remote steps; §3.5 fetch and upload against the crash-safety invariant; §6 the async-runtime record amended
 docs/architecture-building-blocks.md  — [modify] C4 context: the remote cache no longer "later" (:70, :76); port catalog §6 gains RemoteCache; §7 dependency rules name tonic/tokio confined to buildl
-README.md                             — [modify] the remote cache in the summary, kept consistent with the docs
+README.md                             — [modify] the remote cache in the summary, the build/test flags and `doctor`'s remote section, kept consistent with the docs
 CLAUDE.md                             — [modify] Status: milestone 6 built
 crates/buildl-core/src/lib.rs         — [modify] crate docs mention the remote cache port
 crates/buildl/src/lib.rs              — [modify] crate docs list the remote adapter

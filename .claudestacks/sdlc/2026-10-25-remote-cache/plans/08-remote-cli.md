@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-25
 depends-on: [01, 04, 07]
 built-on: 5ec007f25407
@@ -48,7 +48,12 @@ crates/buildl-cli/src/exit.rs                 — [modify] RemoteSwitch and Remo
 crates/buildl-cli/Cargo.toml                  — [modify] dev-dependency `buildl` with feature `test-server`
 crates/buildl-cli/tests/cli/remote.rs         — [create] the binary against TestServer
 crates/buildl-cli/tests/cli/main.rs           — [modify] mod remote
-crates/expected-edges.txt                     — [modify] only if `cargo make guard-crate-edges` reports a change
+crates/expected-edges.txt                     — [modify] `buildl (*)` under buildl-cli (the dev-dependency)
+Makefile.toml                                 — [modify] guard-crate-edges reads `cargo tree --color never`
+crates/buildl/src/remote/token_presence.rs    — [create] token_is_present: the variable set or the file openable, content never read
+crates/buildl-cli/tests/cli/arguments.rs      — [modify] the build/test help snapshot names the three flags
+crates/buildl-cli/tests/cli/output.rs         — [modify] the doctor golden gains `remote: none`
+crates/buildl-cli/README.md                   — [modify] build, test and doctor rows
 ```
 
 ## Order of work
@@ -58,7 +63,8 @@ crates/expected-edges.txt                     — [modify] only if `cargo make g
 **Files:** `remote_switches.rs`, `cli.rs`, `main.rs`, `buildl-core/src/error.rs`, `exit.rs`.
 
 **Change:** `RemoteArgs` holds the three flags, flattened into `BuildArgs` and `TestArgs`.
-`RemoteSwitches::resolve(upload_var, strict_var, args, has_remote)` → `RemotePolicy`: each
+`RemoteSwitches { upload, strict }` (the two variables, read in `main.rs`) and
+`resolve(&self, &RemoteArgs, RemoteTable::{Named, Absent})` → `RemotePolicy`: each
 variable `1` or `0`, anything else `Error::RemoteSwitch` naming the variable; a flag turns its
 switch on whatever its variable says; `--no-remote` → `RemotePolicy::OFF` whatever the variables
 say; no `[remote]` table → `OFF`, but either flag without one, or `--no-remote` with either
@@ -84,7 +90,7 @@ flag, is `Error::RemoteFlags` (spec §6). Reading with upload → `ReadWrite`; s
 **Files:** `remote/configured.rs`, `remote/mod.rs`, `local_ports.rs`, `workspace.rs`, `run.rs`,
 `tests/e2e/remote.rs`, `tests/e2e/main.rs`.
 
-**Change:** `Remote::of` returns `Off` when the policy is `OFF` or the workspace names no
+**Change:** `Remote::{Off, Reapi(Box<Reapi>)}` (boxed: `large_enum_variant`); `Remote::of` returns `Off` when the policy is `OFF` or the workspace names no
 remote, and otherwise builds `Reapi::new(&settings, root)`, which reads the token (so a missing
 token is an error before anything runs, spec §6) and connects on its first call (plan 07). `RunOptions` carries the policy; `build`/`test` hand it
 to the pipeline with `Pipeline::set_remote(policy)` before running (`RemotePolicy::OFF` until now). `plan`, `verify`,
@@ -157,3 +163,42 @@ refusal found is fixed in this chain (spec §12) before the plan is done.
 `cargo make dod`, `cargo deny check` and every `guard-*` task green; through the binary, a
 second checkout builds entirely from what the first uploaded, against the test server and once
 against bazel-remote.
+
+## Task 4 evidence (2026-10-26)
+
+`bazel-remote` 2.6.4 (Homebrew, the author's go-ahead), `--dir <scratch>/cache --max_size 1
+--grpc_address 127.0.0.1:19092 --http_address 127.0.0.1:19093 --access_log_level all`; its log
+reports `gRPC AC dependency checks: enabled`. Workspace: two copies of the `verified` fixture
+(a file, a dependent, a directory output, a target whose output differs every run) with
+`[remote] url = "grpc://127.0.0.1:19092"`, debug binary of `c4f349b`.
+
+| Run | buildl | server log |
+|---|---|---|
+| checkout A, `buildl build --remote-upload` | `4 built`, exit 0 | 4 `AC GET … NOT FOUND`, 25 `CAS PUT`, 4 `AC PUT` `OK` |
+| checkout B, `buildl build` | `4 fetched`, exit 0 | 4 `AC GET` `FOUND`, `CAS GET`s |
+
+`diff -r a/out b/out`: identical (the `stamp` output too, so B used A's result). No `error`,
+`fail`, `reject`, `invalid` or `denied` line in the server log. The server was stopped after.
+
+## Review findings
+
+- correctness — `with_remote` claimed a workspace without `[remote]` builds without one, but the policy reached the pipeline anyway (`UploadUnsandboxed` under `bare`, lookups against `Off`) — `workspace.rs` — fixed: OFF without a table; tested through `Workspace` (blocking)
+- docs — `main.rs` and `buildl-cli/README.md` build/test rows omitted the three flags — fixed (blocking)
+- doc — `resolve` did not say a flag skips its variable; two `lib.rs` claims made false — fixed
+- duplicate logic — `token_is_present` copied the login code's path resolution — fixed: one shared function
+- test — the grpc-token binary test did not assert the position — fixed
+- remaining 🔵 / ❓ of the report — fixed: `doctor` prints `-` for a table naming no token (`TokenState`); `RemoteSwitch`/`RemoteFlags` typed (`RemoteVariable`, `RemoteFlagConflict`); the edges-guard comment names the colour reason
+- records — constructor, `RemoteTable`, boxed variant, `token_is_present`, the edges guard, extra tests not in the plan — fixed: plan amended above
+- Fix round gates (run by the fix coder): `cargo make dod` → `Build Done in 155.36 seconds` (exit 0); `guard-adapter-isolation: OK (38 edges)`; `guard-crate-edges` exit 0; `cargo +1.94 check --workspace --all-targets --all-features` → `Finished`
+
+## Probe results
+
+- `--no-remote` alone short-circuits before either variable is parsed (reviewed against spec §6: the switch table's `--no-remote` row overrides the variables)
+- `cargo tree` under `CARGO_TERM_COLOR=always` (Makefile.toml) colours `(*)`, so the edges guard reads `--color never`
+
+## Deviations
+
+- 2026-10-26 — Task 1: `resolve(&self, …)` on the carried variables; `RemoteTable` in place of a bool; no `struct_excessive_bools` change was needed.
+- 2026-10-26 — Task 2: `Remote::Reapi(Box<Reapi>)`; `RunOptions::with_remote`; e2e `mod remote` behind `cfg(feature = "test-server")`.
+- 2026-10-26 — Task 3: `buildl::remote::token_is_present` added; guard-crate-edges `--color never`.
+- 2026-10-26 — one reviewer pass reading the diff only, then one fix commit; Task 4 ran beside the review.
