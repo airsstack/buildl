@@ -450,10 +450,10 @@ mod tests {
 
     use buildl_core::{
         Argument, Blob, BlobSource, Command, Digest, Directory, Error, FileMode, HostPath, Label,
-        OutputName, OutputPath, Platform, PlatformProperties, PortName, RemoteAction, RemoteCache,
-        RemoteContent, RemoteFile, RemoteOutput, RemoteOutputDirectory, RemoteOutputFile,
-        RemotePlatform, RemoteSettings, RemoteTree, RemoteTreeFile, RemoteUpload, RemoteUrl,
-        Result, RootPath, SourcePath, Timeout, TokenSource, TreePath, Uploaded,
+        OutputName, OutputPath, Platform, PlatformProperties, PlatformPropertyName, PortName,
+        RemoteAction, RemoteCache, RemoteContent, RemoteFile, RemoteOutput, RemoteOutputDirectory,
+        RemoteOutputFile, RemotePlatform, RemoteSettings, RemoteTree, RemoteTreeFile, RemoteUpload,
+        RemoteUrl, Result, RootPath, SourcePath, Timeout, TokenSource, TreePath, Uploaded,
     };
 
     use super::Reapi;
@@ -618,6 +618,23 @@ mod tests {
             server.blob(&tree.blob.digest).as_deref(),
             Some(tree.bytes.as_slice())
         );
+    }
+
+    #[test]
+    fn a_result_uploaded_with_properties_is_found_only_with_them() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let remote = reapi(&server, dir.path());
+        let mut pooled = action();
+        pooled.properties = PlatformProperties::new(BTreeMap::from([(
+            PlatformPropertyName::parse("pool").unwrap(),
+            "large".to_owned(),
+        )]));
+
+        remote.upload(&pooled, &produced(), &store()).unwrap();
+
+        assert!(remote.lookup(&pooled).unwrap().is_some());
+        assert_eq!(remote.lookup(&action()).unwrap(), None);
     }
 
     #[test]

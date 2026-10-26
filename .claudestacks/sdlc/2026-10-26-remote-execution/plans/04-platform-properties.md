@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-26
 depends-on: [01]
 built-on: 4704ec60505e
@@ -14,7 +14,7 @@ workspace's `PlatformProperties` (plan 01) beside `platform`. `remote_action()`
 (`execute/remote_action.rs:35`) takes them from the `RemoteRun` the worker holds, which takes
 them from `workspace.remote` where `RemoteRun` is built (`execute/assembly.rs:190-195`); a
 workspace without a `[remote]` table has none. The adapter's `encode::platform`
-(`buildl/src/remote/encode.rs:136-148`) writes them after `ISA` and `OSFamily`, the whole list
+(`encode::platform` in `buildl/src/remote/encode.rs`) writes them after `ISA` and `OSFamily`, the whole list
 sorted by name then value. Because the lookup, the upload and (plan 08) the execution all
 describe one `RemoteAction`, a result is found under the digest it was stored under (spec §3).
 
@@ -73,8 +73,8 @@ A workspace without `[remote]` passes an empty set, so its keys and descriptions
 `Action` digest is stable for one set of properties.
 
 **Proof:** in `encode.rs` tests and `reapi.rs` tests (`:460`) —
-- `the_platform_lists_every_property_sorted_by_name` — `{ pool = "large", arch-hint = "x" }`
-  encodes as `ISA`, `OSFamily`, `arch-hint`, `pool` in code-point order (upper case sorts first)
+- `the_platform_lists_every_property_sorted_by_name` — `{ pool = "large", arch-hint = "x", Pool = "z", Arch = "y" }`
+  encodes as `Arch`, `ISA`, `OSFamily`, `Pool`, `arch-hint`, `pool` in code-point order (upper case sorts first; `Arch` and `Pool` land among the built-ins, so the sort is what puts them there)
 - `properties_change_the_action_digest` — the same action with and without `{ pool = "large" }` has two digests
 - `a_result_uploaded_with_properties_is_found_only_with_them` — an upload with `{ pool = "large" }` is found by a lookup with them and missed by one without
 
@@ -90,3 +90,20 @@ A workspace without `[remote]` passes an empty set, so its keys and descriptions
 ## Proof
 
 `cargo make dod`; the flow test `remote_on_or_off_gives_identical_keys_and_rows` unchanged and green.
+
+## Review findings
+
+- test-coverage — no flow test guarded the wiring of the workspace's properties into `RemoteRun` — `crates/buildl-core/src/execute/assembly.rs` — fixed: `the_properties_the_workspace_names_are_sent_with_every_lookup_and_upload` in `tests/flows/remote.rs`; with `assembly.rs` passing an empty set it failed (`left: PlatformProperties([])`); restored, `cargo test -p buildl-core --test flows remote` → `test result: ok. 30 passed; 0 failed`
+- style — redundant `assert!(described.properties.is_empty())` — `execute/remote_action.rs` — fixed
+- test-coverage — the sort test's extra names already sorted after the built-ins, so removing the sort left it green — `remote/encode.rs` — fixed: `Arch` and `Pool` added, which land among `ISA`/`OSFamily` only when sorted
+- test-coverage — `a_result_uploaded_with_properties_is_found_only_with_them` was not seen red (feature-gated) — `remote/reapi.rs` — no change: the reviewer showed that removing the `extend` makes it fail
+- docs — the plan cited `encode.rs:136-148` and the line moved — this plan — fixed: cited by symbol. Spec §3's `encode.rs:142-143` citation also moved; the spec is left unchanged, since its claim still holds and editing it would mark every plan stale
+
+## Probe results
+
+- the seven `RemoteAction {` literals — `grep -rn "RemoteAction {" crates/` → types :111, no_remote :67, upload :299, remote_action :80/:254, reapi :515, encode :449 — as planned (lines moved by plan 01)
+- the REAPI sort rule — `remote_execution.proto:965-968` → "MUST be lexicographically sorted by name, and then by value … by the UTF-8 bytes" — as planned
+
+## Deviations
+
+- 2026-10-26 — the sort test has two more upper-case names (`Arch`, `Pool`) than the plan named, so it guards the sort.

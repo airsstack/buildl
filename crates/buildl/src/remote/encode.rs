@@ -132,7 +132,11 @@ pub(crate) fn command(action: &RemoteAction) -> wire::Command {
     }
 }
 
-/// The `Platform` of `action`: its `ISA` and `OSFamily`, sorted by name and then value.
+/// The `Platform` of `action`: its `ISA` and `OSFamily` and the workspace's own properties,
+/// sorted by name and then value, as the protocol requires.
+///
+/// Rust compares `str` by UTF-8 bytes, the order the protocol names, so upper-case names such as
+/// `ISA` come before lower-case ones.
 pub(crate) fn platform(action: &RemoteAction) -> wire::Platform {
     let property = |name: &str, value: &str| wire::platform::Property {
         name: name.to_owned(),
@@ -145,6 +149,12 @@ pub(crate) fn platform(action: &RemoteAction) -> wire::Platform {
             action.platform.os_family(),
         ),
     ];
+    properties.extend(
+        action
+            .properties
+            .iter()
+            .map(|(name, value)| property(name.as_str(), value)),
+    );
     properties.sort_by(|left, right| (&left.name, &left.value).cmp(&(&right.name, &right.value)));
     wire::Platform { properties }
 }
@@ -417,8 +427,9 @@ mod tests {
 
     use buildl_core::{
         Argument, Blob, Command, Digest, Directory, EnvName, EnvValue, FileMode, Label, OutputName,
-        OutputPath, Platform, PlatformProperties, RemoteAction, RemoteContent, RemoteOutput,
-        RemotePlatform, RemoteTree, RemoteTreeFile, RemoteUpload, Timeout, TreePath,
+        OutputPath, Platform, PlatformProperties, PlatformPropertyName, RemoteAction,
+        RemoteContent, RemoteOutput, RemotePlatform, RemoteTree, RemoteTreeFile, RemoteUpload,
+        Timeout, TreePath,
     };
     use prost::Message;
 
@@ -515,6 +526,64 @@ mod tests {
         assert_eq!(
             platform(&remote_action()).properties,
             [property("ISA", "x86-64"), property("OSFamily", "linux")]
+        );
+    }
+
+    fn with_properties(pairs: &[(&str, &str)]) -> RemoteAction {
+        let mut remote = remote_action();
+        remote.properties = PlatformProperties::new(
+            pairs
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        PlatformPropertyName::parse(*name).unwrap(),
+                        (*value).to_owned(),
+                    )
+                })
+                .collect(),
+        );
+        remote
+    }
+
+    #[test]
+    fn the_platform_lists_every_property_sorted_by_name() {
+        let remote = with_properties(&[
+            ("pool", "large"),
+            ("arch-hint", "x"),
+            ("Pool", "z"),
+            ("Arch", "y"),
+        ]);
+
+        let listed: Vec<(String, String)> = platform(&remote)
+            .properties
+            .into_iter()
+            .map(|property| (property.name, property.value))
+            .collect();
+
+        let expected = [
+            ("Arch", "y"),
+            ("ISA", "x86-64"),
+            ("OSFamily", "linux"),
+            ("Pool", "z"),
+            ("arch-hint", "x"),
+            ("pool", "large"),
+        ]
+        .map(|(name, value)| (name.to_owned(), value.to_owned()));
+        assert_eq!(listed, expected);
+    }
+
+    #[test]
+    fn properties_change_the_action_digest() {
+        let command_digest = digest_of(b"command");
+        let root = digest_of(b"root");
+        let digest_of_action = |remote: &RemoteAction| {
+            Encoded::of(&action(&command_digest, &root, remote))
+                .blob
+                .digest
+        };
+        assert_ne!(
+            digest_of_action(&remote_action()),
+            digest_of_action(&with_properties(&[("pool", "large")]))
         );
     }
 
