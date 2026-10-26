@@ -12,6 +12,7 @@ tempfile
 # buildl
 buildl_core
 buildl_lua
+notify
 prost
 prost_types
 rayon
