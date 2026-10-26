@@ -3,7 +3,8 @@
 //! Its own file because it holds the watcher, the channel its events arrive on, and the rule
 //! that turns an event's absolute path into a workspace-relative one.
 //!
-//! Responsibilities: [`NotifyChanges`], and the settling of a burst of events into one batch.
+//! Responsibilities: [`NotifyChanges`], the settling of a burst of events into one batch, and
+//! telling a read, which is dropped, from a change.
 //!
 //! Non-responsibilities: which paths matter to a target, and any timer that runs while nothing
 //! changes.
@@ -14,7 +15,8 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use buildl_core::{ChangeBatch, ChangedPath, Changes, Diagnostic, Error, PortName, Result};
-use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher};
+use notify::event::{AccessKind, AccessMode};
+use notify::{Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 
 /// How long the events must be quiet before a burst counts as settled.
 const WINDOW: Duration = Duration::from_millis(50);
@@ -25,7 +27,8 @@ type Delivery = notify::Result<Event>;
 /// Watches a workspace root and reports its changes in debounced batches.
 ///
 /// The watch lasts as long as the value does. Every path under the root is reported, whatever
-/// the event kind; a path outside the root, the root itself, and a path that is not a valid
+/// the kind of change; a read is not a change, so an access event is dropped unless it closes a
+/// file written. A path outside the root, the root itself, and a path that is not a valid
 /// changed path are dropped. A report that the operating system dropped events is an error,
 /// never a silent gap.
 #[derive(Debug)]
@@ -98,6 +101,16 @@ fn closed(root: &Path) -> Error {
     ))
 }
 
+/// Whether `kind` reports a change. An access event is a read, which inotify raises on every
+/// open, so only a file closed after a write counts.
+const fn is_change(kind: EventKind) -> bool {
+    match kind {
+        EventKind::Access(AccessKind::Close(AccessMode::Write)) => true,
+        EventKind::Access(_) => false,
+        _ => true,
+    }
+}
+
 /// Adds the kept paths of `delivery` to `kept`, or fails when the watcher reported an error or
 /// said the operating system dropped events.
 fn take(root: &Path, delivery: Delivery, kept: &mut BTreeSet<ChangedPath>) -> Result<()> {
@@ -107,6 +120,9 @@ fn take(root: &Path, delivery: Delivery, kept: &mut BTreeSet<ChangedPath>) -> Re
             "the operating system dropped file events under {}; changes may have been missed",
             root.display()
         )));
+    }
+    if !is_change(event.kind) {
+        return Ok(());
     }
     kept.extend(event.paths.iter().filter_map(|path| relative(root, path)));
     Ok(())
@@ -146,7 +162,7 @@ mod tests {
     use std::time::Duration;
 
     use buildl_core::{ChangeBatch, Changes, Error, PortName, Result};
-    use notify::event::Flag;
+    use notify::event::{AccessKind, AccessMode, Flag};
     use notify::{Event, EventKind};
 
     use super::{Delivery, NotifyChanges, gather, relative};
@@ -180,6 +196,11 @@ mod tests {
     /// An event for `path`.
     fn event_at(path: &str) -> Event {
         Event::new(EventKind::Any).add_path(path.into())
+    }
+
+    /// An event of `kind` for `path`.
+    fn event_of(kind: EventKind, path: &str) -> Event {
+        Event::new(kind).add_path(path.into())
     }
 
     /// Whether `error` is the Changes adapter error with `needle` in its text.
@@ -310,6 +331,31 @@ mod tests {
         sender.send(Ok(event_at("/r/b.c"))).unwrap();
         let batch = gather(Path::new("/r"), &events).unwrap();
         assert_eq!(names(&batch), ["a.c", "b.c"]);
+    }
+
+    #[test]
+    fn gather_drops_an_open() {
+        let (sender, events) = mpsc::channel();
+        let open = EventKind::Access(AccessKind::Open(AccessMode::Any));
+        sender.send(Ok(event_of(open, "/r/build.lua"))).unwrap();
+        drop(sender);
+        let error = gather(Path::new("/r"), &events).unwrap_err();
+        assert!(is_changes_error(&error, "stopped delivering"), "{error:?}");
+
+        let (sender, events) = mpsc::channel();
+        sender.send(Ok(event_of(open, "/r/build.lua"))).unwrap();
+        sender.send(Ok(event_at("/r/kept.c"))).unwrap();
+        let batch = gather(Path::new("/r"), &events).unwrap();
+        assert_eq!(names(&batch), ["kept.c"]);
+    }
+
+    #[test]
+    fn gather_keeps_a_closed_write() {
+        let (sender, events) = mpsc::channel();
+        let closed = EventKind::Access(AccessKind::Close(AccessMode::Write));
+        sender.send(Ok(event_of(closed, "/r/a.c"))).unwrap();
+        let batch = gather(Path::new("/r"), &events).unwrap();
+        assert_eq!(names(&batch), ["a.c"]);
     }
 
     #[test]

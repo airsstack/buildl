@@ -136,6 +136,17 @@ fn watch_builds_then_waits() {
 }
 
 #[test]
+fn a_watch_is_quiet_while_nothing_changes() {
+    let (_dir, root) = copy_workspace();
+    let watch = Watching::start(&root, &["watch"]);
+    watch.until(WAITING);
+    assert_eq!(
+        watch.lines.recv_timeout(Duration::from_secs(3)),
+        Err(RecvTimeoutError::Timeout)
+    );
+}
+
+#[test]
 fn an_edit_rebuilds() {
     let (_dir, root) = copy_workspace();
     let watch = Watching::start(&root, &["watch"]);
