@@ -13,7 +13,7 @@
 //! # Using it
 //!
 //! A caller opens a [`Workspace`] and calls a command on it: [`Workspace::check`],
-//! [`Workspace::graph`], [`Workspace::plan`], [`Workspace::build`], [`Workspace::verify`] or
+//! [`Workspace::graph`], [`Workspace::plan`], [`Workspace::build`], [`Workspace::watch`], [`Workspace::verify`] or
 //! [`Workspace::fetch_plugins`]. It names no adapter. A build is lent the caller's own [`Reporter`]: [`report::TerminalReporter`] writes what the
 //! `buildl` binary shows, and [`report::Silent`] shows nothing. The values a command takes and
 //! returns are `buildl-core`'s, re-exported here as [`buildl_core`], so a caller depends on this
@@ -121,6 +121,7 @@
 //! | [`report`] | what a build shows while it runs, and every rendering of a value as text | [`Reporter`] |
 //! | [`approver`] | whether a build may do what it wants | [`Approver`] |
 //! | [`remote`] | the cache of results other machines share | [`RemoteCache`] |
+//! | [`watch`] | the operating system's file events | [`Changes`] |
 //!
 //! [`DeclarationSource`] has no module here: its adapter is the `buildl-lua` crate.
 //!
@@ -149,7 +150,7 @@
 //! | Module | Holds |
 //! |---|---|
 //! | `local_ports` | [`LocalPorts`], the choice of an adapter for every port; [`LocalPipeline`], the pipeline over that choice; and [`Wiring`], which makes the adapters from a workspace's manifest |
-//! | `workspace` | [`Workspace`], the facade: one method per command |
+//! | `workspace` | [`Workspace`], the facade: one method per command, `watch` included, which opens the workspace again for every cycle |
 //!
 //! # Platforms
 //!
@@ -167,6 +168,7 @@
 //!
 //! [`ActionCache`]: buildl_core::ActionCache
 //! [`Approver`]: buildl_core::Approver
+//! [`Changes`]: buildl_core::Changes
 //! [`Clock`]: buildl_core::Clock
 //! [`ContentStore`]: buildl_core::ContentStore
 //! [`DeclarationSource`]: buildl_core::DeclarationSource

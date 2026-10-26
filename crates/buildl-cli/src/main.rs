@@ -14,6 +14,7 @@
 //! | `buildl query <EXPR> [--json]` | the targets the expression reaches, one per line, or as canonical JSON | nothing, or the same line for each discovery target that has not run |
 //! | `buildl plan [TARGET]... [--set NAME=VALUE]... [--json]` | what a build would run and why, or the plan as canonical JSON | nothing |
 //! | `buildl build [TARGET]... [--set NAME=VALUE]... [-k \| --keep-going] [--stream] [--remote-upload] [--remote-strict] [--no-remote]` | nothing | a block for each action that printed or failed, and a summary |
+//! | `buildl watch [TARGET]... [--set NAME=VALUE]... [-k \| --keep-going] [--stream] [--remote-upload] [--remote-strict] [--no-remote]` | nothing | what `build` writes for each cycle, and a `watch:` line for each cycle's start and each wait |
 //! | `buildl test [TARGET]... [--set NAME=VALUE]... [--stop] [--stream] [--rerun] [--verbose] [--remote-upload] [--remote-strict] [--no-remote]` | nothing | a block for each failing test (and each test that printed, with `--verbose`) and for each other target that printed or failed, and a line counting the tests |
 //! | `buildl verify [TARGET]... [--set NAME=VALUE]... [--sample N]` | nothing | a line for each checked target that was verified, mismatched, failed, skipped or not put back, and a line counting them and the targets left out |
 //! | `buildl doctor` | the workspace root, its approver, its run settings, its remote cache (`remote: none`, or its settings, whether its token is set, and the upload and strict variables as this machine sets them; it connects to nothing), its ceiling, and one row per want saying whether the ceiling allows it and whether it is approved, with the plugins whose targets want it under each row, and the wants a plugin does not allow under `plugin violations` | nothing, or the same line for each discovery target that has not run |
@@ -39,6 +40,12 @@
 //! `strategy = "sandbox"` only and records nothing. Every command takes
 //! `--color auto|always|never`: under `auto`, what is printed is coloured only when standard
 //! error is a terminal whose `TERM` is set and not `dumb`, and `NO_COLOR` is unset or empty.
+//!
+//! `watch` takes the flags of `build`. It builds, then builds again when a file the build reads
+//! changes, or when the build files declare a different graph, reading the workspace anew each
+//! cycle; changes under `out`, the state directory and `.git` are ignored. A cycle that fails is
+//! reported and followed by the next change. It ends on Ctrl-C, with 2 for a command line that is
+//! wrong, or with 3 when the file watcher fails.
 //!
 //! An expression is `deps(TARGET)`, every target TARGET depends on, or `rdeps(TARGET)`, every
 //! target that depends on TARGET. Either reaches any number of steps away, and TARGET itself is

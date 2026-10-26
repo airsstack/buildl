@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-26
 depends-on: [05]
 built-on: a08d695c7505
@@ -91,3 +91,24 @@ built in the README and CLAUDE.md`.
 ## Proof
 
 `cargo make dod` green; no document calls watch unbuilt.
+
+## Review findings
+
+- doc accuracy — the building-blocks port-catalog intro still said a row with a later item "describes what is designed", covering the built `Changes`, `Cycles` and `WatchReport` rows — `docs/architecture-building-blocks.md`. Fixed: the built list names the item-7 rows.
+- doc completeness — the building-blocks C4 L3 diagram (adapters, DATA, PORTS, LOGIC) and §5.1, §5.2, §5.4 left watch out where item 6 had added remote — `docs/architecture-building-blocks.md`. Fixed: `watch` adapter, the nine watch types, the three ports (with signatures in §5.2) and `react`, `watch`, `watched_inputs` rows added; diagrams stay Mermaid.
+- doc accuracy — §10's composition-root row named only the root and approvals directory as kept across cycles — building blocks. Fixed: the search path too.
+- doc accuracy — "until a window passes with no kept path" did not match `gather`, whose wait any event extends — `docs/architecture.md` §3.9. Fixed: "no event, a dropped path included".
+- citation — notify's wrapper ban cited building blocks §7; the text is in §4 — `docs/architecture.md` §6. Fixed; the unverifiable "newest stable release" clause dropped.
+- doc accuracy — design §11.1 still called watch mode "already designed" — `docs/design.md`. Fixed: built, keeping no stat cache warm.
+- consistency — README's row read `buildl watch [target]` and omitted the graph-change trigger — `README.md`. Fixed: `[target]...` and the trigger as design §7 states it.
+- Verified: `grep -n -i -E "watch.*(not yet|not built|not implemented)|(not yet|not built|not implemented).*watch" docs/*.md` prints nothing (exit 1); `grep -n "^### 3.9" docs/architecture.md` → `456:### 3.9 \`watch\` — the loop around builds`. Task 2's `cargo make dod` green (coder, run once); the fix round touched no Rust file.
+
+## Probe results
+
+- No throwaway probe: documentation only. Every watch claim was checked against the code by the reviewer, by reading (ignored directories dropped first, trigger naming kept paths, check pass, rescan → exit 3, per-cycle reopen refusing a manifest above the root, lock per cycle inside the build, graph without the lock, no signal handler). The "seventeen modules — sixteen adapters, and `plugins`" count was checked against `crates/buildl/src` and the guard's directory listing.
+
+## Deviations
+
+- 2026-10-26 — Beyond the plan's list, so no document contradicts the build: design's status line, §2 diagram label and §7 "are built" list; both adapter-isolation records' module counts; the building-blocks status line, crate dependency table, module table, port catalog, C4 L3 diagram and §5.1/§5.2/§5.4 (review fix); design §11.1 (review fix).
+- 2026-10-26 — Two status sentences reworded because they matched the plan's grep ("Everything else from item 2 on … not built"; "Remote execution and watch are designed for but not implemented").
+- 2026-10-26 — Tasks 1 and 2 ran in parallel (disjoint files).

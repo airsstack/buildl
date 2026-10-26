@@ -4,7 +4,7 @@
 
 The positioning in one sentence: Lua where Starlark sits in Bazel [5], ninja's execution discipline underneath [4], and airsl's capability model as the trust layer neither of them has.
 
-> **Status: the core pipeline is built.** The `buildl` binary runs `check`, `graph`, `query`, `plan`, `build`, `test`, `verify`, `log`, `clean`, `gc`, `doctor` and `plugins fetch` on a real workspace: it evaluates build files on airsl, in parallel, keys every target, runs what is dirty in parallel with its output captured, and keeps results in a local content-addressed store and action cache, so a second build runs nothing and a build repeated in another directory is byte-identical. Actions run by default at isolation tier 2, the input sandbox: each in a directory of its own outside the workspace, holding copies of its declared inputs and nothing else of the workspace, with `TZ`, `LC_ALL` and `SOURCE_DATE_EPOCH` fixed; tier 1, a plain process holding only its declared environment, runs on request. That is the first item of the [roadmap](#roadmap), with `query`, `test`, `log`, `clean`, `gc` and parallel loading from the second, the input sandbox and `verify` from the third, grant negotiation — the approver and `doctor` — from the fourth, plugins with discovery targets from the fifth, and the remote cache from the sixth; watch mode is designed and not built. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
+> **Status: the core pipeline is built.** The `buildl` binary runs `check`, `graph`, `query`, `plan`, `build`, `test`, `verify`, `log`, `clean`, `gc`, `doctor`, `plugins fetch` and `watch` on a real workspace: it evaluates build files on airsl, in parallel, keys every target, runs what is dirty in parallel with its output captured, and keeps results in a local content-addressed store and action cache, so a second build runs nothing and a build repeated in another directory is byte-identical. Actions run by default at isolation tier 2, the input sandbox: each in a directory of its own outside the workspace, holding copies of its declared inputs and nothing else of the workspace, with `TZ`, `LC_ALL` and `SOURCE_DATE_EPOCH` fixed; tier 1, a plain process holding only its declared environment, runs on request. That is the first item of the [roadmap](#roadmap), with `query`, `test`, `log`, `clean`, `gc` and parallel loading from the second, the input sandbox and `verify` from the third, grant negotiation — the approver and `doctor` — from the fourth, plugins with discovery targets from the fifth, the remote cache from the sixth, and watch mode from the seventh: `buildl watch` builds, then builds again when a file the build reads changes, reading the workspace anew each cycle. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
 
 ---
 
@@ -184,7 +184,7 @@ Each CLI command is the Load → Resolve → Plan → Execute → Record pipelin
 | `buildl graph` | Resolve | emit the DAG (`--json`, the default, or `--dot`) | yes |
 | `buildl plan [target]...` | Plan | dry run: what would rebuild, and why | yes |
 | `buildl build [target]...` | Record | the full pipeline | yes |
-| `buildl watch [target]` | loops | persistent process, re-plans on file change | not yet |
+| `buildl watch [target]...` | loops | persistent process, re-builds when a file the build reads changes or a build file now declares a different graph | yes |
 | `buildl query <expr>` | Resolve | graph queries: `deps()`, `rdeps()` | yes |
 | `buildl test [target]...` | Record | run test targets and what they need | yes |
 | `buildl verify [target]... [--sample N]` | Execute | re-run cached actions in the sandbox and name those whose outputs differ | yes |
@@ -256,7 +256,7 @@ Dependency-ordered, from [`design.md` §13](./docs/design.md); progress is track
 4. **Grant negotiation UX** — wanted set, ceiling intersection, approver, and the `doctor` command; per-target grant narrowing is settled here, as declined; built
 5. **Plugins** — the `extension.toml` manifest, attribution, `buildl.use`; with them discovery targets; built
 6. **Remote cache via REAPI** [7] — most of the remote value at a fraction of the complexity; built
-7. **Watch mode** — full-reload variant first
+7. **Watch mode** — full-reload variant first; built
 8. **Remote execution, toolchain containers** — when a repo has genuinely outgrown one machine
 
 ## Part of airsstack
