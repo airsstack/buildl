@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-26
 depends-on: [01, 04]
 built-on: 0e431e5caec9
@@ -61,7 +61,7 @@ crates/buildl-core/tests/flows/remote.rs          — [modify] the four RemotePo
 crates/buildl-core/tests/flows/build.rs, report.rs, discovery.rs — [modify] Tally literals
 crates/buildl-core/src/types/remote_hit.rs (bis) — [modify] DecodedTree: Files, Symlink(path), EmptyDirectory(path), Unreadable — what a decoded output tree holds
 crates/buildl-core/src/ports/remote_cache.rs (bis)— [modify] decode_tree returns DecodedTree, so a refused tree is told apart from an unreadable one
-docs/architecture.md, docs/architecture-building-blocks.md — [modify] the decode_tree signature
+docs/architecture.md, docs/architecture-building-blocks.md — [modify] the decode_tree signature; the UploadUnsandboxed { which } error
 crates/buildl/src/remote/encode.rs                — [modify] names_symlinks (:293) becomes symlink_paths, returning the paths of all three wire lists, sorted and deduplicated
 crates/buildl/src/remote/reapi.rs                 — [modify] impl RemoteCache (:327) gains execute answering an adapter error, replaced in plan 08
 crates/buildl/src/remote/configured.rs            — [modify] Remote::Off answers execute with an adapter error; Remote::Reapi delegates; RemotePolicy literal (:119)
@@ -254,3 +254,51 @@ It still maps to exit 2 (`exit.rs:104`).
 `cargo make dod` and `cargo deny check` green; the named tests pass; the 29 existing tests of
 `tests/flows/remote.rs` (`grep -c "#\[test\]"`) pass with their `RemotePolicy` consts gaining
 `execution: Off` and no other change.
+
+## Review findings
+
+Task 1:
+- docs — `lib.rs` line over the paragraph width; `remote_cache.rs` docs named only lookup and store; an encode comment overstated v2.1 behaviour — fixed
+- test-coverage — `Execute` missing from the call-name list test — kept as its own plan-named test `execute_is_shown_as_execute`
+- style — one `Tally` literal written `..Tally::default()` — kept: it keeps that test under clippy's line limit
+- test-coverage — no test fails if `Remote::Off` or the `Reapi` stub stop refusing `execute` — kept: the stub is replaced by plan 08
+
+Task 2:
+- docs — `expect(dead_code)` reason and the poisoned-lock comment were inaccurate — fixed
+- test-coverage — the blocking wait has no test in core (core starts no thread) — proven by Task 4's `remote_gates` tests
+- strong-types — `Gate::new(usize)` clamps 0 to 1 — kept: the plan names `a_gate_of_no_places_admits_one`
+
+Task 3:
+- spec — the `Ended` match moved from `Build::record` into `record.rs::recorded` — plan amended
+- test-coverage — the log test echoed its inputs; a hand-built `Kept`; an alias clash — fixed; `cargo test -p buildl-core --lib record` → `38 passed; 0 failed`
+
+Task 4:
+- bug — a directory output holding a symlink or an empty directory was a failed call, against spec §4 step 4 row 3 — fixed: `decode_tree` returns `DecodedTree`, and such a tree is `OutputRefused` with the remote on; flow tests `a_remote_directory_holding_a_symlink_is_refused_naming_it`, `a_remote_directory_holding_an_empty_directory_is_refused`
+- test-coverage — no test of a blob failing its check on the execute path — fixed: `a_blob_that_fails_its_check_in_an_execute_is_a_failed_call_to_execute`, `a_strict_blob_that_fails_its_check_in_an_execute_fails_the_build`
+- test-coverage — no test of the stop check after the local gate, nor of the remote re-check after the remote gate; one test would hang rather than fail if the gates were swapped — fixed: `a_build_that_stops_while_a_task_waits_at_the_local_gate_does_not_begin_it`, three `a_worker_admitted_to_…` tests, `Gate::free()` in the gates test
+- flakiness — `local_runs_never_exceed_workers_while_executing` depended on an 80 ms overlap — fixed: local runs held on a latch
+- strong-types — `began: bool` — fixed: `Began::{NotYet, Told}`
+- docs — `fetch.rs` module and `found_at` docs — fixed
+- spec — the stop test's premise (workers waiting at the gate are admitted before stop is set), the remote re-check, the per-test pool width, the judge function's name — plan amended
+- kept — `Gate::enter` has no timeout, so a place leak would hang a test
+
+Task 5:
+- docs — the two refusal messages worded the fix differently; a stray rustdoc line; an inaccurate sentence in `architecture.md` — fixed
+- naming — `UploadUnsandboxed` now also covers execution — kept, as the plan says
+- after all fixes: `cargo make dod` → `dod exit 0`, `Build Done in 65.39 seconds`
+
+Named tests: `conformance.py … 05` → `plan 05: 34/34 named tests present`.
+
+## Probe results
+
+- buildl-core may start threads in tests — `crates/buildl-core/clippy.toml` bans `std::thread::{spawn, scope, sleep}` and `guard-core-purity` refuses exceptions — **against the spec and plan**: the four limit tests moved to `crates/buildl/tests/e2e/remote_gates.rs`; spec §10 amended (4a698d2)
+- a `buildl` test can build the core with its own remote — `lib.rs:211` exports `Wiring`, `state/mod.rs:35` exports `StateLock`, `port_set.rs:20-52` fields are pub, `driver.rs:71,85` `Pipeline::new`/`set_remote` are pub — as needed
+- a worker waiting at the remote gate is admitted before the build sets stop — coder's run of the held-gate test → the waiting task was sent — **against the plan's wording**; the test holds lookups instead
+
+## Deviations
+
+- 2026-10-26 — the gates' limit tests live in `buildl` (spec §10 and plan amended).
+- 2026-10-26 — `RemoteCache::decode_tree` returns `DecodedTree`, a port change, so a refused output tree ends as a local run's refusal.
+- 2026-10-26 — `recorded()` in `record.rs` holds the `Ended` match.
+- 2026-10-26 — `Error::UploadUnsandboxed { which: UnsandboxedRemote }`; a run that both uploads and executes is told about execution.
+- 2026-10-26 — `the_refusal_names_execution_and_not_upload` checks `strategy to "sandbox"` after the two refusal messages were worded alike.

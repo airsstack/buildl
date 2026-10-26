@@ -101,7 +101,7 @@ impl Exit {
             | Error::InvalidQuery { .. }
             | Error::NoRun { .. }
             | Error::NotATest { .. }
-            | Error::UploadUnsandboxed
+            | Error::UploadUnsandboxed { .. }
             | Error::RemoteToken { .. }
             | Error::RemoteSwitch { .. }
             | Error::RemoteFlags { .. } => Self::Usage,
@@ -185,8 +185,8 @@ mod tests {
         Error, EvaluationFailure, FileChange, InfraKind, InputKind, Label, Origin, OutcomeClass,
         OutputDifference, OutputName, OutputPath, OutputRefusal, PluginName, PluginRef,
         PluginVersion, PluginViolation, PortName, Program, Provenance, RemoteFlagConflict,
-        RemoteVariable, SettingName, SourcePath, TargetRole, TokenSource, TreeFault, Verification,
-        Want, WantedSet,
+        RemoteVariable, SettingName, SourcePath, TargetRole, TokenSource, TreeFault,
+        UnsandboxedRemote, Verification, Want, WantedSet,
     };
 
     use super::Exit;
@@ -250,7 +250,9 @@ mod tests {
                 declared_with: TargetRole::Build,
                 site: Box::new(site()),
             },
-            Error::UploadUnsandboxed,
+            Error::UploadUnsandboxed {
+                which: UnsandboxedRemote::Upload,
+            },
             Error::RemoteToken {
                 from: TokenSource::Env(EnvName::parse("CACHE_TOKEN").unwrap()),
             },
@@ -684,6 +686,17 @@ mod tests {
             label: label("//:app"),
         };
         assert_eq!(Exit::of_error(&error), Exit::Infrastructure);
+    }
+
+    #[test]
+    fn refusing_to_upload_or_to_execute_under_bare_is_a_usage_error() {
+        for which in [UnsandboxedRemote::Upload, UnsandboxedRemote::Execute] {
+            assert_eq!(
+                Exit::of_error(&Error::UploadUnsandboxed { which }),
+                Exit::Usage,
+                "{which:?}"
+            );
+        }
     }
 
     #[test]

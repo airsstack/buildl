@@ -20,7 +20,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::discovery::{discovery_labels, load_twice, results, second_pass};
 use crate::error::{Error, PortName, Result};
-use crate::execute::assembly::ensure_sandboxed_upload;
+use crate::execute::assembly::ensure_sandboxed_remote;
 use crate::execute::execute;
 use crate::grants::negotiate;
 use crate::load::{declaration_order, load};
@@ -339,7 +339,7 @@ impl<P: Ports> Pipeline<P> {
         remote_off: &RemoteSwitch,
     ) -> Result<Vec<ActionOutcome>> {
         let plan = plan(graph, overrides, choices.rerun, &mut self.ports)?;
-        ensure_sandboxed_upload(
+        ensure_sandboxed_remote(
             choices.remote,
             self.ports.manifest.workspace()?.execution.strategy,
         )?;
@@ -396,8 +396,8 @@ impl<P: Ports> Pipeline<P> {
     /// back; whatever [`resolve`] returns; the graph-record port's failure; [`Error::UnknownTarget`] for a label of `scope`
     /// that names neither a target nor an alias; whatever [`plan`](fn@plan) returns, two outputs
     /// of the planned targets that would be written to one place included;
-    /// [`Error::UploadUnsandboxed`] when the remote cache is written to and actions run bare,
-    /// before the approver is asked; [`Error::NotApproved`] when the approver does not approve
+    /// [`Error::UploadUnsandboxed`] when the remote cache is written to or runs actions and actions
+    /// run bare, before the approver is asked; [`Error::NotApproved`] when the approver does not approve
     /// what a plan wants, or the approver's own failure; and
     /// whatever [`execute`](fn@execute) returns: two outputs of the workspace that would be
     /// written to one place, whether or not both targets were asked for, a command that names no
@@ -515,8 +515,8 @@ impl<P: Ports> Pipeline<P> {
     /// that names neither a target nor an alias; [`Error::NotATest`] for a label of `scope` that
     /// names a target that is not a test; whatever [`plan`](fn@plan) returns, two outputs of the
     /// planned targets that would be written to one place included;
-    /// [`Error::UploadUnsandboxed`] when the remote cache is written to and actions run bare,
-    /// before the approver is asked; [`Error::NotApproved`] when the approver does not approve
+    /// [`Error::UploadUnsandboxed`] when the remote cache is written to or runs actions and actions
+    /// run bare, before the approver is asked; [`Error::NotApproved`] when the approver does not approve
     /// what the plan wants, or the approver's own failure; and whatever
     /// [`execute`](fn@execute) returns: two outputs of the workspace that would be
     /// written to one place, whether or not both targets were asked for, a command that names no

@@ -20,6 +20,8 @@
 //! - [`PortName`] — which port an [`Error::Adapter`] came through.
 //! - [`RemoteVariable`] and [`RemoteFlagConflict`] — which switch variable an
 //!   [`Error::RemoteSwitch`] refused, and which flag combination an [`Error::RemoteFlags`] did.
+//! - [`UnsandboxedRemote`] — what an [`Error::UploadUnsandboxed`] found asked for while actions run
+//!   bare.
 //! - [`TreeFault`] — why a list of files an [`Error::InvalidTree`] is about is not a tree.
 //! - [`Result`] — the crate-wide alias.
 //!
@@ -402,16 +404,16 @@ pub enum Error {
     /// A plan was handed over with a graph it was not made from.
     #[error("the plan was not made from this graph")]
     ForeignPlan,
-    /// Uploading to the remote cache was asked for, and actions run bare.
+    /// Uploading to the remote cache, or having the remote run actions, was asked for, and
+    /// actions run bare.
     ///
     /// A bare action can read files it did not declare, so a result it produced is not known to
     /// depend only on its declared inputs, and no one else could trust it.
-    #[error(
-        "uploading to the remote cache needs actions to run in the input sandbox, \
-         but strategy is \"bare\"; set strategy to \"sandbox\", or stop uploading by \
-         unsetting BUILDL_REMOTE_UPLOAD or dropping --remote-upload"
-    )]
-    UploadUnsandboxed,
+    #[error("{}", which.diagnostic())]
+    UploadUnsandboxed {
+        /// What was asked for.
+        which: UnsandboxedRemote,
+    },
     /// The remote cache's token is named, and cannot be used: the variable is unset or not text,
     /// the file is unreadable, or the token holds a character a header cannot carry.
     ///
@@ -985,6 +987,38 @@ impl fmt::Display for ActionFound {
     }
 }
 
+/// What a run asked of the remote that actions run bare cannot give.
+///
+/// Non-exhaustive for the same reason [`Error`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UnsandboxedRemote {
+    /// Sending what ran here to the remote cache.
+    Upload,
+    /// Having the remote run the actions its cache cannot answer. When a run asks for both, this
+    /// is the one named.
+    Execute,
+}
+
+impl UnsandboxedRemote {
+    /// The whole refusal: what was asked for, why bare cannot give it, and the ways out.
+    const fn diagnostic(self) -> &'static str {
+        match self {
+            Self::Upload => {
+                "uploading to the remote cache needs actions to run in the input sandbox, \
+                 but strategy is \"bare\"; set strategy to \"sandbox\", or stop uploading by \
+                 unsetting BUILDL_REMOTE_UPLOAD or dropping --remote-upload"
+            }
+            Self::Execute => {
+                "executing on the remote needs actions to run in the input sandbox, \
+                 but strategy is \"bare\"; set strategy to \"sandbox\", or stop executing by \
+                 setting execute to false in [remote], unsetting BUILDL_REMOTE_EXECUTE or \
+                 dropping --remote-execute"
+            }
+        }
+    }
+}
+
 /// The variable of a remote cache switch.
 ///
 /// Non-exhaustive for the same reason [`Error`] is.
@@ -1195,6 +1229,7 @@ mod tests {
     use super::{
         ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
         EvaluationLimit, NameKind, PortName, RemoteFlagConflict, RemoteVariable, TreeFault,
+        UnsandboxedRemote,
     };
     use crate::types::{
         Argument, Ceiling, Command, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName,
@@ -1873,10 +1908,27 @@ mod tests {
     #[test]
     fn an_unsandboxed_upload_says_how_to_sandbox_or_stop_uploading() {
         assert_eq!(
-            Error::UploadUnsandboxed.to_string(),
+            Error::UploadUnsandboxed {
+                which: UnsandboxedRemote::Upload
+            }
+            .to_string(),
             "uploading to the remote cache needs actions to run in the input sandbox, \
              but strategy is \"bare\"; set strategy to \"sandbox\", or stop uploading by \
              unsetting BUILDL_REMOTE_UPLOAD or dropping --remote-upload"
+        );
+    }
+
+    #[test]
+    fn an_unsandboxed_execution_says_how_to_sandbox_or_stop_executing() {
+        assert_eq!(
+            Error::UploadUnsandboxed {
+                which: UnsandboxedRemote::Execute
+            }
+            .to_string(),
+            "executing on the remote needs actions to run in the input sandbox, \
+             but strategy is \"bare\"; set strategy to \"sandbox\", or stop executing by \
+             setting execute to false in [remote], unsetting BUILDL_REMOTE_EXECUTE or \
+             dropping --remote-execute"
         );
     }
 

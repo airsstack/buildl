@@ -171,6 +171,7 @@ pub mod watch;
 pub use error::{
     ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
     EvaluationLimit, NameKind, PortName, RemoteFlagConflict, RemoteVariable, Result, TreeFault,
+    UnsandboxedRemote,
 };
 pub use execute::execute;
 pub use grants::negotiate;

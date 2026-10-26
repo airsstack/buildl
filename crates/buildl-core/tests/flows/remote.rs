@@ -13,7 +13,7 @@ use buildl_core::{
     OnFailure, OutcomeClass, OutputName, OutputPath, OutputRefusal, Pipeline, PlatformProperties,
     PlatformPropertyName, PortName, RemoteCall, RemoteExecution, RemoteFailure, RemoteJobs,
     RemoteNotice, RemotePolicy, RemoteSettings, RemoteUrl, RemoteUse, RootPath, Sample, Scope,
-    SourcePath, TargetRole, json,
+    SourcePath, TargetRole, UnsandboxedRemote, json,
 };
 
 use crate::common::{
@@ -726,7 +726,15 @@ fn uploading_under_the_bare_strategy_is_refused_before_anything_runs() {
 
     let error = build(&mut pipeline, WRITING).unwrap_err();
 
-    assert!(matches!(error, Error::UploadUnsandboxed), "{error:?}");
+    assert!(
+        matches!(
+            error,
+            Error::UploadUnsandboxed {
+                which: UnsandboxedRemote::Upload
+            }
+        ),
+        "{error:?}"
+    );
     let ports = pipeline.ports();
     assert_eq!(ports.strategy.handed(), []);
     assert!(ports.remote.untouched());
@@ -741,6 +749,60 @@ fn uploading_under_the_bare_strategy_is_refused_before_anything_runs() {
         OutcomeClass::Built,
         "reading alone is allowed"
     );
+}
+
+#[test]
+fn executing_under_the_bare_strategy_is_refused_before_anything_runs() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+    pipeline.ports_mut().manifest.workspace.execution.strategy = Isolation::Bare;
+
+    let error = build(&mut pipeline, executing()).unwrap_err();
+
+    assert!(
+        matches!(
+            error,
+            Error::UploadUnsandboxed {
+                which: UnsandboxedRemote::Execute
+            }
+        ),
+        "{error:?}"
+    );
+    let ports = pipeline.ports();
+    assert_eq!(ports.strategy.handed(), []);
+    assert!(ports.remote.untouched());
+    assert!(
+        ports.approver.asked.is_empty(),
+        "a refused build is not put to the approver"
+    );
+
+    let outcomes = build(&mut pipeline, LENIENT).unwrap();
+    assert_eq!(
+        class(&outcomes, "//:a"),
+        OutcomeClass::Built,
+        "reading alone is allowed"
+    );
+}
+
+#[test]
+fn the_refusal_names_execution_and_not_upload() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+    pipeline.ports_mut().manifest.workspace.execution.strategy = Isolation::Bare;
+
+    let executing = build(&mut pipeline, executing()).unwrap_err().to_string();
+    let both = build(&mut pipeline, executing_and_writing())
+        .unwrap_err()
+        .to_string();
+    let uploading = build(&mut pipeline, WRITING).unwrap_err().to_string();
+
+    assert!(executing.contains("executing on the remote"), "{executing}");
+    assert!(executing.contains("strategy to \"sandbox\""), "{executing}");
+    assert!(!executing.contains("upload"), "{executing}");
+    assert_eq!(
+        both, executing,
+        "execution is named when both are asked for"
+    );
+    assert!(uploading.contains("uploading"), "{uploading}");
+    assert!(!uploading.contains("execut"), "{uploading}");
 }
 
 /// Reading from the remote, sending what it cannot answer to be run there, and carrying on
