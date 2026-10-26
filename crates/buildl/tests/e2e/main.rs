@@ -36,3 +36,4 @@ mod remote_switch;
 mod sandbox;
 mod test;
 mod verify;
+mod watch;

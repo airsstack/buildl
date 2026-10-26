@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-26
 depends-on: [01, 02]
 built-on: a08d695c7505
@@ -151,7 +151,7 @@ Desired-outcome table, as spec §8 lists them:
 - `a_readme_edit_adds_no_log_line` — write `README.md`; no `building` call; `Fixture::log_lines()` count unchanged
 - `a_build_file_comment_edit_runs_no_cycle` — append `-- note` to `lib/build.lua`; no `building` call
 - `a_save_of_the_same_bytes_runs_no_action` — rewrite an input with its own bytes; the cycle runs and no outcome is `Built` (each is `Cached`)
-- `changes_during_a_cycle_make_one_more_cycle` — a step returns a batch of three paths from three edits; exactly one further `building` call
+- `a_batch_of_changes_makes_one_cycle` — a step returns a batch of three paths from three edits; exactly one further `building` call
 - `a_discovery_input_outside_the_scope_runs_a_cycle` — `discovery` fixture, scope a non-discovery target; edit the discovery target's input; a cycle runs
 - `a_readme_edit_on_the_discovery_fixture_adds_no_log_line` — settles spec §10's equality risk
 - `plan_and_log_work_between_cycles` — inside a step, `Fixture::open().plan(…)` and `.log(…)` succeed (the lock is free)
@@ -180,3 +180,24 @@ Done is green. Commit `test(buildl): prove watch against the intent's outcomes`.
 
 `cargo make dod` green, with `guard-adapter-isolation`; `cargo test -p buildl --test e2e watch`
 covers every e2e row of spec §8.
+
+## Review findings
+
+- correctness — `Wiring::reopened` searched the root's ancestors, so a cycle started while `buildl.toml` was missing at the watched root opened and built an enclosing workspace — `crates/buildl/src/local_ports.rs`. Fixed and verified: a found root other than the watched root is refused with `Error::Adapter { port: Manifest }` ("no buildl.toml in <root>"); `a_manifest_gone_from_a_nested_root_does_not_open_the_one_around_it` failed before the fix (the reopening succeeded on the outer root), passes after; `cargo test -p buildl` green (571 unit, 139 e2e, 8), `cargo make dod` green (fix coder, run once).
+- test strength — the search-path assertion compared the process `PATH` with itself — `local_ports.rs`. Fixed: `reopened_keeps_the_search_path_it_was_given` builds the first wiring with its own `SearchPath` and checks the reopened one carries it; same gate run, green.
+- doc-comment-discipline — the `workspace` module doc did not name `watch` or its `watching` child; the `build_watched` doc named a manifest failure it cannot have — `crates/buildl/src/workspace.rs`. Fixed.
+- static-dispatch — a test helper took `&mut dyn Cycles` — `crates/buildl/src/workspace/watching.rs`. Fixed: it takes `impl FnOnce(&mut Reopening<…>)`.
+- test robustness — `a_manifest_edit_is_read_again` indexed `rounds[1]` before asserting the length — `crates/buildl/tests/e2e/watch.rs`. Fixed.
+- naming — `changes_during_a_cycle_make_one_more_cycle` edited between cycles, not during one — `watch.rs`. Fixed by renaming to `a_batch_of_changes_makes_one_cycle` (this plan's Task 4 row updated); the core loop asks for changes only between cycles, and collapsing edits made while a cycle runs is the notify adapter's, proven by plan 03's `writes_while_nobody_asks_drain_into_one_batch`.
+
+## Probe results
+
+- No throwaway probe: every premise the tasks asserted about existing code (`Wiring` fields, `buildl_core::watch`'s signature, `Cycle`/`Watched`, `Fixture` helpers, the `chain` and `discovery` fixtures, the `replace_line` lines) was exercised by the tasks' own red-green tests, which compiled and passed against them.
+- Task 4's rows were checked to assert: every cycle-count expectation shifted by one made 12 of 13 rows fail (the 13th compares `rows()`/`snapshot()` with a twin); the file was restored.
+
+## Deviations
+
+- 2026-10-26 — `Workspace::watch` lives in `crates/buildl/src/workspace/watching.rs` beside `Reopening`, not in `workspace.rs`; `workspace.rs` gains only `mod watching;`.
+- 2026-10-26 — `Workspace::watch` is generic over `Changes` and keeps the first wiring's search path for every reopening; spec §2/§4 do not spell either out. Recorded here rather than amending the approved spec, which would mark plans 05 and 06 stale.
+- 2026-10-26 — `Wiring::reopened` refuses a manifest found above the watched root (review fix), a rule the plan did not name.
+- 2026-10-26 — Task 4's row `changes_during_a_cycle_make_one_more_cycle` renamed `a_batch_of_changes_makes_one_cycle` (review fix).
