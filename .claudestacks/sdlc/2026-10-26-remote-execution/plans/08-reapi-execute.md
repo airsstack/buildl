@@ -2,7 +2,7 @@
 status: approved
 created: 2026-10-26
 depends-on: [02, 03, 04, 05, 07]
-built-on: 4704ec60505e
+built-on: 0e431e5caec9
 ---
 
 # REAPI Execute Implementation Plan
