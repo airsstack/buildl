@@ -25,13 +25,6 @@ const STRICT_VARIABLE: &str = "BUILDL_REMOTE_STRICT";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum RemoteTable {
     /// The workspace names a remote cache.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "nothing reads the workspace's remote table into a policy until build and test do"
-        )
-    )]
     Named,
     /// The workspace names none.
     Absent,
@@ -46,13 +39,6 @@ pub(crate) struct RemoteSwitches {
     pub strict: Option<OsString>,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "nothing builds a policy from the switches until build and test take one"
-    )
-)]
 impl RemoteSwitches {
     /// The policy of a run whose command line is `args`, on a machine these variables describe,
     /// in a workspace that has `table`.

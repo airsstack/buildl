@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 
 use buildl_core::{
     ActionOutcome, ApproverMode, Checkup, Collected, Diagnostic, Directory, Error, Label,
-    LiveOutput, Loaded, OnFailure, Pipeline, Plan, PortName, Query, Reporter, Rerun, Result,
-    Sample, Scope, SettingName, SettingValue, Shown, TargetGraph, Verification, WantedSet,
+    LiveOutput, Loaded, OnFailure, Pipeline, Plan, PortName, Query, RemotePolicy, Reporter, Rerun,
+    Result, Sample, Scope, SettingName, SettingValue, Shown, TargetGraph, Verification, WantedSet,
     pipeline,
 };
 
@@ -33,19 +33,34 @@ use crate::state::{Cleaned, clear_out};
 /// The choices a caller makes about one build or test run that are neither in the workspace nor
 /// part of any key.
 ///
-/// Both are values the run reads and nothing else does, so they travel as one.
+/// They are values the run reads and nothing else does, so they travel as one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RunOptions {
     on_failure: OnFailure,
     live: LiveOutput,
+    remote: RemotePolicy,
 }
 
 impl RunOptions {
     /// What to do with the rest of the targets once one has failed, and when to show what an
-    /// action prints.
+    /// action prints. The run never consults a remote cache until [`RunOptions::with_remote`]
+    /// says to.
     #[must_use]
     pub const fn new(on_failure: OnFailure, live: LiveOutput) -> Self {
-        Self { on_failure, live }
+        Self {
+            on_failure,
+            live,
+            remote: RemotePolicy::OFF,
+        }
+    }
+
+    /// These options, with the run using the remote cache the workspace names as `remote` says.
+    ///
+    /// A workspace that names no remote cache is built without one whatever `remote` says.
+    #[must_use]
+    pub const fn with_remote(mut self, remote: RemotePolicy) -> Self {
+        self.remote = remote;
+        self
     }
 }
 
@@ -136,6 +151,12 @@ impl Workspace {
     #[must_use]
     pub const fn out(&self) -> &Directory {
         self.wiring.out()
+    }
+
+    /// Whether `buildl.toml` has a `[remote]` table.
+    #[must_use]
+    pub const fn names_remote(&self) -> bool {
+        self.wiring.names_remote()
     }
 
     /// A target as a person names it: `//dir:name`, or `:name` / `name` in the directory the
@@ -319,11 +340,11 @@ impl Workspace {
         overrides: &BTreeMap<SettingName, SettingValue>,
     ) -> Result<Plan> {
         let lock = self.wiring.lock()?;
-        Pipeline::new(self.wiring.ports(&lock, Silent, NoTerminal)?).plan(
-            self.wiring.entry(),
-            scope,
-            overrides,
+        Pipeline::new(
+            self.wiring
+                .ports(&lock, Silent, NoTerminal, RemotePolicy::OFF)?,
         )
+        .plan(self.wiring.entry(), scope, overrides)
     }
 
     /// Builds `scope`, telling `reporter` how it goes.
@@ -350,6 +371,11 @@ impl Workspace {
     /// [`PortName::Approver`](buildl_core::PortName::Approver), when that file cannot be read or
     /// written, the user's data directory cannot be found, or the console cannot be asked on.
     /// `console` is where an `interactive` approver asks; under the other two it is not used.
+    ///
+    /// The remote cache is the one `[remote]` names, used as [`RunOptions::with_remote`] says.
+    /// Its token is read before anything runs, so [`Error::RemoteToken`](buildl_core::Error::RemoteToken)
+    /// is returned when it cannot be; a cache that cannot be reached is met at its first call,
+    /// and `options` say whether that fails the run or is told to `reporter` and passed over.
     pub fn build<R: Reporter, C: Console>(
         &self,
         scope: &Scope,
@@ -360,7 +386,12 @@ impl Workspace {
     ) -> Result<Vec<ActionOutcome>> {
         self.wiring.runs()?;
         let lock = self.wiring.lock()?;
-        let mut pipeline = Pipeline::new(self.wiring.ports(&lock, reporter, console)?);
+        let mut pipeline =
+            Pipeline::new(
+                self.wiring
+                    .ports(&lock, reporter, console, options.remote)?,
+            );
+        pipeline.set_remote(options.remote);
         let built = pipeline.build(
             self.wiring.entry(),
             scope,
@@ -542,6 +573,11 @@ impl Workspace {
     /// [`PortName::Approver`](buildl_core::PortName::Approver), when that file cannot be read or
     /// written, the user's data directory cannot be found, or the console cannot be asked on.
     /// `console` is where an `interactive` approver asks; under the other two it is not used.
+    ///
+    /// The remote cache is the one `[remote]` names, used as [`RunOptions::with_remote`] says.
+    /// Its token is read before anything runs, so [`Error::RemoteToken`](buildl_core::Error::RemoteToken)
+    /// is returned when it cannot be; a cache that cannot be reached is met at its first call,
+    /// and `options` say whether that fails the run or is told to `reporter` and passed over.
     pub fn test<R: Reporter, C: Console>(
         &self,
         scope: &Scope,
@@ -553,7 +589,12 @@ impl Workspace {
     ) -> Result<Vec<ActionOutcome>> {
         self.wiring.runs()?;
         let lock = self.wiring.lock()?;
-        let mut pipeline = Pipeline::new(self.wiring.ports(&lock, reporter, console)?);
+        let mut pipeline =
+            Pipeline::new(
+                self.wiring
+                    .ports(&lock, reporter, console, options.remote)?,
+            );
+        pipeline.set_remote(options.remote);
         let tested = pipeline.test(
             self.wiring.entry(),
             scope,

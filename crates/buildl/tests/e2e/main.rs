@@ -29,6 +29,9 @@ mod named;
 mod parallel_load;
 mod plugins;
 mod recovery;
+// The server these tests run against is built only with the `test-server` feature.
+#[cfg(feature = "test-server")]
+mod remote;
 mod remote_switch;
 mod sandbox;
 mod test;

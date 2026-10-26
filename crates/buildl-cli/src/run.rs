@@ -37,7 +37,7 @@ use crate::cli::{
 };
 use crate::doctor_text::doctor_text;
 use crate::exit::Exit;
-use crate::remote_switches::RemoteSwitches;
+use crate::remote_switches::{RemoteSwitches, RemoteTable};
 use crate::terminal::Terminal;
 
 /// Why a command stopped before its end.
@@ -82,7 +82,7 @@ pub(crate) fn run<A, O, E, C>(
     args: A,
     start: io::Result<PathBuf>,
     terminal: &Terminal,
-    _remote: &RemoteSwitches,
+    remote: &RemoteSwitches,
     stdout: &mut O,
     stderr: &mut E,
     console: &mut C,
@@ -114,8 +114,24 @@ where
         Command::Graph(args) => graph(&start, &args, stdout, stderr),
         Command::Query(args) => query(&start, &args, stdout, stderr),
         Command::Plan(args) => plan(&start, args, stdout),
-        Command::Build(args) => build(&start, args, terminal.mode(), paint, stderr, console),
-        Command::Test(args) => test(&start, args, terminal.mode(), paint, stderr, console),
+        Command::Build(args) => build(
+            &start,
+            args,
+            remote,
+            terminal.mode(),
+            paint,
+            stderr,
+            console,
+        ),
+        Command::Test(args) => test(
+            &start,
+            args,
+            remote,
+            terminal.mode(),
+            paint,
+            stderr,
+            console,
+        ),
         Command::Verify(args) => verify(&start, args, paint, stderr, console),
         Command::Doctor => doctor(&start, stdout, stderr),
         Command::Log(args) => log(&start, &args, stdout, stderr),
@@ -312,11 +328,21 @@ fn plan<O: Write>(start: &Path, args: PlanArgs, stdout: &mut O) -> Result<Exit, 
     Ok(Exit::Success)
 }
 
+/// Whether `workspace` names a remote cache, as the switches need to know it.
+const fn remote_table(workspace: &Workspace) -> RemoteTable {
+    if workspace.names_remote() {
+        RemoteTable::Named
+    } else {
+        RemoteTable::Absent
+    }
+}
+
 /// `build`: builds, showing on `stderr` how it goes, and returns the status of the most severe
-/// way a target ended.
+/// way a target ended. The remote cache is used as `remote` and the flags say.
 fn build<E: Write, C: Console>(
     start: &Path,
     args: BuildArgs,
+    remote: &RemoteSwitches,
     mode: Mode,
     paint: Paint,
     stderr: &mut E,
@@ -325,12 +351,13 @@ fn build<E: Write, C: Console>(
     let (on_failure, live) = (args.on_failure(), args.live());
     let settings = overrides(args.selection.overrides)?;
     let workspace = Workspace::open(start)?;
+    let policy = remote.resolve(&args.remote, remote_table(&workspace))?;
     let scope = scope(&workspace, &args.selection.targets)?;
     let mut reporter = TerminalReporter::new(&mut *stderr, mode, paint, Report::Build);
     let built = workspace.build(
         &scope,
         &settings,
-        RunOptions::new(on_failure, live),
+        RunOptions::new(on_failure, live).with_remote(policy),
         &mut reporter,
         console,
     );
@@ -347,6 +374,7 @@ fn build<E: Write, C: Console>(
 fn test<E: Write, C: Console>(
     start: &Path,
     args: TestArgs,
+    remote: &RemoteSwitches,
     mode: Mode,
     paint: Paint,
     stderr: &mut E,
@@ -359,12 +387,13 @@ fn test<E: Write, C: Console>(
     };
     let settings = overrides(args.selection.overrides)?;
     let workspace = Workspace::open(start)?;
+    let policy = remote.resolve(&args.remote, remote_table(&workspace))?;
     let scope = scope(&workspace, &args.selection.targets)?;
     let mut reporter = TerminalReporter::new(&mut *stderr, mode, paint, report);
     let tested = workspace.test(
         &scope,
         &settings,
-        RunOptions::new(on_failure, live),
+        RunOptions::new(on_failure, live).with_remote(policy),
         rerun,
         &mut reporter,
         console,
@@ -577,6 +606,19 @@ mod tests {
             &mut NoTerminal,
         );
         (exit, String::from_utf8(stderr).unwrap())
+    }
+
+    #[test]
+    fn a_remote_flag_in_a_workspace_without_a_remote_table_is_a_usage_error() {
+        let (_dir, root) = copying();
+
+        let build = ran(&root, &["build", "--remote-upload"]);
+        let test = ran(&root, &["test", "--remote-strict"]);
+
+        assert_eq!(build.exit, Exit::Usage, "{}", build.stderr);
+        assert_eq!(test.exit, Exit::Usage, "{}", test.stderr);
+        assert!(build.stderr.contains("[remote]"), "{}", build.stderr);
+        assert!(!root.join("out").exists(), "something was built");
     }
 
     #[test]

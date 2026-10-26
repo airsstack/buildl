@@ -4,12 +4,14 @@
 //! channel to the cache and the login every call carries, the cache's capabilities, the
 //! transfer of blobs, the blocking client that makes the calls and the error it fails with, the
 //! encoding of buildl's remote values as REAPI messages, the input root of an action, and
-//! [`Reapi`], the remote cache built from them. Behind the `test-server` feature it also holds
+//! [`Reapi`], the remote cache built from them, and [`Remote`], the cache a run is given: that
+//! one or none. Behind the `test-server` feature it also holds
 //! an in-memory server to test against.
 
 mod capabilities;
 mod channel;
 mod client;
+mod configured;
 mod encode;
 mod error;
 mod input_tree;
@@ -24,4 +26,5 @@ mod tls_fixture;
 mod transfer;
 mod vocabulary;
 
+pub use configured::Remote;
 pub use reapi::Reapi;

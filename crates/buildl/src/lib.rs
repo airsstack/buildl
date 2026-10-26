@@ -131,10 +131,11 @@
 //! that pins a git plugin through the system `git`; it names only [`state`], [`search_path`] and
 //! `buildl-core`.
 //!
-//! [`remote`] serves no port yet and is in neither table: it holds the REAPI v2 and `ByteStream`
-//! message and service types, generated from the vendored protos, and the blocking client of a
-//! remote cache built on them (runtime, channel, login, capabilities, blob transfer), with an
-//! in-memory cache server behind the `test-server` feature.
+//! [`remote`] serves the [`RemoteCache`] port and is in neither table: it holds the REAPI v2 and
+//! `ByteStream` message and service types, generated from the vendored protos, the blocking
+//! client of a remote cache built on them (runtime, channel, login, capabilities, blob
+//! transfer), the adapter over that client, and the choice between it and no remote at all,
+//! with an in-memory cache server behind the `test-server` feature.
 //!
 //! The adapters meet in two modules and nowhere else. Neither is public: what they hold is
 //! exported from the crate root.
@@ -170,6 +171,7 @@
 //! [`GraphRecord`]: buildl_core::GraphRecord
 //! [`Host`]: buildl_core::Host
 //! [`Manifest`]: buildl_core::Manifest
+//! [`RemoteCache`]: buildl_core::RemoteCache
 //! [`Reporter`]: buildl_core::Reporter
 //! [`StatCache`]: buildl_core::StatCache
 //! [`ToolResolver`]: buildl_core::ToolResolver
