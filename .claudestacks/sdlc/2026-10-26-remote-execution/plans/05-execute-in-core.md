@@ -1,8 +1,9 @@
 ---
-status: approved
+status: executing
 created: 2026-10-26
 depends-on: [01, 04]
-built-on: 4704ec60505e
+built-on: 0e431e5caec9
+disproves: 4704ec60505e
 ---
 
 # Execute In Core Implementation Plan
@@ -43,7 +44,7 @@ crates/buildl-core/src/types/mod.rs, lib.rs       — [modify] export Executed, 
 crates/buildl-core/src/ports/remote_cache.rs      — [modify] trait RemoteCache gains execute(&RemoteAction) -> Result<Executed>
 crates/buildl-core/src/ports/no_remote.rs         — [modify] execute answers an adapter error naming the remote cache
 crates/buildl-core/src/ports/reporter.rs          — [modify] Tally literal (:194)
-crates/buildl-core/src/execute/gate.rs            — [create] Gate: admits n holders at once; unit tests
+crates/buildl-core/src/execute/gate.rs            — [create] Gate: admits n holders at once; single-threaded unit tests (buildl-core starts no thread, crates/buildl-core/clippy.toml)
 crates/buildl-core/src/execute/mod.rs             — [modify] declare gate (crate-private)
 crates/buildl-core/src/execute/perform.rs         — [modify] Ended::Executed; RemoteRun gains the gates and executing(); consult takes the execute branch; executed() judges an Executed; RemotePolicy literals in tests (:724-776); tests (:639)
 crates/buildl-core/src/execute/fetch.rs           — [modify] usable (:38) reads the symlink list; unusable() says why a hit cannot be placed; stdout/stderr download for a failed run; RemoteHit literals in tests (:408, :477)
@@ -53,7 +54,9 @@ crates/buildl-core/src/verify/assembly.rs         — [modify] rechecked (:198-2
 crates/buildl-core/src/pipeline/driver.rs         — [modify] the sandbox check call (:342) is the renamed one
 crates/buildl-core/src/error.rs                   — [modify] UploadUnsandboxed (:414) gains which: Upload or Execute; its Display names the switch
 crates/buildl-core/src/execute/upload.rs          — [modify] test fake (:235) implements execute
-crates/buildl-core/tests/flows/common.rs          — [modify] FakeRemote (:1171, impl :1244) scripts execute answers, holds them, records calls; Tally literal
+crates/buildl-core/tests/flows/common.rs          — [modify] FakeRemote (:1171, impl :1244) scripts execute answers and records calls; Tally literal
+crates/buildl/tests/e2e/remote_gates.rs           — [create] the gates' limits over the real ThreadPool: the ports of Wiring::ports (lib.rs:211) moved into a PortSet whose remote is a fake that holds each execute until released
+crates/buildl/tests/e2e/main.rs                   — [modify] declare remote_gates
 crates/buildl-core/tests/flows/remote.rs          — [modify] the four RemotePolicy consts (:33-51) gain execution: Off; new flow tests
 crates/buildl-core/tests/flows/build.rs, report.rs, discovery.rs — [modify] Tally literals
 crates/buildl/src/remote/encode.rs                — [modify] names_symlinks (:293) returns the paths
@@ -118,10 +121,13 @@ literal gains `remote: 0`; it serializes as `"Remote"` like the other field-less
 **Change:** `Gate::new(n)` admits at most `n` holders; `enter()` blocks until a place is free and
 returns a guard that frees it on drop.
 
-**Proof:** in `gate.rs` tests —
-- `a_gate_admits_its_count_at_once` — eight threads through a gate of three: the peak inside is 3
-- `a_place_is_freed_when_its_holder_leaves` — a gate of one; the second thread enters only after the first guard drops
+**Proof:** in `gate.rs` tests, on one thread (`crates/buildl-core/clippy.toml` bans `std::thread`, and
+`guard-core-purity` refuses any exception; the blocking wait is proven over real threads by Task 4's
+`buildl` tests) —
+- `a_gate_admits_its_count_at_once` — a gate of three gives three places and has none left
+- `a_place_is_freed_when_its_holder_leaves` — a gate of one; dropping its place frees it for the next holder
 - `a_gate_of_one_serializes`
+- `a_gate_of_no_places_admits_one`
 
 **Done when:** `cargo test -p buildl-core gate` passes; `cargo make dod` green. Commit
 `feat(buildl-core): a counting gate for runs in flight`.
@@ -148,7 +154,8 @@ the span the worker measured. Nothing yet produces `Ended::Executed`; the tests 
 ### Task 4 — The worker sends a missed target to be executed
 
 **Files:** `execute/perform.rs`, `execute/fetch.rs`, `execute/assembly.rs` (RemoteRun literal),
-`tests/flows/common.rs`, `tests/flows/remote.rs`.
+`tests/flows/common.rs`, `tests/flows/remote.rs`, `crates/buildl/tests/e2e/remote_gates.rs`,
+`crates/buildl/tests/e2e/main.rs`; `gate.rs` loses its `dead_code` expectation.
 
 **Change:** `RemoteRun` (`perform.rs:68`) gains `executing()` — the policy's execution is `On`
 and the remote is not down — and the two gates, built in `assembly.rs:190` from
@@ -172,10 +179,14 @@ by a new `executed()`, row by row of spec §4 step 4:
 Every local `run` of an executing build enters the local gate first and then checks
 `shared.stop` again, ending `Worked::NotBegun` if it is set; a task that already said it began
 (a fallback after a failed `execute`) does not say it again. An `Ended::Executed` never reaches
-`sent` (`:533`), so it is never uploaded (spec §4). `FakeRemote` scripts an `Executed` per call,
-can hold a call until released, and records the calls.
+`sent` (`:533`), so it is never uploaded (spec §4). `FakeRemote` scripts an `Executed` per call
+and records the calls. The gates' limits need real threads, which buildl-core cannot start, so
+they are proven in `buildl`'s `tests/e2e/remote_gates.rs`: it takes the ports `Wiring::ports`
+makes, moves them into a `PortSet` whose `remote` is a fake that holds each `execute` until the
+test releases it, and builds through `Pipeline` with the policy's `RemoteExecution::On`.
 
-**Proof:** in `perform.rs` tests (`:639`, beside `:746-911`) and `tests/flows/remote.rs` —
+**Proof:** in `perform.rs` tests (`:639`, beside `:746-911`), `tests/flows/remote.rs`, and, for
+the four marked `(threads)`, `crates/buildl/tests/e2e/remote_gates.rs` —
 - `a_missed_target_is_executed_when_the_policy_executes` — lookup miss, `Ran` exit 0: `Ended::Executed`, the strategy never called
 - `a_missed_target_runs_locally_when_execution_is_off`
 - `a_cached_answer_ends_fetched`
@@ -189,14 +200,14 @@ can hold a call until released, and records the calls.
 - `a_strict_failed_execute_fails_the_build`
 - `an_executed_target_is_not_uploaded` — under `ReadWrite`, no `upload` call for it
 - `a_remote_job_takes_no_live_place` — with live output on, the remote job's `Performed.live` is false and a later local action can take the place
-- `remote_jobs_never_exceed_jobs_below_workers` (flow) — `jobs = 2`, `local = 4`, eight targets, each execute held: peak 2
-- `remote_jobs_reach_jobs_above_workers` (flow) — `jobs = 6`, `local = 2`, a dispatcher of 6: peak 6
-- `local_runs_never_exceed_workers_while_executing` (flow) — every execute fails leniently, `jobs = 6`, `local = 2`: peak local runs 2
-- `a_task_waiting_at_a_gate_when_the_build_stops_is_not_begun` (flow) — `jobs = 1`, the first execute held then answered with an action failure, fail-fast: the waiting targets end not begun and `execute` was called once
+- `remote_jobs_never_exceed_jobs_below_workers` (threads) — `jobs = 2`, `local = 4`, eight targets, each execute held: peak 2
+- `remote_jobs_reach_jobs_above_workers` (threads) — `jobs = 6`, `local = 2`, a dispatcher of 6 (`[execution] workers = 6`): peak 6
+- `local_runs_never_exceed_workers_while_executing` (threads) — every execute fails leniently, `jobs = 6`, `local = 2`: peak local runs 2
+- `a_task_waiting_at_a_gate_when_the_build_stops_is_not_begun` (threads) — `jobs = 1`, the first execute held then answered with an action failure, fail-fast: the waiting targets end not begun and `execute` was called once
 - `a_target_sent_to_be_executed_is_reported_as_started` (flow)
 - `an_executed_dependency_gives_dependents_the_keys_a_local_build_would` (flow) — mirrors `:427`
 
-**Done when:** `cargo test -p buildl-core` passes; `cargo make dod` green. Commit
+**Done when:** `cargo test -p buildl-core` and `cargo test -p buildl --all-features --test e2e remote_gates` pass; `cargo make dod` green. Commit
 `feat(buildl-core): execute a missed target on the remote`.
 
 ### Task 5 — Refusing execution under `bare`

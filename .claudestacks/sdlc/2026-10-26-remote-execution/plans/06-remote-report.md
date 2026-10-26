@@ -2,7 +2,7 @@
 status: approved
 created: 2026-10-26
 depends-on: [05]
-built-on: 4704ec60505e
+built-on: 0e431e5caec9
 ---
 
 # Remote Report Implementation Plan
