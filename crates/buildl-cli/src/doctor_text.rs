@@ -1,11 +1,12 @@
-//! The text `doctor` prints: the workspace, its approver, its run settings, its ceiling, one row
-//! per want saying whether the ceiling allows it and whether it is approved, each row followed
-//! by the plugins behind it, and every want a plugin does not allow.
+//! The text `doctor` prints: the workspace, its approver, its run settings, its remote cache, its
+//! ceiling, one row per want saying whether the ceiling allows it and whether it is approved,
+//! each row followed by the plugins behind it, and every want a plugin does not allow.
 //!
 //! Its own file because it is the one command whose output is a report laid out in columns,
 //! read by a person deciding what to allow.
 //!
-//! Responsibilities: [`doctor_text`].
+//! Responsibilities: [`doctor_text`], with [`RemoteReport`], what this machine adds to the
+//! remote cache's settings.
 //!
 //! Non-responsibilities: computing the report, which the library does; and writing it, which
 //! the command does.
@@ -14,10 +15,26 @@ use core::fmt::Display;
 use std::collections::BTreeSet;
 
 use buildl::Doctor;
-use buildl::buildl_core::{Attribution, Directory, Execution, Want, WantedSet, Workers};
+use buildl::buildl_core::{
+    Attribution, Directory, Execution, RemoteSettings, Want, WantedSet, Workers,
+};
+
+use crate::remote_switches::Switch;
 
 /// The spaces after the longest cell of a column.
 const GAP: usize = 2;
+
+/// What `doctor` says of the remote cache beyond what `buildl.toml` holds: what this machine
+/// has, and so what no manifest can say.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RemoteReport {
+    /// Whether the token the manifest names can be found.
+    pub token_set: bool,
+    /// How `BUILDL_REMOTE_UPLOAD` reads.
+    pub upload: Switch,
+    /// How `BUILDL_REMOTE_STRICT` reads.
+    pub strict: Switch,
+}
 
 /// The text of `doctor`'s report, ending in a newline.
 ///
@@ -25,11 +42,16 @@ const GAP: usize = 2;
 /// table is as wide as its longest cell, its head included, and two spaces, so the text is the
 /// same on every run.
 ///
+/// The remote cache follows the run settings: `remote: none` when `buildl.toml` has no
+/// `[remote]` table, and otherwise a `remote` section of the table's `url`, `instance`, `ca`,
+/// `header` and `timeout`, whether the token is set, and `upload` and `strict` as this
+/// machine's variables read in `remote`. The token itself is never in the text.
+///
 /// Under a want that plugins' targets are behind, one line for each chain reads
 /// `    declared by plugin go@1.2.0 for //services/api:server`. When a plugin does not allow a want
 /// of its targets, a `plugin violations` section ends the report with one line for each, worded
 /// as the refusal of a build would word it; the command still succeeds.
-pub(crate) fn doctor_text(doctor: &Doctor) -> String {
+pub(crate) fn doctor_text(doctor: &Doctor, remote: &RemoteReport) -> String {
     let checkup = doctor.checkup();
     let workspace = checkup.workspace();
     let ceiling = &workspace.ceiling;
@@ -37,8 +59,9 @@ pub(crate) fn doctor_text(doctor: &Doctor) -> String {
         format!("workspace  {}", doctor.root().display()),
         format!("approver   {}", workspace.approver),
         format!("execution  {}", execution(&workspace.execution)),
-        "ceiling".to_owned(),
     ];
+    lines.extend(remote_lines(workspace.remote.as_ref(), remote));
+    lines.push("ceiling".to_owned());
     let entries = [
         ("proc.run", joined(&ceiling.run)),
         ("env.read", joined(&ceiling.env)),
@@ -177,6 +200,39 @@ fn execution(execution: &Execution) -> String {
     )
 }
 
+/// The lines about the remote cache `settings` name, or the one line saying there is none.
+fn remote_lines(settings: Option<&RemoteSettings>, remote: &RemoteReport) -> Vec<String> {
+    let Some(settings) = settings else {
+        return vec!["remote: none".to_owned()];
+    };
+    let or_dash = |value: Option<String>| value.unwrap_or_else(|| "-".to_owned());
+    let entries = [
+        ("url", settings.url().to_string()),
+        (
+            "instance",
+            or_dash(settings.instance().map(ToString::to_string)),
+        ),
+        ("ca", or_dash(settings.ca().map(ToString::to_string))),
+        ("header", settings.header().to_string()),
+        ("timeout", settings.timeout().to_string()),
+        (
+            "token",
+            if remote.token_set { "set" } else { "not set" }.to_owned(),
+        ),
+        ("upload", remote.upload.to_string()),
+        ("strict", remote.strict.to_string()),
+    ];
+    let width = column_width(entries.iter().map(|(key, _)| *key));
+    let mut lines = vec!["remote".to_owned()];
+    lines.extend(
+        entries
+            .iter()
+            .map(|(key, value)| format!("  {key:<width$}{value}")),
+    );
+    lines.push("  --remote-upload and --remote-strict turn either on for one run".to_owned());
+    lines
+}
+
 /// The members of `set` joined by `, `, or `-` when there are none.
 fn joined<T: Display>(set: &BTreeSet<T>) -> String {
     if set.is_empty() {
@@ -216,11 +272,13 @@ mod tests {
     use buildl::Doctor;
     use buildl::buildl_core::{
         ApproverMode, Attribution, Ceiling, Checkup, DeclarationSite, Directory, EnvName,
-        Execution, Isolation, Label, Origin, PluginChain, PluginName, PluginRef, PluginVersion,
-        PluginViolation, Program, Provenance, Timeout, Want, WantedSet, Workers, Workspace,
+        Execution, HeaderName, HostPath, InstanceName, Isolation, Label, Origin, PluginChain,
+        PluginName, PluginRef, PluginVersion, PluginViolation, Program, Provenance, RemoteSettings,
+        RemoteUrl, Timeout, TokenSource, Want, WantedSet, Workers, Workspace,
     };
 
-    use super::doctor_text;
+    use super::{RemoteReport, doctor_text};
+    use crate::remote_switches::Switch;
 
     fn programs(names: &[&str]) -> BTreeSet<Program> {
         names
@@ -282,17 +340,129 @@ mod tests {
         outside: WantedSet,
         unapproved: WantedSet,
     ) -> String {
-        doctor_text(&Doctor::new(
-            Checkup::new(
-                workspace,
-                wanted,
-                outside,
-                Attribution::default(),
-                Vec::new(),
+        doctor_text(
+            &Doctor::new(
+                Checkup::new(
+                    workspace,
+                    wanted,
+                    outside,
+                    Attribution::default(),
+                    Vec::new(),
+                ),
+                PathBuf::from("/path/to/myapp"),
+                unapproved,
             ),
-            PathBuf::from("/path/to/myapp"),
-            unapproved,
-        ))
+            &machine(),
+        )
+    }
+
+    /// A machine whose token is not found and whose variables are not set.
+    const fn machine() -> RemoteReport {
+        RemoteReport {
+            token_set: false,
+            upload: Switch::Off,
+            strict: Switch::Off,
+        }
+    }
+
+    /// [`workspace`] with the remote cache `settings`.
+    fn remote_workspace(settings: RemoteSettings) -> Workspace {
+        Workspace {
+            remote: Some(settings),
+            ..workspace(ApproverMode::Manifest, Workers::PerCore)
+        }
+    }
+
+    /// The text of a report of `workspace` on `machine`, with nothing wanted.
+    fn report_on(workspace: Workspace, machine: &RemoteReport) -> String {
+        doctor_text(
+            &Doctor::new(
+                Checkup::new(
+                    workspace,
+                    WantedSet::default(),
+                    WantedSet::default(),
+                    Attribution::default(),
+                    Vec::new(),
+                ),
+                PathBuf::from("/path/to/myapp"),
+                WantedSet::default(),
+            ),
+            machine,
+        )
+    }
+
+    #[test]
+    fn a_workspace_without_a_remote_says_none() {
+        let text = report_on(
+            workspace(ApproverMode::Manifest, Workers::PerCore),
+            &machine(),
+        );
+
+        assert!(
+            text.contains("strategy sandbox\nremote: none\nceiling\n"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn a_remote_section_lists_every_setting_and_the_machine() {
+        let settings =
+            RemoteSettings::builder(RemoteUrl::parse("grpcs://cache.example.com:443").unwrap())
+                .instance(InstanceName::parse("ci").unwrap())
+                .ca(HostPath::parse("certs/ca.pem").unwrap())
+                .header(HeaderName::parse("x-cache-token").unwrap())
+                .timeout(Timeout::parse("45s").unwrap())
+                .token(TokenSource::Env(EnvName::parse("CACHE_TOKEN").unwrap()))
+                .build()
+                .unwrap();
+        let machine = RemoteReport {
+            token_set: true,
+            upload: Switch::On,
+            strict: Switch::Invalid("yes".to_owned()),
+        };
+
+        let text = report_on(remote_workspace(settings), &machine);
+
+        assert!(
+            text.contains(concat!(
+                "strategy sandbox\n",
+                "remote\n",
+                "  url       grpcs://cache.example.com:443\n",
+                "  instance  ci\n",
+                "  ca        certs/ca.pem\n",
+                "  header    x-cache-token\n",
+                "  timeout   45s\n",
+                "  token     set\n",
+                "  upload    on\n",
+                "  strict    invalid (\"yes\" is neither 1 nor 0)\n",
+                "  --remote-upload and --remote-strict turn either on for one run\n",
+                "ceiling\n",
+            )),
+            "{text}"
+        );
+        assert!(!text.contains("CACHE_TOKEN"), "{text}");
+    }
+
+    #[test]
+    fn an_unnamed_instance_and_authority_show_a_dash_and_a_missing_token_says_so() {
+        let settings = RemoteSettings::builder(RemoteUrl::parse("grpc://127.0.0.1:9092").unwrap())
+            .build()
+            .unwrap();
+
+        let text = report_on(remote_workspace(settings), &machine());
+
+        assert!(
+            text.contains(concat!(
+                "  instance  -\n",
+                "  ca        -\n",
+                "  header    authorization\n",
+                "  timeout   30s\n",
+                "  token     not set\n",
+                "  upload    off\n",
+                "  strict    off\n",
+            )),
+            "{text}"
+        );
     }
 
     #[test]
@@ -327,6 +497,7 @@ mod tests {
                 "workspace  /path/to/myapp\n",
                 "approver   interactive\n",
                 "execution  workers 0 (one per core), timeout 10m, strategy sandbox\n",
+                "remote: none\n",
                 "ceiling\n",
                 "  proc.run  go, protoc\n",
                 "  env.read  HOME, PATH\n",
@@ -379,11 +550,14 @@ mod tests {
             vec![violation],
         );
 
-        let text = doctor_text(&Doctor::new(
-            checkup,
-            PathBuf::from("/path/to/myapp"),
-            WantedSet::default(),
-        ));
+        let text = doctor_text(
+            &Doctor::new(
+                checkup,
+                PathBuf::from("/path/to/myapp"),
+                WantedSet::default(),
+            ),
+            &machine(),
+        );
 
         assert!(
             text.ends_with(concat!(

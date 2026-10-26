@@ -5,8 +5,8 @@
 //! transfer of blobs, the blocking client that makes the calls and the error it fails with, the
 //! encoding of buildl's remote values as REAPI messages, the input root of an action, and
 //! [`Reapi`], the remote cache built from them, and [`Remote`], the cache a run is given: that
-//! one or none. Behind the `test-server` feature it also holds
-//! an in-memory server to test against.
+//! one or none; and [`token_is_present`], which says whether the token the settings name can be
+//! found. Behind the `test-server` feature it also holds an in-memory server to test against.
 
 mod capabilities;
 mod channel;
@@ -23,8 +23,10 @@ mod runtime;
 pub mod test_server;
 #[cfg(all(test, feature = "test-server"))]
 mod tls_fixture;
+mod token_presence;
 mod transfer;
 mod vocabulary;
 
 pub use configured::Remote;
 pub use reapi::Reapi;
+pub use token_presence::token_is_present;

@@ -721,6 +721,7 @@ fn doctor_prints_the_workspace_authority() {
                 "workspace  {}\n",
                 "approver   interactive\n",
                 "execution  workers 1, timeout 10m, strategy bare\n",
+                "remote: none\n",
                 "ceiling\n",
                 "  proc.run  cp\n",
                 "  env.read  -\n",

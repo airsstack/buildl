@@ -18,7 +18,7 @@ It is a thin shell: it parses arguments, calls into `buildl`, writes what the li
 | `buildl log <TARGET>` | shows what a target printed when it last ran |
 | `buildl clean`, `buildl gc` | remove the output directory; drop rows of undeclared targets and blobs nothing needs |
 | `buildl plugins fetch` | pins every git plugin `buildl.toml` names in `buildl.lock` and stores its files, so a build needs no network; says on stderr, per plugin, `fetched` or `unchanged`, its name and its commit |
-| `buildl doctor` | prints on stdout the workspace root, its approver, its execution settings, its ceiling, and each want: allowed or refused, approved or not; writes nothing, and exits 0 whatever it reports |
+| `buildl doctor` | prints on stdout the workspace root, its approver, its execution settings, its remote cache (`remote: none`, or the `[remote]` table's settings, whether its token is set, and `BUILDL_REMOTE_UPLOAD` and `BUILDL_REMOTE_STRICT` as this machine sets them), its ceiling, and each want: allowed or refused, approved or not; connects to nothing, writes nothing, and exits 0 whatever it reports |
 
 A target is `//dir:name`, or `:name` and `name`, read against the current directory; with none, `plan`, `build` and `verify` take every target but the tests and `test` every test, and `log` takes exactly one. `plan` and `doctor` print each want with the plugins whose targets want it. `plan`, `build`, `test` and `verify` accept `--set NAME=VALUE`, repeated, to give a build setting a value for the run. `--color auto|always|never` goes with every command. The workspace is the nearest `buildl.toml` at or above the current directory.
 

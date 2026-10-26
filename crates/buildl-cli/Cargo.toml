@@ -24,6 +24,9 @@ buildl = { workspace = true }
 clap   = { workspace = true }
 
 [dev-dependencies]
+# The in-memory remote cache the binary tests run against; `test-server` is a feature the
+# library offers to its tests alone.
+buildl   = { workspace = true, features = ["test-server"] }
 # The temporary workspaces the tests run the commands in.
 tempfile = { workspace = true }
 

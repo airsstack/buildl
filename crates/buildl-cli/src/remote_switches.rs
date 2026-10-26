@@ -5,11 +5,13 @@
 //! takes, and the combinations the command line refuses are refused here. The variables are
 //! handed in as values, so the whole decision is a pure function a test can ask.
 //!
-//! Responsibilities: [`RemoteSwitches`], with [`RemoteSwitches::resolve`], and [`RemoteTable`].
+//! Responsibilities: [`RemoteSwitches`], with [`RemoteSwitches::resolve`], [`RemoteTable`] and
+//! [`Switch`], how one variable reads.
 //!
 //! Non-responsibilities: reading the variables, which `main` does; the flags themselves, which
 //! `cli` owns; and acting on the policy, which the build does.
 
+use core::fmt;
 use std::ffi::OsString;
 
 use buildl::buildl_core::{Error, RemoteFailure, RemotePolicy, RemoteUse};
@@ -30,6 +32,42 @@ pub(crate) enum RemoteTable {
     Absent,
 }
 
+/// How one switch's variable reads on this machine.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Switch {
+    /// The variable is unset or `0`.
+    Off,
+    /// The variable is `1`.
+    On,
+    /// The variable holds anything else, as the text it holds.
+    Invalid(String),
+}
+
+impl Switch {
+    /// How a variable holding `value` reads; `None` is a variable that is not set.
+    fn of(value: Option<&OsString>) -> Self {
+        match value.map(|value| value.to_str()) {
+            None | Some(Some("0")) => Self::Off,
+            Some(Some("1")) => Self::On,
+            Some(_) => Self::Invalid(
+                value
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            ),
+        }
+    }
+}
+
+impl fmt::Display for Switch {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Off => f.write_str("off"),
+            Self::On => f.write_str("on"),
+            Self::Invalid(value) => write!(f, "invalid ({value:?} is neither 1 nor 0)"),
+        }
+    }
+}
+
 /// What this machine's variables say about the remote cache, as the process read them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(crate) struct RemoteSwitches {
@@ -40,6 +78,16 @@ pub(crate) struct RemoteSwitches {
 }
 
 impl RemoteSwitches {
+    /// How `BUILDL_REMOTE_UPLOAD` reads.
+    pub(crate) fn upload_switch(&self) -> Switch {
+        Switch::of(self.upload.as_ref())
+    }
+
+    /// How `BUILDL_REMOTE_STRICT` reads.
+    pub(crate) fn strict_switch(&self) -> Switch {
+        Switch::of(self.strict.as_ref())
+    }
+
     /// The policy of a run whose command line is `args`, on a machine these variables describe,
     /// in a workspace that has `table`.
     ///
@@ -95,15 +143,10 @@ impl RemoteSwitches {
 
 /// Whether the variable `name`, holding `value`, is on: `1` is, `0` and unset are not.
 fn switched_on(name: &'static str, value: Option<&OsString>) -> Result<bool, Error> {
-    match value.map(|value| value.to_str()) {
-        None | Some(Some("0")) => Ok(false),
-        Some(Some("1")) => Ok(true),
-        Some(_) => Err(Error::RemoteSwitch {
-            name,
-            value: value
-                .map(|value| value.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-        }),
+    match Switch::of(value) {
+        Switch::Off => Ok(false),
+        Switch::On => Ok(true),
+        Switch::Invalid(value) => Err(Error::RemoteSwitch { name, value }),
     }
 }
 
@@ -116,7 +159,7 @@ mod tests {
 
     use buildl::buildl_core::{Error, RemoteFailure, RemotePolicy, RemoteUse};
 
-    use super::{RemoteSwitches, RemoteTable};
+    use super::{RemoteSwitches, RemoteTable, Switch};
     use crate::cli::RemoteArgs;
 
     /// Variables as a machine sets them: `None` is unset.
@@ -212,6 +255,31 @@ mod tests {
             .resolve(&flags(false, false, false), RemoteTable::Absent)
             .unwrap();
         assert_eq!(resolved, RemotePolicy::OFF);
+    }
+
+    #[test]
+    fn a_variable_reads_as_on_off_or_invalid() {
+        let on = machine(Some("1"), None);
+        let off = machine(Some("0"), None);
+        let unset = machine(None, None);
+        let bad = machine(Some("yes"), Some(""));
+
+        assert_eq!(on.upload_switch(), Switch::On);
+        assert_eq!(off.upload_switch(), Switch::Off);
+        assert_eq!(unset.upload_switch(), Switch::Off);
+        assert_eq!(unset.strict_switch(), Switch::Off);
+        assert_eq!(bad.upload_switch(), Switch::Invalid("yes".to_owned()));
+        assert_eq!(bad.strict_switch(), Switch::Invalid(String::new()));
+    }
+
+    #[test]
+    fn a_switch_is_worded_for_doctor() {
+        assert_eq!(Switch::On.to_string(), "on");
+        assert_eq!(Switch::Off.to_string(), "off");
+        assert_eq!(
+            Switch::Invalid("yes".to_owned()).to_string(),
+            "invalid (\"yes\" is neither 1 nor 0)"
+        );
     }
 
     #[test]

@@ -27,4 +27,5 @@ uuid
 # buildl-cli
 buildl
 clap
+buildl (*)
 tempfile

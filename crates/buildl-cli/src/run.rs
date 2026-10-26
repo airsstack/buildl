@@ -23,6 +23,7 @@ use buildl::approver::Console;
 use buildl::buildl_core::json::canonical;
 use buildl::buildl_core::{Error, Scope};
 use buildl::plugins::FetchStatus;
+use buildl::remote::token_is_present;
 use buildl::report::{
     Mode, Paint, Report, TerminalReporter, check_line, clean_line, damage, error_text, gc_line,
     graph_dot, header, not_run_lines, plan_text, query_text, verify_text,
@@ -35,7 +36,7 @@ use crate::cli::{
     BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, PluginsArgs, PluginsCommand, QueryArgs,
     Streams, TestArgs, VerifyArgs, overrides,
 };
-use crate::doctor_text::doctor_text;
+use crate::doctor_text::{RemoteReport, doctor_text};
 use crate::exit::Exit;
 use crate::remote_switches::{RemoteSwitches, RemoteTable};
 use crate::terminal::Terminal;
@@ -133,7 +134,7 @@ where
             console,
         ),
         Command::Verify(args) => verify(&start, args, paint, stderr, console),
-        Command::Doctor => doctor(&start, stdout, stderr),
+        Command::Doctor => doctor(&start, remote, stdout, stderr),
         Command::Log(args) => log(&start, &args, stdout, stderr),
         Command::Clean => clean(&start, stderr),
         Command::Gc => gc(&start, stderr),
@@ -300,13 +301,29 @@ fn query<O: Write, E: Write>(
     Ok(Exit::Success)
 }
 
-/// `doctor`: writes to `stdout` what the workspace allows and what its build wants. Wants
-/// outside the ceiling or not approved are reported, and the command succeeded. Which discovery
-/// targets have not run is said on `stderr`.
-fn doctor<O: Write, E: Write>(start: &Path, stdout: &mut O, stderr: &mut E) -> Result<Exit, Stop> {
+/// `doctor`: writes to `stdout` what the workspace allows and what its build wants, and the
+/// remote cache it names with what `remote` says of this machine. Wants outside the ceiling or
+/// not approved are reported, and the command succeeded. Which discovery targets have not run
+/// is said on `stderr`. It connects to no remote cache and reads no token's content.
+fn doctor<O: Write, E: Write>(
+    start: &Path,
+    remote: &RemoteSwitches,
+    stdout: &mut O,
+    stderr: &mut E,
+) -> Result<Exit, Stop> {
     let (doctor, missing) = Workspace::open(start)?.doctor()?;
     let _ = stderr.write_all(not_run_lines(&missing).as_bytes());
-    product(stdout, doctor_text(&doctor).as_bytes())?;
+    let report = RemoteReport {
+        token_set: doctor
+            .checkup()
+            .workspace()
+            .remote
+            .as_ref()
+            .is_some_and(|settings| token_is_present(settings, doctor.root())),
+        upload: remote.upload_switch(),
+        strict: remote.strict_switch(),
+    };
+    product(stdout, doctor_text(&doctor, &report).as_bytes())?;
     Ok(Exit::Success)
 }
 
