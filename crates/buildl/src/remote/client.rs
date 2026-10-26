@@ -62,7 +62,8 @@ impl Progress {
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Instant::now();
     }
 
-    fn last(&self) -> Instant {
+    /// When the last message was taken, or when the progress started if none was.
+    pub(super) fn last(&self) -> Instant {
         *self.last.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
