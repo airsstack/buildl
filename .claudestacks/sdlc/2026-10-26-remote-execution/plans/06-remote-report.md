@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-26
 depends-on: [05]
 built-on: 0e431e5caec9
@@ -83,3 +83,24 @@ The test summary's shares list `remote` after `fetched`
 
 `cargo make dod` green; the existing summary tests (`block.rs:330`, `:341`, `terminal.rs:683`)
 pass unchanged, since a zero count is not shown.
+
+## Review findings
+
+Task 1:
+- test-coverage — `every_class()` in `exit.rs` tests listed every class but `Remote` — fixed: `(OutcomeClass::Remote, Exit::Success)`; `cargo test -p buildl-cli --bin buildl exit` → `29 passed; 0 failed`
+- risk — between the two commits `buildl log` would print an empty class word for `Remote` — closed by Task 2's `the_log_names_a_remote_run`
+- docs — `failure_text` doc over the line width; `Remote` missing from `a_target_that_did_not_fail_has_no_trailer` — fixed
+- kept — `hides` and `failure_text` repeat the success set `OutcomeClass::succeeded` holds, as before this change
+
+Task 2:
+- docs — two doc lines over the line width — fixed
+- test-coverage — `a_zero_remote_count_is_not_shown` did not show its zero — fixed: `remote: 0` written out; `cargo test -p buildl --lib report` → `141 passed; 0 failed`
+- spec — `test_line` now counts `remote` as passed; spec §9 requires it (`tests: 6 passed (1 cached, 2 fetched, 3 remote)`) — no amendment needed
+
+Gates: `cargo make dod` passes fmt, clippy, doc and the guards, and every test but one buildl-cli watch test, a different one per run (`watch::a_watch_is_quiet_while_nothing_changes`, `watch::an_edit_rebuilds`), which passes alone (`cargo test -p buildl-cli --test cli watch` → `5 passed; 0 failed`); doctests → ok.
+
+Named tests: `conformance.py … 06` → `plan 06: 9/9 named tests present`.
+
+## Probe results
+
+- the sites the plan names — `grep -n` → `exit.rs` `of_class` :47, `block.rs` `failure_text` :143, marker :227, `terminal.rs` `hides` :161, `log_text.rs` `ended` :70 — as planned

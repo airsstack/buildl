@@ -61,13 +61,14 @@ const fn civil_from_days(days: u64) -> (u64, u64, u64) {
     (year, month, day)
 }
 
-/// How a run ended, in words: `built`, `cached`, `fetched`, `skipped ({label} failed)` naming
-/// the target that failed, or a failure worded as a build's trailer words it.
+/// How a run ended, in words: `built`, `cached`, `fetched`, `remote`, `skipped ({label} failed)`
+/// naming the target that failed, or a failure worded as a build's trailer words it.
 fn ended(class: &OutcomeClass) -> String {
     match class {
         OutcomeClass::Built => "built".to_owned(),
         OutcomeClass::Cached => "cached".to_owned(),
         OutcomeClass::Fetched => "fetched".to_owned(),
+        OutcomeClass::Remote => "remote".to_owned(),
         OutcomeClass::Skipped { because } => format!("skipped ({because} failed)"),
         _ => failure_text(class).unwrap_or_default(),
     }
@@ -143,6 +144,14 @@ mod tests {
         assert_eq!(
             header(&last(OutcomeClass::Fetched, Vec::new())),
             "//:app: fetched at 2026-10-15 07:03:12 UTC\n"
+        );
+    }
+
+    #[test]
+    fn the_log_names_a_remote_run() {
+        assert_eq!(
+            header(&last(OutcomeClass::Remote, Vec::new())),
+            "//:app: remote at 2026-10-15 07:03:12 UTC\n"
         );
     }
 

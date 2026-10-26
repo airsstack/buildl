@@ -67,7 +67,8 @@ pub enum TestBlocks {
     /// Only a test that failed. A test that was built, cached, fetched or run on the remote
     /// shows nothing.
     Failed,
-    /// Every test, a passing one with what it printed, and a cached or fetched one marked as such.
+    /// Every test, a passing one with what it printed, and a cached, fetched or remote one marked
+    /// as such.
     Every,
 }
 
@@ -699,6 +700,17 @@ mod tests {
         summary.all.fetched = 2;
         reporter.summary(summary);
         assert_eq!(written(&mut reporter), b"1 built, 2 fetched\n");
+    }
+
+    #[test]
+    fn the_terminal_summary_counts_remote() {
+        let mut reporter = reporter(Mode::Plain, Paint::Plain);
+        reporter.begun(5);
+        let mut summary = counts(0, 0, 1, 0);
+        summary.all.fetched = 2;
+        summary.all.remote = 4;
+        reporter.summary(summary);
+        assert_eq!(written(&mut reporter), b"1 built, 2 fetched, 4 remote\n");
     }
 
     #[test]
