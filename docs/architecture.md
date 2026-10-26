@@ -395,15 +395,27 @@ A plugin is a directory of Lua files and an `extension.toml`. `buildl.toml` name
 
 A remote cache (design §11.2) is a store the core does not own, keyed by a description of the work and not by buildl's key, answering with a result it has not checked, and reached over a network by several workers at once. The core therefore has a port of its own for it and does all the judging; the adapter moves bytes and encodes.
 
-```text
- buildl-core                                        buildl (adapter: remote/)
- ───────────                                        ─────────────────────────
- remote_action(task) ──► RemoteAction ─── lookup ──► encode ──► GetActionResult
- usable(hit)  ◄──────────  RemoteHit  ◄───────────── decode ◄── ActionResult
- fetch: download, check length + SHA-256 per blob ─► BatchRead / ByteStream Read
- decode_tree ────────────────────────────────────── Tree → files, or None
- upload_of(run) ─► RemoteUpload + BlobSource ─────► FindMissingBlobs, uploads,
-                                                    UpdateActionResult
+```mermaid
+%% The core judges; the adapter moves bytes and encodes
+graph LR
+    subgraph CORE["buildl-core"]
+        RA["remote_action(task)"]
+        USE["usable(hit)"]
+        FET["fetch: length + SHA-256 per blob"]
+        DEC["decode_tree"]
+        UP["upload_of(run)<br/>RemoteUpload + BlobSource"]
+    end
+    subgraph AD["buildl: remote/"]
+        LK["encode, GetActionResult"]
+        RD["BatchRead / ByteStream Read"]
+        TR["Tree to files, or None"]
+        WR["FindMissingBlobs, uploads,<br/>UpdateActionResult"]
+    end
+    RA -->|"RemoteAction, lookup"| LK
+    LK -->|"RemoteHit"| USE
+    FET -->|"download"| RD
+    DEC -->|"tree bytes"| TR
+    UP -->|"upload"| WR
 ```
 
 `RemoteCache: Send + Sync` is blocking, since workers call it from their own threads, and has four methods: `lookup(&RemoteAction) -> Option<RemoteHit>`, `download(&[Blob]) -> Vec<Vec<u8>>` in the order asked, `decode_tree(&[u8]) -> Option<Vec<RemoteTreeFile>>` (`None` for a tree that holds a symbolic link or an empty directory, which a build cannot place) and `upload(&RemoteAction, &RemoteUpload, &dyn BlobSource) -> Uploaded`, which is `Done` or `InputChanged(path)`. A miss is `Ok(None)` and every other failure is an `Error::Adapter` naming `PortName::RemoteCache`; the core decides what a failure does (§3.4). `BlobSource` is the one new `dyn`: a callback through which the adapter reads the output and log blobs of an upload from the content store it may not import (building blocks §7 rule 2). `Ports` carries the cache as `type Remote: RemoteCache`, and `NoRemote`, which misses and drops uploads, stands in wherever a flow has none.
@@ -436,7 +448,7 @@ The adapter is the module `remote` of `buildl`. A module for each concern:
 |`proto`, `error`, `vocabulary`, `token_presence`|the generated types, the failure of a call with the call named, the names the test server shares, and whether the token the settings name can be found, for `doctor`|
 |`test_server`|behind the `test-server` feature: an in-memory REAPI server on loopback, the one the adapter's, the end-to-end and the binary's tests share|
 
-Many threads call one runtime at once: each polls its own future on its own thread while four runtime workers carry the connection's I/O, and eight threads on one runtime and one channel all completed against a server that held each call for half a second. An upload reads each input file once, hashing as it reads and sending what it hashed, and a file whose digest no longer matches the key's gives `Uploaded::InputChanged`. The blobs of an upload are read and written in groups of at most 32 MiB, so a large result is not held in memory whole; the encoded messages are held from the start.
+Many threads call one runtime at once: each polls its own future on its own thread while four runtime workers carry the connection's I/O, and eight threads on one runtime and one channel all completed against a server that held each call for half a second. An upload hashes every input file once, as it reads it, and reads again only the inputs the server lacks, checking each against its digest; a file whose digest no longer matches the key's, or that is gone, gives `Uploaded::InputChanged`. The blobs of an upload are read and written in groups that close before they pass 32 MiB, so a large result is not held in memory whole, though one blob over 32 MiB forms a group of its own; the encoded messages are held from the start.
 
 The REAPI messages are generated code that is vendored and committed, not built. The `.proto` files are copied byte for byte under `crates/buildl/proto/` at the commits recorded in its README, the REAPI [8] at `c2c07e3d718d3d490a4958344d9c3e47de0bfaf3` and the googleapis files it imports at `dff1cd0c7ff8c26ff4c9f7a87cbe175fb5124d4e` [9]. The prost and tonic output is committed under `crates/buildl/generated/reapi/`, outside `src/` because its `super::super` paths are refused there by `guard-adapter-isolation`, and `src/remote/proto.rs` pulls each file in with `include!` and carries the lint suppressions the generated code needs, each with its reason. A generator, `tools/reapi-codegen/`, regenerates the files with `cargo make reapi-codegen`. It is a package of its own outside the workspace, so its build tools (`protox`, `prost-build`) never enter the workspace's graph or `cargo deny`: generating at build time would add a license outside the allowed set, a banned `tempfile` parent and a duplicate `hashbrown`. A CI job regenerates the code, fails on any difference, and checks the files ship in the published `buildl` package, without which `buildl` would not compile from crates.io.
 
@@ -539,7 +551,7 @@ House rules enforcing design-doc §12 at the code level — checkable in review,
 
 |Decision|Choice|Because|
 |---|---|---|
-|Async runtime|**None — threads**, for the build and its scheduler. Amended: **a tokio runtime confined to the remote adapter, reached only through `block_on`**|The workload is process-spawning and file-hashing: worker count ≈ core count, no fan-out beyond it, no IO multiplexing need. An async runtime buys nothing and costs a dependency tree and an ecosystem split. The remote cache is the one place that changed it: tonic, the gRPC client, needs a runtime. The `remote` module of `buildl` creates and owns it, worker threads call it through `block_on`, and nothing outside that module names tokio, so `buildl-core`, the `Dispatcher` and every other adapter stay synchronous and plain threads (§3.4, §3.8). Several workers block on one runtime at once, which was shown to work before anything was built on it. `deny.toml` bans tonic, prost and uuid outside `buildl`, so the wrapper lists keep the runtime's reach to the one crate; tokio is not banned by name, since its direct dependents are tonic's own transport crates and its confinement follows from tonic's. The network fan-out of remote execution, which this record said would reopen the question, is not built.|
+|Async runtime|**None — threads**, for the build and its scheduler. Amended: **a tokio runtime confined to the remote adapter, reached only through `block_on`**|The workload is process-spawning and file-hashing: worker count ≈ core count, no fan-out beyond it, no IO multiplexing need. An async runtime buys nothing and costs a dependency tree and an ecosystem split. The remote cache is the one place that changed it: tonic, the gRPC client, needs a runtime. The `remote` module of `buildl` creates and owns it, worker threads call it through `block_on`, and nothing outside that module names tokio, so `buildl-core`, the `Dispatcher` and every other adapter stay synchronous and plain threads (§3.4, §3.8). Several workers block on one runtime at once, which was shown to work before anything was built on it. `deny.toml` bans tonic, prost and uuid outside `buildl`, so the wrapper lists keep the runtime's reach to the one crate; tokio is not banned by name: besides `buildl`, its direct dependents are the HTTP and gRPC stack under tonic, and `guard-crate-edges` keeps every other member off it. The network fan-out of remote execution, which this record said would reopen the question, is not built.|
 |What a remote cache is asked|**A REAPI `Action` built by the core, with buildl's action key as its salt**|The server can only be asked in the API's terms, and the action key is not an `Action` digest. The salt puts everything the key folds in (tool fingerprint, settings, network, unset variables) into the `Action` digest, so two targets with different keys never share an entry, whatever the other fields hold; the core builds the value and the adapter encodes it, so nothing protobuf crosses into `buildl-core` (§3.8).|
 |Who judges a remote answer|**`buildl-core`; the adapter only moves and encodes**|A result was written by another machine and is trusted for nothing: exit code, declared paths, a discovery output's kind, and every blob's length and SHA-256 are checked in the core, against a fake port, before a byte reaches the content store (§3.5, §3.8).|
 |A remote failure|**Lenient by default: warn once, run locally, turn the remote off for the rest of the command; `--remote-strict` fails the build**|A cache that is down must not stop a build that can run without it, and a flapping one must not be asked again for every target. Strict is for CI, where a silent fall back to a full local build is the thing to find out (§3.4).|
