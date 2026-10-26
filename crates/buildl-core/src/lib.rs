@@ -34,7 +34,7 @@
 //! | [`pipeline`] | the phases run in sequence over one bundle of ports, one method per command, and the commands that need only some of the ports as functions over those ports alone: the three that reach only build files and the state that holds discovery results, `doctor`, and `log` |
 //! | [`history`] | the read side of the build log: the newest run of a target that left output |
 //! | [`verify`](mod@verify) | verify, which serves one command and is not a phase: cached targets put back in place, a sample of them re-run, and each re-run compared with what was cached |
-//! | [`watch`](mod@watch) | what a watching run decides from the changes it sees: what a batch of changed paths starts; serves one command and is not a phase |
+//! | [`watch`](mod@watch) | what a watching run decides from the changes it sees: what a batch of changed paths starts, and the loop that builds, waits and reacts; serves one command and is not a phase |
 //! | `discovery` | the last result of each discovery target, read back from the build log and the content store for a second load of the build files; several pipeline functions use it, and it is not a phase |
 //! | `suggest` | the nearest declared name to one that names nothing, for any module that refuses a name |
 //!
@@ -209,4 +209,4 @@ pub use types::{
     WantedSet, WatchLayout, Watched, Workers, Workspace, Written,
 };
 pub use verify::verify;
-pub use watch::react;
+pub use watch::{react, watch};

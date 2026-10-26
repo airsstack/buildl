@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-26
 built-on: a08d695c7505
 ---
@@ -235,3 +235,22 @@ is green. Commit `feat(buildl-core): add the watch loop`.
 `cargo make dod` green, including `guard-core-purity` (no clock in `watch/`) and
 `guard-module-edges`. `cargo test -p buildl-core -- watch:: react changed_path change_batch`
 covers every row of spec §3's table and every `buildl-core` row of spec §8.
+
+## Review findings
+
+- doc-comment-discipline — `Built::inputs` doc promised the inputs of every target of the whole graph; spec §3 keeps only the scoped closure plus every discovery target's closure — `types/watch_reference.rs`. Fixed: doc reworded to spec §3 (doc-only, no gate change).
+- doc-comment-discipline — `Watched::built` doc said `None` only before a graph was resolved; spec §3 also makes it `None` on a discovery failure — `types/cycle.rs`. Fixed: "a manifest, load, resolve or discovery failure".
+- doc-comment-discipline — `react` doc said Build "when no build has run yet"; the code (correctly) builds whenever the last cycle left no graph — `watch/react.rs`. Fixed: doc reworded.
+- test-coverage — no test guarded `renew` clearing `built` after a cycle without a graph — `watch/run.rs`. Fixed and verified: `a_cycle_without_a_graph_forgets_the_last_one` added; with `renew` mutated to `cycle.watched.built.or(reference.built)` only that test failed, restored it passes; `cargo make dod` green (fix coder, run once).
+
+## Probe results
+
+- Line references tasks 3–4 rely on — `sed -n` over `crates/buildl-cli/src/exit.rs:110-117,733-736`, `crates/buildl-core/src/lib.rs:43-47`, `types/source_path.rs:50`, `types/directory.rs:68`, `error.rs:784-788` — all held (`Error::Adapter { port, .. } => match port { PortName::Manifest => Self::Definition, _ => Self::Infrastructure }`; rule 1 list; `pub fn as_str`; `pub const fn is_root`; `pub enum PortName`).
+- Every other asserted fact was exercised by the task's own named tests (red then green), reported by each coder; none came out against the plan.
+
+## Deviations
+
+- 2026-10-26 — Task 2 left `pub mod watch;`, the lib.rs module table row and rule 1's list to Task 4, which creates the `watch` module (the plan's file list named lib.rs for both).
+- 2026-10-26 — `ChangeBatch` stores its least path apart from the rest (`least` + `rest: BTreeSet`), so `first()` returns `&ChangedPath` without `expect`/`unwrap` (both denied); `new`, `first`, `len`, `iter` behave as specified. `len` carries `#[expect(clippy::len_without_is_empty)]`: a never-empty type has no meaningful `is_empty`.
+- 2026-10-26 — `react` and `watch` are also re-exported at the crate root (`pub use watch::{react, watch}`), as `verify` and `load` are.
+- 2026-10-26 — Reviews ran per batch of tasks (1–3, then 4–5) over frozen git tree objects, and did not re-run the gate (user's machine-load rule); each coder ran `cargo make dod` once.

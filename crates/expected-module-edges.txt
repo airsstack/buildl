@@ -51,4 +51,6 @@ verify -> execute
 verify -> placement
 verify -> ports
 verify -> types
+watch -> error
+watch -> ports
 watch -> types
