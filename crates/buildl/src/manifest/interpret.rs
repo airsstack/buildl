@@ -18,9 +18,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
     ApproverMode, Ceiling, Diagnostic, Directory, EntryName, EnvName, Error, Execution, GitUrl,
-    HeaderName, HostPath, InstanceName, Isolation, PluginCap, PluginName, PluginNetwork,
-    PluginSource, PortName, Program, RemoteSettings, RemoteUrl, Result, Rev, Timeout, TokenSource,
-    Workers, Workspace,
+    HeaderName, HostPath, InstanceName, Isolation, PlatformProperties, PlatformPropertyName,
+    PluginCap, PluginName, PluginNetwork, PluginSource, PortName, Program, RemoteJobs,
+    RemoteSettings, RemoteSettingsBuilder, RemoteUrl, Result, RetryCount, Rev, Timeout,
+    TokenSource, Workers, Workspace,
 };
 use toml::Spanned;
 
@@ -330,7 +331,8 @@ fn approver(text: &str, table: &ApproverTable) -> Result<ApproverMode> {
 
 /// The `[remote]` table: the cache the workspace names, or `None` when the manifest has no such
 /// table. The table needs a `url`, and a `token` names exactly one of `env` and `file` and only
-/// travels over `grpcs://`.
+/// travels over `grpcs://`. The keys added for remote execution — `execute`, `jobs`,
+/// `queue_timeout`, `retries` and `properties` — are each optional.
 fn remote(text: &str, table: Option<&Tabular<RemoteTable>>) -> Result<Option<RemoteSettings>> {
     let Some(Tabular(table)) = table else {
         return Ok(None);
@@ -371,10 +373,51 @@ fn remote(text: &str, table: Option<&Tabular<RemoteTable>>) -> Result<Option<Rem
     })? {
         builder = builder.timeout(timeout);
     }
+    builder = execution_keys(text, table, builder)?;
     builder
         .build()
         .map(Some)
         .map_err(|reason| located(text, place, &format!("remote.token: {reason}")))
+}
+
+/// The keys of `[remote]` added for remote execution, passed to `builder`; one left out leaves
+/// the builder's default.
+fn execution_keys(
+    text: &str,
+    table: &RemoteTable,
+    mut builder: RemoteSettingsBuilder,
+) -> Result<RemoteSettingsBuilder> {
+    if let Some(execute) = table.execute.as_ref() {
+        builder = builder.execute(*execute.get_ref());
+    }
+    if let Some(jobs) = optional(text, "remote.jobs", table.jobs.as_ref(), |count| {
+        RemoteJobs::from_integer(*count)
+    })? {
+        builder = builder.jobs(jobs);
+    }
+    if let Some(timeout) = optional(
+        text,
+        "remote.queue_timeout",
+        table.queue_timeout.as_ref(),
+        |raw| Timeout::parse(raw),
+    )? {
+        builder = builder.queue_timeout(timeout);
+    }
+    if let Some(retries) = optional(text, "remote.retries", table.retries.as_ref(), |count| {
+        RetryCount::from_integer(*count)
+    })? {
+        builder = builder.retries(retries);
+    }
+    if let Some(written) = table.properties.as_ref() {
+        let mut properties = BTreeMap::new();
+        for (name, value) in written {
+            let parsed = PlatformPropertyName::parse(name.get_ref().as_str())
+                .map_err(|reason| refused(text, "remote.properties", name, &reason))?;
+            properties.insert(parsed, value.clone());
+        }
+        builder = builder.properties(PlatformProperties::new(properties));
+    }
+    Ok(builder)
 }
 
 /// Where the token is read from: the one of `env` and `file` `token` names, and the value of
@@ -546,9 +589,12 @@ mod tests {
     )]
 
     use buildl_core::{
-        Directory, EnvName, HeaderName, HostPath, InstanceName, RemoteSettings, RemoteUrl, Timeout,
+        Directory, EnvName, HeaderName, HostPath, InstanceName, PlatformProperties,
+        PlatformPropertyName, RemoteJobs, RemoteSettings, RemoteUrl, RetryCount, Timeout,
         TokenSource,
     };
+
+    use std::collections::BTreeMap;
 
     use super::{directories, located, out, position, unparsed, workspace};
     use crate::manifest::schema::Raw;
@@ -756,7 +802,7 @@ mod tests {
         let error = toml::from_str::<Raw>(text).unwrap_err();
         assert_eq!(
             unparsed(text, &error).to_string(),
-            "manifest: buildl.toml:4:1: unknown field `urll`, expected one of `url`, `instance`, `ca`, `token`, `header`, `timeout`"
+            "manifest: buildl.toml:4:1: unknown field `urll`, expected one of `url`, `instance`, `ca`, `token`, `header`, `timeout`, `execute`, `jobs`, `queue_timeout`, `retries`, `properties`"
         );
     }
 
@@ -843,5 +889,101 @@ mod tests {
                 "{text:?}: {message}"
             );
         }
+    }
+
+    #[test]
+    fn the_execution_keys_are_read() {
+        let text = "[remote]\n\
+            url           = \"grpcs://cache.example.com\"\n\
+            execute       = true\n\
+            jobs          = 16\n\
+            queue_timeout = \"10m\"\n\
+            retries       = 0\n\
+            properties    = { pool = \"large\", arch = \"wide\" }\n";
+        let expected =
+            RemoteSettings::builder(RemoteUrl::parse("grpcs://cache.example.com").unwrap())
+                .execute(true)
+                .jobs(RemoteJobs::from_integer(16).unwrap())
+                .queue_timeout(Timeout::parse("10m").unwrap())
+                .retries(RetryCount::from_integer(0).unwrap())
+                .properties(PlatformProperties::new(BTreeMap::from([
+                    (
+                        PlatformPropertyName::parse("pool").unwrap(),
+                        "large".to_owned(),
+                    ),
+                    (
+                        PlatformPropertyName::parse("arch").unwrap(),
+                        "wide".to_owned(),
+                    ),
+                ])))
+                .build()
+                .unwrap();
+        assert_eq!(workspace(text, &raw(text)).unwrap().remote, Some(expected));
+
+        let table = "[remote]\nurl = \"grpcs://c\"\n\n[remote.properties]\npool = \"large\"\n";
+        let remote = workspace(table, &raw(table)).unwrap().remote.unwrap();
+        let listed: Vec<_> = remote
+            .properties()
+            .iter()
+            .map(|(name, value)| (name.as_str(), value))
+            .collect();
+        assert_eq!(listed, [("pool", "large")]);
+    }
+
+    #[test]
+    fn the_execution_keys_default_when_absent() {
+        let text = "[remote]\nurl = \"grpcs://c\"\n";
+        let remote = workspace(text, &raw(text)).unwrap().remote.unwrap();
+        let expected = RemoteSettings::builder(RemoteUrl::parse("grpcs://c").unwrap())
+            .build()
+            .unwrap();
+        assert_eq!(remote, expected);
+        assert!(!remote.execute());
+        assert_eq!(remote.jobs().get(), 128);
+        assert_eq!(remote.queue_timeout(), Timeout::parse("1h").unwrap());
+        assert_eq!(remote.retries().get(), 5);
+        assert!(remote.properties().is_empty());
+    }
+
+    #[test]
+    fn a_bad_execution_key_is_named_with_its_place() {
+        let cases = [
+            (
+                "[remote]\nurl = \"grpcs://c\"\njobs = 0\n",
+                "3:8: remote.jobs: ",
+            ),
+            (
+                "[remote]\nurl = \"grpcs://c\"\nretries = 11\n",
+                "3:11: remote.retries: ",
+            ),
+            (
+                "[remote]\nurl = \"grpcs://c\"\nqueue_timeout = \"0s\"\n",
+                "3:17: remote.queue_timeout: ",
+            ),
+            (
+                "[remote]\nurl = \"grpcs://c\"\nproperties = { OSFamily = \"x\" }\n",
+                "3:16: remote.properties: ",
+            ),
+        ];
+        for (text, expected) in cases {
+            let message = refusal(text);
+            assert!(
+                message.starts_with(&format!("manifest: buildl.toml:{expected}")),
+                "{text:?}: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_string_property_is_refused() {
+        let text = "[remote]\nurl = \"grpcs://c\"\nproperties = { pool = 3 }\n";
+        let error = toml::from_str::<Raw>(text).unwrap_err();
+        let message = unparsed(text, &error).to_string();
+        assert!(
+            message.starts_with("manifest: buildl.toml:3:23")
+                && message.contains("invalid type")
+                && message.contains("expected a string"),
+            "{message}"
+        );
     }
 }

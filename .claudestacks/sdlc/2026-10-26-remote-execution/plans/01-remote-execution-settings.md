@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-26
 built-on: 4704ec60505e
 ---
@@ -29,6 +29,8 @@ crates/buildl-core/src/types/remote_settings.rs  — [modify] RemoteJobs, RetryC
 crates/buildl-core/src/types/mod.rs              — [modify] re-export the new types
 crates/buildl-core/src/lib.rs                    — [modify] re-export the new public types
 crates/buildl-core/src/error.rs                  — [modify] NameKind (:1043-1096) gains RemoteJobs, RetryCount, PlatformProperty; Display arms
+crates/buildl-core/src/types/remote_action.rs    — [modify] RemotePlatform gains OS_FAMILY_PROPERTY and ISA_PROPERTY, the one place the reserved names live
+crates/buildl/src/remote/encode.rs               — [modify] fn platform names the two properties through those constants
 crates/buildl/src/manifest/schema.rs             — [modify] RemoteTable (:182-195) gains execute, jobs, queue_timeout, retries, properties
 crates/buildl/src/manifest/interpret.rs          — [modify] fn remote (:334) reads the five keys; tests (:542)
 crates/buildl-cli/src/exit.rs                    — [modify] only if its NameKind list (grep `NameKind::` there) must name the new kinds
@@ -62,7 +64,7 @@ crates/buildl-cli/src/exit.rs                    — [modify] only if its NameKi
 - `a_property_named_like_a_platform_key_is_refused` — `OSFamily` and `ISA` are refused; `osfamily` reads
 - `an_empty_property_name_is_refused`
 - `properties_are_sorted_by_name` — `{ z = "1", a = "2" }` lists `a` first
-- `the_new_settings_default_as_the_spec_says` — a builder with only a url gives `execute` false,
+- `the_execution_settings_have_their_defaults` — a builder with only a url gives `execute` false,
   `jobs` 128, `queue_timeout` 1 h, `retries` 5, no properties
 
 **Done when:** `cargo test -p buildl-core remote_settings` passes and `cargo make dod` is green.
@@ -73,8 +75,9 @@ Commit `feat(buildl-core): remote execution settings`.
 **Files:** `manifest/schema.rs`, `manifest/interpret.rs`, `exit.rs` (only if needed).
 
 **Change:** `RemoteTable` gains `execute: Option<bool>`, `jobs: Option<i64>`,
-`queue_timeout: Option<String>`, `retries: Option<i64>`, `properties: Option<BTreeMap<String,
-String>>`, each spanned as the existing fields are; `deny_unknown_fields` (`:181`) stays. `fn
+`queue_timeout: Option<String>`, `retries: Option<i64>`, `properties: Option<BTreeMap<Spanned<String>,
+String>>` (keys spanned, as `plugins` is, so a refused name is placed at the name itself), each
+spanned as the existing fields are; `deny_unknown_fields` (`:181`) stays. `fn
 remote` (`interpret.rs:334`) passes each to the builder and turns a refusal into the manifest
 error that names the key with its line and column, as `timeout` does (`:369`). A property
 value that is not a string is a type error from the TOML reader, refused like any mistyped key.
@@ -102,3 +105,30 @@ value that is not a string is a type error from the TOML reader, refused like an
 
 `cargo make dod` and `cargo deny check` green; `cargo test -p buildl manifest` and
 `cargo test -p buildl-core remote_settings` include every test named above.
+
+## Review findings
+
+- test-coverage — `name_kind_renders_a_human_phrase` lacked the three new kinds — `crates/buildl-core/src/error.rs` — fixed; verified by `cargo test -p buildl-core` → `test result: ok. 945 passed; 0 failed`
+- modularity — `OSFamily`/`ISA` written in two places — `types/remote_settings.rs`, `remote/encode.rs` — fixed: `RemotePlatform::OS_FAMILY_PROPERTY`/`ISA_PROPERTY`; verified by `cargo test -p buildl remote::encode` → `test result: ok. 10 passed; 0 failed`
+- strong-types — `execute` is a `bool` — `types/remote_settings.rs` — kept: the approved plan prescribes it
+- docs — `RemoteSettings` doc described only the cache — fixed
+- style — import grouping in `remote_settings.rs` — fixed
+- test-coverage — `Display` of the three new types untested — fixed: `the_execution_values_render_as_plain_text`
+- naming — test name carried a process word — fixed: `the_execution_settings_have_their_defaults`
+- docs — `PlatformPropertyName` had no example — fixed: doctest
+- docs — `jobs` field doc said "remote calls"; it caps executions — `manifest/schema.rs` — fixed
+- docs — `fn remote` and `execution_keys` docs called `retries` an execution key — `manifest/interpret.rs` — fixed
+- test-coverage — `a_non_string_property_is_refused` checked only the line — fixed: checks `3:23` and "expected a string"; verified by `cargo test -p buildl a_non_string_property_is_refused` → `test result: ok. 1 passed; 0 failed`
+- spec — spanned property keys not recorded in the plan — fixed: Task 2 amended
+- combined gate after all fixes: `cargo make dod` → exit 0, `Build Done in 54.28 seconds`; `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`
+
+## Probe results
+
+- structure cited by the plan — `grep -n` over `timeout.rs`, `remote_settings.rs`, `error.rs`, `schema.rs`, `interpret.rs` → `Timeout` :81, `from_secs` :106, `invalid` :42, `RemoteSettings` :411, `mod tests` :536, `NameKind` :1042 (plan said :1043), `RemoteTable` :182, `fn remote` :334, tests :542/:692/:703/:812 — as planned
+- `NameKind` matched outside buildl-core needs a new arm — `cargo make dod` → no change needed (`NameKind` is `#[non_exhaustive]`); `exit.rs` untouched
+
+## Deviations
+
+- 2026-10-26 — `properties` keys are `Spanned<String>` so a refused name is placed at the name; plan amended.
+- 2026-10-26 — the reserved property names live once, as `RemotePlatform` constants, used by `encode::platform` too (review finding); plan's file list amended.
+- 2026-10-26 — test `the_new_settings_default_as_the_spec_says` named `the_execution_settings_have_their_defaults`; plan amended.

@@ -192,6 +192,17 @@ pub(crate) struct RemoteTable {
     pub(crate) header: Option<Spanned<String>>,
     /// How long one request may take, written with a unit.
     pub(crate) timeout: Option<Spanned<String>>,
+    /// Whether the cache also runs the actions it has no result for.
+    pub(crate) execute: Option<Spanned<bool>>,
+    /// How many remote executions run at once.
+    pub(crate) jobs: Option<Spanned<i64>>,
+    /// How long an execution may wait in the cache's queue, written with a unit.
+    pub(crate) queue_timeout: Option<Spanned<String>>,
+    /// How many times a failed call is tried again after the first.
+    pub(crate) retries: Option<Spanned<i64>>,
+    /// The platform properties asked of the remote executor, each name with the place it was
+    /// written at.
+    pub(crate) properties: Option<BTreeMap<Spanned<String>, String>>,
 }
 
 /// `token` of `[remote]`: the environment variable or the file the token is read from.
