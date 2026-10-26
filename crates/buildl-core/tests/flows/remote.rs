@@ -9,8 +9,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
     ActionOutcome, Digest, EntryName, Error, InfraKind, Isolation, LiveOutput, OnFailure,
-    OutcomeClass, OutputName, OutputPath, Pipeline, PortName, RemoteCall, RemoteFailure,
-    RemoteNotice, RemotePolicy, RemoteUse, RootPath, Sample, Scope, SourcePath, TargetRole, json,
+    OutcomeClass, OutputName, OutputPath, Pipeline, PlatformProperties, PlatformPropertyName,
+    PortName, RemoteCall, RemoteFailure, RemoteNotice, RemotePolicy, RemoteSettings, RemoteUrl,
+    RemoteUse, RootPath, Sample, Scope, SourcePath, TargetRole, json,
 };
 
 use crate::common::{
@@ -547,6 +548,31 @@ fn a_target_that_ran_is_uploaded_under_read_write() {
     let paths: Vec<&OutputPath> = sent.outputs.iter().map(|output| &output.path).collect();
     assert_eq!(paths, [&out("//:a")]);
     assert_eq!(notices(&pipeline), []);
+}
+
+#[test]
+fn the_properties_the_workspace_names_are_sent_with_every_lookup_and_upload() {
+    let mut pipeline = root_only(vec![target("a", &[])]);
+    let properties = PlatformProperties::new(BTreeMap::from([(
+        PlatformPropertyName::parse("pool").unwrap(),
+        "large".to_owned(),
+    )]));
+    pipeline.ports_mut().manifest.workspace.remote = Some(
+        RemoteSettings::builder(RemoteUrl::parse("grpcs://cache").unwrap())
+            .properties(properties.clone())
+            .build()
+            .unwrap(),
+    );
+
+    build(&mut pipeline, WRITING).unwrap();
+
+    let ports = pipeline.ports();
+    let lookups = ports.remote.lookups();
+    assert_eq!(lookups.len(), 1);
+    assert_eq!(lookups[0].properties, properties);
+    let uploads = ports.remote.uploads();
+    assert_eq!(uploads.len(), 1);
+    assert_eq!(uploads[0].0.properties, properties);
 }
 
 #[test]

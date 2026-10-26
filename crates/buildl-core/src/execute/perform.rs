@@ -27,8 +27,8 @@ use crate::ports::{Clock, ContentStore, ExecStrategy, RemoteCache};
 use crate::types::{
     ActionKey, Channel, Diagnostic, Digest, Execution, Exit, Found, FoundEntry, FoundKind,
     InfraKind, LiveSink, NodeId, OutcomeClass, OutputManifest, OutputName, OutputRefusal,
-    RawOutcome, ReadyAction, RemoteCall, RemoteFailure, RemoteNotice, RemotePolicy, RemoteSwitch,
-    RemoteUse, TargetRole, Timestamp, Tree, TreeEntry, TreePath,
+    PlatformProperties, RawOutcome, ReadyAction, RemoteCall, RemoteFailure, RemoteNotice,
+    RemotePolicy, RemoteSwitch, RemoteUse, TargetRole, Timestamp, Tree, TreeEntry, TreePath,
 };
 
 /// What a worker says about an action while it is still running it.
@@ -72,6 +72,8 @@ pub(crate) struct RemoteRun<'a, R> {
     pub(crate) policy: RemotePolicy,
     /// The settings the build's actions run under, which a remote result is looked up by.
     pub(crate) execution: &'a Execution,
+    /// The platform properties the workspace asks for, which every action is described with.
+    pub(crate) properties: &'a PlatformProperties,
     /// Whether a failed call has turned the remote off for the rest of the command.
     pub(crate) down: &'a RemoteSwitch,
 }
@@ -467,7 +469,7 @@ fn consult<C: ContentStore, R: RemoteCache>(
     cas: &C,
     tell: &(dyn Fn(Told) + Sync),
 ) -> Option<Ended> {
-    let described = match remote_action(task, remote.execution, cas) {
+    let described = match remote_action(task, remote.execution, remote.properties, cas) {
         Ok(described) => described,
         Err(error) => {
             tell(Told::Began(task.node));
@@ -541,7 +543,7 @@ fn sent<C: ContentStore, R: RemoteCache>(
         return ended;
     };
     let printed = *printed;
-    let described = remote_action(task, remote.execution, cas)
+    let described = remote_action(task, remote.execution, remote.properties, cas)
         .and_then(|action| Ok((action, upload_of(task, outputs, &printed, cas)?)));
     let (action, produced) = match described {
         Ok(described) => described,
@@ -654,9 +656,9 @@ mod tests {
     use crate::ports::{ContentStore, NoRemote};
     use crate::types::{
         Diagnostic, Digest, Execution, Exit, FileMode, Found, FoundEntry, FoundKind, InfraKind,
-        NetworkAccess, NodeId, OutcomeClass, OutputManifest, OutputRefusal, ReadyAction,
-        RemoteCall, RemoteFailure, RemoteNotice, RemotePolicy, RemoteSwitch, RemoteUse, StoredFile,
-        TargetRole, Timestamp,
+        NetworkAccess, NodeId, OutcomeClass, OutputManifest, OutputRefusal, PlatformProperties,
+        ReadyAction, RemoteCall, RemoteFailure, RemoteNotice, RemotePolicy, RemoteSwitch,
+        RemoteUse, StoredFile, TargetRole, Timestamp,
     };
 
     fn printed() -> Printed {
@@ -732,12 +734,14 @@ mod tests {
     fn running<'a>(
         policy: RemotePolicy,
         execution: &'a Execution,
+        properties: &'a PlatformProperties,
         down: &'a RemoteSwitch,
     ) -> RemoteRun<'a, NoRemote> {
         RemoteRun {
             port: &NoRemote,
             policy,
             execution,
+            properties,
             down,
         }
     }
@@ -745,6 +749,7 @@ mod tests {
     #[test]
     fn a_remote_is_consulted_only_when_the_build_reads_and_it_is_not_down() {
         let execution = Execution::default();
+        let none = PlatformProperties::default();
         let up = RemoteSwitch::new();
         let down = RemoteSwitch::new();
         down.turn_off();
@@ -757,14 +762,18 @@ mod tests {
                 use_,
                 failure: RemoteFailure::Lenient,
             };
-            assert_eq!(running(policy, &execution, &up).consulted(), expected);
-            assert!(!running(policy, &execution, &down).consulted());
+            assert_eq!(
+                running(policy, &execution, &none, &up).consulted(),
+                expected
+            );
+            assert!(!running(policy, &execution, &none, &down).consulted());
         }
     }
 
     #[test]
     fn a_remote_is_written_to_only_when_the_build_writes_and_it_is_not_down() {
         let execution = Execution::default();
+        let none = PlatformProperties::default();
         let up = RemoteSwitch::new();
         let down = RemoteSwitch::new();
         down.turn_off();
@@ -777,16 +786,20 @@ mod tests {
                 use_,
                 failure: RemoteFailure::Lenient,
             };
-            assert_eq!(running(policy, &execution, &up).uploading(), expected);
-            assert!(!running(policy, &execution, &down).uploading());
+            assert_eq!(
+                running(policy, &execution, &none, &up).uploading(),
+                expected
+            );
+            assert!(!running(policy, &execution, &none, &down).uploading());
         }
     }
 
     #[test]
     fn a_lenient_failure_is_told_once_by_the_worker_that_turns_the_remote_off() {
         let execution = Execution::default();
+        let none = PlatformProperties::default();
         let down = RemoteSwitch::new();
-        let remote = running(reading(RemoteFailure::Lenient), &execution, &down);
+        let remote = running(reading(RemoteFailure::Lenient), &execution, &none, &down);
         let told = Mutex::new(Vec::new());
         let tell = |message: Told| told.lock().unwrap().push(message);
         let error = Error::Adapter {
@@ -847,8 +860,9 @@ mod tests {
     #[test]
     fn a_task_the_remote_cannot_be_asked_about_is_begun_before_it_fails_to_store() {
         let execution = Execution::default();
+        let none = PlatformProperties::default();
         let down = RemoteSwitch::new();
-        let remote = running(reading(RemoteFailure::Lenient), &execution, &down);
+        let remote = running(reading(RemoteFailure::Lenient), &execution, &none, &down);
         let task = Task {
             node: NodeId::new(0),
             role: TargetRole::Build,
@@ -889,8 +903,9 @@ mod tests {
     #[test]
     fn a_strict_failure_ends_the_task_and_says_nothing_to_the_build() {
         let execution = Execution::default();
+        let none = PlatformProperties::default();
         let down = RemoteSwitch::new();
-        let remote = running(reading(RemoteFailure::Strict), &execution, &down);
+        let remote = running(reading(RemoteFailure::Strict), &execution, &none, &down);
         let told = Mutex::new(Vec::new());
         let tell = |message: Told| told.lock().unwrap().push(message);
 

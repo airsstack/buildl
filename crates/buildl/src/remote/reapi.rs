@@ -450,10 +450,10 @@ mod tests {
 
     use buildl_core::{
         Argument, Blob, BlobSource, Command, Digest, Directory, Error, FileMode, HostPath, Label,
-        OutputName, OutputPath, Platform, PortName, RemoteAction, RemoteCache, RemoteContent,
-        RemoteFile, RemoteOutput, RemoteOutputDirectory, RemoteOutputFile, RemotePlatform,
-        RemoteSettings, RemoteTree, RemoteTreeFile, RemoteUpload, RemoteUrl, Result, RootPath,
-        SourcePath, Timeout, TokenSource, TreePath, Uploaded,
+        OutputName, OutputPath, Platform, PlatformProperties, PortName, RemoteAction, RemoteCache,
+        RemoteContent, RemoteFile, RemoteOutput, RemoteOutputDirectory, RemoteOutputFile,
+        RemotePlatform, RemoteSettings, RemoteTree, RemoteTreeFile, RemoteUpload, RemoteUrl,
+        Result, RootPath, SourcePath, Timeout, TokenSource, TreePath, Uploaded,
     };
 
     use super::Reapi;
@@ -524,6 +524,7 @@ mod tests {
             files: vec![source("src/main.c", SOURCE), source("src/one.h", HEADER)],
             platform: RemotePlatform::of(&Platform::parse("linux/x86_64").unwrap()),
             timeout: Timeout::parse("90s").unwrap(),
+            properties: PlatformProperties::default(),
         }
     }
 

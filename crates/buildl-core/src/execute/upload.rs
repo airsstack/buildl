@@ -168,9 +168,9 @@ mod tests {
     use crate::ports::{BlobSource, ContentStore, RemoteCache};
     use crate::types::{
         Blob, Diagnostic, Digest, FileMode, NetworkAccess, NodeId, OutputPath, Platform,
-        ReadyAction, RemoteAction, RemoteCall, RemoteContent, RemoteHit, RemoteNotice,
-        RemoteOutput, RemotePlatform, RemoteTree, RemoteTreeFile, RemoteUpload, RootPath,
-        SourcePath, TargetRole, Timeout, TreePath, Uploaded,
+        PlatformProperties, ReadyAction, RemoteAction, RemoteCall, RemoteContent, RemoteHit,
+        RemoteNotice, RemoteOutput, RemotePlatform, RemoteTree, RemoteTreeFile, RemoteUpload,
+        RootPath, SourcePath, TargetRole, Timeout, TreePath, Uploaded,
     };
 
     const TARGET: &str = "//app:app";
@@ -304,6 +304,7 @@ mod tests {
             files: Vec::new(),
             platform: RemotePlatform::of(&Platform::parse("linux/x86_64").unwrap()),
             timeout: Timeout::parse("1m").unwrap(),
+            properties: PlatformProperties::default(),
         }
     }
 

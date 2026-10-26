@@ -15,8 +15,8 @@ use crate::error::{Error, PortName, Result};
 use crate::execute::perform::Task;
 use crate::ports::ContentStore;
 use crate::types::{
-    ActionKey, Diagnostic, Digest, Execution, OutputManifest, OutputPath, RemoteAction, RemoteFile,
-    RemotePlatform, RootPath,
+    ActionKey, Diagnostic, Digest, Execution, OutputManifest, OutputPath, PlatformProperties,
+    RemoteAction, RemoteFile, RemotePlatform, RootPath,
 };
 
 /// The `RemoteAction` of `task`, run under `execution`.
@@ -25,7 +25,8 @@ use crate::types::{
 /// the strategy sets them where the command runs. The outputs are sorted and hold no path
 /// twice. The files are every declared input, with no mode, and every file of every output of
 /// every dependency, with the mode its manifest records, all sorted by path. Each dependency
-/// output's manifest is read from `cas` by the digest the key holds for it.
+/// output's manifest is read from `cas` by the digest the key holds for it. The `properties` are
+/// the workspace's own, carried as they are; they take no part in the action key.
 ///
 /// # Errors
 ///
@@ -35,6 +36,7 @@ use crate::types::{
 pub(crate) fn remote_action<C: ContentStore>(
     task: &Task,
     execution: &Execution,
+    properties: &PlatformProperties,
     cas: &C,
 ) -> Result<RemoteAction> {
     let (ready, key) = (&task.action, &task.key);
@@ -85,6 +87,7 @@ pub(crate) fn remote_action<C: ContentStore>(
         files,
         platform: platform_of(key),
         timeout: execution.timeout,
+        properties: properties.clone(),
     })
 }
 
@@ -143,8 +146,8 @@ mod tests {
     use crate::types::{
         ActionKey, DepProducts, Digest, EnvName, EnvValue, Execution, FileMode, InputDigest,
         Isolation, KeyComponents, NetworkAccess, NodeId, OutputManifest, OutputName, OutputPath,
-        Platform, Produced, ReadyAction, RemoteAction, RemoteFile, RootPath, StoredFile,
-        TargetRole, Timeout, TreePath,
+        Platform, PlatformProperties, PlatformPropertyName, Produced, ReadyAction, RemoteAction,
+        RemoteFile, RemotePlatform, RootPath, StoredFile, TargetRole, Timeout, TreePath,
     };
 
     /// A store that holds exactly the manifests it is given.
@@ -252,7 +255,13 @@ mod tests {
     }
 
     fn describe(ready: ReadyAction, key: ActionKey, execution: &Execution) -> RemoteAction {
-        remote_action(&task(ready, key), execution, &Manifests::holding(&[])).unwrap()
+        remote_action(
+            &task(ready, key),
+            execution,
+            &PlatformProperties::default(),
+            &Manifests::holding(&[]),
+        )
+        .unwrap()
     }
 
     #[test]
@@ -344,7 +353,13 @@ mod tests {
             ],
         );
 
-        let described = remote_action(&task(action, key), &Execution::default(), &held).unwrap();
+        let described = remote_action(
+            &task(action, key),
+            &Execution::default(),
+            &PlatformProperties::default(),
+            &held,
+        )
+        .unwrap();
 
         let entry = |name: &str, content: &str| RemoteFile {
             path: RootPath::from(&headers_at.entry(&TreePath::parse(name).unwrap())),
@@ -420,6 +435,7 @@ mod tests {
         let error = remote_action(
             &task_with_a_dependency(&lib),
             &Execution::default(),
+            &PlatformProperties::default(),
             &Manifests::holding(&[]),
         )
         .unwrap_err();
@@ -433,8 +449,13 @@ mod tests {
             digest_of(&lib),
             b"not a manifest".to_vec(),
         )]));
-        let error =
-            remote_action(&task_with_a_dependency(&lib), &Execution::default(), &held).unwrap_err();
+        let error = remote_action(
+            &task_with_a_dependency(&lib),
+            &Execution::default(),
+            &PlatformProperties::default(),
+            &held,
+        )
+        .unwrap_err();
         assert_content_store_error(error, "is not a manifest");
     }
 
@@ -446,6 +467,7 @@ mod tests {
         let error = remote_action(
             &mismatched,
             &Execution::default(),
+            &PlatformProperties::default(),
             &Manifests::holding(&[&lib]),
         )
         .unwrap_err();
@@ -460,5 +482,44 @@ mod tests {
         };
         let described = describe(ready(BTreeMap::new(), Vec::new()), plain_key(), &execution);
         assert_eq!(described.timeout, Timeout::parse("90s").unwrap());
+    }
+
+    #[test]
+    fn the_workspace_properties_are_carried() {
+        let properties = PlatformProperties::new(BTreeMap::from([(
+            PlatformPropertyName::parse("pool").unwrap(),
+            "large".to_owned(),
+        )]));
+        let described = remote_action(
+            &task(ready(BTreeMap::new(), Vec::new()), plain_key()),
+            &Execution::default(),
+            &properties,
+            &Manifests::holding(&[]),
+        )
+        .unwrap();
+        assert_eq!(described.properties, properties);
+    }
+
+    #[test]
+    fn no_properties_leave_the_description_as_before() {
+        let key = plain_key();
+        let described = describe(
+            ready(BTreeMap::new(), Vec::new()),
+            key.clone(),
+            &execution(Isolation::Bare),
+        );
+        assert_eq!(
+            described,
+            RemoteAction {
+                salt: key.digest(),
+                command: command(&["cc"]),
+                env: BTreeMap::new(),
+                outputs: Vec::new(),
+                files: Vec::new(),
+                platform: RemotePlatform::of(&Platform::parse("linux/x86_64").unwrap()),
+                timeout: Execution::default().timeout,
+                properties: PlatformProperties::default(),
+            }
+        );
     }
 }

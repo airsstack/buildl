@@ -35,8 +35,8 @@ use crate::ports::{Dispatcher, Manifest, PortSet, Ports, Reporter};
 use crate::types::{
     ActionOutcome, Captured, Ceiling, Command, EnvName, EnvValue, ExpandedDescription, Forcing,
     Isolation, Label, LiveOutput, Node, NodeId, OutcomeEvent, OutputPath, OwnComponents, Plan,
-    PlannedKey, ReadyAction, RemotePolicy, RemoteSwitch, RemoteUse, Rerun, RunChoices, Summary,
-    TargetGraph, Turn, Verdict,
+    PlannedKey, PlatformProperties, ReadyAction, RemotePolicy, RemoteSettings, RemoteSwitch,
+    RemoteUse, Rerun, RunChoices, Summary, TargetGraph, Turn, Verdict,
 };
 
 /// Refuses a run that would upload to the remote cache while actions run `strategy`.
@@ -187,10 +187,15 @@ pub fn execute<P: Ports>(
         ..
     } = ports;
     let (cas, strategy, clock) = (&*cas, &*strategy, &*clock);
+    let no_properties = PlatformProperties::default();
     let remote = RemoteRun {
         port: &*remote_cache,
         policy: remote,
         execution: &workspace.execution,
+        properties: workspace
+            .remote
+            .as_ref()
+            .map_or(&no_properties, RemoteSettings::properties),
         down: remote_off,
     };
     let stop = AtomicBool::new(false);

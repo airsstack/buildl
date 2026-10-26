@@ -59,8 +59,8 @@ mod tests {
     use crate::error::{Error, PortName, Result};
     use crate::ports::{BlobSource, RemoteCache};
     use crate::types::{
-        Argument, Blob, Command, Digest, Platform, RemoteAction, RemotePlatform, RemoteUpload,
-        Timeout, Uploaded,
+        Argument, Blob, Command, Digest, Platform, PlatformProperties, RemoteAction,
+        RemotePlatform, RemoteUpload, Timeout, Uploaded,
     };
 
     fn action() -> RemoteAction {
@@ -72,6 +72,7 @@ mod tests {
             files: Vec::new(),
             platform: RemotePlatform::of(&Platform::parse("linux/x86_64").unwrap()),
             timeout: Timeout::default(),
+            properties: PlatformProperties::default(),
         }
     }
 

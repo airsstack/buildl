@@ -417,8 +417,8 @@ mod tests {
 
     use buildl_core::{
         Argument, Blob, Command, Digest, Directory, EnvName, EnvValue, FileMode, Label, OutputName,
-        OutputPath, Platform, RemoteAction, RemoteContent, RemoteOutput, RemotePlatform,
-        RemoteTree, RemoteTreeFile, RemoteUpload, Timeout, TreePath,
+        OutputPath, Platform, PlatformProperties, RemoteAction, RemoteContent, RemoteOutput,
+        RemotePlatform, RemoteTree, RemoteTreeFile, RemoteUpload, Timeout, TreePath,
     };
     use prost::Message;
 
@@ -458,6 +458,7 @@ mod tests {
             files: Vec::new(),
             platform: RemotePlatform::of(&Platform::parse("linux/x86_64").unwrap()),
             timeout: Timeout::parse("90s").unwrap(),
+            properties: PlatformProperties::default(),
         }
     }
 

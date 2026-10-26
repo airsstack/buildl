@@ -14,7 +14,8 @@
 use std::collections::BTreeMap;
 
 use crate::types::{
-    Command, Digest, EnvName, EnvValue, FileMode, OutputPath, Platform, RootPath, Timeout,
+    Command, Digest, EnvName, EnvValue, FileMode, OutputPath, Platform, PlatformProperties,
+    RootPath, Timeout,
 };
 
 /// One file of the input root: where it is, the digest of its bytes, and whether it may be run.
@@ -90,6 +91,9 @@ pub struct RemoteAction {
     pub platform: RemotePlatform,
     /// How long the command may run.
     pub timeout: Timeout,
+    /// The properties the workspace asks for beyond the machine's own two; empty when the
+    /// workspace names no remote.
+    pub properties: PlatformProperties,
 }
 
 #[cfg(test)]
@@ -103,8 +107,8 @@ mod tests {
 
     use super::{RemoteAction, RemoteFile, RemotePlatform};
     use crate::types::{
-        Argument, Command, Digest, EnvName, EnvValue, FileMode, Platform, RootPath, SourcePath,
-        Timeout,
+        Argument, Command, Digest, EnvName, EnvValue, FileMode, Platform, PlatformProperties,
+        RootPath, SourcePath, Timeout,
     };
 
     fn action(env: &[(&str, &str)]) -> RemoteAction {
@@ -128,6 +132,7 @@ mod tests {
             }],
             platform: RemotePlatform::of(&Platform::parse("linux/x86_64").unwrap()),
             timeout: Timeout::default(),
+            properties: PlatformProperties::default(),
         }
     }
 
