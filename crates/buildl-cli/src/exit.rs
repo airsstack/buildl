@@ -744,6 +744,7 @@ mod tests {
             PortName::RunHistory,
             PortName::PluginStore,
             PortName::RemoteCache,
+            PortName::Changes,
         ] {
             assert_eq!(
                 Exit::of_error(&adapter(port)),

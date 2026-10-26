@@ -27,6 +27,9 @@
 //! - [`RemoteCache`] — a cache of results shared between machines, asked and filled by the action
 //!   that made them; [`BlobSource`] — where the bytes an upload names are read from;
 //!   [`NoRemote`] — the remote cache of a build that has none.
+//! - [`Changes`] — the files that changed in the workspace, one debounced batch at a time.
+//! - [`Cycles`] — one build, and one load of the build files, on the workspace opened again.
+//! - [`WatchReport`] — what a watching loop tells a person: building, failed, waiting.
 //! - [`Ports`] — the bundle naming one implementation of each port, so a pipeline takes one type
 //!   parameter instead of one per port.
 //! - [`PortSet`] — one instance of each port a bundle names, so a pipeline is built from one
@@ -40,8 +43,10 @@
 pub mod action_cache;
 pub mod approver;
 pub mod bundle;
+pub mod changes;
 pub mod clock;
 pub mod content_store;
+pub mod cycles;
 pub mod declaration_source;
 pub mod digester;
 pub mod dispatcher;
@@ -58,12 +63,15 @@ pub mod run_history;
 pub mod stat_cache;
 pub mod sweep;
 pub mod tool_resolver;
+pub mod watch_report;
 
 pub use action_cache::ActionCache;
 pub use approver::Approver;
 pub use bundle::Ports;
+pub use changes::Changes;
 pub use clock::Clock;
 pub use content_store::ContentStore;
+pub use cycles::Cycles;
 pub use declaration_source::DeclarationSource;
 pub use digester::Digester;
 pub use dispatcher::Dispatcher;
@@ -80,3 +88,4 @@ pub use run_history::RunHistory;
 pub use stat_cache::StatCache;
 pub use sweep::Sweep;
 pub use tool_resolver::ToolResolver;
+pub use watch_report::WatchReport;

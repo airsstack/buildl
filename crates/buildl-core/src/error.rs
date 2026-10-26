@@ -816,6 +816,8 @@ pub enum PortName {
     PluginStore,
     /// The cache of results shared between machines.
     RemoteCache,
+    /// What reports changed files in the workspace.
+    Changes,
 }
 
 impl fmt::Display for PortName {
@@ -837,6 +839,7 @@ impl fmt::Display for PortName {
             Self::Approver => "approver",
             Self::PluginStore => "plugin store",
             Self::RemoteCache => "remote cache",
+            Self::Changes => "file watcher",
         })
     }
 }
@@ -2127,6 +2130,7 @@ mod tests {
             (PortName::Approver, "approver"),
             (PortName::PluginStore, "plugin store"),
             (PortName::RemoteCache, "remote cache"),
+            (PortName::Changes, "file watcher"),
         ];
         for (port, rendered) in cases {
             assert_eq!(port.to_string(), rendered);
