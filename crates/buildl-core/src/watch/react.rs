@@ -1,12 +1,12 @@
 //! What one batch of changed paths starts.
 //!
-//! Responsibilities: [`react`], which sorts a batch into a build, a check of the build files, or
-//! nothing.
+//! Responsibilities: [`kept`], which holds the paths of a batch that are changes, and [`react`],
+//! which sorts a batch into a build, a check of the build files, or nothing.
 //!
 //! Non-responsibilities: what kind of event named a path. A path created, written, renamed or
 //! removed is the same change here.
 
-use crate::types::{ChangeBatch, ChangedPath, Directory, Reaction, Reference};
+use crate::types::{ChangeBatch, ChangedPath, Directory, Reaction, Reference, WatchLayout};
 
 /// Whether `path` is `dir` or lies below it.
 ///
@@ -22,32 +22,41 @@ fn under_text(path: &str, dir: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
+/// The paths of `batch` that are changes to the workspace, or `None` when none is.
+///
+/// Paths under the output directory, the state directory or `.git` are not changes: the build
+/// itself writes the first two, and none of the three holds a source.
+#[must_use]
+pub(super) fn kept(batch: &ChangeBatch, layout: &WatchLayout) -> Option<ChangeBatch> {
+    ChangeBatch::new(
+        batch
+            .iter()
+            .filter(|path| {
+                !(under(path, &layout.out)
+                    || under(path, &layout.state)
+                    || under_text(path.as_str(), ".git"))
+            })
+            .cloned()
+            .collect(),
+    )
+}
+
 /// What `batch` starts, given what the last build and the last open of the workspace read.
 ///
-/// Paths under the output directory, the state directory or `.git` are dropped first: the build
-/// itself writes the first two, and none of the three holds a source. A batch with nothing left
-/// is [`Reaction::Ignore`]. Otherwise it is [`Reaction::Build`] when the last cycle left no
-/// graph, when a path left is an input of the last build, or when it is one of the files that
-/// decide the workspace's settings; any other batch is [`Reaction::Check`], for the build files may now
-/// declare a different graph.
+/// Only the paths left after the drop count. A batch with none is [`Reaction::Ignore`]. Otherwise
+/// it is [`Reaction::Build`] when the last cycle left no graph, when a path kept is an input of
+/// the last build, or when it is one of the files that decide the workspace's settings; any other
+/// batch is [`Reaction::Check`], for the build files may now declare a different graph.
 #[must_use]
 pub fn react(batch: &ChangeBatch, reference: &Reference) -> Reaction {
     let layout = &reference.layout;
-    let mut kept = batch
-        .iter()
-        .filter(|path| {
-            !(under(path, &layout.out)
-                || under(path, &layout.state)
-                || under_text(path.as_str(), ".git"))
-        })
-        .peekable();
-    if kept.peek().is_none() {
+    let Some(kept) = kept(batch, layout) else {
         return Reaction::Ignore;
-    }
+    };
     let Some(built) = &reference.built else {
         return Reaction::Build;
     };
-    let starts_build = kept.any(|path| {
+    let starts_build = kept.iter().any(|path| {
         layout.config.contains(path)
             || built
                 .inputs
@@ -70,7 +79,7 @@ mod tests {
 
     use std::collections::BTreeMap;
 
-    use super::{react, under};
+    use super::{kept, react, under};
     use crate::types::{
         Built, ChangeBatch, ChangedPath, Directory, Reaction, Reference, SourcePath, TargetGraph,
         WatchLayout,
@@ -114,6 +123,29 @@ mod tests {
             &path("anything/at/all"),
             &Directory::parse("").unwrap()
         ));
+    }
+
+    #[test]
+    fn kept_holds_the_paths_outside_the_ignored_directories() {
+        let reference = reference("out", &[], true);
+        let changes = batch(&[
+            "out/x.o",
+            ".buildl/log.jsonl",
+            ".git/index",
+            "b.txt",
+            "a.txt",
+        ]);
+        assert_eq!(
+            kept(&changes, &reference.layout),
+            Some(batch(&["a.txt", "b.txt"]))
+        );
+    }
+
+    #[test]
+    fn kept_is_none_when_every_path_is_dropped() {
+        let reference = reference("out", &[], true);
+        let changes = batch(&["out/x.o", ".buildl/log.jsonl", ".git/index"]);
+        assert_eq!(kept(&changes, &reference.layout), None);
     }
 
     #[test]

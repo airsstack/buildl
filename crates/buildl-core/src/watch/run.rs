@@ -9,15 +9,19 @@
 use crate::error::Error;
 use crate::ports::{Changes, Cycles, WatchReport};
 use crate::types::{Cycle, Reaction, Reference, Trigger, WatchLayout};
-use crate::watch::react;
+use crate::watch::react::{kept, react};
 
 /// Watches until changes can no longer be noticed, and returns the error that said so.
 ///
 /// Runs a first build, told it was started by [`Trigger::Start`], then takes one batch at a time
-/// from `changes`. [`react`] sorts each batch against what the last cycle left behind:
+/// from `changes`. A batch is cut to the paths that are changes to the workspace; one with none
+/// left does nothing and says nothing. [`react`] sorts the rest against what the last cycle left
+/// behind:
 /// [`Reaction::Build`] runs a build, [`Reaction::Ignore`] does nothing and says nothing, and
 /// [`Reaction::Check`] loads the build files again. A check that fails to load, or that finds a
-/// graph unequal to the one the last build ran on, runs a build; an equal graph runs nothing.
+/// graph unequal to the one the last build ran on, runs a build; an equal graph runs nothing. A
+/// build started by a batch is told it was started by [`Trigger::Changed`] with the paths kept,
+/// not the whole batch.
 ///
 /// After each cycle an error the build ended with is reported as failed and watching goes on; the
 /// loop then says it is waiting. Changes that arrive while a cycle runs wait in `changes`, which
@@ -42,6 +46,9 @@ pub fn watch<C: Changes, Y: Cycles + WatchReport>(
         let batch = match changes.next() {
             Ok(batch) => batch,
             Err(error) => return error,
+        };
+        let Some(batch) = kept(&batch, &reference.layout) else {
+            continue;
         };
         let build = match react(&batch, &reference) {
             Reaction::Build => true,
@@ -454,6 +461,21 @@ mod tests {
         let named = named.unwrap();
         assert_eq!(named.first().as_str(), "a.txt");
         assert_eq!(named.len(), 2);
+    }
+
+    #[test]
+    fn the_trigger_names_only_the_paths_kept() {
+        let changes = batch(&["out/x.o", ".buildl/log.jsonl", "lib/words/a.txt"]);
+        let first = cycle(Some(layout("out")), Some(built("a")));
+        let (_, calls) = run(
+            vec![changes],
+            vec![first, cycle(None, None)],
+            vec![Ok(graph("b"))],
+        );
+        assert_eq!(
+            calls[5],
+            Call::Building(Trigger::Changed(batch(&["lib/words/a.txt"])))
+        );
     }
 
     #[test]
