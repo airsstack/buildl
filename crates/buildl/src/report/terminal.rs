@@ -366,8 +366,8 @@ mod tests {
     use buildl_core::{
         ActionOutcome, Argument, Captured, Channel, Command, Diagnostic, Error,
         ExpandedDescription, InfraKind, Label, NetworkAccess, OutcomeClass, OutcomeEvent,
-        OutputName, Provenance, ReadyAction, RemoteCall, RemoteNotice, Reporter, Rerun,
-        SettingName, Summary, Tally, TargetRole, Timestamp, Trigger, WatchReport,
+        OutputName, OutputSource, Provenance, ReadyAction, RemoteCall, RemoteNotice, Reporter,
+        Rerun, SettingName, Summary, Tally, TargetRole, Timestamp, Trigger, WatchReport,
     };
 
     use super::{Mode, Report, TerminalReporter, TestBlocks, block};
@@ -399,6 +399,7 @@ mod tests {
             deps: Vec::new(),
             outputs: Vec::new(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
         }
     }
 

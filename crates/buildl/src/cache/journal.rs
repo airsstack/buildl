@@ -148,7 +148,7 @@ mod tests {
 
     use buildl_core::{
         ActionKey, Argument, CacheRow, Command, Digest, Error, KeyComponents, Label, NetworkAccess,
-        OutputName, OwnComponents, Platform, PortName,
+        OutputName, OutputSource, OwnComponents, Platform, PortName,
     };
 
     use super::{Entry, Journal};
@@ -156,9 +156,9 @@ mod tests {
     /// The line the journal holds for the entry of the target `a`.
     const LINE_A: &str = concat!(
         r#"{"label":"//:a","row":{"key":{"components":{"deps":[],"own":{"command":["cc"],"#,
-        r#""env":{},"inputs":[],"network":"Sealed","outputs":["a"],"platform":"linux/x86_64","#,
+        r#""env":{},"inputs":[],"network":"Sealed","output_source":"Command","outputs":["a"],"platform":"linux/x86_64","#,
         r#""settings":{},"tool":null}},"#,
-        r#""digest":"c39a0161a4194c4ef0cedffc45bb82fdea72693ef4b6cc1f36177bed109be4d7"},"#,
+        r#""digest":"06ff22740d6f5f789d0a8f80e0ff1cc7a5177a3747ab772ac1cb4a409b6db82f"},"#,
         r#""outputs":["ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"],"#,
         r#""stderr":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","#,
         r#""stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}"#,
@@ -177,6 +177,7 @@ mod tests {
                 tool: None,
                 settings: BTreeMap::new(),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
                 platform: Platform::parse("linux/x86_64").unwrap(),
             },
             deps: Vec::new(),

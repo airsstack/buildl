@@ -417,8 +417,8 @@ mod tests {
     use crate::types::{
         Blob, DecodedTree, Diagnostic, Digest, FileMode, Found, FoundEntry, FoundKind,
         NetworkAccess, NodeId, OutcomeClass, OutputManifest, OutputName, OutputPath, OutputRefusal,
-        ReadyAction, RemoteAction, RemoteHit, RemoteOutputDirectory, RemoteOutputFile,
-        RemoteTreeFile, RemoteUpload, StoredFile, TargetRole, TreePath,
+        OutputSource, ReadyAction, RemoteAction, RemoteHit, RemoteOutputDirectory,
+        RemoteOutputFile, RemoteTreeFile, RemoteUpload, StoredFile, TargetRole, TreePath,
     };
 
     /// A remote that serves scripted bytes, and notes every download and decode asked of it.
@@ -544,6 +544,7 @@ mod tests {
                 deps: Vec::new(),
                 outputs: names.iter().map(|name| output_path(TARGET, name)).collect(),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
             },
         }
     }

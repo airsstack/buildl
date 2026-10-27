@@ -70,6 +70,16 @@ pub enum Error {
         /// Why the declaration cannot hold the value.
         reason: &'static str,
     },
+    /// A target whose output is its stdout does not declare exactly one output.
+    #[error(
+        "target {target} declares {outputs} outputs; a target whose output is its stdout declares exactly one"
+    )]
+    StdoutOutputs {
+        /// The target.
+        target: Label,
+        /// How many outputs it declares.
+        outputs: usize,
+    },
     /// A value could not be serialized as JSON at all.
     #[error("value could not be serialized as canonical JSON")]
     CanonicalJson {
@@ -945,6 +955,8 @@ pub enum DeclarationField {
     SettingValue,
     /// A target's `always` flag.
     Freshness,
+    /// A target's `stdout` flag.
+    Stdout,
     /// A `subdir` request.
     Subdir,
 }
@@ -964,6 +976,7 @@ impl fmt::Display for DeclarationField {
             Self::SettingName => "setting name",
             Self::SettingValue => "setting value",
             Self::Freshness => "freshness",
+            Self::Stdout => "stdout",
             Self::Subdir => "subdir",
         })
     }
@@ -1255,9 +1268,9 @@ mod tests {
     use crate::types::{
         Argument, Ceiling, Command, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName,
         EnvValue, FieldName, Freshness, HostPath, InputKind, Label, NetworkAccess, Node, Origin,
-        OutputName, OutputPath, PluginName, PluginRef, PluginVersion, PluginViolation, Program,
-        Provenance, RemoteUrl, SettingName, SourcePath, TargetName, TargetRole, TokenSource,
-        TreePath, Want, WantedSet, Written,
+        OutputName, OutputPath, OutputSource, PluginName, PluginRef, PluginVersion,
+        PluginViolation, Program, Provenance, RemoteUrl, SettingName, SourcePath, TargetName,
+        TargetRole, TokenSource, TreePath, Want, WantedSet, Written,
     };
 
     fn lib_file() -> Provenance {
@@ -1470,6 +1483,7 @@ mod tests {
             outputs: vec![OutputName::parse("text").unwrap()],
             env: Vec::new(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
             freshness: Freshness::Cached,
         };
         assert_eq!(
@@ -2477,6 +2491,18 @@ mod tests {
     }
 
     #[test]
+    fn stdout_outputs_names_the_target_and_the_count() {
+        let err = Error::StdoutOutputs {
+            target: "//svc:gen".parse().unwrap(),
+            outputs: 2,
+        };
+        assert_eq!(
+            err.to_string(),
+            "target //svc:gen declares 2 outputs; a target whose output is its stdout declares exactly one"
+        );
+    }
+
+    #[test]
     fn not_accepted_states_why_the_declaration_cannot_hold_the_value() {
         let err = Error::NotAccepted {
             reason: "a discovery target is always cached",
@@ -2516,6 +2542,7 @@ mod tests {
             (DeclarationField::SettingName, "setting name"),
             (DeclarationField::SettingValue, "setting value"),
             (DeclarationField::Freshness, "freshness"),
+            (DeclarationField::Stdout, "stdout"),
             (DeclarationField::Subdir, "subdir"),
         ];
         for (field, rendered) in cases {

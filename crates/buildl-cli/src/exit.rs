@@ -144,6 +144,7 @@ impl Exit {
             | Error::PluginChanged { .. } => Self::CorruptState,
             Error::InvalidName { .. }
             | Error::NotAccepted { .. }
+            | Error::StdoutOutputs { .. }
             | Error::CanonicalJson { .. }
             | Error::FloatRejected { .. }
             | Error::ForeignPlan

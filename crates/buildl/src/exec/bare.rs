@@ -121,7 +121,7 @@ mod tests {
     use buildl_core::{
         Argument, Channel, Command, Digest, Directory, EnvName, EnvValue, Error, ExecStrategy,
         Exit, FileMode, Found, FoundEntry, FoundKind, Label, NetworkAccess, OutputName, OutputPath,
-        PortName, RawOutcome, ReadyAction, StoredFile, TargetName, Timeout,
+        OutputSource, PortName, RawOutcome, ReadyAction, StoredFile, TargetName, Timeout,
     };
 
     use super::Bare;
@@ -166,6 +166,7 @@ mod tests {
             deps: Vec::new(),
             outputs: Vec::new(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
         }
     }
 

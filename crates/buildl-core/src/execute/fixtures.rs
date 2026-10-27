@@ -15,8 +15,8 @@ use crate::execute::perform::Kept;
 use crate::types::{
     ActionKey, Argument, CacheRow, Command, Digest, Directory, FileMode, Freshness, KeyComponents,
     Label, NetworkAccess, Node, NodeId, Origin, OutputManifest, OutputName, OutputPath,
-    OwnComponents, Platform, Program, Provenance, SettingName, SettingValue, SourcePath,
-    StoredFile, TargetGraph, TargetRole, Tree, TreeEntry, TreePath,
+    OutputSource, OwnComponents, Platform, Program, Provenance, SettingName, SettingValue,
+    SourcePath, StoredFile, TargetGraph, TargetRole, Tree, TreeEntry, TreePath,
 };
 
 /// A directory from known-valid text.
@@ -88,6 +88,7 @@ pub(crate) fn own(names: &[&str]) -> OwnComponents {
         tool: None,
         settings: BTreeMap::new(),
         network: NetworkAccess::Sealed,
+        output_source: OutputSource::Command,
         platform: Platform::parse("linux/x86_64").unwrap(),
     }
 }
@@ -168,6 +169,7 @@ pub(crate) fn node(raw: &str, change: impl FnOnce(&mut Node)) -> Node {
         outputs: outputs(&[label.name().as_str()]),
         env: Vec::new(),
         network: NetworkAccess::Sealed,
+        output_source: OutputSource::Command,
         freshness: Freshness::Cached,
         label,
     };

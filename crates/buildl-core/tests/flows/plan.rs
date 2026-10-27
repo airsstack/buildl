@@ -11,9 +11,9 @@ use std::path::Path;
 use buildl_core::{
     ActionKey, CacheRow, DepProducts, Difference, Digest, DirtyReason, EntryName, EnvName,
     EnvValue, Error, EvaluationFailure, FileStat, Freshness, InputKind, KeyComponents, Label,
-    NodeId, Origin, OwnComponents, Pipeline, Plan, PlannedKey, Platform, PluginCap, PluginName,
-    PluginRef, PortName, SettingName, SettingValue, SourcePath, StagedItem, StagedSetting,
-    TargetGraph, Timestamp, ToolIdentity, Verdict, Want, Written, json,
+    NodeId, Origin, OutputSource, OwnComponents, Pipeline, Plan, PlannedKey, Platform, PluginCap,
+    PluginName, PluginRef, PortName, SettingName, SettingValue, SourcePath, StagedItem,
+    StagedSetting, TargetGraph, Timestamp, ToolIdentity, Verdict, Want, Written, json,
 };
 use buildl_core::{Execution, Isolation, Manifest, Scope, Timeout, Workers};
 
@@ -511,6 +511,23 @@ fn an_environment_value_a_tool_and_the_platform_each_reach_the_key() {
     assert_eq!(
         said(&planned(&mut pipeline), "//:app"),
         dirty(Difference::Platform)
+    );
+}
+
+#[test]
+fn turning_stdout_on_explains_the_rebuild() {
+    let mut built = root_only(vec![running("gen", &["cc"])]);
+    build(&mut built, &Overrides::new(), "v1");
+
+    let mut pipeline = root_only(vec![target_with("gen", |target| {
+        target.run = Some(vec![Written::new("cc")]);
+        target.output_source = OutputSource::Stdout;
+    })]);
+    pipeline.ports_mut().cache.rows = built.ports_mut().cache.rows.clone();
+
+    assert_eq!(
+        said(&planned(&mut pipeline), "//:gen"),
+        Said::Dirty(changed(vec![Difference::Stdout]), Vec::new())
     );
 }
 

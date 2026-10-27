@@ -6,7 +6,7 @@
 //!
 //! Responsibilities: [`Declaration`], the four kinds in [`Declared`] — [`Target`], [`Rule`],
 //! [`Alias`] and [`Setting`] — a target's [`Action`], its [`TargetRole`], and the two two-state
-//! flags [`NetworkAccess`] and [`Freshness`].
+//! flags [`NetworkAccess`] and [`Freshness`], and [`OutputSource`], where the output comes from.
 //!
 //! Non-responsibilities: relationships between declarations. Whether a label is declared twice,
 //! whether a dependency exists, and whether a rule reference names a rule all need every build
@@ -52,6 +52,15 @@ pub enum NetworkAccess {
     Declared,
 }
 
+/// Where an action's one output comes from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub enum OutputSource {
+    /// The default: the command writes the output.
+    Command,
+    /// `stdout = true`: what the command prints is the output.
+    Stdout,
+}
+
 /// Whether a target's result may be reused from the cache.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Freshness {
@@ -89,6 +98,8 @@ pub struct Target {
     pub env: Vec<EnvName>,
     /// Whether it may reach the network.
     pub network: NetworkAccess,
+    /// Where its one output comes from.
+    pub output_source: OutputSource,
     /// Whether its result may be reused.
     pub freshness: Freshness,
 }
@@ -202,8 +213,8 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        Action, Alias, Declaration, Declared, Freshness, NetworkAccess, Rule, Setting, Target,
-        TargetRole,
+        Action, Alias, Declaration, Declared, Freshness, NetworkAccess, OutputSource, Rule,
+        Setting, Target, TargetRole,
     };
     use crate::types::{
         Argument, Command, Description, Directory, Label, Origin, OutputName, Provenance,
@@ -228,6 +239,7 @@ mod tests {
             outputs: vec![OutputName::parse("app").unwrap()],
             env: Vec::new(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
             freshness: Freshness::Cached,
         }
     }
@@ -290,7 +302,8 @@ mod tests {
             concat!(
                 r#"{"item":{"Target":{"action":{"Run":["cc","$deps","-o","$out"]},"#,
                 r#""deps":["//:main.o"],"env":[],"freshness":"Cached","inputs":[],"#,
-                r#""label":"//:app","network":"Sealed","outputs":["app"],"role":"Build"}},"#,
+                r#""label":"//:app","network":"Sealed","output_source":"Command","outputs":["app"],"#,
+                r#""role":"Build"}},"#,
                 r#""origin":"BuildFile","provenance":{"directory":"","file":"build.lua"}}"#
             )
         );
@@ -303,6 +316,7 @@ mod tests {
         variant.role = TargetRole::Test;
         variant.action = Action::UseRule(label("//:cc"));
         variant.network = NetworkAccess::Declared;
+        variant.output_source = OutputSource::Stdout;
         variant.freshness = Freshness::Always;
         let items = [
             Declared::Target(variant),
@@ -344,6 +358,7 @@ mod tests {
         assert!(TargetRole::Build < TargetRole::Test);
         assert!(TargetRole::Test < TargetRole::Discovery);
         assert!(NetworkAccess::Sealed < NetworkAccess::Declared);
+        assert!(OutputSource::Command < OutputSource::Stdout);
         assert!(Freshness::Cached < Freshness::Always);
     }
 }

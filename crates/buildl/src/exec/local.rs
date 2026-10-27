@@ -143,7 +143,7 @@ mod tests {
 
     use buildl_core::{
         Argument, Command, Directory, Error, ExecStrategy, Exit, Isolation, Label, NetworkAccess,
-        OutputName, OutputPath, PortName, ReadyAction, TargetName, Timeout,
+        OutputName, OutputPath, OutputSource, PortName, ReadyAction, TargetName, Timeout,
     };
 
     use super::{Local, LocalDir};
@@ -217,6 +217,7 @@ mod tests {
             deps: Vec::new(),
             outputs: Vec::new(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
         }
     }
 

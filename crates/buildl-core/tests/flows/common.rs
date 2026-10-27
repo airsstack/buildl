@@ -12,7 +12,7 @@ use buildl_core::{
     ContentStore, DeclarationOrder, DeclarationSource, Diagnostic, Digest, Digester, Directory,
     Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EvaluationFailure, EventLog,
     ExecStrategy, Exit, FileStat, Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest,
-    NetworkAccess, Origin, OutcomeEvent, OutputPath, Platform, PluginName, PluginRef,
+    NetworkAccess, Origin, OutcomeEvent, OutputPath, OutputSource, Platform, PluginName, PluginRef,
     PluginVersion, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory,
     SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
     StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver,
@@ -1628,6 +1628,7 @@ pub fn target_with(name: &str, change: impl FnOnce(&mut StagedTarget)) -> Staged
         outputs: None,
         env: Vec::new(),
         network: NetworkAccess::Sealed,
+        output_source: OutputSource::Command,
         freshness: Freshness::Cached,
     };
     change(&mut target);
@@ -1775,9 +1776,9 @@ mod tests {
         ActionCache, ActionKey, ActionOutcome, Argument, CacheRow, Captured, Channel, Clock,
         Command, ContentStore, Digest, Directory, Discovered, Dispatcher, EntryName, Error,
         EventLog, ExecStrategy, Exit, GraphRecord, KeyComponents, Label, NetworkAccess,
-        OutcomeClass, OutcomeEvent, OutputName, OutputPath, OwnComponents, Platform, PortName,
-        Provenance, ReadyAction, Reporter, SourcePath, Summary, Tally, TargetGraph, TargetRole,
-        Timestamp, json, load, resolve,
+        OutcomeClass, OutcomeEvent, OutputName, OutputPath, OutputSource, OwnComponents, Platform,
+        PortName, Provenance, ReadyAction, Reporter, SourcePath, Summary, Tally, TargetGraph,
+        TargetRole, Timestamp, json, load, resolve,
     };
 
     use super::{
@@ -1818,6 +1819,7 @@ mod tests {
             deps: Vec::new(),
             outputs: outputs.iter().map(|name| out_path(raw, name)).collect(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
         }
     }
 
@@ -1866,6 +1868,7 @@ mod tests {
                 tool: None,
                 settings: BTreeMap::new(),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
                 platform: Platform::parse("linux/x86_64").unwrap(),
             },
             deps: Vec::new(),

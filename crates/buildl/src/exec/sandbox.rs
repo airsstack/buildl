@@ -288,7 +288,7 @@ mod tests {
     use buildl_core::{
         Argument, Command, Digest, Directory, EnvName, EnvValue, Error, ExecStrategy, Exit,
         FileMode, Found, FoundEntry, FoundKind, Label, NetworkAccess, OutputName, OutputPath,
-        PortName, ReadyAction, SourcePath, StoredFile, TargetName, Timeout,
+        OutputSource, PortName, ReadyAction, SourcePath, StoredFile, TargetName, Timeout,
     };
 
     use super::{InputSandbox, OutPaths};
@@ -380,6 +380,7 @@ mod tests {
             deps: Vec::new(),
             outputs: Vec::new(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
         }
     }
 

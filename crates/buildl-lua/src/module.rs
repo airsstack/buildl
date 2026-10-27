@@ -336,8 +336,8 @@ mod tests {
     use airsl::{Engine, LanguageSurface, ModuleSet, Policy, Script};
     use buildl_core::{
         DeclarationOrder, Diagnostic, Directory, EvaluationFailure, EvaluationLimit, Freshness,
-        NetworkAccess, Origin, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
-        StagedSetting, StagedSubdir, StagedTarget, TargetRole, Written,
+        NetworkAccess, Origin, OutputSource, StagedAlias, StagedDeclaration, StagedFile,
+        StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, TargetRole, Written,
     };
 
     use airsl::mlua::{Lua, Table, Value};
@@ -452,6 +452,7 @@ mod tests {
             outputs: None,
             env: Vec::new(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
             freshness: Freshness::Cached,
         };
         let declared = |order, item| StagedDeclaration {

@@ -5,7 +5,8 @@ use std::path::PathBuf;
 
 use buildl_core::{
     Action, Argument, Command, Declaration, Declared, Directory, Discovered, EntryName, Freshness,
-    Label, NetworkAccess, Origin, OutputName, Provenance, SourcePath, Target, TargetRole, load,
+    Label, NetworkAccess, Origin, OutputName, OutputSource, Provenance, SourcePath, Target,
+    TargetRole, load,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -50,6 +51,7 @@ fn target(
             outputs: vec![OutputName::parse(output).unwrap()],
             env: Vec::new(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
             freshness: Freshness::Cached,
         }),
     )

@@ -11,7 +11,9 @@
 use std::collections::BTreeMap;
 
 use crate::grants::fixtures::command;
-use crate::types::{Digest, NetworkAccess, OutputName, OwnComponents, Platform, Produced};
+use crate::types::{
+    Digest, NetworkAccess, OutputName, OutputSource, OwnComponents, Platform, Produced,
+};
 
 /// The own components of a target running `cc` on `linux/x86_64` and producing `output`, with
 /// nothing else, after `change` is applied.
@@ -24,6 +26,7 @@ pub(crate) fn components(output: &str, change: impl FnOnce(&mut OwnComponents)) 
         tool: None,
         settings: BTreeMap::new(),
         network: NetworkAccess::Sealed,
+        output_source: OutputSource::Command,
         platform: Platform::parse("linux/x86_64").unwrap(),
     };
     change(&mut own);

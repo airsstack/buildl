@@ -13,8 +13,8 @@ use std::path::PathBuf;
 
 use crate::types::{
     Action, Alias, Argument, Command, Declaration, Declared, Directory, Freshness, Label,
-    NetworkAccess, Origin, OutputName, PluginName, PluginRef, PluginVersion, Provenance, Rule,
-    Setting, SettingName, SettingValue, Target, TargetRole,
+    NetworkAccess, Origin, OutputName, OutputSource, PluginName, PluginRef, PluginVersion,
+    Provenance, Rule, Setting, SettingName, SettingValue, Target, TargetRole,
 };
 
 /// A label from known-valid text.
@@ -66,6 +66,7 @@ pub(crate) fn target_item(raw: &str, change: impl FnOnce(&mut Target)) -> Declar
         deps: Vec::new(),
         env: Vec::new(),
         network: NetworkAccess::Sealed,
+        output_source: OutputSource::Command,
         freshness: Freshness::Cached,
     };
     change(&mut target);

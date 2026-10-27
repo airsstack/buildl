@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-10-27
 built-on: 5947af3e315f
 ---
@@ -125,8 +125,8 @@ docs/architecture.md                            — [modify] §2 sketches, :176 
   `a_stdout_target_with_one_output_is_accepted`.
 - `types/plan.rs` per-variant JSON table test (`:501`) gains `Difference::Stdout`.
 - `plan_text.rs` test: `a_stdout_difference_is_worded` — neither value renders the catch-all text.
-- `action_key.rs` tests: `the_output_source_changes_the_key` — two components differing only in
-  `output_source` have different digests; the doctest at `:113-137` builds `OwnComponents` with
+- `action_key.rs` tests: `changing_any_one_component_changes_the_key` gains an output-source case —
+  two components differing only in `output_source` have different digests; the doctest at `:113-137` builds `OwnComponents` with
   the field.
 - `difference.rs` tests: `a_changed_output_source_is_a_stdout_difference`.
 - `tests/flows/plan.rs`: `turning_stdout_on_explains_the_rebuild` — `plan` names

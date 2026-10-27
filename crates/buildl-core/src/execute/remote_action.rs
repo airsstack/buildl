@@ -146,8 +146,9 @@ mod tests {
     use crate::types::{
         ActionKey, DepProducts, Digest, EnvName, EnvValue, Execution, FileMode, InputDigest,
         Isolation, KeyComponents, NetworkAccess, NodeId, OutputManifest, OutputName, OutputPath,
-        Platform, PlatformProperties, PlatformPropertyName, Produced, ReadyAction, RemoteAction,
-        RemoteFile, RemotePlatform, RootPath, StoredFile, TargetRole, Timeout, TreePath,
+        OutputSource, Platform, PlatformProperties, PlatformPropertyName, Produced, ReadyAction,
+        RemoteAction, RemoteFile, RemotePlatform, RootPath, StoredFile, TargetRole, Timeout,
+        TreePath,
     };
 
     /// A store that holds exactly the manifests it is given.
@@ -224,6 +225,7 @@ mod tests {
             deps: Vec::new(),
             outputs,
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
         }
     }
 

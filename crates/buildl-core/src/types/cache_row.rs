@@ -133,7 +133,7 @@ mod tests {
     use crate::json::canonical;
     use crate::types::{
         ActionKey, Argument, Command, Digest, KeyComponents, NetworkAccess, OutputName,
-        OwnComponents, Platform,
+        OutputSource, OwnComponents, Platform,
     };
 
     /// A key declaring `outputs`, with nothing else of note.
@@ -150,6 +150,7 @@ mod tests {
                 tool: None,
                 settings: BTreeMap::new(),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
                 platform: Platform::parse("linux/x86_64").unwrap(),
             },
             deps: Vec::new(),
@@ -288,6 +289,7 @@ mod tests {
                     ),
                 ]),
                 network: NetworkAccess::Declared,
+                output_source: OutputSource::Command,
                 platform: Platform::parse("macos/aarch64").unwrap(),
             },
             deps: vec![

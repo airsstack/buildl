@@ -963,10 +963,10 @@ mod tests {
     use crate::types::{
         Blob, DecodedTree, Diagnostic, Digest, Executed, Execution, Exit, FileMode, Found,
         FoundEntry, FoundKind, InfraKind, LiveSink, NetworkAccess, NodeId, OutcomeClass,
-        OutputManifest, OutputRefusal, PlatformProperties, RawOutcome, ReadyAction, RemoteAction,
-        RemoteCall, RemoteExecution, RemoteFailure, RemoteHit, RemoteJobs, RemoteNotice,
-        RemotePolicy, RemoteSwitch, RemoteUpload, RemoteUse, StoredFile, TargetRole, Timestamp,
-        Uploaded,
+        OutputManifest, OutputRefusal, OutputSource, PlatformProperties, RawOutcome, ReadyAction,
+        RemoteAction, RemoteCall, RemoteExecution, RemoteFailure, RemoteHit, RemoteJobs,
+        RemoteNotice, RemotePolicy, RemoteSwitch, RemoteUpload, RemoteUse, StoredFile, TargetRole,
+        Timestamp, Uploaded,
     };
 
     fn printed() -> Printed {
@@ -1182,6 +1182,7 @@ mod tests {
                 deps: Vec::new(),
                 outputs: vec![output_path("//:app", "app")],
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
             },
         }
     }
@@ -1476,6 +1477,7 @@ mod tests {
                 deps: vec![output_path("//:lib", "lib")],
                 outputs: vec![output_path("//:app", "app")],
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
             },
         };
         let told = Mutex::new(Vec::new());
@@ -1924,6 +1926,7 @@ mod tests {
             deps: Vec::new(),
             outputs: vec![output_path("//:app", "app")],
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
         };
 
         let task = handed_over(Task {

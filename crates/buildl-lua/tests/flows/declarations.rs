@@ -1,9 +1,9 @@
 //! A build file's calls come back as exactly the staged values they wrote.
 
 use buildl_core::{
-    DeclarationOrder, Evaluated, Freshness, NetworkAccess, Origin, StagedAlias, StagedDeclaration,
-    StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, TargetRole,
-    Written,
+    DeclarationOrder, Evaluated, Freshness, NetworkAccess, Origin, OutputSource, StagedAlias,
+    StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir,
+    StagedTarget, TargetRole, Written,
 };
 
 use crate::common::{evaluate, fixture};
@@ -44,6 +44,7 @@ fn every_primitive_and_field_is_staged_as_written() {
                     outputs: None,
                     env: Vec::new(),
                     network: NetworkAccess::Sealed,
+                    output_source: OutputSource::Command,
                     freshness: Freshness::Cached,
                 }),
             ),
@@ -59,6 +60,7 @@ fn every_primitive_and_field_is_staged_as_written() {
                     outputs: Some(strings(&["app"])),
                     env: strings(&["HOME"]),
                     network: NetworkAccess::Declared,
+                    output_source: OutputSource::Command,
                     freshness: Freshness::Always,
                 }),
             ),
@@ -74,6 +76,7 @@ fn every_primitive_and_field_is_staged_as_written() {
                     outputs: None,
                     env: Vec::new(),
                     network: NetworkAccess::Sealed,
+                    output_source: OutputSource::Command,
                     freshness: Freshness::Cached,
                 }),
             ),

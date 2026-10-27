@@ -168,10 +168,10 @@ mod tests {
     use crate::ports::{BlobSource, ContentStore, RemoteCache};
     use crate::types::{
         Blob, DecodedTree, Diagnostic, Digest, Executed, FileMode, NetworkAccess, NodeId,
-        OutputPath, Platform, PlatformProperties, ReadyAction, RemoteAction, RemoteCall,
-        RemoteContent, RemoteHit, RemoteNotice, RemoteOutput, RemotePlatform, RemoteTree,
-        RemoteTreeFile, RemoteUpload, RootPath, SourcePath, TargetRole, Timeout, TreePath,
-        Uploaded,
+        OutputPath, OutputSource, Platform, PlatformProperties, ReadyAction, RemoteAction,
+        RemoteCall, RemoteContent, RemoteHit, RemoteNotice, RemoteOutput, RemotePlatform,
+        RemoteTree, RemoteTreeFile, RemoteUpload, RootPath, SourcePath, TargetRole, Timeout,
+        TreePath, Uploaded,
     };
 
     const TARGET: &str = "//app:app";
@@ -280,6 +280,7 @@ mod tests {
                 deps: Vec::new(),
                 outputs: names.iter().map(|name| output_path(TARGET, name)).collect(),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
             },
         }
     }

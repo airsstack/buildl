@@ -166,6 +166,7 @@ fn node(
         outputs: without_repeats(&target.outputs),
         env: without_repeats(&target.env),
         network: target.network,
+        output_source: target.output_source,
         freshness: target.freshness,
     };
     Ok((node, deps))

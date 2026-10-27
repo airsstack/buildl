@@ -43,8 +43,8 @@ mod tests {
 
     use buildl_core::{
         ActionOutcome, Argument, Captured, Channel, Command, Diagnostic, Directory, Label,
-        NetworkAccess, OutcomeClass, OutcomeEvent, Provenance, ReadyAction, RemoteCall,
-        RemoteNotice, Reporter, Summary, Tally, TargetRole, Timestamp,
+        NetworkAccess, OutcomeClass, OutcomeEvent, OutputSource, Provenance, ReadyAction,
+        RemoteCall, RemoteNotice, Reporter, Summary, Tally, TargetRole, Timestamp,
     };
 
     use super::Silent;
@@ -64,6 +64,7 @@ mod tests {
             deps: Vec::new(),
             outputs: Vec::new(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
         });
         silent.printed(&label, Channel::Stdout, b"hi");
         silent.finished(

@@ -94,6 +94,7 @@ pub(crate) fn own(node: &Node, gathered: &Gathered<'_>) -> OwnComponents {
         tool,
         settings: referenced(&node.run, &gathered.settings),
         network: node.network,
+        output_source: node.output_source,
         platform: gathered.platform.clone(),
     }
 }

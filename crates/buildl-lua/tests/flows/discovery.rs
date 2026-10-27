@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use buildl_core::{
     BuildFile, DeclarationSource, Directory, Discovered, Evaluated, EvaluationFailure, Freshness,
-    Label, NetworkAccess, PluginName, Provenance, StagedFile, StagedItem, StagedTarget, TargetRole,
-    Written,
+    Label, NetworkAccess, OutputSource, PluginName, Provenance, StagedFile, StagedItem,
+    StagedTarget, TargetRole, Written,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -106,6 +106,7 @@ fn discover_stages_a_discovery_target() {
             outputs: None,
             env: vec![Written::new("HOME")],
             network: NetworkAccess::Declared,
+            output_source: OutputSource::Command,
             freshness: Freshness::Cached,
         })
     );
