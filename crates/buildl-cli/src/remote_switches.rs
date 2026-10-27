@@ -89,6 +89,12 @@ impl RemoteSwitches {
         Switch::of(self.strict.as_ref())
     }
 
+    /// How `BUILDL_REMOTE_EXECUTE` reads; `None` when it is not set, since an unset variable
+    /// leaves the decision to `buildl.toml` and `0` does not.
+    pub(crate) fn execute_switch(&self) -> Option<Switch> {
+        self.execute.as_ref().map(|value| Switch::of(Some(value)))
+    }
+
     /// The policy of a run whose command line is `args`, on a machine these variables describe,
     /// in a workspace whose `[remote]` table is `table`, and whose `[execution] workers` come to
     /// `local` here.
@@ -192,6 +198,7 @@ mod tests {
     )]
 
     use core::num::NonZeroUsize;
+    use std::ffi::OsString;
 
     use buildl::buildl_core::{
         Error, RemoteExecution, RemoteFailure, RemoteFlagConflict, RemoteJobs, RemotePolicy,
@@ -422,6 +429,22 @@ mod tests {
         assert_eq!(unset.strict_switch(), Switch::Off);
         assert_eq!(bad.upload_switch(), Switch::Invalid("yes".to_owned()));
         assert_eq!(bad.strict_switch(), Switch::Invalid(String::new()));
+    }
+
+    #[test]
+    fn the_execute_variable_reads_as_unset_off_on_or_invalid() {
+        let read = |value: Option<&str>| RemoteSwitches {
+            execute: value.map(OsString::from),
+            ..RemoteSwitches::default()
+        };
+
+        assert_eq!(read(None).execute_switch(), None);
+        assert_eq!(read(Some("0")).execute_switch(), Some(Switch::Off));
+        assert_eq!(read(Some("1")).execute_switch(), Some(Switch::On));
+        assert_eq!(
+            read(Some("yes")).execute_switch(),
+            Some(Switch::Invalid("yes".to_owned()))
+        );
     }
 
     #[test]

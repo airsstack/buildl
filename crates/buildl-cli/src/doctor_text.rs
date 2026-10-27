@@ -56,6 +56,8 @@ pub(crate) struct RemoteReport {
     pub upload: Switch,
     /// How `BUILDL_REMOTE_STRICT` reads.
     pub strict: Switch,
+    /// How `BUILDL_REMOTE_EXECUTE` reads; `None` when it is not set.
+    pub execute: Option<Switch>,
 }
 
 /// The text of `doctor`'s report, ending in a newline.
@@ -66,8 +68,11 @@ pub(crate) struct RemoteReport {
 ///
 /// The remote cache follows the run settings: `remote: none` when `buildl.toml` has no
 /// `[remote]` table, and otherwise a `remote` section of the table's `url`, `instance`, `ca`,
-/// `header` and `timeout`, whether the token is set (`-` when none is named), and `upload` and `strict` as this
-/// machine's variables read in `remote`. The token itself is never in the text.
+/// `header` and `timeout`, whether the token is set (`-` when none is named), `upload` and
+/// `strict` as this machine's variables read in `remote`, `execute` as the table holds it and as
+/// `BUILDL_REMOTE_EXECUTE` reads, then `jobs`, `queue_timeout`, `retries` and one line for each
+/// platform property in name order, or `properties: none`. The token itself is never in the
+/// text.
 ///
 /// Under a want that plugins' targets are behind, one line for each chain reads
 /// `    declared by plugin go@1.2.0 for //services/api:server`. When a plugin does not allow a want
@@ -240,6 +245,13 @@ fn remote_lines(settings: Option<&RemoteSettings>, remote: &RemoteReport) -> Vec
         ("token", remote.token.word().to_owned()),
         ("upload", remote.upload.to_string()),
         ("strict", remote.strict.to_string()),
+        (
+            "execute",
+            execute(settings.execute(), remote.execute.as_ref()),
+        ),
+        ("jobs", settings.jobs().to_string()),
+        ("queue_timeout", settings.queue_timeout().to_string()),
+        ("retries", settings.retries().to_string()),
     ];
     let width = column_width(entries.iter().map(|(key, _)| *key));
     let mut lines = vec!["remote".to_owned()];
@@ -248,8 +260,30 @@ fn remote_lines(settings: Option<&RemoteSettings>, remote: &RemoteReport) -> Vec
             .iter()
             .map(|(key, value)| format!("  {key:<width$}{value}")),
     );
+    if settings.properties().is_empty() {
+        lines.push("  properties: none".to_owned());
+    } else {
+        lines.extend(
+            settings
+                .properties()
+                .iter()
+                .map(|(name, value)| format!("  property {name} = {value:?}")),
+        );
+    }
     lines.push("  --remote-upload and --remote-strict turn either on for one run".to_owned());
+    lines.push(
+        "  --remote-execute and --no-remote-execute change execute, and --remote-jobs changes \
+         jobs, for one run"
+            .to_owned(),
+    );
     lines
+}
+
+/// The `execute` value: what `buildl.toml` holds and how `BUILDL_REMOTE_EXECUTE` reads.
+fn execute(manifest: bool, variable: Option<&Switch>) -> String {
+    let manifest = if manifest { "on" } else { "off" };
+    let variable = variable.map_or_else(|| "not set".to_owned(), ToString::to_string);
+    format!("{manifest} in buildl.toml, BUILDL_REMOTE_EXECUTE {variable}")
 }
 
 /// The members of `set` joined by `, `, or `-` when there are none.
@@ -291,9 +325,10 @@ mod tests {
     use buildl::Doctor;
     use buildl::buildl_core::{
         ApproverMode, Attribution, Ceiling, Checkup, DeclarationSite, Directory, EnvName,
-        Execution, HeaderName, HostPath, InstanceName, Isolation, Label, Origin, PluginChain,
-        PluginName, PluginRef, PluginVersion, PluginViolation, Program, Provenance, RemoteSettings,
-        RemoteUrl, Timeout, TokenSource, Want, WantedSet, Workers, Workspace,
+        Execution, HeaderName, HostPath, InstanceName, Isolation, Label, Origin,
+        PlatformProperties, PlatformPropertyName, PluginChain, PluginName, PluginRef,
+        PluginVersion, PluginViolation, Program, Provenance, RemoteJobs, RemoteSettings, RemoteUrl,
+        RetryCount, Timeout, TokenSource, Want, WantedSet, Workers, Workspace,
     };
 
     use super::{RemoteReport, TokenState, doctor_text};
@@ -381,6 +416,7 @@ mod tests {
             token: TokenState::Missing,
             upload: Switch::Off,
             strict: Switch::Off,
+            execute: None,
         }
     }
 
@@ -438,6 +474,7 @@ mod tests {
             token: TokenState::Set,
             upload: Switch::On,
             strict: Switch::Invalid("yes".to_owned()),
+            execute: Some(Switch::On),
         };
 
         let text = report_on(remote_workspace(settings), &machine);
@@ -446,15 +483,22 @@ mod tests {
             text.contains(concat!(
                 "strategy sandbox\n",
                 "remote\n",
-                "  url       grpcs://cache.example.com:443\n",
-                "  instance  ci\n",
-                "  ca        certs/ca.pem\n",
-                "  header    x-cache-token\n",
-                "  timeout   45s\n",
-                "  token     set\n",
-                "  upload    on\n",
-                "  strict    invalid (\"yes\" is neither 1 nor 0)\n",
+                "  url            grpcs://cache.example.com:443\n",
+                "  instance       ci\n",
+                "  ca             certs/ca.pem\n",
+                "  header         x-cache-token\n",
+                "  timeout        45s\n",
+                "  token          set\n",
+                "  upload         on\n",
+                "  strict         invalid (\"yes\" is neither 1 nor 0)\n",
+                "  execute        off in buildl.toml, BUILDL_REMOTE_EXECUTE on\n",
+                "  jobs           128\n",
+                "  queue_timeout  1h\n",
+                "  retries        5\n",
+                "  properties: none\n",
                 "  --remote-upload and --remote-strict turn either on for one run\n",
+                "  --remote-execute and --no-remote-execute change execute, and --remote-jobs ",
+                "changes jobs, for one run\n",
                 "ceiling\n",
             )),
             "{text}"
@@ -476,14 +520,128 @@ mod tests {
 
         assert!(
             text.contains(concat!(
-                "  instance  -\n",
-                "  ca        -\n",
-                "  header    authorization\n",
-                "  timeout   30s\n",
-                "  token     -\n",
-                "  upload    off\n",
-                "  strict    off\n",
+                "  instance       -\n",
+                "  ca             -\n",
+                "  header         authorization\n",
+                "  timeout        30s\n",
+                "  token          -\n",
+                "  upload         off\n",
+                "  strict         off\n",
             )),
+            "{text}"
+        );
+    }
+
+    /// The settings of a cache that executes, with every execution setting stated.
+    fn executing_settings(properties: &[(&str, &str)]) -> RemoteSettings {
+        let properties = properties
+            .iter()
+            .map(|(name, value)| {
+                (
+                    PlatformPropertyName::parse(*name).unwrap(),
+                    (*value).to_owned(),
+                )
+            })
+            .collect();
+        RemoteSettings::builder(RemoteUrl::parse("grpcs://cache.example.com").unwrap())
+            .execute(true)
+            .jobs(RemoteJobs::from_integer(16).unwrap())
+            .queue_timeout(Timeout::parse("20m").unwrap())
+            .retries(RetryCount::from_integer(0).unwrap())
+            .properties(PlatformProperties::new(properties))
+            .build()
+            .unwrap()
+    }
+
+    #[test]
+    fn the_remote_section_lists_the_execution_settings() {
+        let text = report_on(
+            remote_workspace(executing_settings(&[("pool", "large")])),
+            &machine(),
+        );
+
+        assert!(
+            text.contains(concat!(
+                "  strict         off\n",
+                "  execute        on in buildl.toml, BUILDL_REMOTE_EXECUTE not set\n",
+                "  jobs           16\n",
+                "  queue_timeout  20m\n",
+                "  retries        0\n",
+                "  property pool = \"large\"\n",
+                "  --remote-upload and --remote-strict turn either on for one run\n",
+                "  --remote-execute and --no-remote-execute change execute, and --remote-jobs ",
+                "changes jobs, for one run\n",
+                "ceiling\n",
+            )),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn the_execute_variable_is_shown_as_this_machine_sets_it() {
+        let line = |execute: Option<Switch>| {
+            let machine = RemoteReport {
+                execute,
+                ..machine()
+            };
+            report_on(remote_workspace(executing_settings(&[])), &machine)
+        };
+
+        let off = line(Some(Switch::Off));
+        let on = line(Some(Switch::On));
+        let unset = line(None);
+        let invalid = line(Some(Switch::Invalid("yes".to_owned())));
+
+        assert!(
+            off.contains("  execute        on in buildl.toml, BUILDL_REMOTE_EXECUTE off\n"),
+            "{off}"
+        );
+        assert!(
+            on.contains("  execute        on in buildl.toml, BUILDL_REMOTE_EXECUTE on\n"),
+            "{on}"
+        );
+        assert!(
+            unset.contains("  execute        on in buildl.toml, BUILDL_REMOTE_EXECUTE not set\n"),
+            "{unset}"
+        );
+        assert!(
+            invalid.contains(concat!(
+                "  execute        on in buildl.toml, ",
+                "BUILDL_REMOTE_EXECUTE invalid (\"yes\" is neither 1 nor 0)\n",
+            )),
+            "{invalid}"
+        );
+    }
+
+    #[test]
+    fn properties_are_listed_in_name_order() {
+        let text = report_on(
+            remote_workspace(executing_settings(&[
+                ("pool", "large"),
+                ("Pool2", "linux"),
+                ("arch", "x86 64"),
+            ])),
+            &machine(),
+        );
+
+        assert!(
+            text.contains(concat!(
+                "  retries        0\n",
+                "  property Pool2 = \"linux\"\n",
+                "  property arch = \"x86 64\"\n",
+                "  property pool = \"large\"\n",
+            )),
+            "{text}"
+        );
+        assert!(!text.contains("properties: none"), "{text}");
+    }
+
+    #[test]
+    fn no_properties_say_none() {
+        let text = report_on(remote_workspace(executing_settings(&[])), &machine());
+
+        assert!(
+            text.contains("  retries        0\n  properties: none\n  --remote-upload"),
             "{text}"
         );
     }
@@ -498,7 +656,7 @@ mod tests {
 
         let text = report_on(remote_workspace(settings), &machine());
 
-        assert!(text.contains("  token     not set\n"), "{text}");
+        assert!(text.contains("  token          not set\n"), "{text}");
     }
 
     #[test]
@@ -520,12 +678,17 @@ mod tests {
             ..WantedSet::default()
         };
 
-        let text = report(
-            workspace(ApproverMode::Interactive, Workers::PerCore),
-            wanted,
-            outside,
-            unapproved,
-        );
+        let remote = Workspace {
+            remote: Some(
+                RemoteSettings::builder(RemoteUrl::parse("grpc://127.0.0.1:9092").unwrap())
+                    .execute(true)
+                    .build()
+                    .unwrap(),
+            ),
+            ..workspace(ApproverMode::Interactive, Workers::PerCore)
+        };
+
+        let text = report(remote, wanted, outside, unapproved);
 
         assert_eq!(
             text,
@@ -533,7 +696,23 @@ mod tests {
                 "workspace  /path/to/myapp\n",
                 "approver   interactive\n",
                 "execution  workers 0 (one per core), timeout 10m, strategy sandbox\n",
-                "remote: none\n",
+                "remote\n",
+                "  url            grpc://127.0.0.1:9092\n",
+                "  instance       -\n",
+                "  ca             -\n",
+                "  header         authorization\n",
+                "  timeout        30s\n",
+                "  token          not set\n",
+                "  upload         off\n",
+                "  strict         off\n",
+                "  execute        on in buildl.toml, BUILDL_REMOTE_EXECUTE not set\n",
+                "  jobs           128\n",
+                "  queue_timeout  1h\n",
+                "  retries        5\n",
+                "  properties: none\n",
+                "  --remote-upload and --remote-strict turn either on for one run\n",
+                "  --remote-execute and --no-remote-execute change execute, and --remote-jobs ",
+                "changes jobs, for one run\n",
                 "ceiling\n",
                 "  proc.run  go, protoc\n",
                 "  env.read  HOME, PATH\n",

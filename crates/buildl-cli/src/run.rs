@@ -334,6 +334,7 @@ fn doctor<O: Write, E: Write>(
         token,
         upload: remote.upload_switch(),
         strict: remote.strict_switch(),
+        execute: remote.execute_switch(),
     };
     product(stdout, doctor_text(&doctor, &report).as_bytes())?;
     Ok(Exit::Success)

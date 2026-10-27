@@ -261,15 +261,22 @@ fn doctor_prints_the_remote_section() {
         stdout(&with).contains(&format!(
             concat!(
                 "remote\n",
-                "  url       grpcs://{}\n",
-                "  instance  ci\n",
-                "  ca        ca.pem\n",
-                "  header    x-cache-token\n",
-                "  timeout   45s\n",
-                "  token     set\n",
-                "  upload    on\n",
-                "  strict    off\n",
+                "  url            grpcs://{}\n",
+                "  instance       ci\n",
+                "  ca             ca.pem\n",
+                "  header         x-cache-token\n",
+                "  timeout        45s\n",
+                "  token          set\n",
+                "  upload         on\n",
+                "  strict         off\n",
+                "  execute        off in buildl.toml, BUILDL_REMOTE_EXECUTE not set\n",
+                "  jobs           128\n",
+                "  queue_timeout  1h\n",
+                "  retries        5\n",
+                "  properties: none\n",
                 "  --remote-upload and --remote-strict turn either on for one run\n",
+                "  --remote-execute and --no-remote-execute change execute, and --remote-jobs ",
+                "changes jobs, for one run\n",
             ),
             server.address()
         )),
@@ -277,7 +284,7 @@ fn doctor_prints_the_remote_section() {
         stdout(&with)
     );
     assert!(
-        stdout(&without).contains("  token     not set\n  upload    off\n"),
+        stdout(&without).contains("  token          not set\n  upload         off\n"),
         "{}",
         stdout(&without)
     );
