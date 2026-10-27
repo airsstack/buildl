@@ -1365,6 +1365,9 @@ mod tests {
     use tonic::transport::{Channel, Endpoint};
 
     use super::*;
+    use buildl_core::{Blob, RemoteUpload};
+
+    use crate::remote::encode::{action_result, hit};
     use crate::remote::proto::build::bazel::remote::execution::v2::action_cache_client::ActionCacheClient;
     use crate::remote::proto::build::bazel::remote::execution::v2::batch_update_blobs_request::Request as UpdateRequest;
     use crate::remote::proto::build::bazel::remote::execution::v2::capabilities_client::CapabilitiesClient;
@@ -1993,6 +1996,65 @@ mod tests {
         assert!(
             !skipped.cached_result,
             "skip_cache_lookup runs the action again"
+        );
+    }
+
+    #[test]
+    fn a_stdout_target_round_trips_through_upload_and_lookup() {
+        let fixture = Fixture::new();
+        let printed = b"one\ntwo\n";
+        let upload = RemoteUpload {
+            outputs: Vec::new(),
+            stdout: Blob::of(printed),
+            stderr: Blob::of(b""),
+        };
+        let stored = action_result(&upload).unwrap().result;
+        let action = proto_digest(b"a stdout action");
+        let mut cache = ActionCacheClient::new(fixture.channel.clone());
+        fixture
+            .runtime
+            .block_on(cache.update_action_result(UpdateActionResultRequest {
+                action_digest: Some(action.clone()),
+                action_result: Some(stored.clone()),
+                ..UpdateActionResultRequest::default()
+            }))
+            .unwrap();
+
+        let found = fixture
+            .runtime
+            .block_on(cache.get_action_result(GetActionResultRequest {
+                action_digest: Some(action),
+                ..GetActionResultRequest::default()
+            }))
+            .unwrap()
+            .into_inner();
+
+        assert_eq!(found, stored);
+        let held = hit(&found).unwrap();
+        assert_eq!(held.files, []);
+        assert_eq!(held.directories, []);
+        assert_eq!(held.stdout, Some(Blob::of(printed)));
+    }
+
+    #[test]
+    fn a_stdout_target_round_trips_through_execution() {
+        let fixture = Fixture::new();
+        let action = fixture.action(&command("printf listing", &["out"]), &[], None);
+
+        let first = response_of(&fixture.execute(&action, false).unwrap());
+        let second = response_of(&fixture.execute(&action, false).unwrap());
+
+        for (response, cached) in [(first, false), (second, true)] {
+            assert_eq!(response.cached_result, cached);
+            let result = response.result.unwrap();
+            assert_eq!(result.output_files, [], "the command wrote nothing at out");
+            let held = hit(&result).unwrap();
+            assert_eq!(held.files, []);
+            assert_eq!(held.stdout, Some(Blob::of(b"listing")));
+        }
+        assert_eq!(
+            fixture.server.blob(&BlobDigest::of(b"listing")),
+            Some(b"listing".to_vec())
         );
     }
 

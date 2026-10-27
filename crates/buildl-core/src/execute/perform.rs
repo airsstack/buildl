@@ -7,8 +7,8 @@
 //!
 //! Responsibilities: [`Task`], [`Told`], [`Shared`], [`Gates`], [`RemoteRun`], [`Worked`],
 //! [`Performed`], [`Span`], [`Printed`], [`Kept`] and [`Ended`]; the decisions [`exited`],
-//! [`collected`] with [`Unkept`], and [`failed_to`]; what a failed call to the remote cache does
-//! to the worker that met it; and [`perform`], which takes one task through the ports in that
+//! [`collected_from`] with [`Unkept`], and [`failed_to`]; what a failed call to the remote cache
+//! does to the worker that met it; and [`perform`], which takes one task through the ports in that
 //! fixed order, sends an action neither cache can answer to the remote to be run when the build
 //! does that, judges what comes back, sends what it ran here to the remote cache when the build
 //! writes there, and says what it is doing while it does.
@@ -285,33 +285,6 @@ pub(crate) const NOT_STORED: OutcomeClass = OutcomeClass::InfraFailure {
     kind: InfraKind::Store,
 };
 
-/// What an action that exited with status zero left, from what was found at each of its
-/// outputs: one manifest per output, in declared order.
-///
-/// `role` is the role of the target: the output of a [`TargetRole::Discovery`] target must be a
-/// file. `names` are the outputs the target declares and `found` what a strategy reported for them,
-/// in the same order. An answer that does not hold one entry per output is the builder's
-/// failure. Otherwise the outputs are examined in declared order, and the first that cannot be
-/// kept decides how the build ends:
-///
-/// - nothing there is [`OutcomeClass::OutputMissing`];
-/// - a symbolic link, or something that is neither a file nor a directory, is
-///   [`OutcomeClass::OutputRefused`];
-/// - a directory is [`OutputRefusal::NotAFile`] for a discovery target, whatever it holds;
-/// - otherwise a directory is examined entry by entry in path order, and is refused for the
-///   first entry that is not a regular file — an empty directory, a symbolic link, something
-///   else, or a name that is not text — as it is when it holds nothing at all;
-/// - a directory whose files do not make a tree — a path that is not below the directory, one
-///   listed twice, a file where another needs a directory — was misreported, which is the
-///   builder's failure.
-pub(crate) fn collected(
-    role: TargetRole,
-    names: &[OutputName],
-    found: Vec<Found>,
-) -> core::result::Result<Vec<OutputManifest>, Unkept> {
-    collected_from(role, &OutputsFrom::Command, names, found)
-}
-
 /// Where the outputs of a target come from, and what is known of it when they come from standard
 /// output.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -332,7 +305,25 @@ impl OutputsFrom {
     }
 }
 
-/// [`collected`] for outputs that come from `from`.
+/// What an action that exited with status zero left, from what was found at each of its
+/// outputs: one manifest per output, in declared order.
+///
+/// `from` says where the outputs come from. `role` is the role of the target: the output of a
+/// [`TargetRole::Discovery`] target must be a file. `names` are the outputs the target declares
+/// and `found` what a strategy reported for them, in the same order. An answer that does not
+/// hold one entry per output is the builder's failure. Otherwise the outputs are examined in
+/// declared order, and the first that cannot be kept decides how the build ends:
+///
+/// - nothing there is [`OutcomeClass::OutputMissing`];
+/// - a symbolic link, or something that is neither a file nor a directory, is
+///   [`OutcomeClass::OutputRefused`];
+/// - a directory is [`OutputRefusal::NotAFile`] for a discovery target, whatever it holds;
+/// - otherwise a directory is examined entry by entry in path order, and is refused for the
+///   first entry that is not a regular file — an empty directory, a symbolic link, something
+///   else, or a name that is not text — as it is when it holds nothing at all;
+/// - a directory whose files do not make a tree — a path that is not below the directory, one
+///   listed twice, a file where another needs a directory — was misreported, which is the
+///   builder's failure.
 ///
 /// For [`OutputsFrom::Stdout`] the one output is a plain file holding what the action printed,
 /// and nothing is expected at its path: whatever is found there is
@@ -370,17 +361,31 @@ fn printed_as(
     stdout: Digest,
     found: &Found,
 ) -> core::result::Result<OutputManifest, Unkept> {
-    if matches!(found, Found::Nothing) {
-        Ok(OutputManifest::File(StoredFile {
-            digest: stdout,
-            mode: FileMode::Plain,
-        }))
-    } else {
-        Err(Unkept {
-            class: OutcomeClass::OutputWritten { name: name.clone() },
-            diagnostic: None,
-        })
-    }
+    let manifest = OutputManifest::File(StoredFile {
+        digest: stdout,
+        mode: FileMode::Plain,
+    });
+    written_at(name, found).map_or(Ok(manifest), Err)
+}
+
+/// The failure of a target whose output is what the action printed, for the first of its outputs
+/// `names` that has something at its path in `found`, one entry per output in the same order:
+/// `None` when every path is empty. Needs no digest, so a result that holds no standard output
+/// can be judged by it.
+pub(crate) fn written(names: &[OutputName], found: &[Found]) -> Option<Unkept> {
+    names
+        .iter()
+        .zip(found)
+        .find_map(|(name, found)| written_at(name, found))
+}
+
+/// The failure of a target whose output is what the action printed, when `found` at the path of
+/// its output `name` is anything: [`OutcomeClass::OutputWritten`].
+fn written_at(name: &OutputName, found: &Found) -> Option<Unkept> {
+    (!matches!(found, Found::Nothing)).then(|| Unkept {
+        class: OutcomeClass::OutputWritten { name: name.clone() },
+        diagnostic: None,
+    })
 }
 
 /// The manifest of the output `name` of a target with `role`, from what was found at its path.
@@ -620,7 +625,9 @@ fn resumed(ended: Option<Ended>, began: Began) -> Consulted {
 /// described, because the content store does not hold what its dependencies produced, ends as a
 /// failure to store, after the build is told it began, as any action the builder fails to take
 /// is. So does a task whose fetched result the content store cannot keep: that is the store's
-/// failure, not the remote's.
+/// failure, not the remote's. A result for a target whose output is its standard output that
+/// names anything at the output path ends the task as a local run writing there would, after
+/// the build is told it began and the logs are stored; the remote stays on.
 fn consult<C: ContentStore, R: RemoteCache>(
     task: &Task,
     remote: &RemoteRun<'_, R>,
@@ -645,6 +652,13 @@ fn consult<C: ContentStore, R: RemoteCache>(
             );
         }
     };
+    if task.action.output_source == OutputSource::Stdout
+        && hit.exit_code == 0
+        && let Some(unkept) = unusable(&hit, task)
+    {
+        tell(Told::Began(task.node));
+        return refused_with_logs(&hit, unkept, RemoteCall::Download, remote, cas, tell);
+    }
     let checked = match fetch(&hit, task, remote.port) {
         Ok(checked) => checked,
         Err(error) => {
@@ -724,7 +738,7 @@ fn sent_when_admitted<C: ContentStore, R: RemoteCache>(
             Consulted::Local(Began::Told)
         }
         Ok(Executed::TimedOut { stdout, stderr }) => {
-            match printed_by_remote(stdout, stderr, remote, cas, tell) {
+            match printed_by_remote(stdout, stderr, RemoteCall::Execute, remote, cas, tell) {
                 Ok(printed) => ended_by(Exit::TimedOut, printed),
                 Err(over) => *over,
             }
@@ -749,11 +763,15 @@ enum Answered {
 /// - A path the command was not asked to leave is a failed call to the remote: the answer is for
 ///   something else.
 /// - Exit status zero, with every declared output there as a file or a directory a build can
-///   keep: the result is checked, downloaded and stored as a fetched one is. It ends the task
-///   [`Ended::Fetched`] when the remote held it, and [`Ended::Executed`] when the remote ran
-///   the action.
+///   keep, or, for a target whose output is its standard output, with the standard output named
+///   and nothing at the path: the result is checked, downloaded and stored as a fetched one is.
+///   It ends the task [`Ended::Fetched`] when the remote held it, and [`Ended::Executed`] when
+///   the remote ran the action. The result of a stdout target that
+///   names no standard output and nothing at the path is a failed call to the remote, as an
+///   `Execute` call that answers wrongly is.
 /// - Exit status zero, with an output missing, a symbolic link, a directory where a discovery
-///   target needs a file, or a directory that holds a symbolic link or an empty directory: the
+///   target needs a file, a directory that holds a symbolic link or an empty directory, or
+///   anything at the path of a target whose output is its standard output: the
 ///   action ran and failed, and the task ends as a local run leaving the same would, the first
 ///   declared output that cannot be kept deciding. The remote stays on.
 /// - Any other status: the action failed, and the task ends as a local run with that status
@@ -804,35 +822,61 @@ fn judged<C: ContentStore, R: RemoteCache>(
             Err(Unfetched::Unkept(unkept)) => refusal = Some(unkept),
         }
     }
-    let printed = match printed_by_remote(hit.stdout, hit.stderr, remote, cas, tell) {
-        Ok(printed) => printed,
-        Err(over) => return *over,
-    };
-    match refusal {
-        Some(unkept) => Consulted::Ended(Ended::Failed {
+    if let Some(unkept) = refusal {
+        return refused_with_logs(hit, unkept, RemoteCall::Execute, remote, cas, tell);
+    }
+    match printed_by_remote(
+        hit.stdout,
+        hit.stderr,
+        RemoteCall::Execute,
+        remote,
+        cas,
+        tell,
+    ) {
+        Ok(printed) => ended_by(Exit::Exited(hit.exit_code), printed),
+        Err(over) => *over,
+    }
+}
+
+/// Ends a task whose result from the remote holds what a local run could not keep, as that run
+/// would end, once the logs of the result are downloaded, checked and stored. `call` is the call
+/// that brought the result, named when the logs cannot be had. The build must have been told the
+/// task began.
+fn refused_with_logs<C: ContentStore, R: RemoteCache>(
+    hit: &RemoteHit,
+    unkept: Unkept,
+    call: RemoteCall,
+    remote: &RemoteRun<'_, R>,
+    cas: &C,
+    tell: &(dyn Fn(Told) + Sync),
+) -> Consulted {
+    match printed_by_remote(hit.stdout, hit.stderr, call, remote, cas, tell) {
+        Ok(printed) => Consulted::Ended(Ended::Failed {
             class: unkept.class,
             diagnostic: unkept.diagnostic,
             printed: Some(printed),
         }),
-        None => ended_by(Exit::Exited(hit.exit_code), printed),
+        Err(over) => *over,
     }
 }
 
 /// Downloads, checks and stores the logs of an action the remote ran, a log it did not keep
 /// being empty.
 ///
-/// A download or a check that fails is a failed call to the remote, and a store that fails is
-/// the builder's failure: the task is over then, and the error says how.
+/// A download or a check that fails is a failed `call` to the remote, and a store that fails is
+/// the builder's failure: the task is over then, and the error says how. The build must have
+/// been told the task began.
 fn printed_by_remote<C: ContentStore, R: RemoteCache>(
     stdout: Option<Blob>,
     stderr: Option<Blob>,
+    call: RemoteCall,
     remote: &RemoteRun<'_, R>,
     cas: &C,
     tell: &(dyn Fn(Told) + Sync),
 ) -> core::result::Result<Printed, Box<Consulted>> {
     let downloaded = logs(stdout, stderr, remote.port).map_err(|error| {
         Box::new(resumed(
-            failed_call(remote, RemoteCall::Execute, &error, tell),
+            failed_call(remote, call, &error, tell),
             Began::Told,
         ))
     })?;
@@ -1012,8 +1056,8 @@ mod tests {
 
     use super::{
         Began, Consulted, Ended, Gates, OutputsFrom, Performed, Printed, RemoteRun, Shared, Span,
-        Task, Told, Unkept, Worked, collected, collected_from, consult, exited, failed_call,
-        failed_to, perform, remote_failure, sent_when_admitted,
+        Task, Told, Unkept, Worked, collected_from, consult, exited, failed_call, failed_to,
+        perform, remote_failure, sent_when_admitted,
     };
     use crate::error::{Error, PortName, Result};
     use crate::execute::fixtures::{command, file, kept, key, label, output_path, outputs, tree};
@@ -1022,11 +1066,20 @@ mod tests {
     use crate::types::{
         Blob, DecodedTree, Diagnostic, Digest, Executed, Execution, Exit, FileMode, Found,
         FoundEntry, FoundKind, InfraKind, LiveSink, NetworkAccess, NodeId, OutcomeClass,
-        OutputManifest, OutputRefusal, OutputSource, PlatformProperties, RawOutcome, ReadyAction,
-        RemoteAction, RemoteCall, RemoteExecution, RemoteFailure, RemoteHit, RemoteJobs,
-        RemoteNotice, RemotePolicy, RemoteSwitch, RemoteUpload, RemoteUse, StoredFile, TargetRole,
-        Timestamp, Uploaded,
+        OutputManifest, OutputName, OutputRefusal, OutputSource, PlatformProperties, RawOutcome,
+        ReadyAction, RemoteAction, RemoteCall, RemoteExecution, RemoteFailure, RemoteHit,
+        RemoteJobs, RemoteNotice, RemotePolicy, RemoteSwitch, RemoteUpload, RemoteUse, StoredFile,
+        TargetRole, Timestamp, Uploaded,
     };
+
+    /// [`collected_from`] for outputs the command leaves at their paths.
+    fn collected(
+        role: TargetRole,
+        names: &[OutputName],
+        found: Vec<Found>,
+    ) -> core::result::Result<Vec<OutputManifest>, Unkept> {
+        collected_from(role, &OutputsFrom::Command, names, found)
+    }
 
     fn printed() -> Printed {
         Printed {

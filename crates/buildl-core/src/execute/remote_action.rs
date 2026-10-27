@@ -23,10 +23,13 @@ use crate::types::{
 ///
 /// The environment is the action's own with the variables the strategy pins laid over it, as
 /// the strategy sets them where the command runs. The outputs are sorted and hold no path
-/// twice. The files are every declared input, with no mode, and every file of every output of
-/// every dependency, with the mode its manifest records, all sorted by path. Each dependency
-/// output's manifest is read from `cas` by the digest the key holds for it. The `properties` are
-/// the workspace's own, carried as they are; they take no part in the action key.
+/// twice. A target whose output is its standard output keeps its path among them: the command is
+/// asked for a file there, so that a server reports one the command wrote, and the result is
+/// then refused for it. The files are every declared input, with no mode, and every file of
+/// every output of every dependency, with the mode its manifest records, all sorted by path.
+/// Each dependency output's manifest is read from `cas` by the digest the key holds for it. The
+/// `properties` are the workspace's own, carried as they are; they take no part in the action
+/// key.
 ///
 /// # Errors
 ///
@@ -307,6 +310,17 @@ mod tests {
             &Execution::default(),
         );
         assert_eq!(action.outputs, vec![a, b]);
+    }
+
+    #[test]
+    fn a_stdout_target_keeps_its_path_in_the_outputs() {
+        let at = output_path("//app:app", "pkgs");
+        let mut action = ready(BTreeMap::new(), vec![at.clone()]);
+        action.output_source = OutputSource::Stdout;
+
+        let described = describe(action, plain_key(), &Execution::default());
+
+        assert_eq!(described.outputs, vec![at]);
     }
 
     #[test]

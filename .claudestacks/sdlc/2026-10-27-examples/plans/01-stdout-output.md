@@ -193,10 +193,13 @@ docs/architecture.md                            — [modify] §2 sketches, :176 
   tests (and code only if a test shows the upload shape needs it)
 
 **Change:**
-- Task 2 kept `collected(role, names, found)` (it now means `OutputsFrom::Command`) and added
-  `collected_from(.., &OutputsFrom, ..)` with `OutputsFrom { Command, Stdout(Digest) }` in
-  `perform.rs`; the three calls in `fetch.rs` (`:88`, `:323`, `:908`) still use `collected`, and
-  this task switches each to `collected_from` with `OutputsFrom::Stdout(digest)` for a stdout target.
+- Task 2 added `collected_from(.., &OutputsFrom, ..)` with `OutputsFrom { Command, Stdout(Digest) }`
+  in `perform.rs` beside `collected`; this task switches the three calls in `fetch.rs` (`:88`,
+  `:323`, `:908`) to `collected_from`, and removes `collected`, which no production code then
+  calls. A stdout target's remote result is judged by `written` (`perform.rs`), which needs no
+  digest; `fetch` takes the digest from `hit.stdout`.
+- A lookup hit is judged as an execution is: for a stdout target `consult` checks `unusable`
+  before `fetch`, so a hit naming the output path fails as `OutputWritten`, not as a failed call.
 - `remote_action` keeps the stdout target's path in `outputs` (`remote_action.rs:46-47`), so the
   REAPI `Command.output_paths` lists it and a server returns a file the command wrote there
   (vendored proto `remote_execution.proto:845-853`). A doc comment says why.
@@ -222,8 +225,9 @@ docs/architecture.md                            — [modify] §2 sketches, :176 
   `a_stdout_result_without_stdout_runs_locally` (without strict: falls back);
   `a_stdout_target_uploads_its_stdout_only`.
 - `fetch.rs` test: `an_executed_stdout_result_is_not_judged_output_missing` (through `unusable`).
-- `encode.rs` tests (module `:525`): `a_stdout_targets_command_lists_its_path_in_output_paths` —
-  the `wire::Command` built at `:108-135` holds the path in `output_paths`;
+- `encode.rs` tests (module `:525`): the existing `the_command_matches_spec_section_2` already shows
+  the `wire::Command` built at `:108-135` holds every output path in `output_paths`, a stdout
+  target's included, since `RemoteAction` carries no output source;
   `a_stdout_upload_has_a_stdout_digest_and_no_output_files` — the `ActionResult` built at
   `:265-294` has `stdout_digest` set and empty `output_files` and `output_directories`.
 - `test_server.rs` tests: `a_stdout_target_round_trips_through_upload_and_lookup`;

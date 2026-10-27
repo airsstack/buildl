@@ -16,8 +16,8 @@ use crate::error::{Error, PortName, Result};
 use crate::execute::perform::{Kept, Printed, Task};
 use crate::ports::{BlobSource, ContentStore, RemoteCache};
 use crate::types::{
-    Blob, Diagnostic, Digest, Label, OutputManifest, RemoteAction, RemoteCall, RemoteContent,
-    RemoteNotice, RemoteOutput, RemoteTree, RemoteTreeFile, RemoteUpload, Uploaded,
+    Blob, Diagnostic, Digest, Label, OutputManifest, OutputSource, RemoteAction, RemoteCall,
+    RemoteContent, RemoteNotice, RemoteOutput, RemoteTree, RemoteTreeFile, RemoteUpload, Uploaded,
 };
 
 /// What `task` produced, in the terms a remote cache stores a result.
@@ -25,6 +25,9 @@ use crate::types::{
 /// `kept` holds one entry per declared output, in declared order, and `printed` what the action
 /// wrote. Each output keeps the path it is declared at, and a directory lists its files in path
 /// order. The size of every file and of both logs is read from `cas`.
+///
+/// A target whose output is its standard output sends no output file: its output travels as the
+/// digest of `printed.stdout`, which the result always names.
 ///
 /// # Errors
 ///
@@ -49,7 +52,11 @@ pub(crate) fn upload_of<C: ContentStore>(
             )),
         });
     }
-    let outputs = declared
+    let sent = match task.action.output_source {
+        OutputSource::Command => declared.as_slice(),
+        OutputSource::Stdout => &[],
+    };
+    let outputs = sent
         .iter()
         .zip(kept)
         .map(|(path, kept)| {
@@ -164,14 +171,14 @@ mod tests {
     use super::{Sent, StoredBlobs, upload, upload_of};
     use crate::error::{Error, PortName, Result};
     use crate::execute::fixtures::{command, file, kept, key, label, output_path, tree};
-    use crate::execute::perform::{Printed, Task};
+    use crate::execute::perform::{Kept, Printed, Task};
     use crate::ports::{BlobSource, ContentStore, RemoteCache};
     use crate::types::{
         Blob, DecodedTree, Diagnostic, Digest, Executed, FileMode, NetworkAccess, NodeId,
-        OutputPath, OutputSource, Platform, PlatformProperties, ReadyAction, RemoteAction,
-        RemoteCall, RemoteContent, RemoteHit, RemoteNotice, RemoteOutput, RemotePlatform,
-        RemoteTree, RemoteTreeFile, RemoteUpload, RootPath, SourcePath, TargetRole, Timeout,
-        TreePath, Uploaded,
+        OutputManifest, OutputPath, OutputSource, Platform, PlatformProperties, ReadyAction,
+        RemoteAction, RemoteCall, RemoteContent, RemoteHit, RemoteNotice, RemoteOutput,
+        RemotePlatform, RemoteTree, RemoteTreeFile, RemoteUpload, RootPath, SourcePath, StoredFile,
+        TargetRole, Timeout, TreePath, Uploaded,
     };
 
     const TARGET: &str = "//app:app";
@@ -380,6 +387,26 @@ mod tests {
         assert_eq!(upload.stdout.size, 10);
         assert_eq!(upload.stderr, Blob::of(b"warning: unused\n"));
         assert_eq!(upload.stderr.size, 16);
+    }
+
+    #[test]
+    fn a_stdout_upload_carries_no_output_file() {
+        let mut task = task(&["pkgs"]);
+        task.action.output_source = OutputSource::Stdout;
+        let store = Store::holding(&["compiling\n", "warning: unused\n"]);
+        let printed = printed();
+        let output = Kept {
+            digest: Digest::of(b"manifest"),
+            manifest: OutputManifest::File(StoredFile {
+                digest: printed.stdout,
+                mode: FileMode::Plain,
+            }),
+        };
+
+        let upload = upload_of(&task, &[output], &printed, &store).unwrap();
+
+        assert_eq!(upload.outputs, []);
+        assert_eq!(upload.stdout, Blob::of(b"compiling\n"));
     }
 
     #[test]

@@ -17,8 +17,9 @@ use buildl_core::{
 };
 
 use crate::common::{
-    Content, Ends, FakePorts, FakeSource, Held, Pace, Reported, Runs, Script, Step, Trace, dir,
-    ending, file, label, ports, program, root_only, script, target, target_with, workspace,
+    Content, Ends, FakePorts, FakeSource, Held, Pace, Reported, Runs, Script, StdoutDigest, Step,
+    Trace, dir, ending, file, label, ports, program, root_only, script, stdout_target, target,
+    target_with, workspace,
 };
 
 fn entry() -> EntryName {
@@ -1448,4 +1449,197 @@ fn a_strict_blob_that_fails_its_check_in_an_execute_fails_the_build() {
         }
         assert_eq!(pipeline.ports().strategy.ran(), [], "{tampered:?}");
     }
+}
+
+/// Makes the remote hold a run of the stdout target `raw` names that printed `stdout`.
+fn hold_printed(pipeline: &mut Pipeline<FakePorts>, raw: &str, stdout: &[u8]) {
+    pipeline
+        .ports_mut()
+        .remote
+        .holds
+        .insert(out(raw), Held::printed(stdout));
+}
+
+#[test]
+fn a_remote_hit_for_a_stdout_target_is_fetched() {
+    let mut pipeline = root_only(vec![stdout_target("listing")]);
+    hold_printed(&mut pipeline, "//:listing", b"one\ntwo\n");
+
+    let outcomes = build(&mut pipeline, LENIENT).unwrap();
+
+    assert_eq!(class(&outcomes, "//:listing"), OutcomeClass::Fetched);
+    let ports = pipeline.ports();
+    assert_eq!(ports.strategy.ran(), []);
+    let printed = Digest::of(b"one\ntwo\n");
+    assert_eq!(
+        ports.cas.placed().get(&out("//:listing")),
+        Some(&printed),
+        "the output is what the original run printed"
+    );
+    let row = ports.cache.rows.get(&label("//:listing")).unwrap();
+    assert_eq!(row.stdout(), printed, "the log and the output share a blob");
+    assert_eq!(
+        ports.remote.lookups()[0].outputs,
+        [out("//:listing")],
+        "the path is asked for, so that a server reports a file written there"
+    );
+    assert_eq!(notices(&pipeline), []);
+}
+
+#[test]
+fn an_executed_stdout_target_is_reported_remote() {
+    let mut pipeline = root_only(vec![stdout_target("listing")]);
+    run_there(
+        &mut pipeline,
+        "//:listing",
+        Runs::Ran(Held::printed(b"one\n")),
+    );
+
+    let outcomes = build(&mut pipeline, executing()).unwrap();
+
+    assert_eq!(class(&outcomes, "//:listing"), OutcomeClass::Remote);
+    let ports = pipeline.ports();
+    assert_eq!(ports.strategy.ran(), [], "nothing ran here");
+    assert_eq!(
+        ports.cas.placed().get(&out("//:listing")),
+        Some(&Digest::of(b"one\n"))
+    );
+    assert_eq!(notices(&pipeline), []);
+}
+
+#[test]
+fn a_server_cached_stdout_target_is_reported_fetched() {
+    let mut pipeline = root_only(vec![stdout_target("listing")]);
+    run_there(
+        &mut pipeline,
+        "//:listing",
+        Runs::Cached(Held::printed(b"one\n")),
+    );
+
+    let outcomes = build(&mut pipeline, executing()).unwrap();
+
+    assert_eq!(class(&outcomes, "//:listing"), OutcomeClass::Fetched);
+    assert_eq!(
+        pipeline.ports().cas.placed().get(&out("//:listing")),
+        Some(&Digest::of(b"one\n"))
+    );
+}
+
+#[test]
+fn an_executed_stdout_result_naming_the_path_is_output_written() {
+    let mut pipeline = root_only(vec![stdout_target("listing")]);
+    run_there(
+        &mut pipeline,
+        "//:listing",
+        ran("//:listing", b"written by the command"),
+    );
+
+    let outcomes = build(&mut pipeline, executing()).unwrap();
+
+    assert_eq!(
+        class(&outcomes, "//:listing"),
+        OutcomeClass::OutputWritten {
+            name: OutputName::parse("listing").unwrap()
+        }
+    );
+    let ports = pipeline.ports();
+    assert_eq!(ports.strategy.ran(), []);
+    assert_eq!(ports.cache.rows.len(), 0, "a failure is never recorded");
+    assert_eq!(notices(&pipeline), [], "the remote did nothing wrong");
+}
+
+#[test]
+fn a_remote_hit_for_a_stdout_target_naming_the_path_is_output_written() {
+    let mut pipeline = root_only(vec![stdout_target("listing")]);
+    pipeline.ports_mut().remote.holds.insert(
+        out("//:listing"),
+        Held::of(out("//:listing"), b"written by the command", b"one\n"),
+    );
+
+    let outcomes = build(&mut pipeline, LENIENT).unwrap();
+
+    assert_eq!(
+        class(&outcomes, "//:listing"),
+        OutcomeClass::OutputWritten {
+            name: OutputName::parse("listing").unwrap()
+        }
+    );
+    let ports = pipeline.ports();
+    assert_eq!(ports.strategy.ran(), [], "the action is not run again");
+    assert_eq!(ports.cache.rows.len(), 0, "a failure is never recorded");
+    assert_eq!(notices(&pipeline), [], "the remote stays on");
+}
+
+#[test]
+fn a_stdout_result_without_stdout_runs_locally() {
+    for executes in [false, true] {
+        let mut pipeline = root_only(vec![stdout_target("listing")]);
+        if executes {
+            run_there(
+                &mut pipeline,
+                "//:listing",
+                Runs::Ran(Held::printed(b"remote\n")),
+            );
+        } else {
+            hold_printed(&mut pipeline, "//:listing", b"remote\n");
+        }
+        pipeline.ports_mut().remote.stdout_digest = StdoutDigest::Omitted;
+        let printing = Script {
+            stdout: Some(b"local\n".to_vec()),
+            ..Script::default()
+        };
+        script(&mut pipeline, "//:listing", printing);
+
+        let policy = if executes { executing() } else { LENIENT };
+        let outcomes = build(&mut pipeline, policy).unwrap();
+
+        assert_eq!(class(&outcomes, "//:listing"), OutcomeClass::Built);
+        let ports = pipeline.ports();
+        assert_eq!(ports.strategy.runs(&label("//:listing")), 1);
+        assert_eq!(
+            ports.cas.placed().get(&out("//:listing")),
+            Some(&Digest::of(b"local\n")),
+            "the output is what ran here"
+        );
+        assert_eq!(notices(&pipeline).len(), 1, "one warning, then it is off");
+    }
+}
+
+#[test]
+fn a_strict_stdout_result_without_stdout_fails_the_build() {
+    let mut pipeline = root_only(vec![stdout_target("listing")]);
+    hold_printed(&mut pipeline, "//:listing", b"remote\n");
+    pipeline.ports_mut().remote.stdout_digest = StdoutDigest::Omitted;
+
+    let error = build(&mut pipeline, STRICT).unwrap_err();
+
+    assert!(matches!(
+        error,
+        Error::Adapter {
+            port: PortName::RemoteCache,
+            ..
+        }
+    ));
+    assert_eq!(pipeline.ports().strategy.ran(), []);
+}
+
+#[test]
+fn a_stdout_target_uploads_its_stdout_only() {
+    let mut pipeline = root_only(vec![stdout_target("listing")]);
+    let printing = Script {
+        stdout: Some(b"one\ntwo\n".to_vec()),
+        ..Script::default()
+    };
+    script(&mut pipeline, "//:listing", printing);
+
+    let outcomes = build(&mut pipeline, WRITING).unwrap();
+
+    assert_eq!(class(&outcomes, "//:listing"), OutcomeClass::Built);
+    let uploads = pipeline.ports().remote.uploads();
+    assert_eq!(uploads.len(), 1);
+    let (action, sent) = &uploads[0];
+    assert_eq!(action.outputs, [out("//:listing")]);
+    assert_eq!(sent.outputs, [], "no output file travels");
+    assert_eq!(sent.stdout, buildl_core::Blob::of(b"one\ntwo\n"));
+    assert_eq!(notices(&pipeline), []);
 }
