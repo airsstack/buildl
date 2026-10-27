@@ -14,7 +14,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Mutex, PoisonError};
 use std::thread;
 
-use buildl_core::{Diagnostic, Dispatcher, Error, PortName, Result, Turn, Workers};
+use buildl_core::{Diagnostic, Dispatcher, Error, PortName, RemoteJobs, Result, Turn, Workers};
 
 /// Runs tasks on up to a fixed number of threads, started as tasks need them.
 ///
@@ -33,6 +33,22 @@ impl ThreadPool {
         Self {
             workers: Self::width_for(workers),
         }
+    }
+
+    /// A pool wide enough for a run that executes on the remote: the larger of what `workers`
+    /// comes to and `jobs`, so every action the remote may hold at once has a thread to wait on.
+    #[must_use]
+    pub fn wide(workers: Workers, jobs: RemoteJobs) -> Self {
+        let jobs = NonZeroUsize::new(usize::from(jobs.get())).unwrap_or(NonZeroUsize::MIN);
+        Self {
+            workers: Self::width_for(workers).max(jobs),
+        }
+    }
+
+    /// How many tasks the pool runs at once, at most.
+    #[must_use]
+    pub const fn width(&self) -> NonZeroUsize {
+        self.workers
     }
 
     /// How many workers `workers` comes to on this machine: what [`ThreadPool::new`] starts the
@@ -194,9 +210,9 @@ mod tests {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Mutex, mpsc};
     use std::thread;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
-    use buildl_core::{Dispatcher, Turn, Workers};
+    use buildl_core::{Dispatcher, RemoteJobs, Turn, Workers};
 
     use super::{ThreadPool, serve};
 
@@ -218,6 +234,52 @@ mod tests {
             );
         }
         assert_eq!(ThreadPool::width_for(Workers::of(3)), limit(3));
+    }
+
+    /// The most tasks `pool` has running at once over twelve tasks that each wait until `expect`
+    /// of them have started, or ten seconds. A pool that is too narrow to start `expect` at
+    /// once makes the waiting tasks time out, and its peak comes out short.
+    fn peak_when_held_until(pool: &mut ThreadPool, expect: usize) -> usize {
+        let started = AtomicUsize::new(0);
+        let running = AtomicUsize::new(0);
+        let most = AtomicUsize::new(0);
+
+        pool.dispatch(
+            |task: u32, _tell: &(dyn Fn(()) + Sync)| {
+                started.fetch_add(1, Ordering::SeqCst);
+                let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                most.fetch_max(now, Ordering::SeqCst);
+                let deadline = Instant::now() + Duration::from_secs(10);
+                while started.load(Ordering::SeqCst) < expect && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(1));
+                }
+                running.fetch_sub(1, Ordering::SeqCst);
+                task
+            },
+            |turn| match turn {
+                Turn::Begin => (0..12).collect(),
+                Turn::Told(()) | Turn::Done(_) => Vec::new(),
+            },
+        )
+        .unwrap();
+
+        most.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn a_wide_pool_runs_as_many_tasks_at_once_as_its_larger_count() {
+        let mut pool = ThreadPool::wide(Workers::of(2), RemoteJobs::from_integer(6).unwrap());
+
+        assert_eq!(pool.workers, limit(6));
+        assert_eq!(peak_when_held_until(&mut pool, 6), 6);
+    }
+
+    #[test]
+    fn a_wide_pool_with_fewer_jobs_than_workers_keeps_the_workers() {
+        let mut pool = ThreadPool::wide(Workers::of(4), RemoteJobs::from_integer(2).unwrap());
+
+        assert_eq!(pool.workers, limit(4));
+        assert_eq!(peak_when_held_until(&mut pool, 4), 4);
     }
 
     #[test]

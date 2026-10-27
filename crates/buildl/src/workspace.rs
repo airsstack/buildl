@@ -242,7 +242,7 @@ impl Workspace {
     pub fn check(&self) -> Result<Loaded> {
         pipeline::check(
             &self.wiring.source()?,
-            &mut self.wiring.dispatcher(),
+            &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
             &self.history(),
             &self.cas(),
@@ -262,7 +262,7 @@ impl Workspace {
     pub fn graph(&self) -> Result<(TargetGraph, Vec<Label>)> {
         pipeline::graph(
             &self.wiring.source()?,
-            &mut self.wiring.dispatcher(),
+            &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
             &self.history(),
             &self.cas(),
@@ -283,7 +283,7 @@ impl Workspace {
     pub fn query(&self, query: &Query) -> Result<(BTreeSet<Label>, Vec<Label>)> {
         pipeline::query(
             &self.wiring.source()?,
-            &mut self.wiring.dispatcher(),
+            &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
             &self.history(),
             &self.cas(),
@@ -307,7 +307,7 @@ impl Workspace {
     pub fn doctor(&self) -> Result<(Doctor, Vec<Label>)> {
         let (checkup, missing) = pipeline::doctor(
             &self.wiring.source()?,
-            &mut self.wiring.dispatcher(),
+            &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.manifest(),
             self.wiring.entry(),
             &self.history(),
@@ -562,7 +562,7 @@ impl Workspace {
         let log = LocalLog::new(layout);
         let collected = pipeline::gc(
             &source,
-            &mut self.wiring.dispatcher(),
+            &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
             &mut cache,
             &cas,

@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 
 use buildl_core::{
     ApproverMode, ChangedPath, Diagnostic, Directory, EntryName, Error, Isolation, Manifest,
-    Pipeline, PluginSource, PortName, PortSet, Ports, RemotePolicy, RemoteSettings, Reporter,
-    Result, Want, WatchLayout,
+    Pipeline, PluginSource, PortName, PortSet, Ports, RemoteExecution, RemotePolicy,
+    RemoteSettings, Reporter, Result, Want, WatchLayout,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -421,21 +421,28 @@ impl Wiring {
         }
     }
 
-    /// The dispatcher that runs several tasks at once: as many workers as the manifest says.
+    /// The dispatcher that runs several tasks at once: as many workers as the manifest says, or
+    /// as many as the larger of that and the remote's job count when `remote` executes on the
+    /// remote.
     ///
     /// The one place the manifest's worker count becomes a dispatcher: `ports` takes its
     /// dispatcher from here, and a command that loads build files without taking the lock runs
-    /// them through one of these.
+    /// them through one of these, with [`RemotePolicy::OFF`].
     #[must_use]
-    pub fn dispatcher(&self) -> ThreadPool {
-        ThreadPool::new(self.workspace.execution.workers)
+    pub fn dispatcher(&self, remote: RemotePolicy) -> ThreadPool {
+        let workers = self.workspace.execution.workers;
+        match remote.execution {
+            RemoteExecution::On { jobs, .. } => ThreadPool::wide(workers, jobs),
+            RemoteExecution::Off => ThreadPool::new(workers),
+        }
     }
 
     /// Every port, for one plan or one build. `lock` proves the state directory is this
     /// process's own.
     ///
-    /// The dispatcher comes from [`Wiring::dispatcher`], so the worker count of the manifest
-    /// reaches it from that one place; the timeout reaches the strategy through here. The strategy
+    /// The dispatcher comes from [`Wiring::dispatcher`] with `remote`, so the worker count of the
+    /// manifest, and the job count of a run that executes on the remote, reach it from that one
+    /// place; the timeout reaches the strategy through here. The strategy
     /// is the one the manifest names, and a strategy this version cannot run is made too, as one
     /// that refuses to run anything, so that `plan` works under every strategy. The program
     /// lookup and the strategy are handed one search path, so the file that is run is the file that
@@ -524,7 +531,7 @@ impl Wiring {
             cas: LocalCas::new(root, layout),
             log: LocalLog::new(layout),
             strategy,
-            dispatcher: self.dispatcher(),
+            dispatcher: self.dispatcher(remote),
             clock: SystemClock,
             graph: GraphFile::new(layout),
             reporter,
@@ -544,11 +551,12 @@ mod tests {
     use core::num::NonZeroU64;
     use std::collections::BTreeMap;
     use std::fs;
+    use std::num::NonZeroUsize;
     use std::path::{Path, PathBuf};
 
     use buildl_core::{
-        Directory, Error, Isolation, Pipeline, PortName, RemotePolicy, Scope, Timeout, Verdict,
-        Want, Workers,
+        Directory, Error, Isolation, Pipeline, PortName, RemoteExecution, RemoteJobs, RemotePolicy,
+        Scope, Timeout, Verdict, Want, Workers,
     };
     use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -964,6 +972,41 @@ mod tests {
             assert_eq!(named, expected, "{table:?}");
             assert_eq!(wiring.data, DataDir::At(root.join("data")));
         }
+    }
+
+    #[test]
+    fn the_dispatcher_is_wide_only_when_executing() {
+        let (_dir, root) = workspace(&format!("{}workers = 3\n", bare()));
+        let wiring = Wiring::read(&root).unwrap();
+        let lock = wiring.lock().unwrap();
+        let executing = RemotePolicy {
+            execution: RemoteExecution::On {
+                jobs: RemoteJobs::from_integer(9).unwrap(),
+                local: NonZeroUsize::MIN,
+            },
+            ..RemotePolicy::OFF
+        };
+
+        assert_eq!(wiring.dispatcher(RemotePolicy::OFF).width().get(), 3);
+        assert_eq!(wiring.dispatcher(executing).width().get(), 9);
+        assert_eq!(
+            wiring
+                .ports(&lock, Silent, NoTerminal, executing)
+                .unwrap()
+                .dispatcher
+                .width()
+                .get(),
+            9
+        );
+        assert_eq!(
+            wiring
+                .ports(&lock, Silent, NoTerminal, RemotePolicy::OFF)
+                .unwrap()
+                .dispatcher
+                .width()
+                .get(),
+            3
+        );
     }
 
     #[test]
