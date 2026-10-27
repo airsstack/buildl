@@ -257,9 +257,11 @@ Author's choices: Q3 b, Q4 a (every call; the four codes the two checked clients
   are retried the same way (§4 step 4). No other code is retried.
 - **Count:** `retries` is the number of retries after the first call, so `5` means at most six
   calls and `0` means one. A missing-blob re-upload (§4 step 3) and a `WaitExecution` resume each
-  use one retry. Every message an `Execute` or `WaitExecution` stream delivers resets the count,
-  so a long job on a server that closes its streams from time to time is not given up while it
-  makes progress; Pants counts "the number of retries allowed since the last successful
+  use one retry. A stream that delivers messages and then ends or breaks before `done` resets the
+  count, so a long job on a server that closes its streams from time to time is not given up while
+  it makes progress; a stream that reaches `done` with a status that is retried does not, since
+  the server sends stage messages before every answer and a server that answers each try that way
+  would otherwise be tried forever; Pants counts "the number of retries allowed since the last successful
   connection" the same way (`pants/remote.rs:802-804`).
 - **Delay:** 100 ms doubled after each retry, at most 5 s, plus 0 to 50 ms at random: Buck2's
   delays (`re_grpc/src/client.rs:671-679`: `INITIAL_DELAY` 100 ms, `MAX_DELAY` 5 s,

@@ -2,7 +2,8 @@
 status: executing
 created: 2026-10-26
 depends-on: [02, 03, 04, 05, 07]
-built-on: 0e431e5caec9
+built-on: 75312efc6398
+disproves: 0e431e5caec9
 ---
 
 # REAPI Execute Implementation Plan
