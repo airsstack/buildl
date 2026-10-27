@@ -49,7 +49,7 @@ use crate::types::{
 ///
 /// Returns [`Error::UploadUnsandboxed`] when `remote` writes or executes and `strategy` is
 /// [`Isolation::Bare`]; execution is the one it names when both are asked for.
-pub(crate) fn ensure_sandboxed_remote(remote: RemotePolicy, strategy: Isolation) -> Result<()> {
+pub fn ensure_sandboxed_remote(remote: RemotePolicy, strategy: Isolation) -> Result<()> {
     if strategy != Isolation::Bare {
         return Ok(());
     }

@@ -173,7 +173,7 @@ pub use error::{
     EvaluationLimit, NameKind, PortName, RemoteFlagConflict, RemoteVariable, Result, TreeFault,
     UnsandboxedRemote,
 };
-pub use execute::execute;
+pub use execute::{ensure_sandboxed_remote, execute};
 pub use grants::negotiate;
 pub use history::LastRun;
 pub use load::load;

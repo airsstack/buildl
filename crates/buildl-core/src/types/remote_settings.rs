@@ -14,7 +14,7 @@
 //! asks for a variable's value.
 
 use core::fmt;
-use core::num::NonZeroU64;
+use core::num::{NonZeroU16, NonZeroU64, NonZeroUsize};
 use core::str::FromStr;
 use std::collections::BTreeMap;
 
@@ -51,7 +51,7 @@ const MIN_JOBS: u16 = 1;
 const MAX_JOBS: u16 = 1024;
 
 /// How many remote calls run at once unless the workspace says otherwise.
-const DEFAULT_JOBS: u16 = 128;
+const DEFAULT_JOBS: NonZeroU16 = NonZeroU16::MIN.saturating_add(127);
 
 /// The most retries after a first call.
 const MAX_RETRIES: u8 = 10;
@@ -434,7 +434,7 @@ const JOBS_REASON: &str = "must be a whole number from 1 to 1024";
 /// # Ok::<(), buildl_core::Error>(())
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct RemoteJobs(u16);
+pub struct RemoteJobs(NonZeroU16);
 
 impl RemoteJobs {
     /// Reads the count a manifest states as the integer `count`.
@@ -446,6 +446,7 @@ impl RemoteJobs {
         u16::try_from(count)
             .ok()
             .filter(|count| (MIN_JOBS..=MAX_JOBS).contains(count))
+            .and_then(NonZeroU16::new)
             .map(Self)
             .ok_or_else(|| invalid(NameKind::RemoteJobs, &count.to_string(), JOBS_REASON))
     }
@@ -469,7 +470,13 @@ impl RemoteJobs {
     /// The count.
     #[must_use]
     pub const fn get(self) -> u16 {
-        self.0
+        self.0.get()
+    }
+
+    /// The count as a thread count: never zero, so no fallback is needed to use it as one.
+    #[must_use]
+    pub fn threads(self) -> NonZeroUsize {
+        NonZeroUsize::from(self.0)
     }
 }
 
@@ -1067,6 +1074,12 @@ mod tests {
         assert_eq!(RemoteJobs::from_integer(1).unwrap().get(), 1);
         assert_eq!(RemoteJobs::from_integer(1024).unwrap().get(), 1024);
         assert_eq!(RemoteJobs::parse("1").unwrap().get(), 1);
+        assert_eq!(RemoteJobs::from_integer(1).unwrap().threads().get(), 1);
+        assert_eq!(
+            RemoteJobs::from_integer(1024).unwrap().threads().get(),
+            1024
+        );
+        assert_eq!(RemoteJobs::default().threads().get(), 128);
         assert_eq!(RemoteJobs::parse("1024").unwrap().get(), 1024);
         for raw in ["0", "1025", "-1", "", "+1", "1 ", "99999999999999999999"] {
             let err = RemoteJobs::parse(raw).unwrap_err();

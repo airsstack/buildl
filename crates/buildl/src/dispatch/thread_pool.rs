@@ -39,15 +39,15 @@ impl ThreadPool {
     /// comes to and `jobs`, so every action the remote may hold at once has a thread to wait on.
     #[must_use]
     pub fn wide(workers: Workers, jobs: RemoteJobs) -> Self {
-        let jobs = NonZeroUsize::new(usize::from(jobs.get())).unwrap_or(NonZeroUsize::MIN);
         Self {
-            workers: Self::width_for(workers).max(jobs),
+            workers: Self::width_for(workers).max(jobs.threads()),
         }
     }
 
     /// How many tasks the pool runs at once, at most.
+    #[cfg(test)]
     #[must_use]
-    pub const fn width(&self) -> NonZeroUsize {
+    pub(crate) const fn width(&self) -> NonZeroUsize {
         self.workers
     }
 

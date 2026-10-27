@@ -93,7 +93,7 @@ impl Watching {
     }
 
     /// The lines the process writes until it closes its standard error, and how it ended.
-    fn finish(&mut self) -> (Vec<String>, ExitStatus) {
+    pub(crate) fn finish(&mut self) -> (Vec<String>, ExitStatus) {
         let mut rest = Vec::new();
         loop {
             match self.lines.recv_timeout(BOUND) {

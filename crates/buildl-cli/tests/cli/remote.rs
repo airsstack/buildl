@@ -463,6 +463,23 @@ fn remote_execution_under_bare_exits_as_usage_from_each_source() {
 }
 
 #[test]
+fn test_under_bare_with_execution_exits_as_usage() {
+    let server = TestServer::start().unwrap();
+    let (_dir, root) = checkout(&manifest(&["sh"]), &executing_at(&server));
+    write(
+        &root,
+        "build.lua",
+        "buildl.test(\"one\", { run = { \"sh\", \"-c\", \"echo one\" } })\n",
+    );
+
+    let tested = run(&root, &["test"], &[]);
+
+    assert_eq!(code(&tested), 2, "{}", stderr(&tested));
+    assert!(stderr(&tested).contains("bare"), "{}", stderr(&tested));
+    assert!(server.calls().is_empty(), "{:?}", server.calls());
+}
+
+#[test]
 fn a_bare_manifest_that_executes_still_checks_plans_and_doctors() {
     let server = TestServer::start().unwrap();
     let (_dir, root) = checkout(&manifest(&["cp"]), &executing_at(&server));
@@ -501,7 +518,7 @@ fn every_execution_usage_error_exits_as_usage() {
             &no_table,
             &["build", "--remote-execute"],
             &[],
-            "need a [remote] table in buildl.toml",
+            "--remote-jobs need a [remote] table",
         ),
         (
             &root,
@@ -596,7 +613,10 @@ fn a_remote_action_failure_fails_the_build_as_an_action_failure() {
 #[test]
 fn test_runs_tests_remotely() {
     let server = TestServer::start().unwrap();
-    let (_dir, root) = checkout(&sandboxed_manifest(&["sh"]), &executing_at(&server));
+    let (_dir, root) = checkout(
+        &sandboxed_manifest(&["sh"]),
+        &format!("url = \"{}\"\n", url_of(&server)),
+    );
     write(
         &root,
         "build.lua",
@@ -606,7 +626,7 @@ fn test_runs_tests_remotely() {
         ),
     );
 
-    let tested = run(&root, &["test"], &[]);
+    let tested = run(&root, &["test", "--remote-execute"], &[]);
 
     assert_eq!(code(&tested), 0, "{}", stderr(&tested));
     assert!(
@@ -626,4 +646,40 @@ fn watch_takes_remote_execute() {
 
     assert_eq!(watch.until(WAITING), [BUILDING, "2 remote", WAITING]);
     assert_eq!(server.calls_to(Method::Execute).len(), 2);
+}
+
+#[test]
+fn watch_under_bare_with_execution_exits_as_usage() {
+    let server = TestServer::start().unwrap();
+    let (_dir, root) = checkout(
+        &manifest(&["cp"]),
+        &format!("url = \"{}\"\n", url_of(&server)),
+    );
+
+    let mut watch = Watching::start(&root, &["watch", "--remote-execute"]);
+    let (lines, status) = watch.finish();
+
+    assert_eq!(status.code(), Some(2), "{lines:?}");
+    assert!(lines.iter().all(|line| line != BUILDING), "{lines:?}");
+    assert!(lines.iter().any(|line| line.contains("bare")), "{lines:?}");
+    assert!(!root.join("out").exists(), "something was built");
+    assert!(server.calls().is_empty(), "{:?}", server.calls());
+}
+
+#[test]
+fn watch_under_bare_with_upload_exits_as_usage() {
+    let server = TestServer::start().unwrap();
+    let (_dir, root) = checkout(
+        &manifest(&["cp"]),
+        &format!("url = \"{}\"\n", url_of(&server)),
+    );
+
+    let mut watch = Watching::start(&root, &["watch", "--remote-upload"]);
+    let (lines, status) = watch.finish();
+
+    assert_eq!(status.code(), Some(2), "{lines:?}");
+    assert!(lines.iter().all(|line| line != BUILDING), "{lines:?}");
+    assert!(lines.iter().any(|line| line.contains("bare")), "{lines:?}");
+    assert!(!root.join("out").exists(), "something was built");
+    assert!(server.calls().is_empty(), "{:?}", server.calls());
 }

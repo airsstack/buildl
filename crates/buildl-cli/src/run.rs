@@ -419,6 +419,7 @@ fn watch<E: Write, C: Console>(
         remote_table(&workspace),
         workspace.local_workers(),
     )?;
+    workspace.ensure_sandboxed_remote(policy)?;
     let scope = scope(&workspace, &args.selection.targets)?;
     let mut changes = match NotifyChanges::start(workspace.root(), SystemClock.now()) {
         Ok(changes) => changes,

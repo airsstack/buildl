@@ -182,13 +182,13 @@ pub(crate) struct RemoteArgs {
     /// Fail the run when a call to the remote cache fails, instead of warning and building locally
     #[arg(long = "remote-strict")]
     pub strict: bool,
-    /// Do not use the remote cache in this run, whatever the variables say
+    /// Do not use the remote cache in this run, and run nothing on the remote, whatever the manifest and variables say
     #[arg(long = "no-remote")]
     pub no_remote: bool,
-    /// Run the actions the remote cache has no result for on the remote, whatever the variables say
+    /// Run the actions the remote cache has no result for on the remote, whatever the manifest and variables say
     #[arg(long = "remote-execute")]
     pub remote_execute: bool,
-    /// Run them here, and keep using the remote cache, whatever the manifest and variables say
+    /// Run every action here, and keep using the remote cache, whatever the manifest and variables say
     #[arg(long = "no-remote-execute")]
     pub no_remote_execute: bool,
     /// How many actions may be with the remote at once, from 1 to 1024, for this run

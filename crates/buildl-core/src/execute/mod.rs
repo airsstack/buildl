@@ -27,4 +27,4 @@ pub(crate) mod upload;
 #[cfg(test)]
 pub(crate) mod fixtures;
 
-pub use assembly::execute;
+pub use assembly::{ensure_sandboxed_remote, execute};

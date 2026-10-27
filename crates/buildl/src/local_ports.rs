@@ -20,7 +20,7 @@ use std::path::{Path, PathBuf};
 use buildl_core::{
     ApproverMode, ChangedPath, Diagnostic, Directory, EntryName, Error, Isolation, Manifest,
     Pipeline, PluginSource, PortName, PortSet, Ports, RemoteExecution, RemotePolicy,
-    RemoteSettings, Reporter, Result, Want, WatchLayout,
+    RemoteSettings, Reporter, Result, Want, WatchLayout, ensure_sandboxed_remote,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -324,10 +324,16 @@ impl Wiring {
         &self.workspace.out
     }
 
-    /// Whether `buildl.toml` has a `[remote]` table.
-    #[must_use]
-    pub const fn names_remote(&self) -> bool {
-        self.workspace.remote.is_some()
+    /// Refuses `remote` when it writes to or executes on the remote while this workspace's
+    /// strategy is `bare`: the refusal a build makes once it has planned, made before anything
+    /// is planned.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::UploadUnsandboxed`] under the conditions of
+    /// [`buildl_core::ensure_sandboxed_remote`].
+    pub fn ensure_sandboxed_remote(&self, remote: RemotePolicy) -> Result<()> {
+        ensure_sandboxed_remote(remote, self.workspace.execution.strategy)
     }
 
     /// The remote cache `[remote]` names, when `buildl.toml` has that table.
@@ -694,8 +700,15 @@ mod tests {
         let (_dir, without) = workspace("");
         let (_other, named) = workspace("[remote]\nurl = \"grpc://127.0.0.1:1\"\n");
 
-        assert!(!Wiring::read(&without).unwrap().names_remote());
-        assert!(Wiring::read(&named).unwrap().names_remote());
+        assert!(Wiring::read(&without).unwrap().remote_settings().is_none());
+        assert!(Wiring::read(&named).unwrap().remote_settings().is_some());
+    }
+
+    #[test]
+    fn local_workers_is_the_manifest_worker_count() {
+        let (_dir, root) = workspace(&format!("{}workers = 3\n", bare()));
+
+        assert_eq!(Wiring::read(&root).unwrap().local_workers().get(), 3);
     }
 
     #[test]

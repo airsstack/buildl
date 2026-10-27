@@ -502,6 +502,23 @@ mod tests {
     }
 
     #[test]
+    fn the_execute_variable_is_not_read_when_a_flag_decides() {
+        let args = RemoteArgs {
+            remote_execute: true,
+            ..plain()
+        };
+        let resolved = decide(&executing("yes"), &args, Some(&table(false, None))).unwrap();
+        assert_eq!(resolved, executes(RemoteJobs::default()));
+
+        let args = RemoteArgs {
+            no_remote_execute: true,
+            ..plain()
+        };
+        let resolved = decide(&executing("yes"), &args, Some(&table(true, None))).unwrap();
+        assert_eq!(resolved, policy(RemoteUse::Read, RemoteFailure::Lenient));
+    }
+
+    #[test]
     fn no_remote_execute_keeps_the_cache() {
         let args = RemoteArgs {
             no_remote_execute: true,
