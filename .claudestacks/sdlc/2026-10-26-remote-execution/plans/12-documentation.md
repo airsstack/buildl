@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-26
 depends-on: [01, 02, 03, 04, 05, 06, 07, 08, 09, 10, 11]
 built-on: 8b1ed74430a0
@@ -83,3 +83,27 @@ finds nothing; `grep -n "network fan-out of remote execution, which this record 
 ## Proof
 
 All greps above hold; `cargo make dod` still green (doctests unaffected).
+
+## Review findings
+
+One review over plans 11 and 12 (`21816dd..fa82cb2`); `cargo make dod` green. Plan 12's findings, all closed:
+- docs (blocking) — `README.md` said `--no-remote` beside any switch flag is a usage error; `--no-remote --no-remote-execute` is accepted (`RemoteSwitches::resolve`) — fixed: it names the four flags refused
+- docs (blocking) — design §11.2's retries paragraph left out the `UNKNOWN`/`INTERNAL` break, which is resumed with one retry and no reset (`execution.rs`, `Attempt::Broke`) — fixed, with the retried-`done` case
+- docs — `README.md`'s doctor sentence said `execute` shows as the variable reads; it shows the manifest value and the variable — fixed
+- docs — design's status headline still read "the core pipeline is implemented; the rest is design" — fixed: every item of §13 is built, some in part
+- docs — architecture's testing paragraph made the CI job, not the test file, skip — fixed
+- docs — `CLAUDE.md` left out that an answer from the server's cache ends `fetched` — fixed
+- kept — the Risks line placing the toolchain sentence in §11.2: the sentence is in §9.6 (`docs/design.md:650`) and stays as it is
+
+Proof: `grep -n "Remote execution is not built" docs/design.md` → nothing; `grep -n "toolchain container" docs/design.md` → nothing; `grep -n "Remote execution (item 8) is designed for and implemented by nothing here" docs/architecture.md` → nothing; `grep -n "network fan-out of remote execution, which this record said would reopen the question, is not built" docs/architecture.md` → nothing; headings of design, architecture, building blocks and README unchanged against `HEAD` before the plan; `crates/buildl/proto/README.md` already named `google/rpc/error_details.proto`. Gates: `cargo make dod` → Build Done.
+
+## Probe results
+
+- every doc claim the review checked against the code held after the fixes: the switch precedence, the usage errors, the delay schedule, the gates, `Wiring::dispatcher`/`ThreadPool::wide`, the `[remote]` key ranges, the bare refusal and its absence from `check`/`plan`/`doctor`, and the doctor layout (`remote_lines`)
+
+## Deviations
+
+- design §13 item 8 says "Toolchains are not shipped in containers" instead of naming toolchain containers, so the plan's grep holds and the non-goal is still stated
+- the status line's "What else §13 lists is described here and still to come" was removed, since item 8 was the last item
+- architecture §4's `OutcomeClass` list, the exit-0 row, the `RemoteSwitch`/`RemoteFlags` rows, §3.5's `Made` list, the summary-line sentence and the testing paragraph were brought up to date as well
+- `cargo make dod` was not re-run for the two document-only commits (no source changed); it ran green on the fix commit
