@@ -28,11 +28,11 @@ use crate::execute::remote_action::remote_action;
 use crate::execute::upload::{Sent, upload, upload_of};
 use crate::ports::{Clock, ContentStore, ExecStrategy, RemoteCache};
 use crate::types::{
-    ActionKey, Blob, Channel, Diagnostic, Digest, Executed, Execution, Exit, Found, FoundEntry,
-    FoundKind, InfraKind, LiveSink, NodeId, OutcomeClass, OutputManifest, OutputName,
-    OutputRefusal, PlatformProperties, RawOutcome, ReadyAction, RemoteAction, RemoteCall,
-    RemoteExecution, RemoteFailure, RemoteHit, RemoteNotice, RemotePolicy, RemoteSwitch, RemoteUse,
-    TargetRole, Timestamp, Tree, TreeEntry, TreePath,
+    ActionKey, Blob, Channel, Diagnostic, Digest, Executed, Execution, Exit, FileMode, Found,
+    FoundEntry, FoundKind, InfraKind, LiveSink, NodeId, OutcomeClass, OutputManifest, OutputName,
+    OutputRefusal, OutputSource, PlatformProperties, RawOutcome, ReadyAction, RemoteAction,
+    RemoteCall, RemoteExecution, RemoteFailure, RemoteHit, RemoteNotice, RemotePolicy,
+    RemoteSwitch, RemoteUse, StoredFile, TargetRole, Timestamp, Tree, TreeEntry, TreePath,
 };
 
 /// What a worker says about an action while it is still running it.
@@ -309,6 +309,40 @@ pub(crate) fn collected(
     names: &[OutputName],
     found: Vec<Found>,
 ) -> core::result::Result<Vec<OutputManifest>, Unkept> {
+    collected_from(role, &OutputsFrom::Command, names, found)
+}
+
+/// Where the outputs of a target come from, and what is known of it when they come from standard
+/// output.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum OutputsFrom {
+    /// The command leaves them at their paths.
+    Command,
+    /// The command prints the one output; this is the digest of what it printed.
+    Stdout(Digest),
+}
+
+impl OutputsFrom {
+    /// Where the outputs of `task` come from, once its action has printed `printed`.
+    const fn of(task: &Task, printed: &Printed) -> Self {
+        match task.action.output_source {
+            OutputSource::Stdout => Self::Stdout(printed.stdout),
+            OutputSource::Command => Self::Command,
+        }
+    }
+}
+
+/// [`collected`] for outputs that come from `from`.
+///
+/// For [`OutputsFrom::Stdout`] the one output is a plain file holding what the action printed,
+/// and nothing is expected at its path: whatever is found there is
+/// [`OutcomeClass::OutputWritten`], the first such output deciding as for any other failure.
+pub(crate) fn collected_from(
+    role: TargetRole,
+    from: &OutputsFrom,
+    names: &[OutputName],
+    found: Vec<Found>,
+) -> core::result::Result<Vec<OutputManifest>, Unkept> {
     if found.len() != names.len() {
         return Err(Unkept {
             class: NOT_STORED,
@@ -322,8 +356,31 @@ pub(crate) fn collected(
     names
         .iter()
         .zip(found)
-        .map(|(name, found)| examined(role, name, found))
+        .map(|(name, found)| match from {
+            OutputsFrom::Command => examined(role, name, found),
+            OutputsFrom::Stdout(digest) => printed_as(name, *digest, &found),
+        })
         .collect()
+}
+
+/// The manifest of the output `name` of a target whose output is what the action printed, which
+/// has the digest `stdout`, from what was found at its path.
+fn printed_as(
+    name: &OutputName,
+    stdout: Digest,
+    found: &Found,
+) -> core::result::Result<OutputManifest, Unkept> {
+    if matches!(found, Found::Nothing) {
+        Ok(OutputManifest::File(StoredFile {
+            digest: stdout,
+            mode: FileMode::Plain,
+        }))
+    } else {
+        Err(Unkept {
+            class: OutcomeClass::OutputWritten { name: name.clone() },
+            diagnostic: None,
+        })
+    }
 }
 
 /// The manifest of the output `name` of a target with `role`, from what was found at its path.
@@ -889,16 +946,18 @@ fn run<S: ExecStrategy, C: ContentStore>(
         Ok(found) => found,
         Err(error) => return failed_to(InfraKind::Store, &error, Some(printed)),
     };
-    let manifests = match collected(task.role, &task.key.components().own.outputs, found) {
-        Ok(manifests) => manifests,
-        Err(unkept) => {
-            return Ended::Failed {
-                class: unkept.class,
-                diagnostic: unkept.diagnostic,
-                printed: Some(printed),
-            };
-        }
-    };
+    let from = OutputsFrom::of(task, &printed);
+    let manifests =
+        match collected_from(task.role, &from, &task.key.components().own.outputs, found) {
+            Ok(manifests) => manifests,
+            Err(unkept) => {
+                return Ended::Failed {
+                    class: unkept.class,
+                    diagnostic: unkept.diagnostic,
+                    printed: Some(printed),
+                };
+            }
+        };
     match kept(manifests, cas) {
         Ok(outputs) => Ended::Produced { outputs, printed },
         Err(error) => failed_to(InfraKind::Store, &error, Some(printed)),
@@ -952,9 +1011,9 @@ mod tests {
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     use super::{
-        Began, Consulted, Ended, Gates, Performed, Printed, RemoteRun, Shared, Span, Task, Told,
-        Unkept, Worked, collected, consult, exited, failed_call, failed_to, perform,
-        remote_failure, sent_when_admitted,
+        Began, Consulted, Ended, Gates, OutputsFrom, Performed, Printed, RemoteRun, Shared, Span,
+        Task, Told, Unkept, Worked, collected, collected_from, consult, exited, failed_call,
+        failed_to, perform, remote_failure, sent_when_admitted,
     };
     use crate::error::{Error, PortName, Result};
     use crate::execute::fixtures::{command, file, kept, key, label, output_path, outputs, tree};
@@ -1624,6 +1683,73 @@ mod tests {
             collected(TargetRole::Build, &[], Vec::new()),
             Ok(Vec::new()),
             "a target that declares no output"
+        );
+    }
+
+    #[test]
+    fn a_stdout_target_keeps_its_stdout_as_the_output() {
+        let x = Digest::of(b"x");
+        assert_eq!(
+            collected_from(
+                TargetRole::Build,
+                &OutputsFrom::Stdout(x),
+                &outputs(&["listing"]),
+                vec![Found::Nothing]
+            ),
+            Ok(vec![OutputManifest::File(stored("x", FileMode::Plain))])
+        );
+    }
+
+    #[test]
+    fn a_stdout_target_whose_command_wrote_the_path_fails() {
+        let written = Unkept {
+            class: OutcomeClass::OutputWritten {
+                name: outputs(&["listing"]).remove(0),
+            },
+            diagnostic: None,
+        };
+        for found in [
+            Found::File(stored("y", FileMode::Plain)),
+            Found::Tree(vec![found_file("a")]),
+            Found::Symlink,
+            Found::Special,
+        ] {
+            assert_eq!(
+                collected_from(
+                    TargetRole::Build,
+                    &OutputsFrom::Stdout(Digest::of(b"x")),
+                    &outputs(&["listing"]),
+                    vec![found]
+                ),
+                Err(written.clone())
+            );
+        }
+    }
+
+    #[test]
+    fn a_command_target_is_unchanged() {
+        let missing = Unkept {
+            class: OutcomeClass::OutputMissing {
+                name: outputs(&["listing"]).remove(0),
+            },
+            diagnostic: None,
+        };
+        assert_eq!(
+            collected_from(
+                TargetRole::Build,
+                &OutputsFrom::Command,
+                &outputs(&["listing"]),
+                vec![Found::Nothing]
+            ),
+            Err(missing.clone())
+        );
+        assert_eq!(
+            collected(
+                TargetRole::Build,
+                &outputs(&["listing"]),
+                vec![Found::Nothing]
+            ),
+            Err(missing)
         );
     }
 

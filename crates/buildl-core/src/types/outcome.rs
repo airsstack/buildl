@@ -98,6 +98,12 @@ pub enum OutcomeClass {
         /// Why it cannot be kept.
         refusal: OutputRefusal,
     },
+    /// It ran and exited with status zero, but its output is the command's standard output and
+    /// the command also wrote that output's path itself.
+    OutputWritten {
+        /// The output.
+        name: OutputName,
+    },
     /// The builder could not build it. Nothing is said about the target's own action.
     InfraFailure {
         /// What the builder could not do.
@@ -147,8 +153,9 @@ pub struct ActionOutcome {
 /// How many targets ended in each way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Tally {
-    /// Targets whose action failed or was ended by a signal, whose output was missing or
-    /// refused, or that the builder could not build.
+    /// Targets whose action failed or was ended by a signal, whose output was missing, refused
+    /// or written by the command that should only have printed it, or that the builder could not
+    /// build.
     pub failed: usize,
     /// Targets never begun because another target failed.
     pub skipped: usize,
@@ -178,6 +185,7 @@ impl Tally {
                 | OutcomeClass::Killed { .. }
                 | OutcomeClass::OutputMissing { .. }
                 | OutcomeClass::OutputRefused { .. }
+                | OutcomeClass::OutputWritten { .. }
                 | OutcomeClass::InfraFailure { .. } => tally.failed += 1,
                 OutcomeClass::Skipped { .. } => tally.skipped += 1,
             }
@@ -222,7 +230,7 @@ mod tests {
     use crate::types::{Label, OutputName, TargetRole};
 
     /// One class of every kind, in the order the enum declares them.
-    fn every_class() -> [OutcomeClass; 9] {
+    fn every_class() -> [OutcomeClass; 10] {
         [
             OutcomeClass::Cached,
             OutcomeClass::Built,
@@ -235,6 +243,9 @@ mod tests {
             OutcomeClass::OutputRefused {
                 name: OutputName::parse("dist").unwrap(),
                 refusal: OutputRefusal::Symlink,
+            },
+            OutcomeClass::OutputWritten {
+                name: OutputName::parse("listing").unwrap(),
             },
             OutcomeClass::InfraFailure {
                 kind: InfraKind::Store,
@@ -268,7 +279,9 @@ mod tests {
         let succeeded = every_class().map(|class| class.succeeded());
         assert_eq!(
             succeeded,
-            [true, true, true, false, false, false, false, false, false]
+            [
+                true, true, true, false, false, false, false, false, false, false
+            ]
         );
     }
 
@@ -291,7 +304,7 @@ mod tests {
             Summary::of(&outcomes),
             Summary {
                 all: Tally {
-                    failed: 5,
+                    failed: 6,
                     skipped: 1,
                     built: 1,
                     cached: 1,
@@ -442,6 +455,7 @@ mod tests {
                 r#"{"Killed":{"signal":11}}"#,
                 r#"{"OutputMissing":{"name":"bin/app"}}"#,
                 r#"{"OutputRefused":{"name":"dist","refusal":"Symlink"}}"#,
+                r#"{"OutputWritten":{"name":"listing"}}"#,
                 r#"{"InfraFailure":{"kind":"Store"}}"#,
                 r#"{"Skipped":{"because":"//lib:text"}}"#,
             ]

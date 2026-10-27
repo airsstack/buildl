@@ -699,6 +699,7 @@ pub enum Leaf {
 /// An unscripted action exits with zero, prints its label and a newline to standard output and
 /// nothing to standard error, and leaves at each output path text made of its label, the path
 /// and the digest of each of its inputs — so the output changes exactly when an input does.
+/// The action of a target whose output is its standard output leaves nothing at its output path.
 #[derive(Debug, Clone, Default)]
 pub struct Script {
     /// How the action goes.
@@ -861,11 +862,13 @@ impl ExecStrategy for FakeStrategy {
         }
         let mut entries = Vec::new();
         for path in &action.outputs {
-            let content = script
-                .outputs
-                .get(path)
-                .cloned()
-                .unwrap_or_else(|| Content::Holds(self.unscripted(action, path)));
+            let content = script.outputs.get(path).cloned().unwrap_or_else(|| {
+                if action.output_source == OutputSource::Stdout {
+                    Content::Missing
+                } else {
+                    Content::Holds(self.unscripted(action, path))
+                }
+            });
             entries.push(match content {
                 Content::Holds(bytes) => Found::File(stored(cas, &bytes, FileMode::Plain)?),
                 Content::Missing => Found::Nothing,
@@ -1613,6 +1616,12 @@ pub fn target(name: &str, deps: &[&str]) -> StagedItem {
     target_with(name, |target| {
         target.deps = deps.iter().map(|dep| Written::new(*dep)).collect();
     })
+}
+
+/// A `b.target(name, { run = { "cc" }, stdout = true })` call: its output is what it prints.
+#[must_use]
+pub fn stdout_target(name: &str) -> StagedItem {
+    target_with(name, |target| target.output_source = OutputSource::Stdout)
 }
 
 /// A `b.target(name, { run = { "cc" } })` call, after `change` is applied to it.

@@ -193,6 +193,10 @@ docs/architecture.md                            — [modify] §2 sketches, :176 
   tests (and code only if a test shows the upload shape needs it)
 
 **Change:**
+- Task 2 kept `collected(role, names, found)` (it now means `OutputsFrom::Command`) and added
+  `collected_from(.., &OutputsFrom, ..)` with `OutputsFrom { Command, Stdout(Digest) }` in
+  `perform.rs`; the three calls in `fetch.rs` (`:88`, `:323`, `:908`) still use `collected`, and
+  this task switches each to `collected_from` with `OutputsFrom::Stdout(digest)` for a stdout target.
 - `remote_action` keeps the stdout target's path in `outputs` (`remote_action.rs:46-47`), so the
   REAPI `Command.output_paths` lists it and a server returns a file the command wrote there
   (vendored proto `remote_execution.proto:845-853`). A doc comment says why.
