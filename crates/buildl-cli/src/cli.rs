@@ -22,7 +22,9 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::num::NonZeroUsize;
 
-use buildl::buildl_core::{LiveOutput, OnFailure, Rerun, Sample, SettingName, SettingValue};
+use buildl::buildl_core::{
+    LiveOutput, OnFailure, RemoteJobs, Rerun, Sample, SettingName, SettingValue,
+};
 use buildl::report::TestBlocks;
 use clap::error::ErrorKind;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
@@ -167,8 +169,12 @@ pub(crate) struct BuildArgs {
     pub remote: RemoteArgs,
 }
 
-/// The remote cache flags `build` and `test` share.
+/// The remote cache flags `build`, `test` and `watch` share.
 #[derive(Debug, Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is one independent flag of the command line, which clap reads as a bool"
+)]
 pub(crate) struct RemoteArgs {
     /// Upload what this run produced to the remote cache
     #[arg(long = "remote-upload")]
@@ -179,6 +185,20 @@ pub(crate) struct RemoteArgs {
     /// Do not use the remote cache in this run, whatever the variables say
     #[arg(long = "no-remote")]
     pub no_remote: bool,
+    /// Run the actions the remote cache has no result for on the remote, whatever the variables say
+    #[arg(long = "remote-execute")]
+    pub remote_execute: bool,
+    /// Run them here, and keep using the remote cache, whatever the manifest and variables say
+    #[arg(long = "no-remote-execute")]
+    pub no_remote_execute: bool,
+    /// How many actions may be with the remote at once, from 1 to 1024, for this run
+    #[arg(long = "remote-jobs", value_name = "N", value_parser = parse_remote_jobs)]
+    pub remote_jobs: Option<RemoteJobs>,
+}
+
+/// A `--remote-jobs` count: a whole number from 1 to 1024.
+fn parse_remote_jobs(raw: &str) -> Result<RemoteJobs, String> {
+    RemoteJobs::parse(raw).map_err(|error| error.to_string())
 }
 
 /// The arguments of `test`.
@@ -390,7 +410,7 @@ mod tests {
     use std::iter;
     use std::num::NonZeroUsize;
 
-    use buildl::buildl_core::{LiveOutput, OnFailure, Rerun, Sample};
+    use buildl::buildl_core::{LiveOutput, OnFailure, RemoteJobs, Rerun, Sample};
     use buildl::report::TestBlocks;
     use clap::error::ErrorKind;
     use clap::{CommandFactory, Parser};
@@ -642,6 +662,56 @@ mod tests {
 
         assert_eq!(
             refused(&["plan", "--remote-upload"]),
+            ErrorKind::UnknownArgument
+        );
+    }
+
+    #[test]
+    fn build_test_and_watch_take_the_execution_flags() {
+        for args in [
+            build(&["build"]).remote,
+            test(&["test"]).remote,
+            watch(&["watch"]).remote,
+        ] {
+            assert!(!args.remote_execute && !args.no_remote_execute);
+            assert_eq!(args.remote_jobs, None);
+        }
+
+        let on = [
+            build(&["build", "--remote-execute", "--remote-jobs", "16"]).remote,
+            test(&["test", "--remote-execute", "--remote-jobs", "16", "app"]).remote,
+            watch(&["watch", "--remote-execute", "--remote-jobs", "16"]).remote,
+        ];
+        for args in on {
+            assert!(args.remote_execute && !args.no_remote_execute);
+            assert_eq!(args.remote_jobs, Some(RemoteJobs::parse("16").unwrap()));
+        }
+
+        assert!(
+            build(&["build", "--no-remote-execute"])
+                .remote
+                .no_remote_execute
+        );
+        assert!(
+            test(&["test", "--no-remote-execute"])
+                .remote
+                .no_remote_execute
+        );
+        assert!(
+            watch(&["watch", "--no-remote-execute"])
+                .remote
+                .no_remote_execute
+        );
+
+        for bad in ["0", "1025", "many", ""] {
+            assert_eq!(
+                refused(&["build", "--remote-jobs", bad]),
+                ErrorKind::ValueValidation,
+                "{bad:?}"
+            );
+        }
+        assert_eq!(
+            refused(&["plan", "--remote-execute"]),
             ErrorKind::UnknownArgument
         );
     }

@@ -1029,6 +1029,8 @@ pub enum RemoteVariable {
     Upload,
     /// `BUILDL_REMOTE_STRICT`, which makes a remote failure fail the build.
     Strict,
+    /// `BUILDL_REMOTE_EXECUTE`, which turns remote execution on.
+    Execute,
 }
 
 impl fmt::Display for RemoteVariable {
@@ -1036,6 +1038,7 @@ impl fmt::Display for RemoteVariable {
         f.write_str(match self {
             Self::Upload => "BUILDL_REMOTE_UPLOAD",
             Self::Strict => "BUILDL_REMOTE_STRICT",
+            Self::Execute => "BUILDL_REMOTE_EXECUTE",
         })
     }
 }
@@ -1051,6 +1054,15 @@ pub enum RemoteFlagConflict {
     /// `--remote-upload` or `--remote-strict` in a workspace whose `buildl.toml` has no
     /// `[remote]` table.
     SwitchWithoutRemote,
+    /// `--remote-execute` together with `--no-remote`.
+    NoRemoteWithExecute,
+    /// `--remote-execute` together with `--no-remote-execute`.
+    ExecuteBothWays,
+    /// `--remote-execute`, `--no-remote-execute` or `--remote-jobs` in a workspace whose
+    /// `buildl.toml` has no `[remote]` table.
+    ExecutionWithoutRemote,
+    /// `--remote-jobs` in a run where remote execution is off.
+    JobsWithoutExecution,
 }
 
 impl fmt::Display for RemoteFlagConflict {
@@ -1062,6 +1074,15 @@ impl fmt::Display for RemoteFlagConflict {
             Self::SwitchWithoutRemote => {
                 "--remote-upload and --remote-strict need a [remote] table in buildl.toml, \
                  and this workspace has none"
+            }
+            Self::NoRemoteWithExecute => "--no-remote cannot be combined with --remote-execute",
+            Self::ExecuteBothWays => "--remote-execute cannot be combined with --no-remote-execute",
+            Self::ExecutionWithoutRemote => {
+                "--remote-execute, --no-remote-execute and --remote-jobs need a [remote] table \
+                 in buildl.toml, and this workspace has none"
+            }
+            Self::JobsWithoutExecution => {
+                "--remote-jobs needs remote execution, and it is off in this run"
             }
         })
     }
@@ -1884,6 +1905,7 @@ mod tests {
             "BUILDL_REMOTE_UPLOAD is \"yes\", and must be 1 or 0"
         );
         assert_eq!(RemoteVariable::Strict.to_string(), "BUILDL_REMOTE_STRICT");
+        assert_eq!(RemoteVariable::Execute.to_string(), "BUILDL_REMOTE_EXECUTE");
     }
 
     #[test]
@@ -1902,6 +1924,28 @@ mod tests {
             unnamed.to_string(),
             "--remote-upload and --remote-strict need a [remote] table in buildl.toml, \
              and this workspace has none"
+        );
+    }
+
+    #[test]
+    fn refused_execution_flags_name_the_flags() {
+        let text = |conflict| Error::RemoteFlags { conflict }.to_string();
+        assert_eq!(
+            text(RemoteFlagConflict::NoRemoteWithExecute),
+            "--no-remote cannot be combined with --remote-execute"
+        );
+        assert_eq!(
+            text(RemoteFlagConflict::ExecuteBothWays),
+            "--remote-execute cannot be combined with --no-remote-execute"
+        );
+        assert_eq!(
+            text(RemoteFlagConflict::ExecutionWithoutRemote),
+            "--remote-execute, --no-remote-execute and --remote-jobs need a [remote] table \
+             in buildl.toml, and this workspace has none"
+        );
+        assert_eq!(
+            text(RemoteFlagConflict::JobsWithoutExecution),
+            "--remote-jobs needs remote execution, and it is off in this run"
         );
     }
 

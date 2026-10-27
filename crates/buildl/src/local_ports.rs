@@ -14,12 +14,13 @@
 
 use core::marker::PhantomData;
 use std::collections::BTreeSet;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
     ApproverMode, ChangedPath, Diagnostic, Directory, EntryName, Error, Isolation, Manifest,
-    Pipeline, PluginSource, PortName, PortSet, Ports, RemotePolicy, Reporter, Result, Want,
-    WatchLayout,
+    Pipeline, PluginSource, PortName, PortSet, Ports, RemotePolicy, RemoteSettings, Reporter,
+    Result, Want, WatchLayout,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -327,6 +328,19 @@ impl Wiring {
     #[must_use]
     pub const fn names_remote(&self) -> bool {
         self.workspace.remote.is_some()
+    }
+
+    /// The remote cache `[remote]` names, when `buildl.toml` has that table.
+    #[must_use]
+    pub const fn remote_settings(&self) -> Option<&RemoteSettings> {
+        self.workspace.remote.as_ref()
+    }
+
+    /// How many actions may run here at once: the manifest's `[execution] workers` resolved for
+    /// this machine, the width of [`Wiring::dispatcher`] without remote jobs.
+    #[must_use]
+    pub fn local_workers(&self) -> NonZeroUsize {
+        ThreadPool::width_for(self.workspace.execution.workers)
     }
 
     /// The output directory, after holding it to the ceiling.

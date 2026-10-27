@@ -13,13 +13,14 @@
 //! which is the wiring's; and showing anything, which is the caller's.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
     ActionOutcome, ApproverMode, Checkup, Collected, Diagnostic, Directory, Error, Label,
-    LiveOutput, Loaded, OnFailure, Pipeline, Plan, PortName, Query, RemotePolicy, Reporter, Rerun,
-    Result, Sample, Scope, SettingName, SettingValue, Shown, TargetGraph, Verification, WantedSet,
-    Watched, pipeline,
+    LiveOutput, Loaded, OnFailure, Pipeline, Plan, PortName, Query, RemotePolicy, RemoteSettings,
+    Reporter, Rerun, Result, Sample, Scope, SettingName, SettingValue, Shown, TargetGraph,
+    Verification, WantedSet, Watched, pipeline,
 };
 
 use crate::approver::{Console, NoTerminal};
@@ -160,6 +161,19 @@ impl Workspace {
     #[must_use]
     pub const fn names_remote(&self) -> bool {
         self.wiring.names_remote()
+    }
+
+    /// The remote cache `buildl.toml`'s `[remote]` table names, when it has one.
+    #[must_use]
+    pub const fn remote_settings(&self) -> Option<&RemoteSettings> {
+        self.wiring.remote_settings()
+    }
+
+    /// How many actions may run here at once: the manifest's `[execution] workers`, resolved for
+    /// this machine.
+    #[must_use]
+    pub fn local_workers(&self) -> NonZeroUsize {
+        self.wiring.local_workers()
     }
 
     /// How a run with `options` uses the remote cache: as `options` say when `buildl.toml` names

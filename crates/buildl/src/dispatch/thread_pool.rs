@@ -30,10 +30,17 @@ impl ThreadPool {
     /// [`Workers::PerCore`], and one where the number of cores cannot be read.
     #[must_use]
     pub fn new(workers: Workers) -> Self {
-        let cores = thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
         Self {
-            workers: workers.on(cores),
+            workers: Self::width_for(workers),
         }
+    }
+
+    /// How many workers `workers` comes to on this machine: what [`ThreadPool::new`] starts the
+    /// pool with.
+    #[must_use]
+    pub fn width_for(workers: Workers) -> NonZeroUsize {
+        let cores = thread::available_parallelism().unwrap_or(NonZeroUsize::MIN);
+        workers.on(cores)
     }
 }
 
@@ -200,6 +207,17 @@ mod tests {
     /// A task that says nothing and returns twice its number.
     fn doubled(task: u32, _tell: &(dyn Fn(()) + Sync)) -> u32 {
         task * 2
+    }
+
+    #[test]
+    fn width_for_matches_new() {
+        for workers in [Workers::PerCore, Workers::of(1), Workers::of(3)] {
+            assert_eq!(
+                ThreadPool::new(workers).workers,
+                ThreadPool::width_for(workers)
+            );
+        }
+        assert_eq!(ThreadPool::width_for(Workers::of(3)), limit(3));
     }
 
     #[test]

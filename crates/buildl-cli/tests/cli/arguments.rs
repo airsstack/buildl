@@ -86,7 +86,7 @@ const TEST_FLAGS: &str = concat!(
     "\n",
 );
 
-/// The help of the remote cache flags `build` and `test` share.
+/// The help of the remote cache flags `build`, `test` and `watch` share.
 const REMOTE_FLAGS: &str = concat!(
     "      --remote-upload\n",
     "          Upload what this run produced to the remote cache\n",
@@ -96,6 +96,15 @@ const REMOTE_FLAGS: &str = concat!(
     "\n",
     "      --no-remote\n",
     "          Do not use the remote cache in this run, whatever the variables say\n",
+    "\n",
+    "      --remote-execute\n",
+    "          Run the actions the remote cache has no result for on the remote, whatever the variables say\n",
+    "\n",
+    "      --no-remote-execute\n",
+    "          Run them here, and keep using the remote cache, whatever the manifest and variables say\n",
+    "\n",
+    "      --remote-jobs <N>\n",
+    "          How many actions may be with the remote at once, from 1 to 1024, for this run\n",
     "\n",
 );
 
