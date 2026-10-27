@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-26
 depends-on: [01, 09]
 built-on: 24837f1a4158
@@ -59,3 +59,23 @@ green. Commit `feat(buildl-cli): doctor shows remote execution settings`.
 
 `cargo make dod` green; `doctor` still makes no network connection (the existing
 `doctor_prints_the_remote_section` runs against a closed URL and passes).
+
+## Review findings
+
+One review (`717ba42`); spec compliant; `cargo make dod` green; blocking: none. Closed:
+- test-coverage — nothing caught the `doctor` wiring of `BUILDL_REMOTE_EXECUTE` being dropped (the CLI test covered only "not set") — fixed: `doctor_prints_the_remote_section` runs with `BUILDL_REMOTE_EXECUTE=1` and expects `on`, and without it expects `not set`; `cargo test -p buildl-cli --test cli doctor_prints_the_remote_section` → 1 passed
+- docs — `Switch::Off`'s doc said "unset or `0`", no longer true for the execute variable, whose unset reading is its own — fixed
+- kept — the private `execute(manifest: bool, …)` helper takes the `bool` that `RemoteSettings::execute()` returns
+- kept — the note line also says `--remote-jobs` changes `jobs` for one run; true (`cli.rs`) and beside §9's note for `execute`
+
+Gates after the fix: `cargo make dod` → Build Done. Named tests: `conformance.py … 10` → all present.
+
+## Probe results
+
+- the CLI test runs against a live TLS test server, not a closed URL, and asserts `server.calls()` is empty — stronger than the plan's premise; doctor connects to nothing
+
+## Deviations
+
+- `remote_switches.rs` gained `RemoteSwitches::execute_switch() -> Option<Switch>` (unset is `not set`, apart from `0`, since `0` overrides `buildl.toml`)
+- the key column widened to `queue_timeout`, so every remote line moved; the two milestone 6 tests that spell those lines were updated
+- final layout, for design §7: `execute        <on|off> in buildl.toml, BUILDL_REMOTE_EXECUTE <not set|off|on|invalid (…)>`, then `jobs`, `queue_timeout`, `retries`, then `property <name> = "<value>"` per property in name order or `properties: none`, then the two flag notes

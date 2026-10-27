@@ -252,6 +252,7 @@ fn doctor_prints_the_remote_section() {
         &[
             (TOKEN_VARIABLE, OsStr::new(TOKEN)),
             ("BUILDL_REMOTE_UPLOAD", OsStr::new("1")),
+            ("BUILDL_REMOTE_EXECUTE", OsStr::new("1")),
         ],
     );
     let without = run(&root, &["doctor"], &[]);
@@ -269,7 +270,7 @@ fn doctor_prints_the_remote_section() {
                 "  token          set\n",
                 "  upload         on\n",
                 "  strict         off\n",
-                "  execute        off in buildl.toml, BUILDL_REMOTE_EXECUTE not set\n",
+                "  execute        off in buildl.toml, BUILDL_REMOTE_EXECUTE on\n",
                 "  jobs           128\n",
                 "  queue_timeout  1h\n",
                 "  retries        5\n",
@@ -284,7 +285,9 @@ fn doctor_prints_the_remote_section() {
         stdout(&with)
     );
     assert!(
-        stdout(&without).contains("  token          not set\n  upload         off\n"),
+        stdout(&without).contains("  token          not set\n  upload         off\n")
+            && stdout(&without)
+                .contains("  execute        off in buildl.toml, BUILDL_REMOTE_EXECUTE not set\n"),
         "{}",
         stdout(&without)
     );

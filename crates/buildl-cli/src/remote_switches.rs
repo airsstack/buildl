@@ -34,7 +34,8 @@ pub(crate) enum RemoteTable<'a> {
 /// How one switch's variable reads on this machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Switch {
-    /// The variable is unset or `0`.
+    /// The variable is `0`, or it is unset and unset means off, as for the upload and strict
+    /// switches.
     Off,
     /// The variable is `1`.
     On,
