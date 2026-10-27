@@ -91,7 +91,7 @@ execution (plan 03), so every retry below counts against `retries` in one place;
 - `a_lost_operation_is_executed_again` — `break_streams(1)` plus `forget_operations()`; two `Execute` calls
 - `missing_blobs_are_handed_to_the_upload_callback` — `report_missing_once(d)`; the callback receives `d`, then the execution completes
 - `missing_blobs_in_the_status_are_handed_to_the_upload_callback` — `report_missing_in_status_once(d)`; likewise
-- `a_precondition_failure_with_another_violation_is_a_failure`
+- `a_precondition_failure_with_another_violation_is_a_failure` — `report_violation_once("UNSUPPORTED", d)` (plan 07's switch for a violation other than `MISSING`): a failure, no re-upload
 - `progress_resets_the_retries` — `retries = 1`, `break_streams(2)`: the `Execute` stream breaks, the `WaitExecution` stream sends a message and breaks, the second `WaitExecution` completes; without the reset the second break would exhaust the one retry
 - `each_transient_status_in_the_response_is_retried_retries_times` — for each of the four codes, `status_in_response(code, retries)` then success: completes after `retries + 1` calls; with `status_in_response(code, retries + 1)` it fails
 - `the_wait_limit_ends_a_silent_execution` — `hold_execution(2 s)`, `queue_timeout` and timeout giving a 1 s limit: `WaitPassed`
@@ -127,7 +127,7 @@ code that reaches it (Task 2 has already retried the transient ones and re-uploa
 - `a_non_zero_exit_is_ran_with_its_code` — also when `cached_result` is true
 - `a_blob_missing_at_execute_is_uploaded_and_the_action_completes` — `report_missing_once(d)` for an input: `d` reaches the server's CAS and `execute` returns `Ran`
 - `a_blob_missing_in_the_status_is_uploaded_and_the_action_completes` — `report_missing_in_status_once(d)`: likewise
-- `deadline_exceeded_is_timed_out_with_its_logs`
+- `deadline_exceeded_is_timed_out_with_its_logs` — the command prints, then `exec sleep` past a 3 s limit (the test server kills only the process it started)
 - `a_transient_status_in_the_response_is_retried` — `status_in_response(Unavailable, 1)`; one more `Execute`, then `Ran`
 - `a_permanent_status_in_the_response_is_a_failure` — `status_in_response(InvalidArgument, 1)`
 - `a_server_that_cannot_execute_fails_the_execute_call` — `ServerOptions { exec: Disabled }`

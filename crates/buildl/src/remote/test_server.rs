@@ -13,13 +13,14 @@
 //! blobs the server holds, the command runs as a process of the machine in a temporary
 //! directory with the environment variables of the `Command` and no others, and the logs and
 //! the outputs it listed are stored as blobs. An action with a blob missing is refused as the
-//! protocol asks, and the result of one that exits with 0 is kept in the action cache. The
-//! operation streams `QUEUED`, `EXECUTING` and then the answer, and `WaitExecution` streams the
+//! protocol asks, and the result of one that exits with 0 is kept in the action cache unless
+//! the action is marked `do_not_cache`. The operation streams `QUEUED`, `EXECUTING` and then the answer, and `WaitExecution` streams the
 //! rest of one the server holds. It can be told to break the next streams after their first
 //! message ([`TestServer::break_streams`]), to forget every operation
 //! ([`TestServer::forget_operations`]), to report a blob missing once, as a call error or in the
 //! answer ([`TestServer::report_missing_once`], [`TestServer::report_missing_in_status_once`]),
-//! to answer with a status instead of running ([`TestServer::status_in_response`]), and to hold
+//! to refuse one with a precondition violation of another kind
+//! ([`TestServer::report_violation_once`]), to answer with a status instead of running ([`TestServer::status_in_response`]), and to hold
 //! each action back, with its stream silent, before it runs ([`TestServer::hold_execution`]).
 //!
 //! ```
@@ -106,6 +107,12 @@ pub enum Fault {
     NotFound,
     /// `INTERNAL`.
     Internal,
+    /// `INVALID_ARGUMENT`.
+    InvalidArgument,
+    /// `FAILED_PRECONDITION`.
+    FailedPrecondition,
+    /// `DEADLINE_EXCEEDED`.
+    DeadlineExceeded,
 }
 
 impl Fault {
@@ -119,6 +126,9 @@ impl Fault {
             Self::PermissionDenied => Code::PermissionDenied,
             Self::NotFound => Code::NotFound,
             Self::Internal => Code::Internal,
+            Self::InvalidArgument => Code::InvalidArgument,
+            Self::FailedPrecondition => Code::FailedPrecondition,
+            Self::DeadlineExceeded => Code::DeadlineExceeded,
         }
     }
 
@@ -356,6 +366,15 @@ impl TestServer {
         self.shared.lock().missing_once = Some(digest.to_string());
     }
 
+    /// Makes the next `Execute` that would run an action answer `FAILED_PRECONDITION` with a
+    /// `PreconditionFailure` holding one violation of type `kind`, for example `"UNSUPPORTED"`,
+    /// whose subject names `digest` as `blobs/{hash}/{size}`. Unlike
+    /// [`TestServer::report_missing_once`] it keeps the blob. The size in the subject is that of
+    /// the blob the server holds when the call arrives, or zero when it holds none.
+    pub fn report_violation_once(&self, kind: &str, digest: &BlobDigest) {
+        self.shared.lock().violation_once = Some((kind.to_owned(), digest.to_string()));
+    }
+
     /// As [`TestServer::report_missing_once`], but the call succeeds: the `done` message carries
     /// an `ExecuteResponse` with no result whose `status` is `FAILED_PRECONDITION` and holds the
     /// `PreconditionFailure` in its details.
@@ -364,9 +383,9 @@ impl TestServer {
     }
 
     /// Makes the next `n` `Execute` calls answer with an `ExecuteResponse` whose `status` is
-    /// `code` and which holds no result. The action is not run.
-    pub fn status_in_response(&self, code: Code, n: u32) {
-        self.shared.lock().status_responses = Some((code, n));
+    /// `fault` and which holds no result. The action is not run.
+    pub fn status_in_response(&self, fault: Fault, n: u32) {
+        self.shared.lock().status_responses = Some((fault, n));
     }
 
     /// Makes every later action wait `delay` before it runs. Its `Execute` stream sends nothing
@@ -444,8 +463,10 @@ struct State {
     missing_once: Option<String>,
     /// The hash of the blob the next run is refused for in the answer.
     missing_in_status_once: Option<String>,
+    /// The kind and the blob hash of the violation the next run is refused for as a call error.
+    violation_once: Option<(String, String)>,
     /// The status the next executions answer with, and how many are left.
-    status_responses: Option<(Code, u32)>,
+    status_responses: Option<(Fault, u32)>,
     /// The wait before each action runs.
     hold: Duration,
 }
@@ -465,9 +486,7 @@ impl State {
         );
         name
     }
-}
 
-impl State {
     /// Drops the blob stored under `hash` and returns its digest as the protocol names it; the
     /// size is zero when the server holds no such blob.
     fn forget_blob(&mut self, hash: &str) -> Digest {
@@ -475,6 +494,15 @@ impl State {
         Digest {
             hash: hash.to_owned(),
             size_bytes,
+        }
+    }
+
+    /// The digest of the blob stored under `hash` as the protocol names it, with a size of zero
+    /// when the server holds no such blob. The blob stays.
+    fn named_blob(&self, hash: &str) -> Digest {
+        Digest {
+            hash: hash.to_owned(),
+            size_bytes: self.blobs.get(hash).map_or(0, |bytes| size_of(bytes)),
         }
     }
 }
@@ -541,7 +569,7 @@ impl Shared {
         };
         if let Some(code) = scripted {
             let response = ExecuteResponse {
-                status: Some(status_of(code, "scripted status")),
+                status: Some(status_of(code.code(), "scripted status")),
                 ..ExecuteResponse::default()
             };
             let name = state.open(action, Some(response));
@@ -573,6 +601,10 @@ impl Shared {
         if let Some(hash) = state.missing_once.take() {
             let missing = state.forget_blob(&hash);
             return Err(refusal_status(Refusal::Missing(vec![missing])));
+        }
+        if let Some((kind, hash)) = state.violation_once.take() {
+            let subject = state.named_blob(&hash);
+            return Err(precondition_error(&violation_status(&kind, &[subject])));
         }
         if let Some(hash) = state.missing_in_status_once.take() {
             let missing = state.forget_blob(&hash);
@@ -707,13 +739,14 @@ impl Shared {
             match found {
                 None => return Err(Status::not_found(format!("no operation {name}"))),
                 Some((action, Some(response))) => {
+                    let response = Any::from_msg(&response).map_err(|error| {
+                        Status::internal(format!("the response cannot be encoded: {error}"))
+                    })?;
                     return Ok(Operation {
                         name: name.to_owned(),
                         metadata: metadata_of(execution_stage::Value::Completed, &action),
                         done: true,
-                        result: Any::from_msg(&response)
-                            .ok()
-                            .map(operation::Result::Response),
+                        result: Some(operation::Result::Response(response)),
                     });
                 }
                 Some((_, None)) => tokio::time::sleep(OPERATION_POLL).await,
@@ -835,25 +868,35 @@ fn metadata_of(stage: execution_stage::Value, action: &Digest) -> Option<Any> {
 fn refusal_status(refusal: Refusal) -> Status {
     match refusal {
         Refusal::Malformed(message) => Status::invalid_argument(message),
-        Refusal::Missing(missing) => {
-            let status = missing_status(&missing);
-            Status::with_details(
-                Code::FailedPrecondition,
-                status.message.clone(),
-                status.encode_to_vec().into(),
-            )
-        }
+        Refusal::Missing(missing) => precondition_error(&missing_status(&missing)),
     }
+}
+
+/// The `FAILED_PRECONDITION` call error that carries `status`, a `google.rpc.Status`, in its
+/// details.
+fn precondition_error(status: &rpc::Status) -> Status {
+    Status::with_details(
+        Code::FailedPrecondition,
+        status.message.clone(),
+        status.encode_to_vec().into(),
+    )
 }
 
 /// The `FAILED_PRECONDITION` status whose details hold a `PreconditionFailure` with one
 /// `MISSING` violation for each of `missing`.
 fn missing_status(missing: &[Digest]) -> rpc::Status {
+    violation_status("MISSING", missing)
+}
+
+/// The `FAILED_PRECONDITION` status whose details hold a `PreconditionFailure` with one
+/// violation of type `kind` for each of `subjects`, each naming its blob as
+/// `blobs/{hash}/{size}`.
+fn violation_status(kind: &str, subjects: &[Digest]) -> rpc::Status {
     let failure = rpc::PreconditionFailure {
-        violations: missing
+        violations: subjects
             .iter()
             .map(|digest| rpc::precondition_failure::Violation {
-                r#type: "MISSING".to_owned(),
+                r#type: kind.to_owned(),
                 subject: format!("blobs/{}/{}", digest.hash, digest.size_bytes),
                 description: String::new(),
             })
@@ -861,7 +904,11 @@ fn missing_status(missing: &[Digest]) -> rpc::Status {
     };
     rpc::Status {
         code: i32::from(Code::FailedPrecondition),
-        message: "blobs the action needs are missing".to_owned(),
+        message: if kind == "MISSING" {
+            "blobs the action needs are missing".to_owned()
+        } else {
+            format!("the action cannot be run: {kind}")
+        },
         details: Any::from_msg(&failure).ok().into_iter().collect(),
     }
 }
@@ -1968,8 +2015,8 @@ mod tests {
     fn an_action_past_its_timeout_is_deadline_exceeded() {
         let fixture = Fixture::new();
         let timeout = prost_types::Duration {
-            seconds: 0,
-            nanos: 800_000_000,
+            seconds: 3,
+            nanos: 0,
         };
         let action = fixture.action(
             &command("printf partial; exec sleep 30", &[]),
@@ -2261,7 +2308,7 @@ mod tests {
     fn a_status_in_the_response_is_sent_n_times() {
         let fixture = Fixture::new();
         let action = fixture.action(&command("printf hi > out", &["out"]), &[], None);
-        fixture.server.status_in_response(Code::Unavailable, 2);
+        fixture.server.status_in_response(Fault::Unavailable, 2);
 
         for _ in 0..2 {
             let messages = fixture.execute(&action, false).unwrap();
@@ -2282,7 +2329,7 @@ mod tests {
     fn a_held_execution_sends_nothing_until_it_runs() {
         let fixture = Fixture::new();
         let action = fixture.action(&command("printf hi > out", &["out"]), &[], None);
-        let delay = Duration::from_millis(400);
+        let delay = Duration::from_secs(2);
         fixture.server.hold_execution(delay);
         let mut client = fixture.execution();
 
@@ -2308,7 +2355,7 @@ mod tests {
         });
 
         assert!(
-            headers_after < delay,
+            headers_after < Duration::from_secs(1),
             "headers came after {headers_after:?}"
         );
         assert!(
@@ -2338,5 +2385,74 @@ mod tests {
         assert_eq!(fixture.wait(&name).unwrap_err().code(), Code::Internal);
         assert_eq!(fixture.wait(&name).unwrap_err().code(), Code::Internal);
         assert_eq!(fixture.server.calls_to(Method::WaitExecution).len(), 2);
+    }
+
+    #[test]
+    fn a_do_not_cache_action_is_run_again_instead_of_answered_from_the_cache() {
+        let fixture = Fixture::new();
+        let script = command("printf hi > out", &["out"]);
+        let command_digest = fixture.store(&script);
+        let action = fixture.store(&Action {
+            command_digest: Some(command_digest),
+            do_not_cache: true,
+            ..Action::default()
+        });
+
+        let first = response_of(&fixture.execute(&action, false).unwrap());
+        let second = response_of(&fixture.execute(&action, false).unwrap());
+
+        assert_eq!(first.result.unwrap().exit_code, 0);
+        assert!(!first.cached_result);
+        assert!(!second.cached_result, "a do_not_cache result is not kept");
+        assert_eq!(second.result.unwrap().exit_code, 0);
+    }
+
+    #[test]
+    fn execute_on_a_server_with_execution_disabled_is_unimplemented() {
+        let fixture = Fixture::with(ServerOptions {
+            exec: Exec::Disabled,
+            ..ServerOptions::default()
+        });
+        let action = fixture.action(&command("true", &[]), &[], None);
+
+        let refusal = fixture.execute(&action, false).unwrap_err();
+
+        assert_eq!(refusal.code(), Code::Unimplemented);
+    }
+
+    #[test]
+    fn a_violation_of_another_kind_is_reported_as_given() {
+        let fixture = Fixture::new();
+        let input: &[u8] = b"an input";
+        let action = fixture.action(&command("cat in > out", &["out"]), &[("in", input)], None);
+        let digest = BlobDigest::of(input);
+        fixture.server.report_violation_once("UNSUPPORTED", &digest);
+
+        let refusal = fixture.execute(&action, false).unwrap_err();
+
+        assert_eq!(refusal.code(), Code::FailedPrecondition);
+        let status = rpc::Status::decode(refusal.details()).unwrap();
+        assert_eq!(status.code, i32::from(Code::FailedPrecondition));
+        assert_eq!(status.details.len(), 1);
+        assert_eq!(
+            status.details[0].type_url,
+            rpc::PreconditionFailure::type_url()
+        );
+        let failure = rpc::PreconditionFailure::decode(status.details[0].value.as_slice()).unwrap();
+        let wanted = proto_digest(input);
+        assert_eq!(failure.violations.len(), 1);
+        assert_eq!(failure.violations[0].r#type, "UNSUPPORTED");
+        assert_eq!(
+            failure.violations[0].subject,
+            format!("blobs/{}/{}", wanted.hash, wanted.size_bytes)
+        );
+        assert_eq!(
+            fixture.server.blob(&digest),
+            Some(input.to_vec()),
+            "the blob is kept"
+        );
+
+        let response = response_of(&fixture.execute(&action, false).unwrap());
+        assert_eq!(response.result.unwrap().exit_code, 0);
     }
 }

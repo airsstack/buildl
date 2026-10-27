@@ -39,7 +39,7 @@ const POLL: Duration = Duration::from_millis(5);
 const NO_EXIT: i32 = -1;
 
 /// The protocol's digest of `bytes`.
-pub(super) fn wire_digest(bytes: &[u8]) -> Digest {
+fn wire_digest(bytes: &[u8]) -> Digest {
     Digest {
         hash: BlobDigest::of(bytes).to_string(),
         size_bytes: i64::try_from(bytes.len()).unwrap_or(i64::MAX),
@@ -85,7 +85,8 @@ pub(super) struct Job {
     files: Blobs,
     /// The hash of the root `Directory`; `None` for an action without inputs.
     root: Option<String>,
-    /// The longest the process may run.
+    /// The longest the process may run. Only the process itself is killed at the limit, not
+    /// what it started, so a command meant to outlast it should `exec` its last program.
     timeout: Option<Duration>,
     /// Whether the action asks that its result not be kept.
     do_not_cache: bool,
@@ -109,6 +110,10 @@ impl Job {
     }
 
     /// Runs the command in a fresh temporary directory, which is removed afterwards.
+    ///
+    /// A command that runs past its limit is killed and the run is reported as timed out. Only
+    /// the direct child is killed: a program that command started outlives it, so a command
+    /// meant to time out should `exec` its last program rather than wait for it.
     ///
     /// # Errors
     ///
@@ -281,7 +286,7 @@ pub(super) fn prepare(blobs: &Blobs, action: &Digest) -> Result<Job, Refusal> {
             "the command has no arguments".to_owned(),
         ));
     }
-    if !is_relative(&command.working_directory, true) {
+    if !is_relative_directory(&command.working_directory) {
         return Err(Refusal::Malformed(format!(
             "the working directory {:?} leaves the input root",
             command.working_directory
@@ -376,7 +381,7 @@ fn outputs_of(command: &Command) -> Result<Vec<String>, Refusal> {
     } else {
         command.output_paths.clone()
     };
-    if let Some(path) = outputs.iter().find(|path| !is_relative(path, false)) {
+    if let Some(path) = outputs.iter().find(|path| !is_relative_path(path)) {
         return Err(Refusal::Malformed(format!(
             "the output path {path:?} leaves the working directory"
         )));
@@ -407,12 +412,16 @@ fn check_name(name: &str) -> Result<(), Refusal> {
     }
 }
 
-/// Whether `path` stays inside the directory it is joined to; an empty path does when `empty`.
-fn is_relative(path: &str, empty: bool) -> bool {
-    if path.is_empty() {
-        return empty;
-    }
+/// Whether `path` is one or more ordinary components, so that it stays inside the directory it
+/// is joined to. An empty path is not.
+fn is_relative_path(path: &str) -> bool {
     path.split('/').all(is_name)
+}
+
+/// Whether `path` names a directory inside the one it is joined to: the empty path, which is
+/// that directory itself, or a relative path.
+fn is_relative_directory(path: &str) -> bool {
+    path.is_empty() || is_relative_path(path)
 }
 
 /// What a command left at its output paths.
@@ -809,6 +818,21 @@ mod tests {
     }
 
     #[test]
+    fn the_directories_leading_to_an_output_are_created() {
+        let mut command = sh("printf deep > sub/o");
+        command.output_paths = vec!["sub/o".to_owned()];
+
+        let execution = job_for(&command).run().unwrap();
+
+        assert_eq!(execution.result.exit_code, 0);
+        assert_eq!(execution.result.output_files[0].path, "sub/o");
+        assert_eq!(
+            execution.result.output_files[0].digest,
+            Some(wire_digest(b"deep"))
+        );
+    }
+
+    #[test]
     fn a_process_past_its_limit_is_killed_and_its_logs_kept() {
         let mut blobs = Blobs::new();
         let command = put_message(&mut blobs, &sh("printf early; exec sleep 30"));
@@ -817,8 +841,8 @@ mod tests {
             &Action {
                 command_digest: Some(command),
                 timeout: Some(prost_types::Duration {
-                    seconds: 0,
-                    nanos: 800_000_000,
+                    seconds: 3,
+                    nanos: 0,
                 }),
                 ..Action::default()
             },

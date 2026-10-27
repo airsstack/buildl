@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-26
 depends-on: [02, 03]
 built-on: 0e431e5caec9
@@ -79,7 +79,8 @@ operation gets a name; `WaitExecution(name)` streams the rest of a held operatio
 - `report_missing_in_status_once(digest)` — the same, but as `done` with an `ExecuteResponse`
   whose `status` is `FAILED_PRECONDITION` carrying the `PreconditionFailure` detail
   (`REAPI:81-84`: errors while running are reported in that field)
-- `status_in_response(code, n)` — the next `n` `ExecuteResponse`s carry `status` `code` and no result
+- `status_in_response(fault, n)` — the next `n` `ExecuteResponse`s carry `status` with the code of `fault` (buildl's `Fault`, so no tonic type reaches a caller) and no result
+- `report_violation_once(kind, digest)` — the next `Execute` answers `FAILED_PRECONDITION` with one violation of type `kind` for that blob, as a call error; the blob is kept
 - `hold_execution(Duration)` — each action waits this long before it runs, the stream sending nothing meanwhile
 - `fail_times(Method::Execute, fault, n)` and `fail(Method::Execute, fault)` from plan 03 apply to `Execute` and `WaitExecution` as to any call
 - `calls_to(Method::Execute)` (`:230`) counts executions
@@ -88,7 +89,8 @@ operation gets a name; `WaitExecution(name)` streams the rest of a held operatio
 `a_broken_stream_ends_before_done`, `a_wait_execution_stream_can_be_broken_too`,
 `forgotten_operations_are_not_found`, `a_blob_reported_missing_once_is_found_after_upload`,
 `a_blob_reported_missing_in_the_status_carries_the_detail`, `a_status_in_the_response_is_sent_n_times`,
-`a_held_execution_sends_nothing_until_it_runs`, `an_execute_can_be_failed_like_any_call`.
+`a_held_execution_sends_nothing_until_it_runs`, `an_execute_can_be_failed_like_any_call`,
+`a_violation_of_another_kind_is_reported_as_given`.
 
 **Done when:** `cargo test -p buildl --features test-server remote::test_server` passes;
 `cargo make dod` green. Commit `test(buildl): scripted execution failures in the test server`.
@@ -107,3 +109,30 @@ operation gets a name; `WaitExecution(name)` streams the rest of a held operatio
 
 `cargo make dod` green; every test named above runs under `--features test-server` in the `dod`
 task (`Makefile.toml:91` runs `--all-features`).
+
+## Review findings
+
+One review over both tasks (`02bdfb5..9551ada`); spec compliant, `cargo make dod` green; blocking: none. All closed in one fix round:
+- api — `status_in_response` took `tonic::Code`, a tonic type in the public test API — fixed: it takes `Fault`, which gains `InvalidArgument`, `FailedPrecondition`, `DeadlineExceeded`
+- risk — both timeout tests gave the action 800 ms before checking its stdout — fixed: 3 s; the headers-before-body test holds 2 s and allows 1 s for headers
+- plan 08 — `a_precondition_failure_with_another_violation_is_a_failure` had no switch to set it up — fixed: `report_violation_once(kind, digest)` with test `a_violation_of_another_kind_is_reported_as_given`; plan 08 amended to name it
+- test-coverage — output parent directories, `do_not_cache`, `Execute` on a disabled server had no test — fixed: `the_directories_leading_to_an_output_are_created`, `a_do_not_cache_action_is_run_again_instead_of_answered_from_the_cache`, `execute_on_a_server_with_execution_disabled_is_unimplemented`
+- docs — only the direct child is killed on timeout, so a command meant to time out `exec`s its last program — documented on `Job::run`; plan 08's deadline test amended to say so
+- style — a private `wire_digest`; `is_relative(path, bool)` split into two named functions; two `impl State` blocks merged; an `Any` encoding failure is an `INTERNAL` error, never a `done` with no result; module doc names `do_not_cache`
+- kept — the server runs any command a loopback client sends; it exists only under the `test-server` feature, which only dev-dependencies enable
+- kept — no helper stores a non-zero `ActionResult`; plan 08 can store one with `UpdateActionResult` inside the crate
+
+Gates after the fix: `cargo test -p buildl --features test-server remote::test_` → 50 passed; `cargo make dod` → Build Done; `cargo make guard-adapter-isolation` → OK. Named tests: `conformance.py … 07` → 9/9 bullet-listed, and every Task 2 name present by `grep -n "fn <name>"`.
+
+## Probe results
+
+- generated server halves — `grep -n "pub mod execution_server" generated/reapi/build.bazel.remote.execution.v2.rs` → `:3233`, under the `test-server` feature; `PreconditionFailure` at `google.rpc.rs:288` — as planned
+- `tempfile` is a normal `[dependencies]` entry of `crates/buildl/Cargo.toml` (`:36`) — as planned
+- tokio has only `rt`, `rt-multi-thread`, `time` (`Cargo.toml:90`) — so the action runs with `std::process` in `spawn_blocking`, the timeout enforced by `try_wait` and kill; no feature added
+
+## Deviations
+
+- stream shape fixed for the client plan: every stream sends a non-done stage message first (Execute: `QUEUED`, `EXECUTING`, then `done`; a cache hit: `CACHE_CHECK`, then `done`; `WaitExecution`: the current stage, then `done`), so `break_streams` never delivers `done`
+- missing inputs at `Execute` are a call error, not a `status` in the response: "Errors discovered during creation of the `Operation` will be reported as gRPC Status errors" (`remote_execution.proto:80-81`)
+- `Exec::Disabled` advertises `exec_enabled = false` and answers `Execute` with `UNIMPLEMENTED`
+- added `report_violation_once` (review, above)
