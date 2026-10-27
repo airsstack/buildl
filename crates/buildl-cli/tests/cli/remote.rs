@@ -1,5 +1,5 @@
-//! The binary against a remote cache: the summary, the switches, the usage errors, `doctor`, and
-//! the token kept out of every output.
+//! The binary against a remote cache: the summary, the switches, the usage errors, `doctor`, the
+//! token kept out of every output, and remote execution end to end.
 //!
 //! Each test runs the built binary in workspaces whose `buildl.toml` names the in-memory server
 //! of `buildl::remote::test_server`, so what a build sent to the cache and what it asked of it
@@ -10,9 +10,10 @@ use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 
-use buildl::remote::test_server::{Method, ServerOptions, TestServer, TlsIdentity};
+use buildl::remote::test_server::{Exec, Fault, Method, ServerOptions, TestServer, TlsIdentity};
 
 use crate::common::{code, manifest, run, sandboxed_manifest, stderr, stdout, workspace, write};
+use crate::watch::{BUILDING, WAITING, Watching};
 
 /// One target, `//:copy`, that copies `a.txt`.
 const COPY: &str =
@@ -366,4 +367,263 @@ fn a_bad_upload_variable_exits_as_usage() {
         stderr(&built)
     );
     assert!(server.calls().is_empty(), "{:?}", server.calls());
+}
+
+/// Two targets, `//:one` and `//:two`, that copy `a.txt`.
+const TWO: &str = concat!(
+    "buildl.target(\"one\", { inputs = { \"a.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+    "buildl.target(\"two\", { inputs = { \"a.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+);
+
+/// The environment variables a run is given.
+type Variables<'a> = &'a [(&'a str, &'a OsStr)];
+
+/// A workspace of [`TWO`] that runs in the sandbox, with `remote` as its `[remote]` table.
+fn two_targets(remote: &str) -> (tempfile::TempDir, PathBuf) {
+    let (dir, root) = checkout(&sandboxed_manifest(&["cp"]), remote);
+    write(&root, "build.lua", TWO);
+    (dir, root)
+}
+
+/// The `[remote]` lines that name `server` and turn execution on.
+fn executing_at(server: &TestServer) -> String {
+    format!("url = \"{}\"\nexecute = true\n", url_of(server))
+}
+
+#[test]
+fn remote_execute_runs_every_target_on_the_server() {
+    let server = TestServer::start().unwrap();
+    let (_dir, root) = two_targets(&format!("url = \"{}\"\n", url_of(&server)));
+
+    let built = run(&root, &["build", "--remote-execute"], &[]);
+
+    assert_eq!(code(&built), 0, "{}", stderr(&built));
+    assert_eq!(stderr(&built), "2 remote\n");
+    assert_eq!(server.calls_to(Method::Execute).len(), 2);
+    assert_eq!(fs::read(root.join("out/one")).unwrap(), b"a\n");
+    assert_eq!(fs::read(root.join("out/two")).unwrap(), b"a\n");
+}
+
+#[test]
+fn a_second_checkout_fetches_what_the_server_ran() {
+    let server = TestServer::start().unwrap();
+    let remote = format!("url = \"{}\"\n", url_of(&server));
+    let (_first_dir, first) = two_targets(&remote);
+    let (_second_dir, second) = two_targets(&remote);
+    assert_eq!(code(&run(&first, &["build", "--remote-execute"], &[])), 0);
+
+    let fetched = run(&second, &["build"], &[]);
+
+    assert_eq!(code(&fetched), 0, "{}", stderr(&fetched));
+    assert_eq!(stderr(&fetched), "2 fetched\n");
+    assert_eq!(server.calls_to(Method::Execute).len(), 2);
+    for name in ["out/one", "out/two"] {
+        assert_eq!(
+            fs::read(first.join(name)).unwrap(),
+            fs::read(second.join(name)).unwrap()
+        );
+    }
+}
+
+#[test]
+fn the_manifest_switch_runs_remotely() {
+    let server = TestServer::start().unwrap();
+    let (_dir, root) = two_targets(&executing_at(&server));
+
+    let built = run(&root, &["build"], &[]);
+
+    assert_eq!(code(&built), 0, "{}", stderr(&built));
+    assert_eq!(stderr(&built), "2 remote\n");
+    assert_eq!(server.calls_to(Method::Execute).len(), 2);
+}
+
+#[test]
+fn remote_execution_under_bare_exits_as_usage_from_each_source() {
+    let server = TestServer::start().unwrap();
+    let url = url_of(&server);
+    let cases: [(&str, &[&str], Variables); 3] = [
+        ("url = \"URL\"\nexecute = true\n", &["build"], &[]),
+        (
+            "url = \"URL\"\n",
+            &["build"],
+            &[("BUILDL_REMOTE_EXECUTE", OsStr::new("1"))],
+        ),
+        ("url = \"URL\"\n", &["build", "--remote-execute"], &[]),
+    ];
+    for (remote, args, variables) in cases {
+        let (_dir, root) = checkout(&manifest(&["cp"]), &remote.replace("URL", &url));
+
+        let built = run(&root, args, variables);
+
+        assert_eq!(code(&built), 2, "{args:?}: {}", stderr(&built));
+        assert!(stderr(&built).contains("bare"), "{}", stderr(&built));
+        assert!(!root.join("out").exists(), "something was built");
+    }
+    assert!(server.calls().is_empty(), "{:?}", server.calls());
+}
+
+#[test]
+fn a_bare_manifest_that_executes_still_checks_plans_and_doctors() {
+    let server = TestServer::start().unwrap();
+    let (_dir, root) = checkout(&manifest(&["cp"]), &executing_at(&server));
+
+    for command in ["check", "plan", "doctor"] {
+        let output = run(&root, &[command], &[]);
+
+        assert_eq!(code(&output), 0, "{command}: {}", stderr(&output));
+    }
+    assert!(server.calls().is_empty(), "{:?}", server.calls());
+}
+
+#[test]
+fn every_execution_usage_error_exits_as_usage() {
+    let server = TestServer::start().unwrap();
+    let (_dir, root) = sandboxed(&url_of(&server));
+    let (_bare_dir, no_table) = workspace(&[
+        ("buildl.toml", &sandboxed_manifest(&["cp"])),
+        ("build.lua", COPY),
+        ("a.txt", "a\n"),
+    ]);
+    let cases: [(&Path, &[&str], Variables, &str); 5] = [
+        (
+            &root,
+            &["build", "--remote-execute", "--no-remote"],
+            &[],
+            "--no-remote cannot be combined with --remote-execute",
+        ),
+        (
+            &root,
+            &["build", "--remote-execute", "--no-remote-execute"],
+            &[],
+            "--remote-execute cannot be combined with --no-remote-execute",
+        ),
+        (
+            &no_table,
+            &["build", "--remote-execute"],
+            &[],
+            "need a [remote] table in buildl.toml",
+        ),
+        (
+            &root,
+            &["build", "--remote-jobs", "4"],
+            &[],
+            "--remote-jobs needs remote execution",
+        ),
+        (
+            &root,
+            &["build"],
+            &[("BUILDL_REMOTE_EXECUTE", OsStr::new("yes"))],
+            "BUILDL_REMOTE_EXECUTE",
+        ),
+    ];
+    for (start, args, variables, message) in cases {
+        let built = run(start, args, variables);
+
+        assert_eq!(code(&built), 2, "{args:?}: {}", stderr(&built));
+        assert!(
+            stderr(&built).contains(message),
+            "{args:?}: {}",
+            stderr(&built)
+        );
+        assert!(!start.join("out").exists(), "something was built");
+    }
+    assert!(server.calls().is_empty(), "{:?}", server.calls());
+}
+
+#[test]
+fn a_server_that_cannot_execute_warns_and_builds_locally() {
+    let server = TestServer::start_with(ServerOptions {
+        exec: Exec::Disabled,
+        ..ServerOptions::default()
+    })
+    .unwrap();
+    let (_dir, root) = two_targets(&executing_at(&server));
+
+    let built = run(&root, &["build"], &[]);
+
+    assert_eq!(code(&built), 0, "{}", stderr(&built));
+    let text = stderr(&built);
+    let warnings: Vec<&str> = text
+        .lines()
+        .filter(|line| line.starts_with("warning:"))
+        .collect();
+    assert_eq!(warnings.len(), 1, "{text}");
+    assert!(warnings[0].contains("execute"), "{text}");
+    assert!(text.contains("2 built"), "{text}");
+    assert!(!text.contains("remote\n"), "{text}");
+    assert_eq!(server.calls_to(Method::Execute).len(), 0);
+}
+
+#[test]
+fn a_strict_execute_failure_exits_as_infrastructure() {
+    let server = TestServer::start().unwrap();
+    server.fail(Method::Execute, Fault::PermissionDenied);
+    let (_dir, root) = two_targets(&format!("{}retries = 0\n", executing_at(&server)));
+
+    let built = run(&root, &["build", "--remote-strict"], &[]);
+
+    assert_eq!(code(&built), 3, "{}", stderr(&built));
+}
+
+#[test]
+fn a_remote_action_failure_fails_the_build_as_an_action_failure() {
+    let server = TestServer::start().unwrap();
+    let (_dir, root) = checkout(&sandboxed_manifest(&["sh"]), &executing_at(&server));
+    write(
+        &root,
+        "build.lua",
+        "buildl.target(\"bad\", { run = { \"sh\", \"-c\", \"echo printed-remotely; exit 1\" } })\n",
+    );
+
+    let built = run(&root, &["build"], &[]);
+
+    assert_eq!(code(&built), 1, "{}", stderr(&built));
+    assert!(
+        stderr(&built).contains("FAILED //:bad: action failure"),
+        "{}",
+        stderr(&built)
+    );
+    let log = run(&root, &["log", "bad"], &[]);
+    assert_eq!(code(&log), 0, "{}", stderr(&log));
+    assert!(
+        format!("{}{}", stdout(&log), stderr(&log)).contains("printed-remotely"),
+        "{}{}",
+        stdout(&log),
+        stderr(&log)
+    );
+}
+
+#[test]
+fn test_runs_tests_remotely() {
+    let server = TestServer::start().unwrap();
+    let (_dir, root) = checkout(&sandboxed_manifest(&["sh"]), &executing_at(&server));
+    write(
+        &root,
+        "build.lua",
+        concat!(
+            "buildl.test(\"one\", { run = { \"sh\", \"-c\", \"echo one\" } })\n",
+            "buildl.test(\"two\", { run = { \"sh\", \"-c\", \"echo two\" } })\n",
+        ),
+    );
+
+    let tested = run(&root, &["test"], &[]);
+
+    assert_eq!(code(&tested), 0, "{}", stderr(&tested));
+    assert!(
+        stderr(&tested).contains("tests: 2 passed (2 remote)"),
+        "{}",
+        stderr(&tested)
+    );
+    assert_eq!(server.calls_to(Method::Execute).len(), 2);
+}
+
+#[test]
+fn watch_takes_remote_execute() {
+    let server = TestServer::start().unwrap();
+    let (_dir, root) = two_targets(&format!("url = \"{}\"\n", url_of(&server)));
+
+    let watch = Watching::start(&root, &["watch", "--remote-execute"]);
+
+    assert_eq!(watch.until(WAITING), [BUILDING, "2 remote", WAITING]);
+    assert_eq!(server.calls_to(Method::Execute).len(), 2);
 }
