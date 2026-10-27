@@ -1247,3 +1247,57 @@ fn build_after_fetch_succeeds_offline() {
     assert_eq!(code(&built), 0, "{}", stderr(&built));
     assert_eq!(fs::read(root.join("out/hello-out")).unwrap(), b"hello\n");
 }
+
+/// One target, `//:listing`, whose output is what `printf` prints.
+const LISTING: &str =
+    "buildl.target(\"listing\", { run = { \"printf\", \"one\\ntwo\\n\" }, stdout = true })\n";
+
+#[test]
+fn a_stdout_target_with_two_outputs_exits_5() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["printf"])),
+        (
+            "build.lua",
+            "buildl.target(\"listing\", { outputs = { \"a\", \"b\" }, run = { \"printf\", \"x\" }, stdout = true })\n",
+        ),
+    ]);
+    let (status, said) = failed(&root, &["build"]);
+    assert_eq!(status, 5, "{said}");
+    assert_eq!(
+        said,
+        "error: build.lua: declaration #0: invalid stdout: target //:listing declares 2 outputs; a target whose output is its stdout declares exactly one\n"
+    );
+    assert!(!root.join("out").exists());
+}
+
+#[test]
+fn a_stdout_target_whose_command_writes_the_path_exits_1() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["sh"])),
+        (
+            "build.lua",
+            "buildl.target(\"listing\", { run = { \"sh\", \"-c\", \"printf x > \\\"$1\\\"; printf y\", \"sh\", \"$out\" }, stdout = true })\n",
+        ),
+    ]);
+    let (status, said) = failed(&root, &["build"]);
+    assert_eq!(status, 1, "{said}");
+    assert!(
+        said.contains("output listing is written from stdout, and the command wrote it too"),
+        "{said}"
+    );
+}
+
+#[test]
+fn log_shows_what_a_stdout_target_printed() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["printf"])),
+        ("build.lua", LISTING),
+    ]);
+    assert_eq!(code(&run(&root, &["build"], &[])), 0);
+    assert_eq!(fs::read(root.join("out/listing")).unwrap(), b"one\ntwo\n");
+
+    let output = run(&root, &["log", "listing"], &[]);
+
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    assert_eq!(stdout(&output), "one\ntwo\n");
+}

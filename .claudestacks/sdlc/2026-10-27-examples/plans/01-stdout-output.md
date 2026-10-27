@@ -250,8 +250,9 @@ by argv only (`printf`, `sh` in tests only — architecture-building-blocks §8)
 
 **Proof:** written first, seen failing, then passing —
 - e2e `a_stdout_output_is_built_twice_byte_identical` — under `sandbox`, `out/<name>` holds the
-  printed bytes, and a second checkout builds the same bytes; `the_same_under_bare`;
-  `log_still_shows_what_a_stdout_target_printed`.
+  printed bytes, and a second checkout builds the same bytes; `the_same_under_bare` — two `bare`
+  checkouts are identical and match `sandbox`'s outputs;
+  `log_still_shows_what_a_stdout_target_printed`; `a_second_build_is_served_from_the_cache`.
 - CLI `a_stdout_target_with_two_outputs_exits_5`;
   `a_stdout_target_whose_command_writes_the_path_exits_1` — stderr names the output and says it is
   written from stdout; `log_shows_what_a_stdout_target_printed` — `buildl log <target>` prints

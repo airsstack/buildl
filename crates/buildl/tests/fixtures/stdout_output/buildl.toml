@@ -1,0 +1,15 @@
+[workspace]
+name   = "stdout_output"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["printf"]
+env.read = []
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
+
+[execution]
+workers  = 1
+timeout  = "1m"
