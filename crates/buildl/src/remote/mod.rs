@@ -7,7 +7,8 @@
 //! REAPI messages, the input root of an action, and [`Reapi`], the remote cache built from them,
 //! and [`Remote`], the cache a run is given: that one or none; and [`token_is_present`], which
 //! says whether the token the settings name can be found. Behind the `test-server` feature it
-//! also holds an in-memory server to test against.
+//! also holds an in-memory server to test against, which stores blobs and action results and
+//! runs the actions it is asked to execute.
 
 mod capabilities;
 mod channel;
@@ -21,6 +22,8 @@ mod proto;
 mod reapi;
 mod retry;
 mod runtime;
+#[cfg(feature = "test-server")]
+mod test_execution;
 #[cfg(feature = "test-server")]
 pub mod test_server;
 #[cfg(all(test, feature = "test-server"))]
