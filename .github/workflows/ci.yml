@@ -169,3 +169,53 @@ jobs:
             echo "generated/reapi/ is missing from the buildl package" >&2
             exit 1
           }
+
+  remote-execution:
+    name: Remote execution on NativeLink
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # The in-memory test server the gate uses is buildl's own reading of the
+    # Remote Execution API; this job runs the binary against a real server.
+    # NativeLink's prebuilt image is x86_64 only and its worker matches the
+    # runner's OSFamily and ISA, so the job is Linux only. Its published image
+    # holds no shell, so ci/nativelink.Dockerfile puts its static binary on a
+    # Debian base whose sh and coreutils the actions run.
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the latest stable Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: remote-execution
+
+      - name: Start NativeLink
+        run: |
+          docker build -f ci/nativelink.Dockerfile -t buildl-ci-nativelink ci
+          docker run -d --name nativelink -p 50051:50051 \
+            -v "$PWD/ci/nativelink.json5:/config" buildl-ci-nativelink /config
+
+      - name: Wait for NativeLink to listen
+        run: |
+          for _ in $(seq 60); do
+            if (echo > /dev/tcp/127.0.0.1/50051) 2>/dev/null; then exit 0; fi
+            sleep 1
+          done
+          echo "NativeLink did not listen on 50051 within 60 s" >&2
+          exit 1
+
+      - name: The real-server tests
+        env:
+          BUILDL_TEST_REAPI_URL: grpc://127.0.0.1:50051
+        # Each server test prints one `real server:` line when it runs; three such
+        # lines prove none of them skipped.
+        run: |
+          cargo test -p buildl-cli --test real_remote -- --nocapture 2>&1 | tee real_remote.log
+          test "${PIPESTATUS[0]}" -eq 0
+          ran=$(grep -c '^real server: ' real_remote.log)
+          test "$ran" -eq 3 || { echo "expected 3 server tests to run, $ran did" >&2; exit 1; }
+
+      - name: NativeLink's log
+        if: failure()
+        run: docker logs nativelink
