@@ -127,10 +127,11 @@ The core incremental mechanism, deliberately aligned with the Remote Execution A
 ```mermaid
 %% Action key composition
 graph TD
-    CMD["Command<br/>argv template"] --> KEY["Action key<br/>sha256 of all four"]
+    CMD["Command<br/>argv template"] --> KEY["Action key<br/>sha256 of all five"]
     IN["Input hashes<br/>via the stat cache"] --> KEY
     DEP["Dep output hashes<br/>early cutoff built in"] --> KEY
     ENV["Env values<br/>granted names only"] --> KEY
+    SET["Tool fingerprints, settings,<br/>network, output source, os/arch"] --> KEY
     KEY --> CMP{"equals cached key?"}
     CMP -- yes --> CLEAN["Clean — served from cache"]
     CMP -- no --> DIRTY["Dirty — plus the reason why"]
