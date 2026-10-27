@@ -1,9 +1,9 @@
 ---
-status: executing
+status: done
 created: 2026-10-26
 depends-on: [02, 03, 04, 05, 07]
-built-on: 75312efc6398
-disproves: 0e431e5caec9
+built-on: c7841e3774e8
+disproves: 75312efc6398
 ---
 
 # REAPI Execute Implementation Plan
@@ -16,8 +16,8 @@ resuming with `WaitExecution` and re-uploading missing blobs; `Reapi::execute`
 (`remote/reapi.rs:327`, the stub of plan 05) describes the action, uploads what the server lacks
 by reusing the upload's input reading (`read_inputs`, `:266`, and `write`, `:291`) without
 outputs, logs or `UpdateActionResult`, calls `execute`, and turns the `ExecuteResponse` into an
-`Executed`. Every call goes through the plan 03 `Retry`, and each stream message counts as
-progress. The whole of one execution is bounded by `queue_timeout + [execution] timeout`
+`Executed`. Every call goes through the plan 03 `Retry`, and a stream that delivers messages
+and then ends or breaks before `done` counts as progress (spec §5). The whole of one execution is bounded by `queue_timeout + [execution] timeout`
 (spec §4); milestone 6's `[remote] timeout` keeps bounding the connection, unary calls and
 ByteStream messages, and not the silence between `Execute` stream messages.
 
@@ -65,15 +65,20 @@ Commit `feat(buildl): check that the server can execute`.
 
 **Files:** `execution.rs`, `mod.rs`, `client.rs`, `error.rs`.
 
-**Change:** `Client::execute(action_digest, upload_missing)` sends `ExecuteRequest` with the
+**Change:** `Client::execute(action_digest, limit, supply)` sends `ExecuteRequest` with the
 instance, the digest, `skip_cache_lookup = false` (spec §1) and the SHA-256 digest function, and
 reads `Operation`s (`ops.proto:121-156`) until `done`. It owns the one `Retry` budget of the
 execution (plan 03), so every retry below counts against `retries` in one place;
-`upload_missing` is the caller's callback that sends the blobs a `MISSING` answer names:
-- every message is progress for the `Retry` (spec §5), through the progress handle plan 03's
-  `Retry::run` hands the operation;
+`supply` is the caller's callback that hands over the bytes of the blobs a `MISSING` answer
+names, and `Client::execute` sends them itself (a callback that sent them would nest `block_on`
+inside the runtime); a `supply` error ends the execution as `ExecuteError::Supply`:
+- a stream that delivers messages and then ends or breaks before `done` is progress for the
+  `Retry` (spec §5, as amended), through the progress handle plan 03's `Retry::run` hands the
+  operation; a stream that reaches `done` with a retried status is not;
 - a stream that ends or breaks before `done` calls `WaitExecution(name)` (`REAPI:122-136`); its
-  `NOT_FOUND` calls `Execute` again (`REAPI:132-135`); each uses one retry;
+  `NOT_FOUND` calls `Execute` again (`REAPI:132-135`); each uses one retry. A break is a failure,
+  after a message, with a retried code, or with `UNKNOWN` or `INTERNAL`, which uses one retry
+  without resetting the count (spec §4 step 3, as amended);
 - `FAILED_PRECONDITION` whose `google.rpc.Status` details hold a `PreconditionFailure`
   (`type_url` ending `google.rpc.PreconditionFailure`, plan 02) with only `MISSING` violations
   calls `upload_missing` with the digests and calls `Execute` again (one retry); any other detail
@@ -148,3 +153,30 @@ green. Commit `feat(buildl): execute actions on the remote`.
 ## Proof
 
 `cargo make dod`, `cargo deny check`; every test named runs under `--all-features`.
+
+## Review findings
+
+One review over the three tasks (`7a4f247..816b88b`); `cargo make dod` and a default-features `cargo clippy -p buildl --all-targets -- -D warnings` green; blocking: none. All closed in one fix round:
+- spec — a stream failing mid-way with a code outside the four retried ones was a failure, not a resume; the spec says a stream that breaks is resumed — fixed: `UNKNOWN`/`INTERNAL` after a message resume with `WaitExecution` using one retry without resetting the count (spec §4 step 3 amended); tests `a_stream_that_fails_unavailable_after_a_message_is_resumed`, `a_stream_that_fails_unknown_after_a_message_is_resumed_without_resetting`, `a_stream_that_fails_with_another_code_is_a_failure`, over the new test-server switch `fail_streams(fault, n)`
+- test-coverage — the wait limit over the retry pauses held by structure only — fixed: `the_wait_limit_covers_the_pauses_between_tries` (real delays, limit 1 s)
+- test-coverage — the sum `queue_timeout + action.timeout` was unguarded — fixed: `the_wait_limit_is_the_queue_timeout_plus_the_action_timeout`
+- plan — the plan still said every stream message is progress — fixed in the plan text (Architecture, Task 2)
+- docs/style — client module doc on what bounds an execution; `NoExecution` lists its three reasons; a long doc line rewrapped; `WaitPassed` named once in its diagnostic; `send_missing` and `load` generic over `B: BlobSource + ?Sized`
+- kept — opening an `Execute`/`WaitExecution` stream is bounded by `[remote] timeout` until the server's headers arrive; the test server and NativeLink send headers at once, and the real-server run (plan 11) checks NativeLink
+- kept — the per-call-timeout test uses 200 ms / 1 s instead of 100 ms / 500 ms, the same proof with more margin
+
+Gates after the fix: `cargo test -p buildl --features test-server remote::` → 268 passed + 6 e2e; default-features clippy clean; `cargo make dod` green; `cargo deny check` → ok. Named tests: `conformance.py … 08` → 28/28.
+
+## Probe results
+
+- `update_enabled` covers only the action cache: "Describes the server/instance capabilities for updating the action cache" (`remote_execution.proto:2352-2355`) — so execution uploads skip `require_updates`, tested under `Updates::Disabled`
+- what a broken stream's code is — tonic `Status::from_error` gives `UNKNOWN` when no status is in the source chain (`tonic-0.14.6/src/status.rs:329-335`); HTTP/2 reset reasons map to `INTERNAL` only with tonic's `server` feature (`:383-411`); keep-alive timeouts are `UNAVAILABLE`, cancels `CANCELLED` (`:438-444`) — disproved the spec's silence on which codes are a break; spec amended
+- retry count reset — the test server sends stage messages before every `done`, so "every message resets the count" (spec §5) would let `status_in_response(code, retries + 1)` never give up — disproved; spec §5 amended to reset only for a stream that ends or breaks before `done`
+
+## Deviations
+
+- `Client::execute(action, limit, supply)`: the caller's `supply` returns the bytes of the blobs a `MISSING` answer names and the client sends them, instead of a callback that sends (nested `block_on` would panic); errors are `ExecuteError<E> { Remote, Supply }`, a `Supply` error carrying a changed input's path becomes `Executed::InputChanged`
+- `RemoteError::NoExecution` was created in Task 1 (with `require_execution`), not Task 2
+- `Client::require_execution` and `Client::write_blobs_for_execution` (no `require_updates`) added in Task 3
+- the non-zero-exit-with-`cached_result` case is tested at `encode::executed` (`a_non_zero_exit_is_ran_whether_or_not_the_result_was_cached`), since the test server never caches a non-zero exit
+- `disproves` set twice (`0e431e5caec9`, then `75312efc6398`); the spec now reads `c7841e3774e8` and plans 08–12 were re-stamped

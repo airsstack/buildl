@@ -176,6 +176,12 @@ messages describing the resulting execution, with eventual response ExecuteRespo
 - A stream that ends, or breaks, before `done` is resumed with `WaitExecution(name)`
   (`REAPI:122-136`). `NOT_FOUND` from `WaitExecution` means "the operation no longer exists …
   The client should call Execute to retry" (`REAPI:132-135`), and it does.
+  A stream breaks when it fails, after delivering a message, with one of the retried codes of §5
+  or with `UNKNOWN` or `INTERNAL`: tonic gives a reset connection one of those, `UNKNOWN` when
+  nothing in the error's source chain names a status (`tonic-0.14.6/src/status.rs:329-335`,
+  `:438-454`) and `INTERNAL` for most HTTP/2 reset reasons when its `server` feature is on
+  (`:393-411`). A break with `UNKNOWN` or `INTERNAL` uses one retry and does not reset the count,
+  so a server that answers every stream that way is given up. Any other code is a failure.
 - `FAILED_PRECONDITION` with a `google.rpc.PreconditionFailure` detail whose violations are all
   of type `MISSING` (`REAPI:103-112`) re-uploads the named blobs and calls `Execute` again.
   Any other detail is a failed call. This holds whether the code comes back as the call's

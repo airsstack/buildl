@@ -2,7 +2,7 @@
 status: approved
 created: 2026-10-26
 depends-on: [01, 09]
-built-on: 75312efc6398
+built-on: c7841e3774e8
 ---
 
 # Doctor Execution Implementation Plan
