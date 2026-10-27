@@ -1,8 +1,9 @@
 ---
-status: approved
+status: executing
+disproves: 24837f1a4158
 created: 2026-10-26
 depends-on: [09]
-built-on: 24837f1a4158
+built-on: 8b1ed74430a0
 ---
 
 # Real Server CI Implementation Plan
@@ -25,6 +26,7 @@ repository, and runs that file. buildl links nothing of NativeLink (spec §10).
 
 ```
 ci/nativelink.json5                     — [create] NativeLink v1.4.0 basic_cas.json5 with the worker's OSFamily set to "linux"
+ci/nativelink.Dockerfile                — [create] the published image's static nativelink binary on debian:bookworm-slim, which has sh and coreutils (spec §10)
 crates/buildl-cli/tests/real_remote.rs  — [create] the real-server tests; skipped without BUILDL_TEST_REAPI_URL
 .github/workflows/ci.yml                — [modify] a fifth job, remote-execution, after reapi-codegen (:132-171)
 ```
@@ -59,8 +61,9 @@ other, whose commands use only `sh` and `printf`/`cat`, sets `[remote] url` to
 
 **Change:** a job `remote-execution` on `ubuntu-latest`: check out; install the stable toolchain
 and cache as the `dod` job does (`:46-58`); start
-`docker run -d -p 50051:50051 -v $PWD/ci/nativelink.json5:/config ghcr.io/tracemachina/nativelink:v1.4.0 config`
-(NativeLink's own form, `nativelink-README.md:96-105`); wait until port 50051 accepts a
+`docker build -f ci/nativelink.Dockerfile -t buildl-ci-nativelink ci`, then
+`docker run -d -p 50051:50051 -v $PWD/ci/nativelink.json5:/config buildl-ci-nativelink /config`
+(NativeLink's run form, `nativelink-README.md:96-105`, on the derived image of spec §10); wait until port 50051 accepts a
 connection, failing the job after 60 s; run
 `BUILDL_TEST_REAPI_URL=grpc://127.0.0.1:50051 cargo test -p buildl-cli --test real_remote`;
 on failure print `docker logs` of the container.

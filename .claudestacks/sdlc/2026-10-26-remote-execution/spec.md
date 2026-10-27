@@ -408,8 +408,9 @@ are unchanged. A new CI job on `ubuntu-latest` starts NativeLink and runs them:
 remote-execution:
   runs-on: ubuntu-latest
   steps:
+    - docker build -f ci/nativelink.Dockerfile -t buildl-ci-nativelink ci
     - docker run -d -p 50051:50051 -v $PWD/ci/nativelink.json5:/config
-        ghcr.io/tracemachina/nativelink:v1.4.0 config
+        buildl-ci-nativelink /config
     - BUILDL_TEST_REAPI_URL=grpc://127.0.0.1:50051
         cargo test -p buildl-cli --test real_remote
 ```
@@ -417,7 +418,19 @@ remote-execution:
 The real-server tests live in one integration test file, `crates/buildl-cli/tests/real_remote.rs`,
 which drives the `buildl` binary.
 
-- The image name, tag and run form are NativeLink's own (`nl-README:96-105`). Its example config
+- The published image `ghcr.io/tracemachina/nativelink:v1.4.0` (`nl-README:96-105`) holds the
+  `nativelink` binary and nothing else: its filesystem, exported with `docker export`, has 23
+  entries, among them `bin/nativelink` and no `/bin/sh`, and `docker run --entrypoint /bin/sh` on
+  it fails with "stat /bin/sh: no such file or directory". Its local worker runs each action as a
+  process inside the container, so no `sh` or `cp` could start there. `ci/nativelink.Dockerfile`
+  therefore copies that image's `nativelink` binary, linked statically against musl
+  (`nativelink-x86_64-unknown-linux-musl-1.4.0`), onto `debian:bookworm-slim`, which has a shell
+  and coreutils. A local run of that image under `linux/amd64` emulation, with the worker's
+  `OSFamily` and `ISA` set to this machine's `macos` and `arm-a64`, built a two-target workspace
+  with `--remote-execute` (`2 remote`), fetched it in a fresh copy (`2 fetched`, byte-identical
+  outputs), and failed a `cp` of a missing file as an action failure with GNU `cp`'s message,
+  shown by `buildl log`. Its example config
+
   has a scheduler, a local worker and the Execution service on port 50051
   (`nl-config:40-66` schedulers, `:68-75` the local worker, `:136-171` the listener and the
   `execution` service).
@@ -431,15 +444,10 @@ which drives the `buildl` binary.
   licence (`nl-README:171`). It is run by the CI job and is not shipped with or linked into buildl.
 
 **Not verified, carried as risks for the plan:**
-- The prebuilt image is "currently limited to `x86_64` systems" (`nl-README:87`). This machine is
-  `arm64` (`uname -m`), with Docker Engine 20.10.24 `arm64` (`docker version`). Whether the image
-  runs here under emulation was not tried. Even if it runs, its worker advertises `ISA` `x86-64` and
-  a buildl on this machine sends `arm-a64`, so no job would match. The real-server tests are
-  therefore expected to run in CI, not on this machine.
-- NativeLink's local worker runs each action inside the NativeLink container, in
-  `/tmp/nativelink/work` (`nl-config:68-78`). Which programs that image holds (a shell, `cp`) was
-  not checked, so the real-server test workspace's commands may need to change to what the image
-  has.
+- The prebuilt image is "currently limited to `x86_64` systems" (`nl-README:87`). With the CI
+  config its worker advertises `ISA` `x86-64` and `OSFamily` `linux`, so a buildl on this `arm64`
+  Mac matches no worker; the real-server tests run in CI. The local run above used a scratch
+  config, not `ci/nativelink.json5`.
 - How long the new CI job takes was not measured.
 - That NativeLink `v1.4.0` accepts every call of §4 as described: only the CI run proves it.
 
