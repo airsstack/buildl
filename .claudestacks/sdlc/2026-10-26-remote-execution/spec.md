@@ -91,7 +91,9 @@ milestone 6 variables. Usage errors (exit 2), all before the approver is asked:
   `ensure_sandboxed_upload` (`crates/buildl-core/src/execute/assembly.rs:52`, error
   `UploadUnsandboxed` at `crates/buildl-core/src/error.rs:414`). A manifest that says
   `execute = true` under `bare` is refused only by `build`, `test` and `watch`, not when it is
-  read, so `check`, `plan` and `doctor` still work.
+  read, so `check`, `plan` and `doctor` still work. `watch` refuses at its start, before the first
+  build, as `build` does; a `buildl.toml` edited into this state while it watches fails that
+  cycle and the watch goes on, as any error a cycle ends with does (milestone 7).
 
 `BUILDL_REMOTE_EXECUTE` in a workspace with no `[remote]` table is not read: a machine-wide
 variable does not break a workspace that names no server, and it does not set off the `bare`

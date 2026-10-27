@@ -1,8 +1,9 @@
 ---
-status: executing
+status: done
+disproves: c7841e3774e8
 created: 2026-10-26
 depends-on: [01, 05, 06, 08]
-built-on: c7841e3774e8
+built-on: 24837f1a4158
 ---
 
 # Remote Execution CLI Implementation Plan
@@ -132,3 +133,27 @@ otherwise, as today. The commands that build ports with `RemotePolicy::OFF` (`lo
 ## Proof
 
 `cargo make dod`, `cargo deny check`; every `tests/cli/remote.rs` test, old and new, passes.
+
+## Review findings
+
+One review over the three tasks (`302e45e..d402017`); `cargo make dod` green. Blocking: S1. All closed in one fix round:
+- spec (blocking) — with `strategy = "bare"` and execution on, `watch` reported each cycle failed and kept watching instead of exiting 2 (checked on the built binary) — fixed: `watch` checks the run's policy against the workspace's strategy after `resolve`, before the file watcher starts (`Workspace::ensure_sandboxed_remote`, over core `ensure_sandboxed_remote`, now public); spec §2 amended: a `buildl.toml` edited into that state mid-watch fails that cycle, as any cycle error does; tests `watch_under_bare_with_execution_exits_as_usage`, `watch_under_bare_with_upload_exits_as_usage`, `writing_or_executing_remotely_is_refused_under_bare_only_with_a_remote_table`
+- plan — `test_runs_tests_remotely` used the manifest switch — fixed: `test --remote-execute`
+- test-coverage — the execute variable not read when a flag decides; `local_workers`; the bare refusal on `test`; a usage-error test that could not tell two refusals apart — fixed: `the_execute_variable_is_not_read_when_a_flag_decides`, `local_workers` tests on `Workspace` and `Wiring`, `test_under_bare_with_execution_exits_as_usage`, a phrase only `ExecutionWithoutRemote` has
+- strong-types — `ThreadPool::wide` fell back to one thread for a zero `RemoteJobs` — fixed: `RemoteJobs` holds a `NonZeroU16` with a total `threads()`
+- docs/style — `--no-remote`, `--remote-execute`, `--no-remote-execute` help texts; `ThreadPool::width()` test-only; `names_remote()` removed (no caller left)
+
+Gates after the fix: `cargo test -p buildl-cli` → 137 passed; `cargo make dod` green (guards OK); `cargo deny check` → ok. Named tests: `conformance.py … 09` → 26/26.
+
+## Probe results
+
+- a bare program name with the environment cleared — `Command::new("cp").env_clear()` in a throwaway crate ran `cp` (exit 64, its usage error): Rust looks the name up in the parent's `PATH`, so the test server finds `cp`; REAPI leaves resolution without a `PATH` variable to the server (`remote_execution.proto:762-769`)
+- `watch` under bare with execution on — the reviewer's run of the built binary printed the refusal, then `watch: waiting for changes`, and kept running — disproved the plan's "watch gains the switches with no code of its own" for the refusal; spec §2 amended
+
+## Deviations
+
+- Task 1 also touched `run.rs`, `workspace.rs` (`remote_settings`, `local_workers`), `thread_pool.rs` (`width_for`) and `local_ports.rs` accessors, since `resolve` needs them to compile; Task 2 kept `wide` and the dispatcher
+- Task 1 updated the `REMOTE_FLAGS` help snapshot in `tests/cli/arguments.rs`; Task 3 made `tests/cli/watch.rs`'s driver helpers `pub(crate)` to reuse them
+- `RemoteTable` carries the settings (`Named(&RemoteSettings) | Absent`); `resolve(args, table, local)`
+- `--no-remote --remote-jobs` is `JobsWithoutExecution`; `--no-remote --no-remote-execute` is not an error
+- `disproves` set to `c7841e3774e8`; the spec now reads `24837f1a4158` and plans 09–12 were re-stamped
