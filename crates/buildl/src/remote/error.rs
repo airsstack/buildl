@@ -55,6 +55,12 @@ pub(crate) enum RemoteError {
     /// The cache does not let clients write.
     #[error("the remote cache does not accept uploads: it reports action cache updates disabled")]
     UpdatesDisabled,
+    /// The server cannot execute actions.
+    #[error("the remote server cannot execute actions: {reason}")]
+    NoExecution {
+        /// Why: execution is not enabled, or the server has no SHA-256 for it.
+        reason: &'static str,
+    },
     /// One blob of a transfer failed.
     #[error("{call}: blob {}/{} failed with {code:?}: {message}", .digest.hash, .digest.size_bytes)]
     Blob {
@@ -109,6 +115,7 @@ impl Failure for RemoteError {
             | Self::Unusable { .. }
             | Self::NoSha256
             | Self::UpdatesDisabled
+            | Self::NoExecution { .. }
             | Self::TooLarge { .. }
             | Self::Protocol { .. }
             | Self::GaveUp { .. } => None,
@@ -190,6 +197,7 @@ mod tests {
             setup,
             RemoteError::NoSha256,
             RemoteError::UpdatesDisabled,
+            RemoteError::NoExecution { reason: "off" },
             RemoteError::TooLarge { size: 1 },
             RemoteError::Unusable {
                 reason: "down".to_owned(),
@@ -247,6 +255,18 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "the remote cache is unusable: Capabilities.GetCapabilities did not answer within 30s"
+        );
+    }
+
+    #[test]
+    fn a_server_that_cannot_execute_says_why() {
+        let error = RemoteError::NoExecution {
+            reason: "execution is not enabled",
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "the remote server cannot execute actions: execution is not enabled"
         );
     }
 
