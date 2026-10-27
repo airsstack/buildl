@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-27
 built-on: 5947af3e315f
 ---
@@ -118,3 +118,22 @@ the list of JSON values in `text`; it reads a stream such as `go list -json` pri
 - `cargo make dod` and `cargo deny check` green.
 - Plan 08 reads a stdout discovery output back with it end to end; plan 04's `go-discovery`
   example decodes real `go list -json ./...` output in CI.
+
+## Review findings
+
+- doc-comment-discipline — module doc called decode_all "the one primitive that reads data"; `sources`/`discovered` also read data. Reworded to what sets it apart (plain catchable Lua errors) — `crates/buildl-lua/src/decode_all.rs:3-4`. Fixed; `cargo make dod` exit 0 (`Build Done in 33.24 seconds`) at `000e55f`.
+- error-message — stream errors lacked a `buildl.decode_all:` prefix; now prefixed, and `garbage_between_values_raises` asserts it — `decode_all.rs:45`. Fixed; same dod run green.
+- unit-test-mandate — `a_non_string_raises_naming_the_argument` did not assert the argument name; now asserts `text must be a string`. Fixed; same dod run green.
+- docs-accuracy — README and rustdoc said "whitespace or nothing may separate" values; `12` is one value and `truefalse` raises. Both now say whitespace may be left out only beside an object, array or string — `crates/buildl-lua/README.md:13`, `decode_all.rs:22`. Fixed.
+- plan-file-list — `crates/buildl-lua/README.md` changed but was not listed; added to the plan's file lists.
+
+## Probe results
+
+- Registry copy shallow (Risks): `a_build_file_replacing_airsstack_json_does_not_change_decode_all` passes when `airsstack.json.decode` is overwritten and when `airsstack.json` is replaced — the registry copy is unaffected. Not against the plan.
+- Unit tests seen failing against a stub first: all 14 failed with "unimplemented" (coder report); then `cargo test -p buildl-lua` → `test result: ok. 166 passed` (lib), `ok. 66 passed` (flows).
+
+## Deviations
+
+- 2026-10-27 — Task 1 built in an isolated worktree, carried over as a patch and applied with `git apply -3` after plan 01 Task 1 committed (both touched `crates/buildl-lua/tests/flows/declarations.rs`).
+- 2026-10-27 — Task 1 also updated `crates/buildl-lua/README.md` (declaration API row); added to the plan's file lists.
+- 2026-10-27 — Task 2 writes `b.decode_all` in design §5, following §5's own `b.` alias, where the plan wrote `buildl.decode_all`.
