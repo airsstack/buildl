@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 disproves: 24837f1a4158
 created: 2026-10-26
 depends-on: [09]
@@ -116,3 +116,4 @@ One review over plans 11 and 12 (`21816dd..fa82cb2`); `cargo make dod` green. Pl
 
 - `ci/nativelink.Dockerfile` (not in the plan's file list): the published image's static binary on `debian:bookworm-slim`
 - the tests use `cp`, `--remote-strict` and a fresh `a.txt` per test; each prints `real server: <test> against <url>` when it runs, and the CI step requires three such lines
+- CI — PR #19, run 40448731193: `Remote execution on NativeLink` passed in 53 s; its log holds the three `real server:` lines (`a_failing_command_fails_as_an_action_failure`, `a_fresh_checkout_fetches_what_the_server_ran`, `every_target_runs_on_the_server`) and `test result: ok. 4 passed`; every other check passed too
