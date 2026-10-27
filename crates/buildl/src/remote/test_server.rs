@@ -15,7 +15,12 @@
 //! the outputs it listed are stored as blobs. An action with a blob missing is refused as the
 //! protocol asks, and the result of one that exits with 0 is kept in the action cache. The
 //! operation streams `QUEUED`, `EXECUTING` and then the answer, and `WaitExecution` streams the
-//! rest of one the server holds.
+//! rest of one the server holds. It can be told to break the next streams after their first
+//! message ([`TestServer::break_streams`]), to forget every operation
+//! ([`TestServer::forget_operations`]), to report a blob missing once, as a call error or in the
+//! answer ([`TestServer::report_missing_once`], [`TestServer::report_missing_in_status_once`]),
+//! to answer with a status instead of running ([`TestServer::status_in_response`]), and to hold
+//! each action back, with its stream silent, before it runs ([`TestServer::hold_execution`]).
 //!
 //! ```
 //! use buildl::remote::test_server::{Method, TestServer};
@@ -331,6 +336,45 @@ impl TestServer {
         self.shared.lock().stream_delay = delay;
     }
 
+    /// Makes the next `n` streams, `Execute` or `WaitExecution` counted in the order they
+    /// arrive, send their first message and then end without a `done` message. The operation
+    /// stays held and keeps running, so a `WaitExecution` can finish it.
+    pub fn break_streams(&self, n: u32) {
+        self.shared.lock().broken_streams = n;
+    }
+
+    /// Makes every later `WaitExecution` answer `NOT_FOUND`, whatever name it asks for.
+    pub fn forget_operations(&self) {
+        self.shared.lock().forgetful = true;
+    }
+
+    /// Makes the next `Execute` that would run an action answer `FAILED_PRECONDITION` with a
+    /// `PreconditionFailure` that names `digest` as missing, and drops the blob so that it has
+    /// to be uploaded again. The size in the blob's name is that of the blob the server holds
+    /// when the call arrives, or zero when it holds none.
+    pub fn report_missing_once(&self, digest: &BlobDigest) {
+        self.shared.lock().missing_once = Some(digest.to_string());
+    }
+
+    /// As [`TestServer::report_missing_once`], but the call succeeds: the `done` message carries
+    /// an `ExecuteResponse` with no result whose `status` is `FAILED_PRECONDITION` and holds the
+    /// `PreconditionFailure` in its details.
+    pub fn report_missing_in_status_once(&self, digest: &BlobDigest) {
+        self.shared.lock().missing_in_status_once = Some(digest.to_string());
+    }
+
+    /// Makes the next `n` `Execute` calls answer with an `ExecuteResponse` whose `status` is
+    /// `code` and which holds no result. The action is not run.
+    pub fn status_in_response(&self, code: Code, n: u32) {
+        self.shared.lock().status_responses = Some((code, n));
+    }
+
+    /// Makes every later action wait `delay` before it runs. Its `Execute` stream sends nothing
+    /// meanwhile, not even its first message, though the response headers are sent at once.
+    pub fn hold_execution(&self, delay: Duration) {
+        self.shared.lock().hold = delay;
+    }
+
     /// Stores `bytes` as a blob and returns its digest.
     #[must_use]
     pub fn put_blob(&self, bytes: &[u8]) -> BlobDigest {
@@ -392,6 +436,18 @@ struct State {
     operations: BTreeMap<String, Held>,
     /// How many operations have been named, so that no name is used twice.
     named: u64,
+    /// The streams still to end after their first message.
+    broken_streams: u32,
+    /// Whether `WaitExecution` answers `NOT_FOUND` for every name.
+    forgetful: bool,
+    /// The hash of the blob the next run is refused for as a call error.
+    missing_once: Option<String>,
+    /// The hash of the blob the next run is refused for in the answer.
+    missing_in_status_once: Option<String>,
+    /// The status the next executions answer with, and how many are left.
+    status_responses: Option<(Code, u32)>,
+    /// The wait before each action runs.
+    hold: Duration,
 }
 
 impl State {
@@ -409,6 +465,28 @@ impl State {
         );
         name
     }
+}
+
+impl State {
+    /// Drops the blob stored under `hash` and returns its digest as the protocol names it; the
+    /// size is zero when the server holds no such blob.
+    fn forget_blob(&mut self, hash: &str) -> Digest {
+        let size_bytes = self.blobs.remove(hash).map_or(0, |bytes| size_of(&bytes));
+        Digest {
+            hash: hash.to_owned(),
+            size_bytes,
+        }
+    }
+}
+
+/// An execution the server has accepted, ready to be streamed.
+struct Accepted {
+    /// The name of its operation.
+    name: String,
+    /// The stages its stream reports before the answer.
+    stages: Vec<execution_stage::Value>,
+    /// How long its stream stays silent, and the action unrun, at first.
+    hold: Duration,
 }
 
 /// An execution the server has accepted.
@@ -440,22 +518,45 @@ impl Shared {
             .and_then(Failing::next)
     }
 
-    /// Accepts the execution of `action` and returns the name of its operation and the stages
-    /// its stream reports before the answer. The action runs on the server's runtime.
+    /// Accepts the execution of `action`. The action runs on the server's runtime.
     ///
-    /// A result held for the action answers at once unless `skip_cache_lookup` is set.
+    /// A scripted status answers at once. A result held for the action answers at once unless
+    /// `skip_cache_lookup` is set. A blob scripted as missing refuses the run.
     fn accept(
         self: &Arc<Self>,
         action: &Digest,
         skip_cache_lookup: bool,
-    ) -> Result<(String, Vec<execution_stage::Value>), Status> {
+    ) -> Result<Accepted, Status> {
         let mut state = self.lock();
-        let held = if skip_cache_lookup {
+        let running = vec![
+            execution_stage::Value::Queued,
+            execution_stage::Value::Executing,
+        ];
+        let scripted = match &mut state.status_responses {
+            Some((code, left)) if *left > 0 => {
+                *left -= 1;
+                Some(*code)
+            }
+            _ => None,
+        };
+        if let Some(code) = scripted {
+            let response = ExecuteResponse {
+                status: Some(status_of(code, "scripted status")),
+                ..ExecuteResponse::default()
+            };
+            let name = state.open(action, Some(response));
+            return Ok(Accepted {
+                name,
+                stages: running,
+                hold: Duration::ZERO,
+            });
+        }
+        let cached = if skip_cache_lookup {
             None
         } else {
             state.results.get(&action.hash).cloned()
         };
-        if let Some(result) = held {
+        if let Some(result) = cached {
             let response = ExecuteResponse {
                 result: Some(result),
                 cached_result: true,
@@ -463,28 +564,49 @@ impl Shared {
                 ..ExecuteResponse::default()
             };
             let name = state.open(action, Some(response));
-            return Ok((name, vec![execution_stage::Value::CacheCheck]));
+            return Ok(Accepted {
+                name,
+                stages: vec![execution_stage::Value::CacheCheck],
+                hold: Duration::ZERO,
+            });
+        }
+        if let Some(hash) = state.missing_once.take() {
+            let missing = state.forget_blob(&hash);
+            return Err(refusal_status(Refusal::Missing(vec![missing])));
+        }
+        if let Some(hash) = state.missing_in_status_once.take() {
+            let missing = state.forget_blob(&hash);
+            let response = ExecuteResponse {
+                status: Some(missing_status(&[missing])),
+                ..ExecuteResponse::default()
+            };
+            let name = state.open(action, Some(response));
+            return Ok(Accepted {
+                name,
+                stages: running,
+                hold: Duration::ZERO,
+            });
         }
         let job = test_execution::prepare(&state.blobs, action).map_err(refusal_status)?;
         let name = state.open(action, None);
+        let hold = state.hold;
         drop(state);
 
         let do_not_cache = job.do_not_cache();
         let shared = Arc::clone(self);
         let (operation, action) = (name.clone(), action.clone());
         tokio::spawn(async move {
+            tokio::time::sleep(hold).await;
             let outcome = tokio::task::spawn_blocking(move || job.run())
                 .await
                 .unwrap_or_else(|error| Err(io::Error::other(error)));
             shared.complete(&operation, &action, do_not_cache, outcome);
         });
-        Ok((
+        Ok(Accepted {
             name,
-            vec![
-                execution_stage::Value::Queued,
-                execution_stage::Value::Executing,
-            ],
-        ))
+            stages: running,
+            hold,
+        })
     }
 
     /// Stores what a run left behind, keeps its result when the protocol allows, and sets the
@@ -527,16 +649,28 @@ impl Shared {
         }
     }
 
-    /// The stream of operation `name`: one message for each of `stages`, then the answer once
-    /// the action has finished.
+    /// Counts the arriving stream off the streams scripted to break; true when it is to break.
+    fn break_next(&self) -> bool {
+        let mut state = self.lock();
+        let broken = state.broken_streams > 0;
+        state.broken_streams = state.broken_streams.saturating_sub(1);
+        broken
+    }
+
+    /// The stream of operation `name`: nothing for `hold`, then one message for each of
+    /// `stages`, then the answer once the action has finished. A stream that is `broken` ends
+    /// after its first message, before the answer.
     fn operation_stream(
         self: &Arc<Self>,
         name: String,
         action: &Digest,
         stages: Vec<execution_stage::Value>,
+        hold: Duration,
+        broken: bool,
     ) -> BoxStream<Operation> {
         let progress: Vec<_> = stages
             .into_iter()
+            .take(if broken { 1 } else { usize::MAX })
             .map(|stage| {
                 Ok(Operation {
                     name: name.clone(),
@@ -552,7 +686,14 @@ impl Shared {
             let name = name.clone();
             async move { shared.finished(&name).await }
         });
-        Box::pin(tokio_stream::iter(progress).chain(answer))
+        let silence = tokio_stream::once(())
+            .then(move |()| tokio::time::sleep(hold))
+            .filter_map(|()| None);
+        if broken {
+            Box::pin(silence.chain(tokio_stream::iter(progress)))
+        } else {
+            Box::pin(silence.chain(tokio_stream::iter(progress)).chain(answer))
+        }
     }
 
     /// The `done` message of operation `name`, once its action has finished.
@@ -695,28 +836,33 @@ fn refusal_status(refusal: Refusal) -> Status {
     match refusal {
         Refusal::Malformed(message) => Status::invalid_argument(message),
         Refusal::Missing(missing) => {
-            let failure = rpc::PreconditionFailure {
-                violations: missing
-                    .iter()
-                    .map(|digest| rpc::precondition_failure::Violation {
-                        r#type: "MISSING".to_owned(),
-                        subject: format!("blobs/{}/{}", digest.hash, digest.size_bytes),
-                        description: String::new(),
-                    })
-                    .collect(),
-            };
-            let message = "blobs the action needs are missing";
-            let status = rpc::Status {
-                code: i32::from(Code::FailedPrecondition),
-                message: message.to_owned(),
-                details: Any::from_msg(&failure).ok().into_iter().collect(),
-            };
+            let status = missing_status(&missing);
             Status::with_details(
                 Code::FailedPrecondition,
-                message,
+                status.message.clone(),
                 status.encode_to_vec().into(),
             )
         }
+    }
+}
+
+/// The `FAILED_PRECONDITION` status whose details hold a `PreconditionFailure` with one
+/// `MISSING` violation for each of `missing`.
+fn missing_status(missing: &[Digest]) -> rpc::Status {
+    let failure = rpc::PreconditionFailure {
+        violations: missing
+            .iter()
+            .map(|digest| rpc::precondition_failure::Violation {
+                r#type: "MISSING".to_owned(),
+                subject: format!("blobs/{}/{}", digest.hash, digest.size_bytes),
+                description: String::new(),
+            })
+            .collect(),
+    };
+    rpc::Status {
+        code: i32::from(Code::FailedPrecondition),
+        message: "blobs the action needs are missing".to_owned(),
+        details: Any::from_msg(&failure).ok().into_iter().collect(),
     }
 }
 
@@ -973,10 +1119,15 @@ impl Execution for Service {
         }
         let message = request.into_inner();
         let action = digest_of(message.action_digest.as_ref())?;
-        let (name, stages) = self.shared.accept(action, message.skip_cache_lookup)?;
-        Ok(Response::new(
-            self.shared.operation_stream(name, action, stages),
-        ))
+        let accepted = self.shared.accept(action, message.skip_cache_lookup)?;
+        let broken = self.shared.break_next();
+        Ok(Response::new(self.shared.operation_stream(
+            accepted.name,
+            action,
+            accepted.stages,
+            accepted.hold,
+            broken,
+        )))
     }
 
     type WaitExecutionStream = BoxStream<Operation>;
@@ -990,12 +1141,14 @@ impl Execution for Service {
             .begin(Method::WaitExecution, headers_of(&request), None)
             .await?;
         let name = request.into_inner().name;
-        let (action, stage) = self
-            .shared
-            .lock()
-            .operations
-            .get(&name)
-            .map(|held| {
+        let (action, stage) = {
+            let known = self.shared.lock();
+            let held = if known.forgetful {
+                None
+            } else {
+                known.operations.get(&name)
+            };
+            held.map(|held| {
                 let stage = if held.response.is_some() {
                     execution_stage::Value::Completed
                 } else {
@@ -1003,11 +1156,15 @@ impl Execution for Service {
                 };
                 (held.action.clone(), stage)
             })
-            .ok_or_else(|| Status::not_found(format!("no operation {name}")))?;
+        }
+        .ok_or_else(|| Status::not_found(format!("no operation {name}")))?;
+        let broken = self.shared.break_next();
         Ok(Response::new(self.shared.operation_stream(
             name,
             &action,
             vec![stage],
+            Duration::ZERO,
+            broken,
         )))
     }
 }
@@ -1946,5 +2103,240 @@ mod tests {
             ..ServerOptions::default()
         });
         assert_eq!(sha1.digest_functions, [digest_function::Value::Sha1 as i32]);
+    }
+
+    /// The name of the operation an `Execute` of `action` opens, read off its first message.
+    fn open_operation(fixture: &Fixture, action: &Digest) -> String {
+        let mut client = fixture.execution();
+        fixture.runtime.block_on(async {
+            let mut stream = client
+                .execute(ExecuteRequest {
+                    action_digest: Some(action.clone()),
+                    ..ExecuteRequest::default()
+                })
+                .await
+                .unwrap()
+                .into_inner();
+            stream.message().await.unwrap().unwrap().name
+        })
+    }
+
+    /// The blobs a `PreconditionFailure` carried by `status` names as missing.
+    fn missing_subjects(status: &rpc::Status) -> Vec<String> {
+        assert_eq!(status.code, i32::from(Code::FailedPrecondition));
+        assert_eq!(status.details.len(), 1);
+        assert_eq!(
+            status.details[0].type_url,
+            rpc::PreconditionFailure::type_url()
+        );
+        let failure = rpc::PreconditionFailure::decode(status.details[0].value.as_slice()).unwrap();
+        assert!(
+            failure
+                .violations
+                .iter()
+                .all(|each| each.r#type == "MISSING")
+        );
+        failure
+            .violations
+            .iter()
+            .map(|each| each.subject.clone())
+            .collect()
+    }
+
+    #[test]
+    fn a_broken_stream_ends_before_done() {
+        let fixture = Fixture::new();
+        let action = fixture.action(&command("printf hi > out", &["out"]), &[], None);
+        fixture.server.break_streams(1);
+
+        let broken = fixture.execute(&action, false).unwrap();
+
+        assert_eq!(broken.len(), 1);
+        assert!(!broken[0].done);
+        assert_eq!(stage_of(&broken[0]), execution_stage::Value::Queued as i32);
+        let whole = fixture.execute(&action, false).unwrap();
+        assert!(whole.last().unwrap().done);
+        assert_eq!(response_of(&whole).result.unwrap().exit_code, 0);
+    }
+
+    #[test]
+    fn a_wait_execution_stream_can_be_broken_too() {
+        let fixture = Fixture::new();
+        let action = fixture.action(&command("sleep 0.3; printf hi > out", &["out"]), &[], None);
+        fixture.server.break_streams(2);
+
+        let first = fixture.execute(&action, false).unwrap();
+        assert_eq!(first.len(), 1);
+        assert!(!first[0].done);
+        let name = first[0].name.clone();
+
+        let second = fixture.wait(&name).unwrap();
+        assert_eq!(second.len(), 1);
+        assert!(!second[0].done);
+
+        let third = fixture.wait(&name).unwrap();
+        assert!(!third[0].done);
+        let result = response_of(&third).result.unwrap();
+        assert_eq!(result.output_files[0].digest, Some(proto_digest(b"hi")));
+        assert_eq!(fixture.server.calls_to(Method::Execute).len(), 1);
+        assert_eq!(fixture.server.calls_to(Method::WaitExecution).len(), 2);
+    }
+
+    #[test]
+    fn forgotten_operations_are_not_found() {
+        let fixture = Fixture::new();
+        let action = fixture.action(&command("true", &[]), &[], None);
+        let name = open_operation(&fixture, &action);
+        assert!(fixture.wait(&name).is_ok());
+
+        fixture.server.forget_operations();
+
+        assert_eq!(fixture.wait(&name).unwrap_err().code(), Code::NotFound);
+        assert_eq!(
+            fixture.wait("operations/other").unwrap_err().code(),
+            Code::NotFound
+        );
+    }
+
+    #[test]
+    fn a_blob_reported_missing_once_is_found_after_upload() {
+        let fixture = Fixture::new();
+        let input: &[u8] = b"an input";
+        let action = fixture.action(&command("cat in > out", &["out"]), &[("in", input)], None);
+        let digest = BlobDigest::of(input);
+        fixture.server.report_missing_once(&digest);
+
+        let refusal = fixture.execute(&action, false).unwrap_err();
+
+        assert_eq!(refusal.code(), Code::FailedPrecondition);
+        let status = rpc::Status::decode(refusal.details()).unwrap();
+        let wanted = proto_digest(input);
+        assert_eq!(
+            missing_subjects(&status),
+            [format!("blobs/{}/{}", wanted.hash, wanted.size_bytes)]
+        );
+        assert_eq!(
+            fixture.server.blob(&digest),
+            None,
+            "it must be uploaded again"
+        );
+
+        let _ = fixture.server.put_blob(input);
+        let response = response_of(&fixture.execute(&action, false).unwrap());
+        assert_eq!(response.result.unwrap().exit_code, 0);
+        assert_eq!(fixture.server.calls_to(Method::Execute).len(), 2);
+    }
+
+    #[test]
+    fn a_blob_reported_missing_in_the_status_carries_the_detail() {
+        let fixture = Fixture::new();
+        let input: &[u8] = b"an input";
+        let action = fixture.action(&command("cat in > out", &["out"]), &[("in", input)], None);
+        let digest = BlobDigest::of(input);
+        fixture.server.report_missing_in_status_once(&digest);
+
+        let messages = fixture.execute(&action, false).unwrap();
+
+        assert!(!messages[0].done, "a stage message comes first");
+        let response = response_of(&messages);
+        assert_eq!(response.result, None);
+        let wanted = proto_digest(input);
+        assert_eq!(
+            missing_subjects(response.status.as_ref().unwrap()),
+            [format!("blobs/{}/{}", wanted.hash, wanted.size_bytes)]
+        );
+        assert_eq!(
+            fixture.server.blob(&digest),
+            None,
+            "it must be uploaded again"
+        );
+
+        let _ = fixture.server.put_blob(input);
+        let response = response_of(&fixture.execute(&action, false).unwrap());
+        assert_eq!(response.status.unwrap().code, 0);
+        assert_eq!(response.result.unwrap().exit_code, 0);
+    }
+
+    #[test]
+    fn a_status_in_the_response_is_sent_n_times() {
+        let fixture = Fixture::new();
+        let action = fixture.action(&command("printf hi > out", &["out"]), &[], None);
+        fixture.server.status_in_response(Code::Unavailable, 2);
+
+        for _ in 0..2 {
+            let messages = fixture.execute(&action, false).unwrap();
+            assert!(!messages[0].done);
+            let response = response_of(&messages);
+            assert_eq!(response.status.unwrap().code, i32::from(Code::Unavailable));
+            assert_eq!(response.result, None);
+        }
+        assert_eq!(fixture.server.blob(&BlobDigest::of(b"hi")), None);
+
+        let response = response_of(&fixture.execute(&action, false).unwrap());
+        assert_eq!(response.status.unwrap().code, 0);
+        assert_eq!(response.result.unwrap().exit_code, 0);
+        assert_eq!(fixture.server.calls_to(Method::Execute).len(), 3);
+    }
+
+    #[test]
+    fn a_held_execution_sends_nothing_until_it_runs() {
+        let fixture = Fixture::new();
+        let action = fixture.action(&command("printf hi > out", &["out"]), &[], None);
+        let delay = Duration::from_millis(400);
+        fixture.server.hold_execution(delay);
+        let mut client = fixture.execution();
+
+        let (headers_after, first_after, response) = fixture.runtime.block_on(async {
+            let started = Instant::now();
+            let mut stream = client
+                .execute(ExecuteRequest {
+                    action_digest: Some(action.clone()),
+                    ..ExecuteRequest::default()
+                })
+                .await
+                .unwrap()
+                .into_inner();
+            let headers_after = started.elapsed();
+            let first = stream.message().await.unwrap().unwrap();
+            let first_after = started.elapsed();
+            assert!(!first.done);
+            let mut messages = vec![first];
+            while let Some(message) = stream.message().await.unwrap() {
+                messages.push(message);
+            }
+            (headers_after, first_after, response_of(&messages))
+        });
+
+        assert!(
+            headers_after < delay,
+            "headers came after {headers_after:?}"
+        );
+        assert!(
+            first_after >= delay,
+            "first message came after {first_after:?}"
+        );
+        assert_eq!(response.result.unwrap().exit_code, 0);
+    }
+
+    #[test]
+    fn an_execute_can_be_failed_like_any_call() {
+        let fixture = Fixture::new();
+        let action = fixture.action(&command("true", &[]), &[], None);
+        fixture
+            .server
+            .fail_times(Method::Execute, Fault::Unavailable, 1);
+
+        let refusal = fixture.execute(&action, false).unwrap_err();
+        assert_eq!(refusal.code(), Code::Unavailable);
+        let name = {
+            let messages = fixture.execute(&action, false).unwrap();
+            messages[0].name.clone()
+        };
+        assert_eq!(fixture.server.calls_to(Method::Execute).len(), 2);
+
+        fixture.server.fail(Method::WaitExecution, Fault::Internal);
+        assert_eq!(fixture.wait(&name).unwrap_err().code(), Code::Internal);
+        assert_eq!(fixture.wait(&name).unwrap_err().code(), Code::Internal);
+        assert_eq!(fixture.server.calls_to(Method::WaitExecution).len(), 2);
     }
 }
