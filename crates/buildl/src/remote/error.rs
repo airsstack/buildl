@@ -105,10 +105,6 @@ pub(crate) enum RemoteError {
 }
 
 /// Why an execution failed: the remote server, or the caller that supplies the blobs it lacks.
-#[cfg_attr(
-    not(all(test, feature = "test-server")),
-    expect(dead_code, reason = "no caller reads the failure of an execution yet")
-)]
 #[derive(Debug)]
 pub(crate) enum ExecuteError<E> {
     /// The server or the connection failed.

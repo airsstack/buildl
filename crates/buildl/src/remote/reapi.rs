@@ -6,17 +6,20 @@
 //! read from another adapter. The client connects on the first call, so a cache that is down is
 //! the failure of that call and not of building the adapter.
 //!
-//! Responsibilities: the four calls of [`RemoteCache`], and the text of their failures.
+//! Responsibilities: the calls of [`RemoteCache`], and the text of their failures. An execution
+//! sends the input files, their `Directory` messages, the `Command` and the `Action` the cache
+//! lacks, asks the server to run it, and never uploads a result afterwards.
 //!
 //! Non-responsibilities: judging a result the cache returns, which is the core's, and the
 //! messages' shape, which `encode` and `input_tree` decide.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File};
 use std::io;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use buildl_core::{
     Blob, BlobSource, DecodedTree, Diagnostic, Digest, Error, Executed, Hasher, PortName,
@@ -26,7 +29,7 @@ use buildl_core::{
 
 use super::client::Client;
 use super::encode::{self, Encoded, wire_digest};
-use super::error::RemoteError;
+use super::error::{ExecuteError, RemoteError};
 use super::input_tree::{Input, InputTree, Unreadable, input_tree, measure};
 use super::proto::build::bazel::remote::execution::v2 as wire;
 use super::vocabulary::Method;
@@ -36,6 +39,7 @@ pub struct Reapi {
     client: Client,
     root: PathBuf,
     write_group: usize,
+    queue_timeout: Duration,
 }
 
 /// The cache's address and the workspace root; the login token is never shown.
@@ -64,6 +68,7 @@ impl Reapi {
                 client,
                 root: root.to_path_buf(),
                 write_group: WRITE_GROUP,
+                queue_timeout: settings.queue_timeout().as_duration(),
             }),
             Err(RemoteError::Token(error)) => Err(error),
             Err(error) => Err(adapter(format!("{}: {error}", settings.url()))),
@@ -96,7 +101,7 @@ fn adapter(text: String) -> Error {
 /// the group.
 const WRITE_GROUP: usize = 32 * 1024 * 1024;
 
-/// Where the bytes of a blob an upload sends come from.
+/// Where the bytes of a blob an upload or an execution sends come from.
 enum Source {
     /// A message the adapter encoded.
     Message(Vec<u8>),
@@ -106,7 +111,7 @@ enum Source {
     Input(RootPath),
 }
 
-/// The blobs an upload names, each once, in the order they are sent.
+/// The blobs an upload or an execution names, each once, in the order they are sent.
 #[derive(Default)]
 struct Parcel {
     entries: Vec<(wire::Digest, Source)>,
@@ -129,6 +134,17 @@ impl Parcel {
         Ok(())
     }
 
+    fn add_inputs(&mut self, inputs: &[Input<'_>]) -> std::result::Result<(), RemoteError> {
+        for input in inputs {
+            let blob = Blob {
+                digest: input.file.digest,
+                size: input.size,
+            };
+            self.add(wire_digest(&blob)?, Source::Input(input.file.path.clone()));
+        }
+        Ok(())
+    }
+
     /// The blobs of the upload up to the input-root `Directory` messages, in the order the
     /// protocol is told them: the input files, the output files, the `Tree` of each directory
     /// output, stdout and stderr, then `directories`.
@@ -139,13 +155,7 @@ impl Parcel {
         directories: Vec<(wire::Digest, Vec<u8>)>,
     ) -> std::result::Result<Self, RemoteError> {
         let mut parcel = Self::default();
-        for input in inputs {
-            let blob = Blob {
-                digest: input.file.digest,
-                size: input.size,
-            };
-            parcel.add(wire_digest(&blob)?, Source::Input(input.file.path.clone()));
-        }
+        parcel.add_inputs(inputs)?;
         for output in &produced.outputs {
             match &output.content {
                 RemoteContent::File { blob, .. } => parcel.add_stored(blob)?,
@@ -165,6 +175,23 @@ impl Parcel {
             parcel.add(digest, Source::Message(bytes));
         }
         Ok(parcel)
+    }
+
+    /// The blobs an execution names, and the digest of its `Action`: the input files, the
+    /// input-root `Directory` messages, the `Command` and the `Action`.
+    fn to_execute(
+        inputs: &[Input<'_>],
+        described: Described,
+    ) -> std::result::Result<(Self, wire::Digest), RemoteError> {
+        let mut parcel = Self::default();
+        parcel.add_inputs(inputs)?;
+        for (digest, bytes) in described.tree.directories {
+            parcel.add(digest, Source::Message(bytes));
+        }
+        parcel.add_message(described.command);
+        let action = described.action.digest();
+        parcel.add_message(described.action);
+        Ok((parcel, action))
     }
 }
 
@@ -221,6 +248,23 @@ fn digest_file(path: &Path) -> io::Result<(Blob, u32)> {
         size,
     };
     Ok((blob, mode))
+}
+
+/// Why the blobs a server lacked at execution could not all be supplied.
+enum Unsupplied {
+    /// This input file no longer holds what it was hashed as.
+    Changed(RootPath),
+    /// The blobs could not be read, or the server asked for one the action does not name.
+    Failed(Error),
+}
+
+/// A content store that holds nothing: an execution sends input files and messages only.
+struct NoStore;
+
+impl BlobSource for NoStore {
+    fn read(&self, _digest: &Digest) -> Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
 }
 
 /// The action, its command and the input root, encoded.
@@ -297,23 +341,61 @@ impl Reapi {
         Ok(Inputs::Held(held))
     }
 
-    /// Writes the blobs of `group` to the cache.
-    fn write(&self, group: &[(wire::Digest, Vec<u8>)]) -> Result<()> {
-        self.client
-            .write_blobs(group)
-            .map_err(|error| self.failed(Method::BatchUpdateBlobs, error))
+    /// Asks the cache which blobs of `parcel` it lacks and writes those with `write`, in groups
+    /// of at most the write size. Returns the input file that no longer holds what it was
+    /// hashed as, when one is found, in which case no later blob is written.
+    fn send_missing(
+        &self,
+        parcel: &Parcel,
+        blobs: &dyn BlobSource,
+        write: impl Fn(&[(wire::Digest, Vec<u8>)]) -> std::result::Result<(), RemoteError>,
+    ) -> Result<Option<RootPath>> {
+        let named: Vec<wire::Digest> = parcel.entries.iter().map(|(d, _)| d.clone()).collect();
+        let missing: BTreeSet<String> = self
+            .client
+            .find_missing_blobs(&named)
+            .map_err(|error| self.failed(Method::FindMissingBlobs, error))?
+            .into_iter()
+            .map(|digest| digest.hash)
+            .collect();
+        let write = |group: &[(wire::Digest, Vec<u8>)]| {
+            write(group).map_err(|error| self.failed(Method::BatchUpdateBlobs, error))
+        };
+
+        let mut group = Vec::new();
+        let mut held = 0_usize;
+        for (digest, source) in &parcel.entries {
+            if !missing.contains(&digest.hash) {
+                continue;
+            }
+            let bytes = match self.load(digest, source, blobs)? {
+                Loaded::Bytes(bytes) => bytes,
+                Loaded::Changed(path) => return Ok(Some(path)),
+            };
+            if !group.is_empty() && held.saturating_add(bytes.len()) > self.write_group {
+                write(&group)?;
+                group.clear();
+                held = 0;
+            }
+            held += bytes.len();
+            group.push((digest.clone(), bytes));
+        }
+        if !group.is_empty() {
+            write(&group)?;
+        }
+        Ok(None)
     }
 
     /// The bytes `source` stands for, as the blob named `digest`.
     fn load(
         &self,
         digest: &wire::Digest,
-        source: Source,
+        source: &Source,
         blobs: &dyn BlobSource,
     ) -> Result<Loaded> {
         match source {
-            Source::Message(bytes) => Ok(Loaded::Bytes(bytes)),
-            Source::Store(held) => blobs.read(&held)?.map(Loaded::Bytes).ok_or_else(|| {
+            Source::Message(bytes) => Ok(Loaded::Bytes(bytes.clone())),
+            Source::Store(held) => blobs.read(held)?.map(Loaded::Bytes).ok_or_else(|| {
                 adapter(format!(
                     "{}: {}: the content store holds no blob {held}",
                     self.client.url(),
@@ -324,10 +406,12 @@ impl Reapi {
                 Ok(bytes) if Digest::of(&bytes).to_string() == digest.hash => {
                     Ok(Loaded::Bytes(bytes))
                 }
-                Ok(_) => Ok(Loaded::Changed(path)),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(Loaded::Changed(path)),
+                Ok(_) => Ok(Loaded::Changed(path.clone())),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    Ok(Loaded::Changed(path.clone()))
+                }
                 Err(error) => {
-                    Err(self.io_failure(Method::BatchUpdateBlobs, "read input file", &path, &error))
+                    Err(self.io_failure(Method::BatchUpdateBlobs, "read input file", path, &error))
                 }
             },
         }
@@ -406,35 +490,9 @@ impl RemoteCache for Reapi {
         let action_digest = described.action.digest();
         parcel.add_message(described.action);
 
-        let named: Vec<wire::Digest> = parcel.entries.iter().map(|(d, _)| d.clone()).collect();
-        let missing: BTreeSet<String> = self
-            .client
-            .find_missing_blobs(&named)
-            .map_err(|error| self.failed(Method::FindMissingBlobs, error))?
-            .into_iter()
-            .map(|digest| digest.hash)
-            .collect();
-
-        let mut group = Vec::new();
-        let mut held = 0_usize;
-        for (digest, source) in parcel.entries {
-            if !missing.contains(&digest.hash) {
-                continue;
-            }
-            let bytes = match self.load(&digest, source, blobs)? {
-                Loaded::Bytes(bytes) => bytes,
-                Loaded::Changed(path) => return Ok(Uploaded::InputChanged(path)),
-            };
-            if !group.is_empty() && held.saturating_add(bytes.len()) > self.write_group {
-                self.write(&group)?;
-                group.clear();
-                held = 0;
-            }
-            held += bytes.len();
-            group.push((digest, bytes));
-        }
-        if !group.is_empty() {
-            self.write(&group)?;
+        let write = |group: &[(wire::Digest, Vec<u8>)]| self.client.write_blobs(group);
+        if let Some(path) = self.send_missing(&parcel, blobs, write)? {
+            return Ok(Uploaded::InputChanged(path));
         }
 
         self.client
@@ -443,11 +501,62 @@ impl RemoteCache for Reapi {
         Ok(Uploaded::Done)
     }
 
-    fn execute(&self, _action: &RemoteAction) -> Result<Executed> {
-        Err(adapter(format!(
-            "{}: execution is not available",
-            self.client.url()
-        )))
+    fn execute(&self, action: &RemoteAction) -> Result<Executed> {
+        self.client
+            .require_execution()
+            .map_err(|error| self.failed(Method::Execute, error))?;
+        let inputs = match self.read_inputs(&action.files)? {
+            Inputs::Held(inputs) => inputs,
+            Inputs::Changed(path) => return Ok(Executed::InputChanged(path)),
+        };
+        let described = self.describe(Method::FindMissingBlobs, action, &inputs)?;
+        let (parcel, action_digest) = Parcel::to_execute(&inputs, described)
+            .map_err(|error| self.failed(Method::FindMissingBlobs, error))?;
+        let write =
+            |group: &[(wire::Digest, Vec<u8>)]| self.client.write_blobs_for_execution(group);
+        if let Some(path) = self.send_missing(&parcel, &NoStore, write)? {
+            return Ok(Executed::InputChanged(path));
+        }
+
+        let sources: BTreeMap<&str, (&wire::Digest, &Source)> = parcel
+            .entries
+            .iter()
+            .map(|(digest, source)| (digest.hash.as_str(), (digest, source)))
+            .collect();
+        let supply = |lacking: &[wire::Digest]| {
+            lacking
+                .iter()
+                .map(|wanted| {
+                    let Some((digest, source)) = sources.get(wanted.hash.as_str()) else {
+                        return Err(Unsupplied::Failed(adapter(format!(
+                            "{}: {}: the server asked for blob {}/{}, which the action does not name",
+                            self.client.url(),
+                            Method::Execute,
+                            wanted.hash,
+                            wanted.size_bytes
+                        ))));
+                    };
+                    match self.load(digest, source, &NoStore) {
+                        Ok(Loaded::Bytes(bytes)) => Ok(((*digest).clone(), bytes)),
+                        Ok(Loaded::Changed(path)) => Err(Unsupplied::Changed(path)),
+                        Err(error) => Err(Unsupplied::Failed(error)),
+                    }
+                })
+                .collect::<std::result::Result<Vec<_>, Unsupplied>>()
+        };
+        let limit = self
+            .queue_timeout
+            .saturating_add(action.timeout.as_duration());
+        match self.client.execute(&action_digest, limit, supply) {
+            Ok(response) => {
+                encode::executed(&response).map_err(|error| self.failed(Method::Execute, error))
+            }
+            Err(ExecuteError::Remote(error)) => Err(self.failed(Method::Execute, error)),
+            Err(ExecuteError::Supply(Unsupplied::Changed(path))) => {
+                Ok(Executed::InputChanged(path))
+            }
+            Err(ExecuteError::Supply(Unsupplied::Failed(error))) => Err(error),
+        }
     }
 }
 
@@ -466,18 +575,18 @@ mod tests {
     use std::time::Duration;
 
     use buildl_core::{
-        Argument, Blob, BlobSource, Command, DecodedTree, Digest, Directory, Error, FileMode,
-        HostPath, Label, OutputName, OutputPath, Platform, PlatformProperties,
+        Argument, Blob, BlobSource, Command, DecodedTree, Digest, Directory, Error, Executed,
+        FileMode, HostPath, Label, OutputName, OutputPath, Platform, PlatformProperties,
         PlatformPropertyName, PortName, RemoteAction, RemoteCache, RemoteContent, RemoteFile,
-        RemoteOutput, RemoteOutputDirectory, RemoteOutputFile, RemotePlatform, RemoteSettings,
-        RemoteTree, RemoteTreeFile, RemoteUpload, RemoteUrl, Result, RootPath, SourcePath, Timeout,
-        TokenSource, TreePath, Uploaded,
+        RemoteHit, RemoteOutput, RemoteOutputDirectory, RemoteOutputFile, RemotePlatform,
+        RemoteSettings, RemoteTree, RemoteTreeFile, RemoteUpload, RemoteUrl, Result, RootPath,
+        SourcePath, Timeout, TokenSource, TreePath, Uploaded,
     };
 
     use super::Reapi;
     use crate::remote::encode::{self, Encoded};
     use crate::remote::input_tree::{InputTree, input_tree, measure};
-    use crate::remote::test_server::{Fault, Method, ServerOptions, TestServer};
+    use crate::remote::test_server::{Exec, Fault, Method, ServerOptions, TestServer, Updates};
 
     const SOURCE: &[u8] = b"int main(void) { return 0; }\n";
     const HEADER: &[u8] = b"#define ONE 1\n";
@@ -956,6 +1065,357 @@ mod tests {
         let text = diagnostic.to_string();
         assert_eq!(text.matches(&address.to_string()).count(), 1, "{text}");
         assert!(text.contains("GetActionResult: cannot connect"), "{text}");
+    }
+
+    /// A reapi over `server` that makes calls again up to `retries` times and waits `queue` for
+    /// a queued execution.
+    fn executing(server: &TestServer, root: &Path, retries: i64, queue: &str) -> Reapi {
+        let url = RemoteUrl::parse(&format!("grpc://{}", server.address())).unwrap();
+        let settings = RemoteSettings::builder(url)
+            .timeout(Timeout::parse("5s").unwrap())
+            .queue_timeout(Timeout::parse(queue).unwrap())
+            .retries(buildl_core::RetryCount::from_integer(retries).unwrap())
+            .build()
+            .unwrap();
+        Reapi::new(&settings, root).unwrap()
+    }
+
+    /// The action of `action()` with its inputs, running `script` in the shell and declaring
+    /// the one output `obj`.
+    fn running(script: &str) -> RemoteAction {
+        RemoteAction {
+            command: Command::new(vec![
+                Argument::parse("/bin/sh").unwrap(),
+                Argument::parse("-c").unwrap(),
+                Argument::parse(script).unwrap(),
+            ])
+            .unwrap(),
+            outputs: vec![output_path("obj")],
+            ..action()
+        }
+    }
+
+    /// Writes the output `obj`, then prints a line.
+    fn building() -> RemoteAction {
+        running(&format!(
+            "printf object > {}; echo compiling",
+            output_path("obj").as_str()
+        ))
+    }
+
+    fn ran(outcome: Executed) -> RemoteHit {
+        let Executed::Ran(hit) = outcome else {
+            unreachable!("expected Ran, got {outcome:?}");
+        };
+        hit
+    }
+
+    fn writes(server: &TestServer) -> usize {
+        server.calls_to(Method::BatchUpdateBlobs).len() + server.calls_to(Method::Write).len()
+    }
+
+    fn header_changed() -> Executed {
+        Executed::InputChanged(RootPath::from(&SourcePath::parse("src/one.h").unwrap()))
+    }
+
+    #[test]
+    fn an_action_is_executed_and_its_result_returned() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let remote = executing(&server, dir.path(), 0, "1m");
+
+        let hit = ran(remote.execute(&building()).unwrap());
+
+        assert_eq!(hit.exit_code, 0);
+        assert_eq!(hit.files.len(), 1);
+        assert_eq!(hit.files[0].path, output_path("obj").as_str());
+        assert_eq!(hit.files[0].blob, Blob::of(b"object"));
+        assert_eq!(hit.stdout, Some(Blob::of(b"compiling\n")));
+        let fetched = remote
+            .download(&[hit.files[0].blob, hit.stdout.unwrap()])
+            .unwrap();
+        assert_eq!(fetched, [b"object".to_vec(), b"compiling\n".to_vec()]);
+    }
+
+    #[test]
+    fn an_executed_result_is_then_found_by_lookup() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let remote = executing(&server, dir.path(), 0, "1m");
+
+        let hit = ran(remote.execute(&building()).unwrap());
+        let found = remote.lookup(&building()).unwrap();
+
+        assert_eq!(found, Some(hit));
+    }
+
+    #[test]
+    fn an_execution_sends_the_inputs_the_command_and_the_action() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let described = building();
+
+        executing(&server, dir.path(), 0, "1m")
+            .execute(&described)
+            .unwrap();
+
+        let command = Encoded::of(&encode::command(&described));
+        let tree = tree_of(dir.path(), &described.files);
+        let message = encode::action(&command.digest(), &tree.root, &described);
+        let action_blob = Encoded::of(&message);
+        for bytes in [SOURCE, HEADER] {
+            assert_eq!(server.blob(&Digest::of(bytes)).as_deref(), Some(bytes));
+        }
+        for (digest, bytes) in &tree.directories {
+            let held = server.blob(&Digest::from_hex(&digest.hash).unwrap());
+            assert_eq!(held.as_deref(), Some(bytes.as_slice()));
+        }
+        assert_eq!(
+            server.blob(&command.blob.digest).as_deref(),
+            Some(command.bytes.as_slice())
+        );
+        assert_eq!(
+            server.blob(&action_blob.blob.digest).as_deref(),
+            Some(action_blob.bytes.as_slice())
+        );
+    }
+
+    #[test]
+    fn only_what_the_server_lacks_is_uploaded_before_execute() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let remote = executing(&server, dir.path(), 0, "1m");
+        remote.execute(&building()).unwrap();
+        let written = writes(&server);
+        assert!(written > 0);
+
+        remote.execute(&building()).unwrap();
+
+        assert_eq!(
+            writes(&server),
+            written,
+            "the second execution writes no blob"
+        );
+        assert_eq!(server.calls_to(Method::Execute).len(), 2);
+    }
+
+    #[test]
+    fn an_input_changed_on_disk_is_input_changed_and_nothing_is_executed() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let remote = executing(&server, dir.path(), 0, "1m");
+        fs::write(dir.path().join("src/one.h"), b"#define ONE 2\n").unwrap();
+
+        let outcome = remote.execute(&building()).unwrap();
+
+        assert_eq!(outcome, header_changed());
+        assert_eq!(writes(&server), 0);
+        assert_eq!(server.calls_to(Method::Execute).len(), 0);
+    }
+
+    #[test]
+    fn an_input_changed_before_it_is_sent_is_input_changed_and_nothing_is_executed() {
+        let server = TestServer::start().unwrap();
+        server.stall(Method::FindMissingBlobs, Duration::from_millis(600));
+        let dir = workspace();
+        let remote = executing(&server, dir.path(), 0, "1m");
+        let header = dir.path().join("src/one.h");
+
+        let outcome = thread::scope(|scope| {
+            let sent = scope.spawn(|| remote.execute(&building()));
+            while server.calls_to(Method::FindMissingBlobs).is_empty() {
+                thread::sleep(Duration::from_millis(5));
+            }
+            fs::write(&header, b"#define ONE 3\n").unwrap();
+            sent.join().unwrap().unwrap()
+        });
+
+        assert_eq!(outcome, header_changed());
+        assert_eq!(server.calls_to(Method::Execute).len(), 0);
+    }
+
+    #[test]
+    fn a_cached_answer_is_cached() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let remote = executing(&server, dir.path(), 0, "1m");
+        let first = ran(remote.execute(&building()).unwrap());
+
+        let second = remote.execute(&building()).unwrap();
+
+        assert_eq!(second, Executed::Cached(first));
+    }
+
+    #[test]
+    fn a_non_zero_exit_is_ran_with_its_code() {
+        // A non-zero exit that the server calls cached is covered where the response is read,
+        // in `encode`: the test server never keeps a result with a non-zero exit.
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let remote = executing(&server, dir.path(), 0, "1m");
+        let failing = running("echo bad >&2; exit 3");
+
+        let hit = ran(remote.execute(&failing).unwrap());
+
+        assert_eq!(hit.exit_code, 3);
+        assert_eq!(hit.stderr, Some(Blob::of(b"bad\n")));
+        assert_eq!(remote.lookup(&failing).unwrap(), None);
+    }
+
+    #[test]
+    fn a_blob_missing_at_execute_is_uploaded_and_the_action_completes() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let remote = executing(&server, dir.path(), 1, "1m");
+        let header = Digest::of(HEADER);
+        server.report_missing_once(&header);
+
+        let hit = ran(remote.execute(&building()).unwrap());
+
+        assert_eq!(hit.exit_code, 0);
+        assert_eq!(server.blob(&header).as_deref(), Some(HEADER));
+        assert_eq!(server.calls_to(Method::Execute).len(), 2);
+    }
+
+    #[test]
+    fn a_blob_missing_in_the_status_is_uploaded_and_the_action_completes() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let remote = executing(&server, dir.path(), 1, "1m");
+        let header = Digest::of(HEADER);
+        server.report_missing_in_status_once(&header);
+
+        let hit = ran(remote.execute(&building()).unwrap());
+
+        assert_eq!(hit.exit_code, 0);
+        assert_eq!(server.blob(&header).as_deref(), Some(HEADER));
+        assert_eq!(server.calls_to(Method::Execute).len(), 2);
+    }
+
+    #[test]
+    fn a_blob_missing_at_execute_that_changed_on_disk_is_input_changed() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let remote = executing(&server, dir.path(), 1, "1m");
+        server.report_missing_once(&Digest::of(HEADER));
+        server.stall(Method::Execute, Duration::from_millis(400));
+        let header = dir.path().join("src/one.h");
+
+        let outcome = thread::scope(|scope| {
+            let sent = scope.spawn(|| remote.execute(&building()));
+            while server.calls_to(Method::Execute).is_empty() {
+                thread::sleep(Duration::from_millis(5));
+            }
+            fs::write(&header, b"#define ONE 4\n").unwrap();
+            sent.join().unwrap().unwrap()
+        });
+
+        assert_eq!(outcome, header_changed());
+    }
+
+    #[test]
+    fn deadline_exceeded_is_timed_out_with_its_logs() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        // The wait limit is the queue time plus the action's own time, 3 s.
+        let remote = executing(&server, dir.path(), 0, "2s");
+        let mut slow = running("echo started; exec /bin/sleep 30");
+        slow.timeout = Timeout::parse("1s").unwrap();
+
+        let outcome = remote.execute(&slow).unwrap();
+
+        assert_eq!(
+            outcome,
+            Executed::TimedOut {
+                stdout: Some(Blob::of(b"started\n")),
+                stderr: Some(Blob::of(b"")),
+            }
+        );
+        let logs = remote.download(&[Blob::of(b"started\n")]).unwrap();
+        assert_eq!(logs, [b"started\n".to_vec()]);
+    }
+
+    #[test]
+    fn a_transient_status_in_the_response_is_retried() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let remote = executing(&server, dir.path(), 1, "1m");
+        server.status_in_response(Fault::Unavailable, 1);
+
+        let hit = ran(remote.execute(&building()).unwrap());
+
+        assert_eq!(hit.exit_code, 0);
+        assert_eq!(server.calls_to(Method::Execute).len(), 2);
+    }
+
+    #[test]
+    fn a_permanent_status_in_the_response_is_a_failure() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let remote = executing(&server, dir.path(), 1, "1m");
+        server.status_in_response(Fault::InvalidArgument, 1);
+
+        let error = remote.execute(&building()).unwrap_err();
+
+        let Error::Adapter { port, diagnostic } = error else {
+            unreachable!("expected an adapter error, got {error:?}");
+        };
+        assert_eq!(port, PortName::RemoteCache);
+        let text = diagnostic.to_string();
+        assert!(text.contains(&server.address().to_string()), "{text}");
+        assert!(text.contains("Execution.Execute"), "{text}");
+        assert!(text.contains("InvalidArgument"), "{text}");
+        assert_eq!(server.calls_to(Method::Execute).len(), 1);
+    }
+
+    #[test]
+    fn a_server_that_cannot_execute_fails_the_execute_call() {
+        let server = TestServer::start_with(ServerOptions {
+            exec: Exec::Disabled,
+            ..ServerOptions::default()
+        })
+        .unwrap();
+        let dir = workspace();
+        let remote = executing(&server, dir.path(), 0, "1m");
+
+        let error = remote.execute(&building()).unwrap_err();
+
+        let Error::Adapter { diagnostic, .. } = error else {
+            unreachable!("expected an adapter error, got {error:?}");
+        };
+        let text = diagnostic.to_string();
+        assert!(text.contains("cannot execute"), "{text}");
+        assert!(text.contains("Execution.Execute"), "{text}");
+        assert_eq!(server.calls_to(Method::Execute).len(), 0);
+        assert_eq!(writes(&server), 0);
+    }
+
+    #[test]
+    fn an_execution_goes_on_when_the_cache_refuses_action_cache_updates() {
+        let server = TestServer::start_with(ServerOptions {
+            updates: Updates::Disabled,
+            ..ServerOptions::default()
+        })
+        .unwrap();
+        let dir = workspace();
+
+        let outcome = executing(&server, dir.path(), 0, "1m")
+            .execute(&building())
+            .unwrap();
+
+        assert!(matches!(outcome, Executed::Ran(_)), "{outcome:?}");
+    }
+
+    #[test]
+    fn no_result_is_uploaded_after_an_execution() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+
+        executing(&server, dir.path(), 0, "1m")
+            .execute(&building())
+            .unwrap();
+
+        assert_eq!(server.calls_to(Method::UpdateActionResult).len(), 0);
     }
 
     #[test]

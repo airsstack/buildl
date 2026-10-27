@@ -336,14 +336,37 @@ impl Client {
     /// Returns [`RemoteError::UpdatesDisabled`] when the cache does not accept uploads, and
     /// otherwise the failure of a call or of the first blob that failed.
     pub(crate) fn write_blobs(&self, blobs: &[(Digest, Vec<u8>)]) -> Result<(), RemoteError> {
+        self.capabilities()?.require_updates()?;
+        self.write_blobs_for_execution(blobs)
+    }
+
+    /// Writes the blobs an execution reads, each with the digest it is stored under. Unlike
+    /// [`Client::write_blobs`] it does not need the cache to accept action cache updates.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure of a call or of the first blob that failed.
+    pub(crate) fn write_blobs_for_execution(
+        &self,
+        blobs: &[(Digest, Vec<u8>)],
+    ) -> Result<(), RemoteError> {
         let capabilities = self.capabilities()?;
-        capabilities.require_updates()?;
         let wire = self.wire()?;
         self.runtime.block_on(transfer::write_blobs(
             &wire,
             capabilities.batch_threshold(),
             blobs,
         ))
+    }
+
+    /// Checks that the server can execute actions.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RemoteError::NoExecution`] when it cannot, and the failure of the capabilities
+    /// otherwise.
+    pub(crate) fn require_execution(&self) -> Result<(), RemoteError> {
+        self.capabilities()?.require_execution()
     }
 
     /// Executes `action` on the server and returns the response that finishes it.
@@ -359,10 +382,6 @@ impl Client {
     /// Returns [`ExecuteError::Supply`] with the failure of `supply`, and otherwise
     /// [`RemoteError::NoExecution`] when the server cannot execute, [`RemoteError::WaitPassed`]
     /// when `limit` passes, and the failure of a call or of the capabilities it needs.
-    #[cfg_attr(
-        not(all(test, feature = "test-server")),
-        expect(dead_code, reason = "no caller executes an action yet")
-    )]
     pub(crate) fn execute<E: Send>(
         &self,
         action: &Digest,

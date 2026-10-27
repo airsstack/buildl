@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 
 use buildl_core::{
-    Blob, DecodedTree, Digest, FileMode, RemoteAction, RemoteContent, RemoteHit,
+    Blob, DecodedTree, Digest, Executed, FileMode, RemoteAction, RemoteContent, RemoteHit,
     RemoteOutputDirectory, RemoteOutputFile, RemotePlatform, RemoteTreeFile, RemoteUpload, Timeout,
     TreePath,
 };
@@ -372,6 +372,70 @@ pub(crate) fn hit(result: &wire::ActionResult) -> Result<RemoteHit, RemoteError>
     })
 }
 
+/// How the server ended an execution, from the response that finished it.
+///
+/// A status of OK, or none, is a run: [`Executed::Cached`] when the server held the result
+/// already and the exit code is 0, and [`Executed::Ran`] otherwise, so a result with a non-zero
+/// exit code is a run whatever `cached_result` says. `DEADLINE_EXCEEDED` is
+/// [`Executed::TimedOut`], holding the logs the result names when it has any.
+///
+/// # Errors
+///
+/// Returns [`RemoteError::Status`] for any other status, [`RemoteError::Protocol`] when an OK
+/// response holds no result or a digest of the result is not one buildl can use.
+pub(crate) fn executed(response: &wire::ExecuteResponse) -> Result<Executed, RemoteError> {
+    answered(response).map_err(|error| match error {
+        RemoteError::Protocol { detail, .. } => RemoteError::Protocol {
+            call: Method::Execute,
+            detail,
+        },
+        other => other,
+    })
+}
+
+/// [`executed`], whose protocol failures name the call that read the result and not `Execute`.
+fn answered(response: &wire::ExecuteResponse) -> Result<Executed, RemoteError> {
+    let code = response
+        .status
+        .as_ref()
+        .map_or(tonic::Code::Ok, |status| tonic::Code::from_i32(status.code));
+    match code {
+        tonic::Code::Ok => {
+            let result = response
+                .result
+                .as_ref()
+                .ok_or_else(|| protocol("the response holds no result".to_owned()))?;
+            let found = hit(result)?;
+            Ok(if response.cached_result && found.exit_code == 0 {
+                Executed::Cached(found)
+            } else {
+                Executed::Ran(found)
+            })
+        }
+        tonic::Code::DeadlineExceeded => {
+            let log = |digest: Option<&wire::Digest>, what: &str| {
+                digest.map(|digest| blob_of(Some(digest), what)).transpose()
+            };
+            let result = response.result.as_ref();
+            Ok(Executed::TimedOut {
+                stdout: log(result.and_then(|r| r.stdout_digest.as_ref()), "stdout")?,
+                stderr: log(result.and_then(|r| r.stderr_digest.as_ref()), "stderr")?,
+            })
+        }
+        other => Err(RemoteError::Status {
+            call: Method::Execute,
+            source: tonic::Status::new(
+                other,
+                response
+                    .status
+                    .as_ref()
+                    .map(|status| status.message.clone())
+                    .unwrap_or_default(),
+            ),
+        }),
+    }
+}
+
 /// The most files and directories a `Tree` may expand to.
 ///
 /// A `Tree` names its children by digest, so several directories may point at one child, and a
@@ -467,15 +531,15 @@ mod tests {
     use std::collections::BTreeMap;
 
     use buildl_core::{
-        Argument, Blob, Command, DecodedTree, Digest, Directory, EnvName, EnvValue, FileMode,
-        Label, OutputName, OutputPath, Platform, PlatformProperties, PlatformPropertyName,
-        RemoteAction, RemoteContent, RemoteOutput, RemotePlatform, RemoteTree, RemoteTreeFile,
-        RemoteUpload, Timeout, TreePath,
+        Argument, Blob, Command, DecodedTree, Digest, Directory, EnvName, EnvValue, Executed,
+        FileMode, Label, OutputName, OutputPath, Platform, PlatformProperties,
+        PlatformPropertyName, RemoteAction, RemoteContent, RemoteOutput, RemotePlatform,
+        RemoteTree, RemoteTreeFile, RemoteUpload, Timeout, TreePath,
     };
     use prost::Message;
 
     use super::{
-        Encoded, RemoteError, action, action_result, command, hit, platform, tree_files,
+        Encoded, RemoteError, action, action_result, command, executed, hit, platform, tree_files,
         wire_digest,
     };
     use crate::remote::proto::build::bazel::remote::execution::v2 as wire;
@@ -885,5 +949,113 @@ mod tests {
             hit(&repeated).unwrap().symlinks,
             ["out/dir-link", "out/link"]
         );
+    }
+
+    fn response(code: tonic::Code, cached_result: bool, exit_code: i32) -> wire::ExecuteResponse {
+        wire::ExecuteResponse {
+            result: Some(wire::ActionResult {
+                exit_code,
+                stdout_digest: Some(digest_of(b"out")),
+                stderr_digest: Some(digest_of(b"err")),
+                ..wire::ActionResult::default()
+            }),
+            cached_result,
+            status: Some(crate::remote::proto::google::rpc::Status {
+                code: code as i32,
+                message: "said so".to_owned(),
+                details: Vec::new(),
+            }),
+            ..wire::ExecuteResponse::default()
+        }
+    }
+
+    #[test]
+    fn an_ok_response_that_ran_is_ran() {
+        let found = executed(&response(tonic::Code::Ok, false, 0)).unwrap();
+
+        let Executed::Ran(hit) = found else {
+            unreachable!("expected Ran, got {found:?}");
+        };
+        assert_eq!(hit.exit_code, 0);
+        assert_eq!(hit.stdout, Some(Blob::of(b"out")));
+    }
+
+    #[test]
+    fn a_response_without_a_status_is_ok() {
+        let mut bare = response(tonic::Code::Ok, false, 0);
+        bare.status = None;
+
+        assert!(matches!(executed(&bare).unwrap(), Executed::Ran(_)));
+    }
+
+    #[test]
+    fn a_cached_ok_response_with_exit_zero_is_cached() {
+        let found = executed(&response(tonic::Code::Ok, true, 0)).unwrap();
+
+        assert!(matches!(found, Executed::Cached(_)), "{found:?}");
+    }
+
+    #[test]
+    fn a_non_zero_exit_is_ran_whether_or_not_the_result_was_cached() {
+        for cached in [false, true] {
+            let found = executed(&response(tonic::Code::Ok, cached, 3)).unwrap();
+
+            let Executed::Ran(hit) = found else {
+                unreachable!("expected Ran, got {found:?}");
+            };
+            assert_eq!(hit.exit_code, 3);
+        }
+    }
+
+    #[test]
+    fn a_deadline_exceeded_response_is_timed_out_with_its_logs() {
+        let found = executed(&response(tonic::Code::DeadlineExceeded, false, -1)).unwrap();
+
+        assert_eq!(
+            found,
+            Executed::TimedOut {
+                stdout: Some(Blob::of(b"out")),
+                stderr: Some(Blob::of(b"err")),
+            }
+        );
+    }
+
+    #[test]
+    fn a_deadline_exceeded_response_without_a_result_is_timed_out_without_logs() {
+        let mut bare = response(tonic::Code::DeadlineExceeded, false, 0);
+        bare.result = None;
+
+        assert_eq!(
+            executed(&bare).unwrap(),
+            Executed::TimedOut {
+                stdout: None,
+                stderr: None,
+            }
+        );
+    }
+
+    #[test]
+    fn any_other_status_is_a_failed_call_that_names_it() {
+        let error = executed(&response(tonic::Code::InvalidArgument, false, 0)).unwrap_err();
+
+        let text = error.to_string();
+        assert!(text.contains("Execution.Execute"), "{text}");
+        assert!(text.contains("InvalidArgument"), "{text}");
+        assert!(text.contains("said so"), "{text}");
+        assert_eq!(
+            crate::remote::retry::Failure::code(&error),
+            Some(tonic::Code::InvalidArgument)
+        );
+    }
+
+    #[test]
+    fn an_ok_response_without_a_result_breaks_the_protocol() {
+        let mut empty = response(tonic::Code::Ok, false, 0);
+        empty.result = None;
+
+        let error = executed(&empty).unwrap_err();
+
+        assert!(matches!(error, RemoteError::Protocol { .. }), "{error:?}");
+        assert!(error.to_string().contains("Execution.Execute"), "{error}");
     }
 }
