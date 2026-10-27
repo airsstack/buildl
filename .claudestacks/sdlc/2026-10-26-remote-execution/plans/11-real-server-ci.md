@@ -43,12 +43,15 @@ crates/buildl-cli/tests/real_remote.rs  — [create] the real-server tests; skip
 (`basic_cas.json5:109-113`) to `"linux"` (spec §10). Its scheduler, local worker and the
 `execution` service on port 50051 stay as they are (`:40-66`, `:68-75`, `:136-171`). The test
 file writes a small workspace into a temporary directory: two targets, one depending on the
-other, whose commands use only `sh` and `printf`/`cat`, sets `[remote] url` to
-`BUILDL_TEST_REAPI_URL` and `retries = 5`, and runs the binary.
+other, whose commands use only `cp` (the Debian base of `ci/nativelink.Dockerfile` has it),
+sets `[remote] url` to `BUILDL_TEST_REAPI_URL`, `retries = 5` and `queue_timeout = "2m"` (so a
+worker that matches no job fails the test fast), and runs the binary with `--remote-strict`. Each
+test writes its own `a.txt`, so its action digests are new to a server that keeps results across
+tests.
 
 **Proof:** written first (they skip locally without the variable), then run in CI —
 - `every_target_runs_on_the_server` — `build --remote-execute`: summary `2 remote`, `out/` holds the expected bytes
-- `a_fresh_checkout_fetches_what_the_server_ran` — the same workspace copied to a new directory, `build` with no flags: `2 fetched`, byte-identical outputs
+- `a_fresh_checkout_fetches_what_the_server_ran` — the same workspace written to a new directory, `build --remote-strict` with no execute flag: `2 fetched`, byte-identical outputs
 - `a_failing_command_fails_as_an_action_failure` — a third target that exits 1: the build fails with the action-failure exit, `buildl log` shows its stderr
 - `tests_skip_without_the_variable` — with `BUILDL_TEST_REAPI_URL` unset every test returns early and passes
 
@@ -63,8 +66,10 @@ other, whose commands use only `sh` and `printf`/`cat`, sets `[remote] url` to
 and cache as the `dod` job does (`:46-58`); start
 `docker build -f ci/nativelink.Dockerfile -t buildl-ci-nativelink ci`, then
 `docker run -d -p 50051:50051 -v $PWD/ci/nativelink.json5:/config buildl-ci-nativelink /config`
-(NativeLink's run form, `nativelink-README.md:96-105`, on the derived image of spec §10); wait until port 50051 accepts a
-connection, failing the job after 60 s; run
+(NativeLink's run form, `nativelink-README.md:96-105`, on the derived image of spec §10); wait
+until `docker logs` shows `Worker registered with scheduler` (a connect to the published port
+proves nothing, since Docker's port proxy accepts it as soon as the container starts), failing the
+job after 60 s; run
 `BUILDL_TEST_REAPI_URL=grpc://127.0.0.1:50051 cargo test -p buildl-cli --test real_remote`;
 on failure print `docker logs` of the container.
 
@@ -77,12 +82,10 @@ Commit `ci(repo): run remote execution against NativeLink`.
 
 ## Risks
 
-- **Most risky step:** the image's contents. NativeLink's worker runs actions inside its own
-  container (`basic_cas.json5:68-78`, `work_directory: /tmp/nativelink/work`), and whether that
-  image holds `sh`, `printf` and `cat` was not checked (spec §10). `execute` probes it first with
-  `docker run --entrypoint sh ghcr.io/tracemachina/nativelink:v1.4.0 -c 'command -v sh printf cat'`
-  on Linux x86_64; if the image lacks them, the test commands change to what it has, or the
-  config's worker gains an `entrypoint`/`additional_environment` that provides them.
+- **Most risky step (settled):** the image's contents. NativeLink's worker runs actions inside its
+  own container (`basic_cas.json5:68-78`, `work_directory: /tmp/nativelink/work`). The probe ran:
+  the published image has no `/bin/sh` and only the `nativelink` binaries, so
+  `ci/nativelink.Dockerfile` puts its static binary on `debian:bookworm-slim` (spec §10).
 - Whether `priority` matching admits `OSFamily` `""` was not checked; the config states `linux`
   instead (spec §10).
 - The prebuilt image is `x86_64` only (`nativelink-README.md:87`); this job and the probe run on

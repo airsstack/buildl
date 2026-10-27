@@ -54,7 +54,7 @@ fn workspace(url: &str, input: &str, extra: &str) -> (tempfile::TempDir, PathBuf
     let dir = tempfile::tempdir().unwrap();
     let root = fs::canonicalize(dir.path()).unwrap();
     let manifest = format!(
-        "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nworkers = 1\n\n[remote]\nurl = \"{url}\"\nretries = 5\n"
+        "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nworkers = 1\n\n[remote]\nurl = \"{url}\"\nretries = 5\nqueue_timeout = \"2m\"\n"
     );
     fs::write(root.join("buildl.toml"), manifest).unwrap();
     fs::write(root.join("build.lua"), format!("{TARGETS}{extra}")).unwrap();

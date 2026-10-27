@@ -196,13 +196,17 @@ jobs:
           docker run -d --name nativelink -p 50051:50051 \
             -v "$PWD/ci/nativelink.json5:/config" buildl-ci-nativelink /config
 
-      - name: Wait for NativeLink to listen
+      # Docker's port proxy accepts a connection on the host as soon as the
+      # container starts, so a connect proves nothing. NativeLink logs this line
+      # once its local worker has joined the scheduler and a job can run.
+      - name: Wait for NativeLink's worker
         run: |
           for _ in $(seq 60); do
-            if (echo > /dev/tcp/127.0.0.1/50051) 2>/dev/null; then exit 0; fi
+            if docker logs nativelink 2>&1 | grep -q 'Worker registered with scheduler'; then exit 0; fi
             sleep 1
           done
-          echo "NativeLink did not listen on 50051 within 60 s" >&2
+          echo "NativeLink's worker did not register within 60 s" >&2
+          docker logs nativelink
           exit 1
 
       - name: The real-server tests
@@ -213,7 +217,7 @@ jobs:
         run: |
           cargo test -p buildl-cli --test real_remote -- --nocapture 2>&1 | tee real_remote.log
           test "${PIPESTATUS[0]}" -eq 0
-          ran=$(grep -c '^real server: ' real_remote.log)
+          ran=$(grep -c '^real server: ' real_remote.log || true)
           test "$ran" -eq 3 || { echo "expected 3 server tests to run, $ran did" >&2; exit 1; }
 
       - name: NativeLink's log
