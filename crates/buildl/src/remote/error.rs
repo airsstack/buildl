@@ -58,7 +58,8 @@ pub(crate) enum RemoteError {
     /// The server cannot execute actions.
     #[error("the remote server cannot execute actions: {reason}")]
     NoExecution {
-        /// Why: execution is not enabled, or the server has no SHA-256 for it.
+        /// Why: the server states no execution capabilities, execution is not enabled, or the
+        /// server has no SHA-256 for it.
         reason: &'static str,
     },
     /// An execution was still unfinished when the time given to it passed.

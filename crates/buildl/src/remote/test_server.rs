@@ -14,14 +14,16 @@
 //! directory with the environment variables of the `Command` and no others, and the logs and
 //! the outputs it listed are stored as blobs. An action with a blob missing is refused as the
 //! protocol asks, and the result of one that exits with 0 is kept in the action cache unless
-//! the action is marked `do_not_cache`. The operation streams `QUEUED`, `EXECUTING` and then the answer, and `WaitExecution` streams the
-//! rest of one the server holds. It can be told to break the next streams after their first
-//! message ([`TestServer::break_streams`]), to forget every operation
+//! the action is marked `do_not_cache`. The operation streams `QUEUED`, `EXECUTING` and then the
+//! answer, and `WaitExecution` streams the rest of one the server holds. It can be told to break
+//! the next streams after their first message ([`TestServer::break_streams`]), to fail them with
+//! a status after it ([`TestServer::fail_streams`]), to forget every operation
 //! ([`TestServer::forget_operations`]), to report a blob missing once, as a call error or in the
 //! answer ([`TestServer::report_missing_once`], [`TestServer::report_missing_in_status_once`]),
 //! to refuse one with a precondition violation of another kind
-//! ([`TestServer::report_violation_once`]), to answer with a status instead of running ([`TestServer::status_in_response`]), and to hold
-//! each action back, with its stream silent, before it runs ([`TestServer::hold_execution`]).
+//! ([`TestServer::report_violation_once`]), to answer with a status instead of running
+//! ([`TestServer::status_in_response`]), and to hold each action back, with its stream silent,
+//! before it runs ([`TestServer::hold_execution`]).
 //!
 //! ```
 //! use buildl::remote::test_server::{Method, TestServer};
@@ -107,6 +109,8 @@ pub enum Fault {
     NotFound,
     /// `INTERNAL`.
     Internal,
+    /// `UNKNOWN`.
+    Unknown,
     /// `INVALID_ARGUMENT`.
     InvalidArgument,
     /// `FAILED_PRECONDITION`.
@@ -126,6 +130,7 @@ impl Fault {
             Self::PermissionDenied => Code::PermissionDenied,
             Self::NotFound => Code::NotFound,
             Self::Internal => Code::Internal,
+            Self::Unknown => Code::Unknown,
             Self::InvalidArgument => Code::InvalidArgument,
             Self::FailedPrecondition => Code::FailedPrecondition,
             Self::DeadlineExceeded => Code::DeadlineExceeded,
@@ -353,6 +358,13 @@ impl TestServer {
         self.shared.lock().broken_streams = n;
     }
 
+    /// Makes the next `n` streams, counted as for [`TestServer::break_streams`], send their first
+    /// message and then fail with the status of `fault` instead of ending cleanly. The operation
+    /// stays held and keeps running. Streams scripted to break are counted off first.
+    pub fn fail_streams(&self, fault: Fault, n: u32) {
+        self.shared.lock().failed_streams = Some((fault, n));
+    }
+
     /// Makes every later `WaitExecution` answer `NOT_FOUND`, whatever name it asks for.
     pub fn forget_operations(&self) {
         self.shared.lock().forgetful = true;
@@ -457,6 +469,8 @@ struct State {
     named: u64,
     /// The streams still to end after their first message.
     broken_streams: u32,
+    /// The status the next streams fail with after their first message, and how many are left.
+    failed_streams: Option<(Fault, u32)>,
     /// Whether `WaitExecution` answers `NOT_FOUND` for every name.
     forgetful: bool,
     /// The hash of the blob the next run is refused for as a call error.
@@ -505,6 +519,17 @@ impl State {
             size_bytes: self.blobs.get(hash).map_or(0, |bytes| size_of(bytes)),
         }
     }
+}
+
+/// How a stream of an operation ends.
+#[derive(Clone, Copy, Debug)]
+enum Ending {
+    /// With the answer.
+    Whole,
+    /// After its first message, without the answer.
+    Broken,
+    /// After its first message, with the status of this fault.
+    Failed(Fault),
 }
 
 /// An execution the server has accepted, ready to be streamed.
@@ -681,28 +706,42 @@ impl Shared {
         }
     }
 
-    /// Counts the arriving stream off the streams scripted to break; true when it is to break.
-    fn break_next(&self) -> bool {
+    /// Counts the arriving stream off the streams scripted to break, then off those scripted to
+    /// fail, and returns how it is to end.
+    fn ending_next(&self) -> Ending {
         let mut state = self.lock();
-        let broken = state.broken_streams > 0;
-        state.broken_streams = state.broken_streams.saturating_sub(1);
-        broken
+        if state.broken_streams > 0 {
+            state.broken_streams -= 1;
+            return Ending::Broken;
+        }
+        match &mut state.failed_streams {
+            Some((fault, left)) if *left > 0 => {
+                *left -= 1;
+                Ending::Failed(*fault)
+            }
+            _ => Ending::Whole,
+        }
     }
 
     /// The stream of operation `name`: nothing for `hold`, then one message for each of
-    /// `stages`, then the answer once the action has finished. A stream that is `broken` ends
-    /// after its first message, before the answer.
+    /// `stages`, then the answer once the action has finished. A stream that does not end
+    /// `Whole` stops after its first message, before the answer, and a `Failed` one ends with
+    /// the fault's status.
     fn operation_stream(
         self: &Arc<Self>,
         name: String,
         action: &Digest,
         stages: Vec<execution_stage::Value>,
         hold: Duration,
-        broken: bool,
+        ending: Ending,
     ) -> BoxStream<Operation> {
         let progress: Vec<_> = stages
             .into_iter()
-            .take(if broken { 1 } else { usize::MAX })
+            .take(if matches!(ending, Ending::Whole) {
+                usize::MAX
+            } else {
+                1
+            })
             .map(|stage| {
                 Ok(Operation {
                     name: name.clone(),
@@ -721,10 +760,13 @@ impl Shared {
         let silence = tokio_stream::once(())
             .then(move |()| tokio::time::sleep(hold))
             .filter_map(|()| None);
-        if broken {
-            Box::pin(silence.chain(tokio_stream::iter(progress)))
-        } else {
-            Box::pin(silence.chain(tokio_stream::iter(progress)).chain(answer))
+        let moving = silence.chain(tokio_stream::iter(progress));
+        match ending {
+            Ending::Whole => Box::pin(moving.chain(answer)),
+            Ending::Broken => Box::pin(moving),
+            Ending::Failed(fault) => {
+                Box::pin(moving.chain(tokio_stream::iter([Err(fault.status())])))
+            }
         }
     }
 
@@ -1167,13 +1209,13 @@ impl Execution for Service {
         let message = request.into_inner();
         let action = digest_of(message.action_digest.as_ref())?;
         let accepted = self.shared.accept(action, message.skip_cache_lookup)?;
-        let broken = self.shared.break_next();
+        let ending = self.shared.ending_next();
         Ok(Response::new(self.shared.operation_stream(
             accepted.name,
             action,
             accepted.stages,
             accepted.hold,
-            broken,
+            ending,
         )))
     }
 
@@ -1205,13 +1247,13 @@ impl Execution for Service {
             })
         }
         .ok_or_else(|| Status::not_found(format!("no operation {name}")))?;
-        let broken = self.shared.break_next();
+        let ending = self.shared.ending_next();
         Ok(Response::new(self.shared.operation_stream(
             name,
             &action,
             vec![stage],
             Duration::ZERO,
-            broken,
+            ending,
         )))
     }
 }
@@ -2227,6 +2269,48 @@ mod tests {
         assert_eq!(result.output_files[0].digest, Some(proto_digest(b"hi")));
         assert_eq!(fixture.server.calls_to(Method::Execute).len(), 1);
         assert_eq!(fixture.server.calls_to(Method::WaitExecution).len(), 2);
+    }
+
+    #[test]
+    fn a_failed_stream_ends_with_its_status_after_a_message() {
+        let fixture = Fixture::new();
+        let action = fixture.action(&command("sleep 0.3; printf hi > out", &["out"]), &[], None);
+        fixture.server.fail_streams(Fault::Unknown, 2);
+        let mut client = fixture.execution();
+
+        let (first, ending, name) = fixture.runtime.block_on(async {
+            let mut stream = client
+                .execute(ExecuteRequest {
+                    action_digest: Some(action.clone()),
+                    ..ExecuteRequest::default()
+                })
+                .await
+                .unwrap()
+                .into_inner();
+            let first = stream.message().await.unwrap().unwrap();
+            let ending = stream.message().await.unwrap_err();
+            let name = first.name.clone();
+            (first, ending, name)
+        });
+
+        assert!(!first.done);
+        assert_eq!(ending.code(), Code::Unknown);
+
+        let waiting = fixture.runtime.block_on(async {
+            let mut client = fixture.execution();
+            let mut stream = client
+                .wait_execution(WaitExecutionRequest { name: name.clone() })
+                .await
+                .unwrap()
+                .into_inner();
+            assert!(stream.message().await.unwrap().is_some());
+            stream.message().await.unwrap_err()
+        });
+        assert_eq!(waiting.code(), Code::Unknown, "a WaitExecution counts too");
+
+        let messages = fixture.wait(&name).unwrap();
+        let result = response_of(&messages).result.unwrap();
+        assert_eq!(result.output_files[0].digest, Some(proto_digest(b"hi")));
     }
 
     #[test]

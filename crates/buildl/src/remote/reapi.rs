@@ -229,6 +229,7 @@ fn names_own_call(error: &RemoteError) -> bool {
     match error {
         RemoteError::Status { .. }
         | RemoteError::TimedOut { .. }
+        | RemoteError::WaitPassed { .. }
         | RemoteError::Protocol { .. }
         | RemoteError::Blob { .. } => true,
         RemoteError::GaveUp { last, .. } => names_own_call(last),
@@ -344,10 +345,10 @@ impl Reapi {
     /// Asks the cache which blobs of `parcel` it lacks and writes those with `write`, in groups
     /// of at most the write size. Returns the input file that no longer holds what it was
     /// hashed as, when one is found, in which case no later blob is written.
-    fn send_missing(
+    fn send_missing<B: BlobSource + ?Sized>(
         &self,
         parcel: &Parcel,
-        blobs: &dyn BlobSource,
+        blobs: &B,
         write: impl Fn(&[(wire::Digest, Vec<u8>)]) -> std::result::Result<(), RemoteError>,
     ) -> Result<Option<RootPath>> {
         let named: Vec<wire::Digest> = parcel.entries.iter().map(|(d, _)| d.clone()).collect();
@@ -387,11 +388,11 @@ impl Reapi {
     }
 
     /// The bytes `source` stands for, as the blob named `digest`.
-    fn load(
+    fn load<B: BlobSource + ?Sized>(
         &self,
         digest: &wire::Digest,
         source: &Source,
-        blobs: &dyn BlobSource,
+        blobs: &B,
     ) -> Result<Loaded> {
         match source {
             Source::Message(bytes) => Ok(Loaded::Bytes(bytes.clone())),
@@ -1333,6 +1334,20 @@ mod tests {
         );
         let logs = remote.download(&[Blob::of(b"started\n")]).unwrap();
         assert_eq!(logs, [b"started\n".to_vec()]);
+    }
+
+    #[test]
+    fn the_wait_limit_is_the_queue_timeout_plus_the_action_timeout() {
+        let server = TestServer::start().unwrap();
+        let dir = workspace();
+        let remote = executing(&server, dir.path(), 0, "1s");
+        server.hold_execution(Duration::from_secs(2));
+        let mut quick = running("true");
+        quick.timeout = Timeout::parse("4s").unwrap();
+
+        let outcome = remote.execute(&quick).unwrap();
+
+        assert!(matches!(outcome, Executed::Ran(_)), "{outcome:?}");
     }
 
     #[test]

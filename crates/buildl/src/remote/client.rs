@@ -9,8 +9,9 @@
 //! reason and every later one at once. Every unary call is bounded whole by the settings'
 //! timeout, each message of a `ByteStream` read by the same timeout, and a `ByteStream` write by
 //! the same timeout for each chunk the cache takes. A call that fails with a status the cache
-//! may recover from is made again, as many times as the settings allow. An execution is
-//! bounded not by the timeout but by the limit its caller gives.
+//! may recover from is made again, as many times as the settings allow. Opening each stream of
+//! an execution is bounded by the same timeout until its headers arrive; the silence between
+//! its messages is bounded only by the limit its caller gives.
 
 use std::future::Future;
 use std::path::Path;
@@ -1556,6 +1557,98 @@ mod tests {
     }
 
     #[test]
+    fn a_stream_that_fails_unavailable_after_a_message_is_resumed() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 1);
+        let action = store_action(&server, "printf hi > out", &["out"], &[]);
+        server.fail_streams(Fault::Unavailable, 1);
+
+        let response = client.execute(&action, LIMIT, nothing).unwrap();
+
+        assert_eq!(response.result.unwrap().output_files[0].path, "out");
+        assert_eq!(server.calls_to(Method::Execute).len(), 1);
+        assert_eq!(server.calls_to(Method::WaitExecution).len(), 1);
+
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 1);
+        let action = store_action(&server, "printf hi > out", &["out"], &[]);
+        server.fail_streams(Fault::Unavailable, 2);
+
+        let response = client.execute(&action, LIMIT, nothing).unwrap();
+
+        assert_eq!(response.result.unwrap().exit_code, 0);
+        assert_eq!(server.calls_to(Method::Execute).len(), 1);
+        assert_eq!(
+            server.calls_to(Method::WaitExecution).len(),
+            2,
+            "the message the first stream delivered gave back the retry"
+        );
+    }
+
+    #[test]
+    fn a_stream_that_fails_unknown_after_a_message_is_resumed_without_resetting() {
+        for fault in [Fault::Unknown, Fault::Internal] {
+            let server = TestServer::start().unwrap();
+            let client = retrying_server(&server, 1);
+            let action = store_action(&server, "printf hi > out", &["out"], &[]);
+            server.fail_streams(fault, 1);
+
+            let response = client.execute(&action, LIMIT, nothing).unwrap();
+
+            assert_eq!(response.result.unwrap().exit_code, 0, "{fault:?}");
+            assert_eq!(server.calls_to(Method::WaitExecution).len(), 1, "{fault:?}");
+
+            let server = TestServer::start().unwrap();
+            let client = retrying_server(&server, 1);
+            let action = store_action(&server, "printf hi > out", &["out"], &[]);
+            server.fail_streams(fault, 2);
+
+            let error = client.execute(&action, LIMIT, nothing).unwrap_err();
+
+            assert!(
+                matches!(
+                    &error,
+                    ExecuteError::Remote(RemoteError::GaveUp { calls: 2, last })
+                        if matches!(&**last, RemoteError::Status { source, .. }
+                            if source.code() == fault_code(fault))
+                ),
+                "{fault:?}: {error:?}"
+            );
+            assert_eq!(server.calls_to(Method::WaitExecution).len(), 1, "{fault:?}");
+        }
+    }
+
+    /// The status code a scripted `fault` is sent as.
+    fn fault_code(fault: Fault) -> tonic::Code {
+        match fault {
+            Fault::Unknown => tonic::Code::Unknown,
+            Fault::Internal => tonic::Code::Internal,
+            other => unreachable!("{other:?} is not used here"),
+        }
+    }
+
+    #[test]
+    fn a_stream_that_fails_with_another_code_is_a_failure() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 3);
+        let action = store_action(&server, "printf hi > out", &["out"], &[]);
+        server.fail_streams(Fault::PermissionDenied, 1);
+
+        let error = client.execute(&action, LIMIT, nothing).unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                ExecuteError::Remote(RemoteError::Status { call: Method::Execute, source })
+                    if source.code() == tonic::Code::PermissionDenied
+            ),
+            "{error:?}"
+        );
+        assert_eq!(server.calls_to(Method::Execute).len(), 1);
+        assert_eq!(server.calls_to(Method::WaitExecution).len(), 0);
+    }
+
+    #[test]
     fn each_transient_status_in_the_response_is_retried_retries_times() {
         for fault in [
             Fault::Unavailable,
@@ -1632,6 +1725,34 @@ mod tests {
             started.elapsed() < Duration::from_millis(1900),
             "{:?}",
             started.elapsed()
+        );
+    }
+
+    #[test]
+    fn the_wait_limit_covers_the_pauses_between_tries() {
+        let server = TestServer::start().unwrap();
+        let mut client = client(&server);
+        client.retry = Retry::new(count(10));
+        let action = store_action(&server, "printf hi > out", &["out"], &[]);
+        server.status_in_response(Fault::Unavailable, 100);
+
+        let started = Instant::now();
+        let error = client
+            .execute(&action, Duration::from_secs(1), nothing)
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                ExecuteError::Remote(RemoteError::WaitPassed { limit })
+                    if *limit == Duration::from_secs(1)
+            ),
+            "{error:?}"
+        );
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed >= Duration::from_secs(1) && elapsed < Duration::from_secs(3),
+            "{elapsed:?}"
         );
     }
 

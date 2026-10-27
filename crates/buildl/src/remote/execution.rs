@@ -4,9 +4,13 @@
 //! says it is done. The whole execution shares one [`Retry`] budget, and each try is one
 //! `Execute` or `WaitExecution` stream:
 //!
-//! - a stream that ends or breaks before the operation is done is resumed with
-//!   `WaitExecution` on the operation's name, and a `WaitExecution` the server answers with
-//!   `NOT_FOUND` starts the execution again with `Execute`;
+//! - a stream that ends, or fails with a code the cache may recover from (`UNAVAILABLE`,
+//!   `RESOURCE_EXHAUSTED`, `ABORTED`, `CANCELLED`), after delivering a message before the
+//!   operation is done is resumed with `WaitExecution` on the operation's name; one that fails
+//!   with `UNKNOWN` or `INTERNAL` after a message, as a reset connection does, is resumed the
+//!   same way but uses one of the retries and does not start the count over; any other failure
+//!   of a stream is a failure. A `WaitExecution` the server answers with `NOT_FOUND` starts
+//!   the execution again with `Execute`;
 //! - a `FAILED_PRECONDITION` whose details name only missing blobs, as the call's error or as
 //!   the status of the final response, has the blobs sent and `Execute` called again; any other
 //!   precondition failure is a failure;
@@ -14,8 +18,9 @@
 //!   `RESOURCE_EXHAUSTED`, `ABORTED`, `CANCELLED`) is retried as the same code from a call is;
 //! - an operation that ends with an error, or that holds no response, breaks the protocol.
 //!
-//! A try that received messages and then stopped started the count of retries over; a try that
-//! ended in an answer, whatever the answer, did not. The time between two messages is not
+//! A try that received messages and then ended, or failed with a code the cache may recover
+//! from, started the count of retries over; a try that ended in an answer, whatever the answer,
+//! or failed with `UNKNOWN` or `INTERNAL`, did not. The time between two messages is not
 //! bounded by the client's timeout, since an action may run a long time; the whole execution
 //! is bounded by the limit the caller gives, every pause included.
 //!
@@ -67,6 +72,14 @@ enum Attempt<E> {
     Remote(RemoteError),
     /// The caller could not supply the blobs the server lacks.
     Supply(E),
+    /// A stream failed with `UNKNOWN` or `INTERNAL` after a message: retried as an
+    /// `UNAVAILABLE` is, though it counts for no progress.
+    Broke {
+        /// The call that was made.
+        call: Method,
+        /// What the stream failed with.
+        source: Status,
+    },
     /// The try cannot go on and the next one can: it is retried as an `UNAVAILABLE` is.
     Again {
         /// The call that was made.
@@ -80,7 +93,7 @@ impl<E> Failure for Attempt<E> {
     fn code(&self) -> Option<Code> {
         match self {
             Self::Remote(error) => error.code(),
-            Self::Again { .. } => Some(Code::Unavailable),
+            Self::Again { .. } | Self::Broke { .. } => Some(Code::Unavailable),
             Self::Supply(_) => None,
         }
     }
@@ -204,6 +217,12 @@ where
                     });
                 }
                 Err(source) => {
+                    if moved && matches!(source.code(), Code::Unknown | Code::Internal) {
+                        return Err(Attempt::Broke {
+                            call: method,
+                            source,
+                        });
+                    }
                     if moved {
                         progress.record();
                     }
@@ -391,6 +410,12 @@ where
             Attempt::Remote(error) => {
                 ExecuteError::Remote(RemoteError::from(super::retry::Failed {
                     error,
+                    calls: failed.calls,
+                }))
+            }
+            Attempt::Broke { call, source } => {
+                ExecuteError::Remote(RemoteError::from(super::retry::Failed {
+                    error: RemoteError::Status { call, source },
                     calls: failed.calls,
                 }))
             }
