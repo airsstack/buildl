@@ -95,3 +95,24 @@ Commit `ci(repo): run remote execution against NativeLink`.
 ## Proof
 
 The `remote-execution` CI job green on the pull request, with every real-server test run.
+
+## Review findings
+
+One review over plans 11 and 12 (`21816dd..fa82cb2`); `cargo make dod` green. Plan 11's findings, closed in `4a5d18c`:
+- ci — the wait step's connect to 127.0.0.1:50051 proved nothing, since Docker's port proxy accepts it as soon as the container starts — fixed: the step waits for NativeLink's `Worker registered with scheduler` log line, seen in a local run right after `Ready, listening on 0.0.0.0:50051`
+- ci — `ran=$(grep -c …)` ended the step under `bash -e` before its message when nothing matched — fixed: `|| true`
+- ci — both base images were pinned by tag only while the copy names a store hash — fixed: pinned by digest (`nativelink@sha256:56e4a01e…`, `debian:bookworm-slim@sha256:7ff6ba31…`); the pinned image built and passed the server tests locally
+- test — with no `queue_timeout`, a worker that matches no job would wait the default hour — fixed: `queue_timeout = "2m"`
+- plan — the plan still said `sh`/`printf`/`cat` and described the image probe as pending — fixed in the plan text
+
+## Probe results
+
+- the published image — `docker export` of `ghcr.io/tracemachina/nativelink:v1.4.0` lists 23 entries (the `nativelink`, `cas_speed_check` and `redis_store_tester` binaries) and `docker run --entrypoint /bin/sh` fails "stat /bin/sh: no such file or directory" — disproved the plan's hope that the image holds `sh`; spec §10 amended, `ci/nativelink.Dockerfile` added
+- `ci/nativelink.json5` differs from upstream `basic_cas.json5` v1.4.0 (223 lines) in line 111 only: `""` → `"linux"`
+- the derived image under `linux/amd64` emulation on this Mac, with a scratch config whose worker offers `macos`/`arm-a64`: `BUILDL_TEST_REAPI_URL=grpc://127.0.0.1:50051 cargo test -p buildl-cli --test real_remote -- --nocapture` printed three `real server:` lines and `4 passed`; by hand, a two-target build printed `2 remote`, a fresh copy `2 fetched` with identical bytes, and a failing `cp` showed GNU `cp`'s message through `buildl log`
+- a bare program name — Rust resolves it through the server process's `PATH` after `env_clear` (plan 09's probe), so `cp` needs no absolute path on the worker
+
+## Deviations
+
+- `ci/nativelink.Dockerfile` (not in the plan's file list): the published image's static binary on `debian:bookworm-slim`
+- the tests use `cp`, `--remote-strict` and a fresh `a.txt` per test; each prints `real server: <test> against <url>` when it runs, and the CI step requires three such lines
