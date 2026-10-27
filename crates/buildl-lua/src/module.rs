@@ -12,7 +12,8 @@
 //! file, that made the call; answering `buildl.discovered` from the evaluation's results.
 //!
 //! Non-responsibilities: the argument shapes, which `primitives` owns, the walk behind
-//! `buildl.sources`, which `sources` owns, the replacement functions, which `stable_text` owns,
+//! `buildl.sources`, which `sources` owns, the stream reader behind `buildl.decode_all`, which
+//! `decode_all` owns, the replacement functions, which `stable_text` owns,
 //! and loading the plugins `buildl.use` names, which `plugin` owns.
 
 use std::collections::BTreeMap;
@@ -23,6 +24,7 @@ use airsl::mlua::{self, Lua, Table, Value};
 use airsl::{HostModule, InstallContext, ModuleName};
 use buildl_core::{EvaluationFailure, EvaluationLimit, Origin, PluginName, StagedItem, TargetRole};
 
+use crate::decode_all;
 use crate::plugin::Plugins;
 use crate::primitives;
 use crate::refusal::{CallSite, Refusal};
@@ -207,6 +209,9 @@ pub(crate) fn primitives_table(
             .transpose()
     })?;
     table.set("discovered", discovered)?;
+
+    let decode_all = lua.create_function(|lua, text: Value| decode_all::decode_all(lua, &text))?;
+    table.set("decode_all", decode_all)?;
 
     Ok(table)
 }

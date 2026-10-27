@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-10-27
 built-on: 5947af3e315f
 ---
@@ -33,6 +33,7 @@ crates/buildl-lua/src/lib.rs          — [modify] `mod decode_all;` (export-onl
 crates/buildl-lua/src/module.rs       — [modify] primitives_table sets `decode_all` (:127-218)
 crates/buildl-lua/tests/flows/plugins.rs — [modify] a plugin reaches buildl.decode_all
 crates/buildl-lua/tests/flows/declarations.rs — [modify] a build file uses it and declares from the result
+crates/buildl-lua/README.md           — [modify] the declaration API row lists `decode_all`
 docs/design.md                        — [modify] §5 bullet
 ```
 
@@ -42,7 +43,7 @@ docs/design.md                        — [modify] §5 bullet
 
 **Files:**
 - Modify `crates/buildl-lua/Cargo.toml`, `crates/expected-edges.txt`, `crates/buildl-lua/src/lib.rs`,
-  `crates/buildl-lua/src/module.rs`
+  `crates/buildl-lua/src/module.rs`, `crates/buildl-lua/README.md`
 - Create `crates/buildl-lua/src/decode_all.rs`
 - Test: `decode_all.rs` `#[cfg(test)] mod tests`; `crates/buildl-lua/tests/flows/plugins.rs`;
   `crates/buildl-lua/tests/flows/declarations.rs`

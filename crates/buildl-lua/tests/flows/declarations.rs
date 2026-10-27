@@ -6,7 +6,7 @@ use buildl_core::{
     StagedTarget, TargetRole, Written,
 };
 
-use crate::common::{evaluate, fixture};
+use crate::common::{evaluate, fixture, workspace};
 
 fn strings<T>(texts: &[&str]) -> Vec<Written<T>> {
     texts.iter().map(|text| Written::new(*text)).collect()
@@ -128,4 +128,26 @@ fn a_missing_build_file_is_absent() {
     let dir = tempfile::tempdir().unwrap();
     let root = std::fs::canonicalize(dir.path()).unwrap();
     assert_eq!(evaluate(&root).unwrap(), Evaluated::Absent);
+}
+
+#[test]
+fn a_build_file_declares_one_target_per_decoded_value() {
+    let (_dir, root) = workspace(
+        "local stream = '{\"n\":\"a\"}\\n{\"n\":\"b\"}\\n{\"n\":\"c\"}'\n\
+         for _, value in ipairs(buildl.decode_all(stream)) do\n\
+           buildl.target(value.n, { run = { 'x' } })\n\
+         end",
+    );
+    let Evaluated::Staged(staged) = evaluate(&root).unwrap() else {
+        panic!("the workspace has a build file");
+    };
+    let names: Vec<&str> = staged
+        .declarations
+        .iter()
+        .map(|declaration| match &declaration.item {
+            StagedItem::Target(target) => target.name.as_written(),
+            other => panic!("expected a target, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(names, ["a", "b", "c"]);
 }

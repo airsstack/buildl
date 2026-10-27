@@ -16,6 +16,10 @@ airsl       = { workspace = true }
 buildl-core = { workspace = true }
 # `buildl.sources()` matching, with the glob semantics of airsl's own `glob` module.
 globset     = { workspace = true }
+# `serde::de::IgnoredAny`: `buildl.decode_all()` reads each value of a stream without building it.
+serde       = { workspace = true }
+# `buildl.decode_all()` splits a stream of JSON values at the byte offset of each value's end.
+serde_json  = { workspace = true }
 # `buildl.sources()` traversal of the declaring directory, host-side.
 walkdir     = { workspace = true }
 
