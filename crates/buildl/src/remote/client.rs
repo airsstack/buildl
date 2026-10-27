@@ -9,7 +9,8 @@
 //! reason and every later one at once. Every unary call is bounded whole by the settings'
 //! timeout, each message of a `ByteStream` read by the same timeout, and a `ByteStream` write by
 //! the same timeout for each chunk the cache takes. A call that fails with a status the cache
-//! may recover from is made again, as many times as the settings allow.
+//! may recover from is made again, as many times as the settings allow. An execution is
+//! bounded not by the timeout but by the limit its caller gives.
 
 use std::future::Future;
 use std::path::Path;
@@ -25,13 +26,16 @@ use tonic::{Code, Status};
 
 use super::capabilities::Capabilities;
 use super::channel::{self, ChannelError, Pending};
-use super::error::RemoteError;
+use super::error::{ExecuteError, RemoteError};
+use super::execution;
 use super::login::Login;
 use super::proto::build::bazel::remote::execution::v2::action_cache_client::ActionCacheClient;
 use super::proto::build::bazel::remote::execution::v2::capabilities_client::CapabilitiesClient;
 use super::proto::build::bazel::remote::execution::v2::content_addressable_storage_client::ContentAddressableStorageClient;
+use super::proto::build::bazel::remote::execution::v2::execution_client::ExecutionClient;
 use super::proto::build::bazel::remote::execution::v2::{
-    ActionResult, Digest, GetActionResultRequest, UpdateActionResultRequest, digest_function,
+    ActionResult, Digest, ExecuteResponse, GetActionResultRequest, UpdateActionResultRequest,
+    digest_function,
 };
 use super::proto::google::bytestream::byte_stream_client::ByteStreamClient;
 use super::retry::Retry;
@@ -105,6 +109,10 @@ impl Wire<'_> {
 
     pub(super) fn cas(&self) -> ContentAddressableStorageClient<Intercepted> {
         ContentAddressableStorageClient::with_interceptor(self.channel.clone(), self.login.clone())
+    }
+
+    pub(super) fn execution(&self) -> ExecutionClient<Intercepted> {
+        ExecutionClient::with_interceptor(self.channel.clone(), self.login.clone())
     }
 
     pub(super) fn bytestream(&self) -> ByteStreamClient<Intercepted> {
@@ -338,6 +346,41 @@ impl Client {
         ))
     }
 
+    /// Executes `action` on the server and returns the response that finishes it.
+    ///
+    /// `supply` is given the digests of the blobs the server says it lacks and returns their
+    /// bytes, which are sent before the execution is asked for again; sending them needs no
+    /// permission to update the action cache. `limit` bounds the whole call, every wait for the
+    /// server and every pause between tries included; a status in the response that is not
+    /// retried here is the caller's to judge.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ExecuteError::Supply`] with the failure of `supply`, and otherwise
+    /// [`RemoteError::NoExecution`] when the server cannot execute, [`RemoteError::WaitPassed`]
+    /// when `limit` passes, and the failure of a call or of the capabilities it needs.
+    #[cfg_attr(
+        not(all(test, feature = "test-server")),
+        expect(dead_code, reason = "no caller executes an action yet")
+    )]
+    pub(crate) fn execute<E: Send>(
+        &self,
+        action: &Digest,
+        limit: Duration,
+        supply: impl Fn(&[Digest]) -> Result<Vec<(Digest, Vec<u8>)>, E> + Send + Sync,
+    ) -> Result<ExecuteResponse, ExecuteError<E>> {
+        let capabilities = self.capabilities()?;
+        capabilities.require_execution()?;
+        let wire = self.wire()?;
+        self.runtime.block_on(execution::run(
+            &wire,
+            capabilities.batch_threshold(),
+            limit,
+            action,
+            supply,
+        ))
+    }
+
     /// The result the cache holds for `action`, or `None` when it holds none.
     ///
     /// # Errors
@@ -419,7 +462,9 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::convert::Infallible;
     use std::net::TcpListener;
+    use std::sync::Mutex;
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -430,10 +475,14 @@ mod tests {
 
     use super::Client;
     use crate::remote::channel::ChannelError;
-    use crate::remote::error::RemoteError;
-    use crate::remote::proto::build::bazel::remote::execution::v2::{ActionResult, Digest};
+    use crate::remote::error::{ExecuteError, RemoteError};
+    use crate::remote::proto::build::bazel::remote::execution::v2::{
+        Action, ActionResult, Command, Digest, Directory, FileNode,
+    };
     use crate::remote::retry::Retry;
-    use crate::remote::test_server::{Fault, Hashing, Method, ServerOptions, TestServer, Updates};
+    use crate::remote::test_server::{
+        Exec, Fault, Hashing, Method, ServerOptions, TestServer, Updates,
+    };
     use crate::remote::tls_fixture::root;
 
     const MIB: usize = 1024 * 1024;
@@ -1254,5 +1303,349 @@ mod tests {
             ),
             "{error:?}"
         );
+    }
+
+    /// Stores an action on `server` that runs `script` over a root holding `inputs`, and
+    /// returns its digest.
+    fn store_action(
+        server: &TestServer,
+        script: &str,
+        outputs: &[&str],
+        inputs: &[&[u8]],
+    ) -> Digest {
+        fn store<M: prost::Message>(server: &TestServer, message: &M) -> Digest {
+            let bytes = message.encode_to_vec();
+            let _ = server.put_blob(&bytes);
+            digest_of(&bytes)
+        }
+        let files = inputs
+            .iter()
+            .enumerate()
+            .map(|(at, bytes)| {
+                let _ = server.put_blob(bytes);
+                FileNode {
+                    name: format!("in{at}"),
+                    digest: Some(digest_of(bytes)),
+                    ..FileNode::default()
+                }
+            })
+            .collect();
+        let root = store(
+            server,
+            &Directory {
+                files,
+                ..Directory::default()
+            },
+        );
+        let command = store(
+            server,
+            &Command {
+                arguments: vec!["/bin/sh".to_owned(), "-c".to_owned(), script.to_owned()],
+                output_paths: outputs.iter().map(|path| (*path).to_owned()).collect(),
+                ..Command::default()
+            },
+        );
+        store(
+            server,
+            &Action {
+                command_digest: Some(command),
+                input_root_digest: Some(root),
+                ..Action::default()
+            },
+        )
+    }
+
+    /// A `supply` that has nothing to send.
+    #[expect(
+        clippy::unnecessary_wraps,
+        reason = "the shape of a `supply`, which can fail"
+    )]
+    const fn nothing(_: &[Digest]) -> Result<Vec<(Digest, Vec<u8>)>, Infallible> {
+        Ok(Vec::new())
+    }
+
+    const LIMIT: Duration = Duration::from_secs(30);
+
+    #[test]
+    fn an_action_runs_to_done() {
+        let server = TestServer::start().unwrap();
+        let client = client(&server);
+        let action = store_action(&server, "printf hi > out", &["out"], &[]);
+
+        let response = client.execute(&action, LIMIT, nothing).unwrap();
+
+        let result = response.result.unwrap();
+        assert_eq!(result.exit_code, 0);
+        assert_eq!(result.output_files[0].path, "out");
+        assert_eq!(result.output_files[0].digest, Some(digest_of(b"hi")));
+        assert_eq!(server.calls_to(Method::Execute).len(), 1);
+        assert_eq!(server.calls_to(Method::WaitExecution).len(), 0);
+    }
+
+    #[test]
+    fn a_broken_stream_is_resumed_with_wait_execution() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 1);
+        let action = store_action(&server, "printf hi > out", &["out"], &[]);
+        server.break_streams(1);
+
+        let response = client.execute(&action, LIMIT, nothing).unwrap();
+
+        assert_eq!(response.result.unwrap().output_files[0].path, "out");
+        assert_eq!(server.calls_to(Method::Execute).len(), 1);
+        assert_eq!(server.calls_to(Method::WaitExecution).len(), 1);
+    }
+
+    #[test]
+    fn a_lost_operation_is_executed_again() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 3);
+        let action = store_action(&server, "printf hi > out", &["out"], &[]);
+        server.break_streams(1);
+        server.forget_operations();
+
+        let response = client.execute(&action, LIMIT, nothing).unwrap();
+
+        assert_eq!(response.result.unwrap().output_files[0].path, "out");
+        assert_eq!(server.calls_to(Method::Execute).len(), 2);
+        assert_eq!(server.calls_to(Method::WaitExecution).len(), 1);
+    }
+
+    /// Runs an action over one input, `lose` telling the server to lose it, and returns the
+    /// digests `supply` was asked for.
+    fn run_with_a_missing_input(
+        lose: impl FnOnce(&TestServer, &buildl_core::Digest),
+    ) -> Vec<Vec<Digest>> {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 1);
+        let input = b"an input".as_slice();
+        let action = store_action(&server, "cat in0 > out", &["out"], &[input]);
+        let wanted = buildl_core::Digest::of(input);
+        lose(&server, &wanted);
+        let asked = Mutex::new(Vec::new());
+
+        let response = client
+            .execute(&action, LIMIT, |digests: &[Digest]| {
+                asked.lock().unwrap().push(digests.to_vec());
+                Ok::<_, Infallible>(vec![(digest_of(input), input.to_vec())])
+            })
+            .unwrap();
+
+        assert_eq!(response.result.unwrap().exit_code, 0);
+        assert_eq!(server.blob(&wanted).as_deref(), Some(input));
+        assert_eq!(server.calls_to(Method::Execute).len(), 2);
+        assert_eq!(server.calls_to(Method::UpdateActionResult).len(), 0);
+        asked.into_inner().unwrap()
+    }
+
+    #[test]
+    fn missing_blobs_are_handed_to_the_upload_callback() {
+        let asked = run_with_a_missing_input(TestServer::report_missing_once);
+
+        assert_eq!(asked, vec![vec![digest_of(b"an input")]]);
+    }
+
+    #[test]
+    fn missing_blobs_in_the_status_are_handed_to_the_upload_callback() {
+        let asked = run_with_a_missing_input(TestServer::report_missing_in_status_once);
+
+        assert_eq!(asked, vec![vec![digest_of(b"an input")]]);
+    }
+
+    #[test]
+    fn blobs_are_sent_for_an_execution_when_the_cache_refuses_updates() {
+        let server = TestServer::start_with(ServerOptions {
+            updates: Updates::Disabled,
+            ..ServerOptions::default()
+        })
+        .unwrap();
+        let client = retrying_server(&server, 1);
+        let input = b"an input".as_slice();
+        let action = store_action(&server, "cat in0 > out", &["out"], &[input]);
+        server.report_missing_once(&buildl_core::Digest::of(input));
+
+        let response = client
+            .execute(&action, LIMIT, |_: &[Digest]| {
+                Ok::<_, Infallible>(vec![(digest_of(input), input.to_vec())])
+            })
+            .unwrap();
+
+        assert_eq!(response.result.unwrap().exit_code, 0);
+    }
+
+    #[test]
+    fn a_supply_that_fails_ends_the_execution() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 2);
+        let input = b"an input".as_slice();
+        let action = store_action(&server, "cat in0 > out", &["out"], &[input]);
+        server.report_missing_once(&buildl_core::Digest::of(input));
+
+        let error = client
+            .execute(&action, LIMIT, |_: &[Digest]| {
+                Err::<Vec<(Digest, Vec<u8>)>, _>("changed on disk")
+            })
+            .unwrap_err();
+
+        assert!(
+            matches!(error, ExecuteError::Supply("changed on disk")),
+            "{error:?}"
+        );
+        assert_eq!(server.calls_to(Method::Execute).len(), 1);
+    }
+
+    #[test]
+    fn a_precondition_failure_with_another_violation_is_a_failure() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 2);
+        let input = b"an input".as_slice();
+        let action = store_action(&server, "cat in0 > out", &["out"], &[input]);
+        server.report_violation_once("UNSUPPORTED", &buildl_core::Digest::of(input));
+        let asked = Mutex::new(0);
+
+        let error = client
+            .execute(&action, LIMIT, |_: &[Digest]| {
+                *asked.lock().unwrap() += 1;
+                Ok::<_, Infallible>(Vec::new())
+            })
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                ExecuteError::Remote(RemoteError::Status { call: Method::Execute, source })
+                    if source.code() == tonic::Code::FailedPrecondition
+            ),
+            "{error:?}"
+        );
+        assert_eq!(*asked.lock().unwrap(), 0);
+        assert_eq!(server.calls_to(Method::Execute).len(), 1);
+    }
+
+    #[test]
+    fn progress_resets_the_retries() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 1);
+        let action = store_action(&server, "printf hi > out", &["out"], &[]);
+        server.break_streams(2);
+
+        let response = client.execute(&action, LIMIT, nothing).unwrap();
+
+        assert_eq!(response.result.unwrap().output_files[0].path, "out");
+        assert_eq!(server.calls_to(Method::Execute).len(), 1);
+        assert_eq!(server.calls_to(Method::WaitExecution).len(), 2);
+    }
+
+    #[test]
+    fn each_transient_status_in_the_response_is_retried_retries_times() {
+        for fault in [
+            Fault::Unavailable,
+            Fault::ResourceExhausted,
+            Fault::Aborted,
+            Fault::Cancelled,
+        ] {
+            let retries = 2;
+            let server = TestServer::start().unwrap();
+            let client = retrying_server(&server, retries);
+            let action = store_action(&server, "printf hi > out", &["out"], &[]);
+            server.status_in_response(fault, 2);
+
+            let response = client.execute(&action, LIMIT, nothing).unwrap();
+
+            assert_eq!(response.result.unwrap().exit_code, 0, "{fault:?}");
+            assert_eq!(server.calls_to(Method::Execute).len(), 3, "{fault:?}");
+
+            let server = TestServer::start().unwrap();
+            let client = retrying_server(&server, retries);
+            let action = store_action(&server, "printf hi > out", &["out"], &[]);
+            server.status_in_response(fault, 3);
+
+            let error = client.execute(&action, LIMIT, nothing).unwrap_err();
+
+            assert!(
+                matches!(
+                    &error,
+                    ExecuteError::Remote(RemoteError::GaveUp { calls: 3, .. })
+                ),
+                "{fault:?}: {error:?}"
+            );
+            assert_eq!(server.calls_to(Method::Execute).len(), 3, "{fault:?}");
+        }
+    }
+
+    #[test]
+    fn a_permanent_status_in_the_response_is_returned_not_retried() {
+        let server = TestServer::start().unwrap();
+        let client = retrying_server(&server, 2);
+        let action = store_action(&server, "printf hi > out", &["out"], &[]);
+        server.status_in_response(Fault::InvalidArgument, 1);
+
+        let response = client.execute(&action, LIMIT, nothing).unwrap();
+
+        assert_eq!(
+            response.status.unwrap().code,
+            i32::from(tonic::Code::InvalidArgument)
+        );
+        assert_eq!(server.calls_to(Method::Execute).len(), 1);
+    }
+
+    #[test]
+    fn the_wait_limit_ends_a_silent_execution() {
+        let server = TestServer::start().unwrap();
+        let client = client(&server);
+        let action = store_action(&server, "printf hi > out", &["out"], &[]);
+        server.hold_execution(Duration::from_secs(2));
+
+        let started = Instant::now();
+        let error = client
+            .execute(&action, Duration::from_secs(1), nothing)
+            .unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                ExecuteError::Remote(RemoteError::WaitPassed { limit })
+                    if *limit == Duration::from_secs(1)
+            ),
+            "{error:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_millis(1900),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[test]
+    fn the_per_call_timeout_does_not_cut_a_silent_stream() {
+        let server = TestServer::start().unwrap();
+        let client = Client::new(&settings(&server, None, "200ms"), root()).unwrap();
+        let action = store_action(&server, "printf hi > out", &["out"], &[]);
+        server.hold_execution(Duration::from_secs(1));
+
+        let response = client
+            .execute(&action, Duration::from_secs(10), nothing)
+            .unwrap();
+
+        assert_eq!(response.result.unwrap().exit_code, 0);
+    }
+
+    #[test]
+    fn a_server_that_cannot_execute_is_refused_before_any_execute_call() {
+        let server = TestServer::start_with(ServerOptions {
+            exec: Exec::Disabled,
+            ..ServerOptions::default()
+        })
+        .unwrap();
+        let client = client(&server);
+        let action = store_action(&server, "true", &[], &[]);
+
+        let error = client.execute(&action, LIMIT, nothing).unwrap_err();
+
+        assert!(
+            matches!(error, ExecuteError::Remote(RemoteError::NoExecution { .. })),
+            "{error:?}"
+        );
+        assert_eq!(server.calls_to(Method::Execute).len(), 0);
     }
 }

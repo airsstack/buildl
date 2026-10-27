@@ -131,10 +131,6 @@ impl Capabilities {
     ///
     /// Returns [`RemoteError::NoExecution`] when the server states no execution capabilities,
     /// has execution switched off, or does not execute with SHA-256.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "no caller asks for execution yet")
-    )]
     pub(crate) const fn require_execution(&self) -> Result<(), RemoteError> {
         let reason = match self.execution {
             Execution::Enabled => return Ok(()),

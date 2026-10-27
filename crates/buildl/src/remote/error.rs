@@ -61,6 +61,12 @@ pub(crate) enum RemoteError {
         /// Why: execution is not enabled, or the server has no SHA-256 for it.
         reason: &'static str,
     },
+    /// An execution was still unfinished when the time given to it passed.
+    #[error("{} did not finish within {limit:?}", Method::Execute)]
+    WaitPassed {
+        /// The time the whole execution was given.
+        limit: Duration,
+    },
     /// One blob of a transfer failed.
     #[error("{call}: blob {}/{} failed with {code:?}: {message}", .digest.hash, .digest.size_bytes)]
     Blob {
@@ -98,6 +104,25 @@ pub(crate) enum RemoteError {
     },
 }
 
+/// Why an execution failed: the remote server, or the caller that supplies the blobs it lacks.
+#[cfg_attr(
+    not(all(test, feature = "test-server")),
+    expect(dead_code, reason = "no caller reads the failure of an execution yet")
+)]
+#[derive(Debug)]
+pub(crate) enum ExecuteError<E> {
+    /// The server or the connection failed.
+    Remote(RemoteError),
+    /// The caller could not supply the blobs the server said it lacks.
+    Supply(E),
+}
+
+impl<E> From<RemoteError> for ExecuteError<E> {
+    fn from(error: RemoteError) -> Self {
+        Self::Remote(error)
+    }
+}
+
 impl Failure for RemoteError {
     /// The code the cache answered with. A call that timed out and a connection that cannot be
     /// made count as `UNAVAILABLE`: the cache may be back by the next try. A failure that is
@@ -116,6 +141,7 @@ impl Failure for RemoteError {
             | Self::NoSha256
             | Self::UpdatesDisabled
             | Self::NoExecution { .. }
+            | Self::WaitPassed { .. }
             | Self::TooLarge { .. }
             | Self::Protocol { .. }
             | Self::GaveUp { .. } => None,
@@ -198,6 +224,9 @@ mod tests {
             RemoteError::NoSha256,
             RemoteError::UpdatesDisabled,
             RemoteError::NoExecution { reason: "off" },
+            RemoteError::WaitPassed {
+                limit: Duration::from_secs(1),
+            },
             RemoteError::TooLarge { size: 1 },
             RemoteError::Unusable {
                 reason: "down".to_owned(),
@@ -267,6 +296,18 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "the remote server cannot execute actions: execution is not enabled"
+        );
+    }
+
+    #[test]
+    fn an_execution_that_ran_out_of_time_names_the_call_and_the_limit() {
+        let error = RemoteError::WaitPassed {
+            limit: Duration::from_secs(90),
+        };
+
+        assert_eq!(
+            error.to_string(),
+            "Execution.Execute did not finish within 90s"
         );
     }
 
