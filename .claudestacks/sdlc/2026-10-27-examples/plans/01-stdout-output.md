@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-27
 built-on: 5947af3e315f
 ---
@@ -312,3 +312,32 @@ Mermaid stays Mermaid; § cross-references are preserved.
 - `cargo make dod` and `cargo deny check` green after every task.
 - `cargo test -p buildl --test e2e stdout_output` and `cargo test -p buildl-cli --test cli` pass.
 - Plan 04's `go-discovery` example builds on Linux and macOS in CI with `stdout = true`.
+
+## Review findings
+
+- spec-drift — the `stdout` one-output refusal did not name the target (spec §3) — `crates/buildl-core/src/load/traversal.rs`, `error.rs`. Fixed: new `Error::StdoutOutputs { target, outputs }` inside `InvalidDeclaration`; tests assert the label and count. Verified by the fix round's `cargo make dod` (`Build Done in 108.63 seconds`), committed `fa8fbc1`.
+- unit-test-mandate — `full_key` left `output_source` at its default; `a_key_whose_digest_is_not_its_components_is_refused` lacked the field — `types/action_key.rs`. Fixed, `fa8fbc1`.
+- test-hygiene — `changing_any_one_component_changes_the_key` lacked the output source; `the_output_source_changes_the_key` folded into it — `types/action_key.rs`. Fixed, `fa8fbc1`.
+- doc-comment-discipline — over-long doc lines in `plan/difference.rs` and `execute/perform.rs`. Rewrapped, `fa8fbc1` / `144e0bd`.
+- docs-accuracy — architecture §3.4 said `Error::StdoutOutputs` exits 5 and is raised bare; it only reaches the CLI inside `InvalidDeclaration` — `docs/architecture.md`. Fixed, `2012a4f`.
+- docs-wording — design §5 field list read as if `stdout` were for phony targets; §8.7 stdout sentences broke "a tree like that" — `docs/design.md`. Fixed, `2012a4f`.
+- docs-drift — README key diagram still read "all four" after design §8.3 changed — `README.md`. Fixed, `2012a4f`.
+- correctness (🔴) — `consult` (lookup path) sent a stdout hit naming the output path to `fetch`, so it became a failed call (warning, remote off, local re-run) instead of `OutputWritten` — `execute/perform.rs`. Fixed test-first: `a_remote_hit_for_a_stdout_target_naming_the_path_is_output_written` failed (`left: Built, right: OutputWritten`), then passed; fix round `cargo make dod` exit 0 (`Build Done in 74.41 seconds`), committed `144e0bd`.
+- strong-types — `Digest::of(&[])` sentinel to judge the path — `execute/fetch.rs`. Replaced by `written`/`written_at`, which need no digest, `144e0bd`.
+- test-hygiene — `encode.rs` `a_stdout_targets_command_lists_its_path_in_output_paths` duplicated `the_command_matches_spec_section_2`; dropped, `144e0bd`. `StdoutDigest::Left` renamed `Omitted`.
+- test-coverage — `the_same_under_bare` did not compare two `bare` checkouts — `crates/buildl/tests/e2e/stdout_output.rs`. Fixed: `cargo test -p buildl --test e2e stdout_output` → `test result: ok. 4 passed`; `cargo clippy -p buildl --all-targets --all-features -- -D warnings` clean; committed `694c9ef`.
+- noted, kept — `a_failed_stdout_target_stores_nothing` cannot fail through Task 2's code (exit is checked before collection); kept as the spec-rule guard. Premise-guard tests in `encode.rs`/`test_server.rs` and the strict-without-stdout flow test guard premises, not new adapter code.
+
+## Probe results
+
+- Plan anchors checked before each task (`grep`): `NetworkAccess` declaration.rs:48, `Difference::Network` difference.rs:68, `#[non_exhaustive]` plan.rs:29 and outcome.rs:66, `DISCOVER_FIELDS` primitives.rs:29, `flag()` values.rs:80, `collected` perform.rs:307, catch-alls exit.rs:59 and block.rs:171 — all present. Against the plan: `convert_target` is at traversal.rs:216, not :280; 44 crate files construct the structs, not "about 40".
+- Task 3 red-first: `fetch.rs` unit tests and the `upload.rs` test failed before the code; the lookup-hit flows test failed `left: Built, right: OutputWritten` before the fix.
+- Task 4: the feature already existed, so all 7 tests passed at once; the first exit-5 assertion missed the `build.lua: declaration #0: ` prefix and was corrected in the test.
+
+## Deviations
+
+- 2026-10-27 — Task 1: the refusal carries the target through a new `Error::StdoutOutputs` (spec §3 asks it to name the target); `the_output_source_changes_the_key` became a case of `changing_any_one_component_changes_the_key`; `log.jsonl` golden also regenerated (key digests changed).
+- 2026-10-27 — Task 2: added `collected_from` with `OutputsFrom { Command, Stdout(Digest) }` beside `collected`; one extra flow test for `OutputWritten` through the pipeline.
+- 2026-10-27 — Task 3: removed `collected`; a stdout target's remote result is judged by `written` (no digest); `consult` checks a lookup hit with `unusable` before `fetch`; four extra tests; the planned `encode.rs` output-paths test dropped as a duplicate.
+- 2026-10-27 — Task 4: extra test `a_second_build_is_served_from_the_cache`; `the_same_under_bare` also compares two `bare` checkouts.
+- 2026-10-27 — Task 5 ran beside Task 2 (docs only) and also fixed the README key diagram.
