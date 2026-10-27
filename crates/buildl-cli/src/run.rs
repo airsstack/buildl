@@ -21,7 +21,8 @@ use std::path::{Path, PathBuf};
 
 use buildl::approver::Console;
 use buildl::buildl_core::json::canonical;
-use buildl::buildl_core::{Error, Scope};
+use buildl::buildl_core::{Clock, Error, Scope};
+use buildl::clock::SystemClock;
 use buildl::plugins::FetchStatus;
 use buildl::remote::token_is_present;
 use buildl::report::{
@@ -333,6 +334,7 @@ fn doctor<O: Write, E: Write>(
         token,
         upload: remote.upload_switch(),
         strict: remote.strict_switch(),
+        execute: remote.execute_switch(),
     };
     product(stdout, doctor_text(&doctor, &report).as_bytes())?;
     Ok(Exit::Success)
@@ -356,13 +358,11 @@ fn plan<O: Write>(start: &Path, args: PlanArgs, stdout: &mut O) -> Result<Exit, 
     Ok(Exit::Success)
 }
 
-/// Whether `workspace` names a remote cache, as the switches need to know it.
-const fn remote_table(workspace: &Workspace) -> RemoteTable {
-    if workspace.names_remote() {
-        RemoteTable::Named
-    } else {
-        RemoteTable::Absent
-    }
+/// The `[remote]` table of `workspace`, as the switches need to know it.
+fn remote_table(workspace: &Workspace) -> RemoteTable<'_> {
+    workspace
+        .remote_settings()
+        .map_or(RemoteTable::Absent, RemoteTable::Named)
 }
 
 /// `build`: builds, showing on `stderr` how it goes, and returns the status of the most severe
@@ -379,7 +379,11 @@ fn build<E: Write, C: Console>(
     let (on_failure, live) = (args.on_failure(), args.live());
     let settings = overrides(args.selection.overrides)?;
     let workspace = Workspace::open(start)?;
-    let policy = remote.resolve(&args.remote, remote_table(&workspace))?;
+    let policy = remote.resolve(
+        &args.remote,
+        remote_table(&workspace),
+        workspace.local_workers(),
+    )?;
     let scope = scope(&workspace, &args.selection.targets)?;
     let mut reporter = TerminalReporter::new(&mut *stderr, mode, paint, Report::Build);
     let built = workspace.build(
@@ -411,9 +415,14 @@ fn watch<E: Write, C: Console>(
     let (on_failure, live) = (args.on_failure(), args.live());
     let settings = overrides(args.selection.overrides)?;
     let workspace = Workspace::open(start)?;
-    let policy = remote.resolve(&args.remote, remote_table(&workspace))?;
+    let policy = remote.resolve(
+        &args.remote,
+        remote_table(&workspace),
+        workspace.local_workers(),
+    )?;
+    workspace.ensure_sandboxed_remote(policy)?;
     let scope = scope(&workspace, &args.selection.targets)?;
-    let mut changes = match NotifyChanges::start(workspace.root()) {
+    let mut changes = match NotifyChanges::start(workspace.root(), SystemClock.now()) {
         Ok(changes) => changes,
         Err(error) => return Ok(watch_ended(&error, paint, stderr)),
     };
@@ -458,7 +467,11 @@ fn test<E: Write, C: Console>(
     };
     let settings = overrides(args.selection.overrides)?;
     let workspace = Workspace::open(start)?;
-    let policy = remote.resolve(&args.remote, remote_table(&workspace))?;
+    let policy = remote.resolve(
+        &args.remote,
+        remote_table(&workspace),
+        workspace.local_workers(),
+    )?;
     let scope = scope(&workspace, &args.selection.targets)?;
     let mut reporter = TerminalReporter::new(&mut *stderr, mode, paint, report);
     let tested = workspace.test(

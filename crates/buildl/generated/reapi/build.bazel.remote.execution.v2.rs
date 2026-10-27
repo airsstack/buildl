@@ -85,6 +85,16 @@ pub struct Action {
     #[prost(message, optional, tag = "10")]
     pub platform: ::core::option::Option<Platform>,
 }
+impl ::prost::Name for Action {
+    const NAME: &'static str = "Action";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.Action".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.Action".into()
+    }
+}
 /// A `Command` is the actual command executed by a worker running an
 /// \[Action\]\[build.bazel.remote.execution.v2.Action\] and specifications of its
 /// environment.
@@ -262,6 +272,17 @@ pub mod command {
         #[prost(string, tag = "2")]
         pub value: ::prost::alloc::string::String,
     }
+    impl ::prost::Name for EnvironmentVariable {
+        const NAME: &'static str = "EnvironmentVariable";
+        const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+        fn full_name() -> ::prost::alloc::string::String {
+            "build.bazel.remote.execution.v2.Command.EnvironmentVariable".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "type.googleapis.com/build.bazel.remote.execution.v2.Command.EnvironmentVariable"
+                .into()
+        }
+    }
     #[derive(
         Clone,
         Copy,
@@ -311,6 +332,16 @@ pub mod command {
         }
     }
 }
+impl ::prost::Name for Command {
+    const NAME: &'static str = "Command";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.Command".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.Command".into()
+    }
+}
 /// A `Platform` is a set of requirements, such as hardware, operating system, or
 /// compiler toolchain, for an
 /// \[Action\]\[build.bazel.remote.execution.v2.Action\]'s execution
@@ -357,6 +388,27 @@ pub mod platform {
         /// The property value.
         #[prost(string, tag = "2")]
         pub value: ::prost::alloc::string::String,
+    }
+    impl ::prost::Name for Property {
+        const NAME: &'static str = "Property";
+        const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+        fn full_name() -> ::prost::alloc::string::String {
+            "build.bazel.remote.execution.v2.Platform.Property".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "type.googleapis.com/build.bazel.remote.execution.v2.Platform.Property"
+                .into()
+        }
+    }
+}
+impl ::prost::Name for Platform {
+    const NAME: &'static str = "Platform";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.Platform".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.Platform".into()
     }
 }
 /// A `Directory` represents a directory node in a file tree, containing zero or
@@ -449,6 +501,16 @@ pub struct Directory {
     #[prost(message, optional, tag = "5")]
     pub node_properties: ::core::option::Option<NodeProperties>,
 }
+impl ::prost::Name for Directory {
+    const NAME: &'static str = "Directory";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.Directory".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.Directory".into()
+    }
+}
 /// A single property for \[FileNodes\]\[build.bazel.remote.execution.v2.FileNode\],
 /// \[Directories\]\[build.bazel.remote.execution.v2.Directory\], and
 /// \[SymlinkNodes\]\[build.bazel.remote.execution.v2.SymlinkNode\]. The server is
@@ -462,6 +524,16 @@ pub struct NodeProperty {
     /// The property value.
     #[prost(string, tag = "2")]
     pub value: ::prost::alloc::string::String,
+}
+impl ::prost::Name for NodeProperty {
+    const NAME: &'static str = "NodeProperty";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.NodeProperty".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.NodeProperty".into()
+    }
 }
 /// Node properties for \[FileNodes\]\[build.bazel.remote.execution.v2.FileNode\],
 /// \[Directories\]\[build.bazel.remote.execution.v2.Directory\], and
@@ -480,6 +552,16 @@ pub struct NodeProperties {
     #[prost(message, optional, tag = "3")]
     pub unix_mode: ::core::option::Option<u32>,
 }
+impl ::prost::Name for NodeProperties {
+    const NAME: &'static str = "NodeProperties";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.NodeProperties".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.NodeProperties".into()
+    }
+}
 /// A `FileNode` represents a single file and associated metadata.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct FileNode {
@@ -495,6 +577,16 @@ pub struct FileNode {
     #[prost(message, optional, tag = "6")]
     pub node_properties: ::core::option::Option<NodeProperties>,
 }
+impl ::prost::Name for FileNode {
+    const NAME: &'static str = "FileNode";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.FileNode".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.FileNode".into()
+    }
+}
 /// A `DirectoryNode` represents a child of a
 /// \[Directory\]\[build.bazel.remote.execution.v2.Directory\] which is itself
 /// a `Directory` and its associated metadata.
@@ -509,6 +601,16 @@ pub struct DirectoryNode {
     /// for information about how to take the digest of a proto message.
     #[prost(message, optional, tag = "2")]
     pub digest: ::core::option::Option<Digest>,
+}
+impl ::prost::Name for DirectoryNode {
+    const NAME: &'static str = "DirectoryNode";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.DirectoryNode".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.DirectoryNode".into()
+    }
 }
 /// A `SymlinkNode` represents a symbolic link.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -529,6 +631,16 @@ pub struct SymlinkNode {
     pub target: ::prost::alloc::string::String,
     #[prost(message, optional, tag = "4")]
     pub node_properties: ::core::option::Option<NodeProperties>,
+}
+impl ::prost::Name for SymlinkNode {
+    const NAME: &'static str = "SymlinkNode";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.SymlinkNode".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.SymlinkNode".into()
+    }
 }
 /// A content digest. A digest for a given blob consists of the size of the blob
 /// and its hash. The hash algorithm to use is defined by the server.
@@ -570,6 +682,16 @@ pub struct Digest {
     /// The size of the blob, in bytes.
     #[prost(int64, tag = "2")]
     pub size_bytes: i64,
+}
+impl ::prost::Name for Digest {
+    const NAME: &'static str = "Digest";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.Digest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.Digest".into()
+    }
 }
 /// ExecutedActionMetadata contains details about a completed execution.
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -632,6 +754,17 @@ pub struct ExecutedActionMetadata {
     /// getrusage(2) statistics.
     #[prost(message, repeated, tag = "11")]
     pub auxiliary_metadata: ::prost::alloc::vec::Vec<::prost_types::Any>,
+}
+impl ::prost::Name for ExecutedActionMetadata {
+    const NAME: &'static str = "ExecutedActionMetadata";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.ExecutedActionMetadata".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.ExecutedActionMetadata"
+            .into()
+    }
 }
 /// An ActionResult represents the result of an
 /// \[Action\]\[build.bazel.remote.execution.v2.Action\] being run.
@@ -811,6 +944,16 @@ pub struct ActionResult {
     #[prost(message, optional, tag = "9")]
     pub execution_metadata: ::core::option::Option<ExecutedActionMetadata>,
 }
+impl ::prost::Name for ActionResult {
+    const NAME: &'static str = "ActionResult";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.ActionResult".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.ActionResult".into()
+    }
+}
 /// An `OutputFile` is similar to a
 /// \[FileNode\]\[build.bazel.remote.execution.v2.FileNode\], but it is used as an
 /// output in an `ActionResult`. It allows a full file path rather than
@@ -839,6 +982,16 @@ pub struct OutputFile {
     #[prost(message, optional, tag = "7")]
     pub node_properties: ::core::option::Option<NodeProperties>,
 }
+impl ::prost::Name for OutputFile {
+    const NAME: &'static str = "OutputFile";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.OutputFile".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.OutputFile".into()
+    }
+}
 /// A `Tree` contains all the
 /// \[Directory\]\[build.bazel.remote.execution.v2.Directory\] protos in a
 /// single directory Merkle tree, compressed into one message.
@@ -856,6 +1009,16 @@ pub struct Tree {
     /// implementation also produce Tree messages with matching digests.
     #[prost(message, repeated, tag = "2")]
     pub children: ::prost::alloc::vec::Vec<Directory>,
+}
+impl ::prost::Name for Tree {
+    const NAME: &'static str = "Tree";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.Tree".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.Tree".into()
+    }
 }
 /// An `OutputDirectory` is the output in an `ActionResult` corresponding to a
 /// directory's full contents rather than a single file.
@@ -919,6 +1082,16 @@ pub struct OutputDirectory {
     #[prost(message, optional, tag = "5")]
     pub root_directory_digest: ::core::option::Option<Digest>,
 }
+impl ::prost::Name for OutputDirectory {
+    const NAME: &'static str = "OutputDirectory";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.OutputDirectory".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.OutputDirectory".into()
+    }
+}
 /// An `OutputSymlink` is similar to a
 /// \[Symlink\]\[build.bazel.remote.execution.v2.SymlinkNode\], but it is used as an
 /// output in an `ActionResult`.
@@ -941,6 +1114,16 @@ pub struct OutputSymlink {
     #[prost(message, optional, tag = "4")]
     pub node_properties: ::core::option::Option<NodeProperties>,
 }
+impl ::prost::Name for OutputSymlink {
+    const NAME: &'static str = "OutputSymlink";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.OutputSymlink".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.OutputSymlink".into()
+    }
+}
 /// An `ExecutionPolicy` can be used to control the scheduling of the action.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ExecutionPolicy {
@@ -956,6 +1139,16 @@ pub struct ExecutionPolicy {
     #[prost(int32, tag = "1")]
     pub priority: i32,
 }
+impl ::prost::Name for ExecutionPolicy {
+    const NAME: &'static str = "ExecutionPolicy";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.ExecutionPolicy".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.ExecutionPolicy".into()
+    }
+}
 /// A `ResultsCachePolicy` is used for fine-grained control over how action
 /// outputs are stored in the CAS and Action Cache.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -970,6 +1163,16 @@ pub struct ResultsCachePolicy {
     /// decide how these map into retention/eviction policy.
     #[prost(int32, tag = "1")]
     pub priority: i32,
+}
+impl ::prost::Name for ResultsCachePolicy {
+    const NAME: &'static str = "ResultsCachePolicy";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.ResultsCachePolicy".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.ResultsCachePolicy".into()
+    }
 }
 /// A request message for
 /// \[Execution.Execute\]\[build.bazel.remote.execution.v2.Execution.Execute\].
@@ -1034,6 +1237,16 @@ pub struct ExecuteRequest {
     #[prost(string, repeated, tag = "12")]
     pub inline_output_files: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+impl ::prost::Name for ExecuteRequest {
+    const NAME: &'static str = "ExecuteRequest";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.ExecuteRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.ExecuteRequest".into()
+    }
+}
 /// A `LogFile` is a log stored in the CAS.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct LogFile {
@@ -1047,6 +1260,16 @@ pub struct LogFile {
     /// displaying a binary file.
     #[prost(bool, tag = "2")]
     pub human_readable: bool,
+}
+impl ::prost::Name for LogFile {
+    const NAME: &'static str = "LogFile";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.LogFile".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.LogFile".into()
+    }
 }
 /// The response message for
 /// \[Execution.Execute\]\[build.bazel.remote.execution.v2.Execution.Execute\],
@@ -1091,6 +1314,16 @@ pub struct ExecuteResponse {
     /// that may be displayed to the user upon failure or when requested explicitly.
     #[prost(string, tag = "5")]
     pub message: ::prost::alloc::string::String,
+}
+impl ::prost::Name for ExecuteResponse {
+    const NAME: &'static str = "ExecuteResponse";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.ExecuteResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.ExecuteResponse".into()
+    }
 }
 /// The current stage of action execution.
 ///
@@ -1159,6 +1392,16 @@ pub mod execution_stage {
         }
     }
 }
+impl ::prost::Name for ExecutionStage {
+    const NAME: &'static str = "ExecutionStage";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.ExecutionStage".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.ExecutionStage".into()
+    }
+}
 /// Metadata about an ongoing
 /// \[execution\]\[build.bazel.remote.execution.v2.Execution.Execute\], which
 /// will be contained in the \[metadata
@@ -1197,6 +1440,17 @@ pub struct ExecuteOperationMetadata {
     #[prost(enumeration = "digest_function::Value", tag = "6")]
     pub digest_function: i32,
 }
+impl ::prost::Name for ExecuteOperationMetadata {
+    const NAME: &'static str = "ExecuteOperationMetadata";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.ExecuteOperationMetadata".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.ExecuteOperationMetadata"
+            .into()
+    }
+}
 /// A request message for
 /// \[WaitExecution\]\[build.bazel.remote.execution.v2.Execution.WaitExecution\].
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -1205,6 +1459,16 @@ pub struct WaitExecutionRequest {
     /// returned by \[Execute\]\[build.bazel.remote.execution.v2.Execution.Execute\].
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
+}
+impl ::prost::Name for WaitExecutionRequest {
+    const NAME: &'static str = "WaitExecutionRequest";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.WaitExecutionRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.WaitExecutionRequest".into()
+    }
 }
 /// A request message for
 /// \[ActionCache.GetActionResult\]\[build.bazel.remote.execution.v2.ActionCache.GetActionResult\].
@@ -1245,6 +1509,17 @@ pub struct GetActionResultRequest {
     #[prost(enumeration = "digest_function::Value", tag = "6")]
     pub digest_function: i32,
 }
+impl ::prost::Name for GetActionResultRequest {
+    const NAME: &'static str = "GetActionResultRequest";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.GetActionResultRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.GetActionResultRequest"
+            .into()
+    }
+}
 /// A request message for
 /// \[ActionCache.UpdateActionResult\]\[build.bazel.remote.execution.v2.ActionCache.UpdateActionResult\].
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1279,6 +1554,17 @@ pub struct UpdateActionResultRequest {
     #[prost(enumeration = "digest_function::Value", tag = "5")]
     pub digest_function: i32,
 }
+impl ::prost::Name for UpdateActionResultRequest {
+    const NAME: &'static str = "UpdateActionResultRequest";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.UpdateActionResultRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.UpdateActionResultRequest"
+            .into()
+    }
+}
 /// A request message for
 /// \[ContentAddressableStorage.FindMissingBlobs\]\[build.bazel.remote.execution.v2.ContentAddressableStorage.FindMissingBlobs\].
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1304,6 +1590,17 @@ pub struct FindMissingBlobsRequest {
     #[prost(enumeration = "digest_function::Value", tag = "3")]
     pub digest_function: i32,
 }
+impl ::prost::Name for FindMissingBlobsRequest {
+    const NAME: &'static str = "FindMissingBlobsRequest";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.FindMissingBlobsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.FindMissingBlobsRequest"
+            .into()
+    }
+}
 /// A response message for
 /// \[ContentAddressableStorage.FindMissingBlobs\]\[build.bazel.remote.execution.v2.ContentAddressableStorage.FindMissingBlobs\].
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1311,6 +1608,17 @@ pub struct FindMissingBlobsResponse {
     /// A list of the blobs requested *not* present in the storage.
     #[prost(message, repeated, tag = "2")]
     pub missing_blob_digests: ::prost::alloc::vec::Vec<Digest>,
+}
+impl ::prost::Name for FindMissingBlobsResponse {
+    const NAME: &'static str = "FindMissingBlobsResponse";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.FindMissingBlobsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.FindMissingBlobsResponse"
+            .into()
+    }
 }
 /// A request message for
 /// \[ContentAddressableStorage.BatchUpdateBlobs\]\[build.bazel.remote.execution.v2.ContentAddressableStorage.BatchUpdateBlobs\].
@@ -1356,6 +1664,28 @@ pub mod batch_update_blobs_request {
         #[prost(enumeration = "super::compressor::Value", tag = "3")]
         pub compressor: i32,
     }
+    impl ::prost::Name for Request {
+        const NAME: &'static str = "Request";
+        const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+        fn full_name() -> ::prost::alloc::string::String {
+            "build.bazel.remote.execution.v2.BatchUpdateBlobsRequest.Request".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "type.googleapis.com/build.bazel.remote.execution.v2.BatchUpdateBlobsRequest.Request"
+                .into()
+        }
+    }
+}
+impl ::prost::Name for BatchUpdateBlobsRequest {
+    const NAME: &'static str = "BatchUpdateBlobsRequest";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.BatchUpdateBlobsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.BatchUpdateBlobsRequest"
+            .into()
+    }
 }
 /// A response message for
 /// \[ContentAddressableStorage.BatchUpdateBlobs\]\[build.bazel.remote.execution.v2.ContentAddressableStorage.BatchUpdateBlobs\].
@@ -1378,6 +1708,28 @@ pub mod batch_update_blobs_response {
         pub status: ::core::option::Option<
             super::super::super::super::super::super::google::rpc::Status,
         >,
+    }
+    impl ::prost::Name for Response {
+        const NAME: &'static str = "Response";
+        const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+        fn full_name() -> ::prost::alloc::string::String {
+            "build.bazel.remote.execution.v2.BatchUpdateBlobsResponse.Response".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "type.googleapis.com/build.bazel.remote.execution.v2.BatchUpdateBlobsResponse.Response"
+                .into()
+        }
+    }
+}
+impl ::prost::Name for BatchUpdateBlobsResponse {
+    const NAME: &'static str = "BatchUpdateBlobsResponse";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.BatchUpdateBlobsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.BatchUpdateBlobsResponse"
+            .into()
     }
 }
 /// A request message for
@@ -1409,6 +1761,17 @@ pub struct BatchReadBlobsRequest {
     #[prost(enumeration = "digest_function::Value", tag = "4")]
     pub digest_function: i32,
 }
+impl ::prost::Name for BatchReadBlobsRequest {
+    const NAME: &'static str = "BatchReadBlobsRequest";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.BatchReadBlobsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.BatchReadBlobsRequest"
+            .into()
+    }
+}
 /// A response message for
 /// \[ContentAddressableStorage.BatchReadBlobs\]\[build.bazel.remote.execution.v2.ContentAddressableStorage.BatchReadBlobs\].
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1437,6 +1800,28 @@ pub mod batch_read_blobs_response {
         pub status: ::core::option::Option<
             super::super::super::super::super::super::google::rpc::Status,
         >,
+    }
+    impl ::prost::Name for Response {
+        const NAME: &'static str = "Response";
+        const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+        fn full_name() -> ::prost::alloc::string::String {
+            "build.bazel.remote.execution.v2.BatchReadBlobsResponse.Response".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "type.googleapis.com/build.bazel.remote.execution.v2.BatchReadBlobsResponse.Response"
+                .into()
+        }
+    }
+}
+impl ::prost::Name for BatchReadBlobsResponse {
+    const NAME: &'static str = "BatchReadBlobsResponse";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.BatchReadBlobsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.BatchReadBlobsResponse"
+            .into()
     }
 }
 /// A request message for
@@ -1479,6 +1864,16 @@ pub struct GetTreeRequest {
     #[prost(enumeration = "digest_function::Value", tag = "5")]
     pub digest_function: i32,
 }
+impl ::prost::Name for GetTreeRequest {
+    const NAME: &'static str = "GetTreeRequest";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.GetTreeRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.GetTreeRequest".into()
+    }
+}
 /// A response message for
 /// \[ContentAddressableStorage.GetTree\]\[build.bazel.remote.execution.v2.ContentAddressableStorage.GetTree\].
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1492,6 +1887,16 @@ pub struct GetTreeResponse {
     /// If empty, signifies that this is the last page of results.
     #[prost(string, tag = "2")]
     pub next_page_token: ::prost::alloc::string::String,
+}
+impl ::prost::Name for GetTreeResponse {
+    const NAME: &'static str = "GetTreeResponse";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.GetTreeResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.GetTreeResponse".into()
+    }
 }
 /// A request message for
 /// \[ContentAddressableStorage.SplitBlob\]\[build.bazel.remote.execution.v2.ContentAddressableStorage.SplitBlob\].
@@ -1522,6 +1927,16 @@ pub struct SplitBlobRequest {
     #[prost(enumeration = "chunking_function::Value", tag = "4")]
     pub chunking_function: i32,
 }
+impl ::prost::Name for SplitBlobRequest {
+    const NAME: &'static str = "SplitBlobRequest";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.SplitBlobRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.SplitBlobRequest".into()
+    }
+}
 /// A response message for
 /// \[ContentAddressableStorage.SplitBlob\]\[build.bazel.remote.execution.v2.ContentAddressableStorage.SplitBlob\].
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1537,6 +1952,16 @@ pub struct SplitBlobResponse {
     /// The chunking function used to split the blob.
     #[prost(enumeration = "chunking_function::Value", tag = "2")]
     pub chunking_function: i32,
+}
+impl ::prost::Name for SplitBlobResponse {
+    const NAME: &'static str = "SplitBlobResponse";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.SplitBlobResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.SplitBlobResponse".into()
+    }
 }
 /// A response message for
 /// \[ContentAddressableStorage.GetChunkMapping\]\[build.bazel.remote.execution.v2.ContentAddressableStorage.GetChunkMapping\].
@@ -1562,6 +1987,17 @@ pub struct GetChunkMappingResponse {
     /// Servers SHOULD omit this field on subsequent responses.
     #[prost(enumeration = "chunking_function::Value", tag = "2")]
     pub chunking_function: i32,
+}
+impl ::prost::Name for GetChunkMappingResponse {
+    const NAME: &'static str = "GetChunkMappingResponse";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.GetChunkMappingResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.GetChunkMappingResponse"
+            .into()
+    }
 }
 /// A request message for
 /// \[ContentAddressableStorage.SpliceBlob\]\[build.bazel.remote.execution.v2.ContentAddressableStorage.SpliceBlob\].
@@ -1606,6 +2042,16 @@ pub struct SpliceBlobRequest {
     #[prost(enumeration = "chunking_function::Value", tag = "5")]
     pub chunking_function: i32,
 }
+impl ::prost::Name for SpliceBlobRequest {
+    const NAME: &'static str = "SpliceBlobRequest";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.SpliceBlobRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.SpliceBlobRequest".into()
+    }
+}
 /// A request message for
 /// \[ContentAddressableStorage.RegisterChunkMapping\]\[build.bazel.remote.execution.v2.ContentAddressableStorage.RegisterChunkMapping\].
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -1648,6 +2094,17 @@ pub struct RegisterChunkMappingRequest {
     #[prost(enumeration = "chunking_function::Value", tag = "5")]
     pub chunking_function: i32,
 }
+impl ::prost::Name for RegisterChunkMappingRequest {
+    const NAME: &'static str = "RegisterChunkMappingRequest";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.RegisterChunkMappingRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.RegisterChunkMappingRequest"
+            .into()
+    }
+}
 /// A response message for
 /// \[ContentAddressableStorage.SpliceBlob\]\[build.bazel.remote.execution.v2.ContentAddressableStorage.SpliceBlob\].
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -1658,6 +2115,16 @@ pub struct SpliceBlobResponse {
     /// implicitly (through hash length) specified in the splice request.
     #[prost(message, optional, tag = "1")]
     pub blob_digest: ::core::option::Option<Digest>,
+}
+impl ::prost::Name for SpliceBlobResponse {
+    const NAME: &'static str = "SpliceBlobResponse";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.SpliceBlobResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.SpliceBlobResponse".into()
+    }
 }
 /// A request message for
 /// \[Capabilities.GetCapabilities\]\[build.bazel.remote.execution.v2.Capabilities.GetCapabilities\].
@@ -1670,6 +2137,17 @@ pub struct GetCapabilitiesRequest {
     /// omitted.
     #[prost(string, tag = "1")]
     pub instance_name: ::prost::alloc::string::String,
+}
+impl ::prost::Name for GetCapabilitiesRequest {
+    const NAME: &'static str = "GetCapabilitiesRequest";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.GetCapabilitiesRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.GetCapabilitiesRequest"
+            .into()
+    }
 }
 /// A response message for
 /// \[Capabilities.GetCapabilities\]\[build.bazel.remote.execution.v2.Capabilities.GetCapabilities\].
@@ -1692,6 +2170,16 @@ pub struct ServerCapabilities {
     /// Latest RE API version supported.
     #[prost(message, optional, tag = "5")]
     pub high_api_version: ::core::option::Option<super::super::super::semver::SemVer>,
+}
+impl ::prost::Name for ServerCapabilities {
+    const NAME: &'static str = "ServerCapabilities";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.ServerCapabilities".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.ServerCapabilities".into()
+    }
 }
 /// The digest function used for converting values into keys for CAS and Action
 /// Cache.
@@ -1839,6 +2327,16 @@ pub mod digest_function {
         }
     }
 }
+impl ::prost::Name for DigestFunction {
+    const NAME: &'static str = "DigestFunction";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.DigestFunction".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.DigestFunction".into()
+    }
+}
 /// The chunking function is used to split a blob into chunks.
 ///
 /// The server advertises support for a chunking function by setting the
@@ -1902,11 +2400,32 @@ pub mod chunking_function {
         }
     }
 }
+impl ::prost::Name for ChunkingFunction {
+    const NAME: &'static str = "ChunkingFunction";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.ChunkingFunction".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.ChunkingFunction".into()
+    }
+}
 /// Describes the server/instance capabilities for updating the action cache.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ActionCacheUpdateCapabilities {
     #[prost(bool, tag = "1")]
     pub update_enabled: bool,
+}
+impl ::prost::Name for ActionCacheUpdateCapabilities {
+    const NAME: &'static str = "ActionCacheUpdateCapabilities";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.ActionCacheUpdateCapabilities".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.ActionCacheUpdateCapabilities"
+            .into()
+    }
 }
 /// Allowed values for priority in
 /// \[ResultsCachePolicy\]\[build.bazel.remote.execution.v2.ResultsCachePolicy\] and
@@ -1930,6 +2449,27 @@ pub mod priority_capabilities {
         /// least urgent task or shortest retained item.
         #[prost(int32, tag = "2")]
         pub max_priority: i32,
+    }
+    impl ::prost::Name for PriorityRange {
+        const NAME: &'static str = "PriorityRange";
+        const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+        fn full_name() -> ::prost::alloc::string::String {
+            "build.bazel.remote.execution.v2.PriorityCapabilities.PriorityRange".into()
+        }
+        fn type_url() -> ::prost::alloc::string::String {
+            "type.googleapis.com/build.bazel.remote.execution.v2.PriorityCapabilities.PriorityRange"
+                .into()
+        }
+    }
+}
+impl ::prost::Name for PriorityCapabilities {
+    const NAME: &'static str = "PriorityCapabilities";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.PriorityCapabilities".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.PriorityCapabilities".into()
     }
 }
 /// Describes how the server treats absolute symlink targets.
@@ -1982,6 +2522,17 @@ pub mod symlink_absolute_path_strategy {
                 _ => None,
             }
         }
+    }
+}
+impl ::prost::Name for SymlinkAbsolutePathStrategy {
+    const NAME: &'static str = "SymlinkAbsolutePathStrategy";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.SymlinkAbsolutePathStrategy".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.SymlinkAbsolutePathStrategy"
+            .into()
     }
 }
 /// Compression formats which may be supported.
@@ -2040,6 +2591,16 @@ pub mod compressor {
                 _ => None,
             }
         }
+    }
+}
+impl ::prost::Name for Compressor {
+    const NAME: &'static str = "Compressor";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.Compressor".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.Compressor".into()
     }
 }
 /// Capabilities of the remote cache system.
@@ -2118,6 +2679,16 @@ pub struct CacheCapabilities {
     #[prost(message, optional, tag = "12")]
     pub rep_max_cdc_params: ::core::option::Option<RepMaxCdcParams>,
 }
+impl ::prost::Name for CacheCapabilities {
+    const NAME: &'static str = "CacheCapabilities";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.CacheCapabilities".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.CacheCapabilities".into()
+    }
+}
 /// Parameters for the FastCDC content-defined chunking algorithm.
 ///
 /// Implementations MUST follow the FastCDC 2020 paper by Wen Xia, et al.:
@@ -2167,6 +2738,16 @@ pub struct FastCdc2020Params {
     #[prost(uint32, tag = "2")]
     pub seed: u32,
 }
+impl ::prost::Name for FastCdc2020Params {
+    const NAME: &'static str = "FastCdc2020Params";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.FastCdc2020Params".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.FastCdc2020Params".into()
+    }
+}
 /// Parameters for the RepMaxCDC content-defined chunking algorithm.
 ///
 /// Supported implementations:
@@ -2205,6 +2786,16 @@ pub struct RepMaxCdcParams {
     #[prost(uint64, tag = "2")]
     pub horizon_size_bytes: u64,
 }
+impl ::prost::Name for RepMaxCdcParams {
+    const NAME: &'static str = "RepMaxCdcParams";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.RepMaxCdcParams".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.RepMaxCdcParams".into()
+    }
+}
 /// Capabilities of the remote execution system.
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ExecutionCapabilities {
@@ -2240,6 +2831,17 @@ pub struct ExecutionCapabilities {
     #[prost(enumeration = "digest_function::Value", repeated, tag = "5")]
     pub digest_functions: ::prost::alloc::vec::Vec<i32>,
 }
+impl ::prost::Name for ExecutionCapabilities {
+    const NAME: &'static str = "ExecutionCapabilities";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.ExecutionCapabilities".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.ExecutionCapabilities"
+            .into()
+    }
+}
 /// Details for the tool used to call the API.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ToolDetails {
@@ -2249,6 +2851,16 @@ pub struct ToolDetails {
     /// Version of the tool used for the request, e.g. 5.0.3.
     #[prost(string, tag = "2")]
     pub tool_version: ::prost::alloc::string::String,
+}
+impl ::prost::Name for ToolDetails {
+    const NAME: &'static str = "ToolDetails";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.ToolDetails".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.ToolDetails".into()
+    }
 }
 /// An optional Metadata to attach to any RPC request to tell the server about an
 /// external context of the request. The server may use this for logging or other
@@ -2295,6 +2907,16 @@ pub struct RequestMetadata {
     #[prost(string, tag = "7")]
     pub configuration_id: ::prost::alloc::string::String,
 }
+impl ::prost::Name for RequestMetadata {
+    const NAME: &'static str = "RequestMetadata";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.RequestMetadata".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.RequestMetadata".into()
+    }
+}
 /// A request message for
 /// \[ContentAddressableStorage.GetChunkMapping\]\[build.bazel.remote.execution.v2.ContentAddressableStorage.GetChunkMapping\].
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2319,6 +2941,17 @@ pub struct GetChunkMappingRequest {
     #[prost(enumeration = "chunking_function::Value", tag = "4")]
     pub chunking_function: i32,
 }
+impl ::prost::Name for GetChunkMappingRequest {
+    const NAME: &'static str = "GetChunkMappingRequest";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.GetChunkMappingRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.GetChunkMappingRequest"
+            .into()
+    }
+}
 /// A response message for
 /// \[ContentAddressableStorage.RegisterChunkMapping\]\[build.bazel.remote.execution.v2.ContentAddressableStorage.RegisterChunkMapping\].
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -2329,6 +2962,17 @@ pub struct RegisterChunkMappingResponse {
     /// implicitly (through hash length) specified in the splice request.
     #[prost(message, optional, tag = "1")]
     pub blob_digest: ::core::option::Option<Digest>,
+}
+impl ::prost::Name for RegisterChunkMappingResponse {
+    const NAME: &'static str = "RegisterChunkMappingResponse";
+    const PACKAGE: &'static str = "build.bazel.remote.execution.v2";
+    fn full_name() -> ::prost::alloc::string::String {
+        "build.bazel.remote.execution.v2.RegisterChunkMappingResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/build.bazel.remote.execution.v2.RegisterChunkMappingResponse"
+            .into()
+    }
 }
 /// Generated client implementations.
 pub mod execution_client {

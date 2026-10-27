@@ -14,7 +14,8 @@
 use std::collections::BTreeMap;
 
 use crate::types::{
-    Command, Digest, EnvName, EnvValue, FileMode, OutputPath, Platform, RootPath, Timeout,
+    Command, Digest, EnvName, EnvValue, FileMode, OutputPath, Platform, PlatformProperties,
+    RootPath, Timeout,
 };
 
 /// One file of the input root: where it is, the digest of its bytes, and whether it may be run.
@@ -37,6 +38,12 @@ pub struct RemotePlatform {
 }
 
 impl RemotePlatform {
+    /// The name of the property that carries the operating system family.
+    pub const OS_FAMILY_PROPERTY: &'static str = "OSFamily";
+
+    /// The name of the property that carries the instruction set.
+    pub const ISA_PROPERTY: &'static str = "ISA";
+
     /// The machine `platform` names, in the words a remote cache uses: the operating system is
     /// kept as it is, and `aarch64` and `x86_64` become `arm-a64` and `x86-64`. Any other
     /// architecture is kept as it is.
@@ -84,6 +91,9 @@ pub struct RemoteAction {
     pub platform: RemotePlatform,
     /// How long the command may run.
     pub timeout: Timeout,
+    /// The properties the workspace asks for beyond the machine's own two; empty when the
+    /// workspace names no remote.
+    pub properties: PlatformProperties,
 }
 
 #[cfg(test)]
@@ -97,8 +107,8 @@ mod tests {
 
     use super::{RemoteAction, RemoteFile, RemotePlatform};
     use crate::types::{
-        Argument, Command, Digest, EnvName, EnvValue, FileMode, Platform, RootPath, SourcePath,
-        Timeout,
+        Argument, Command, Digest, EnvName, EnvValue, FileMode, Platform, PlatformProperties,
+        RootPath, SourcePath, Timeout,
     };
 
     fn action(env: &[(&str, &str)]) -> RemoteAction {
@@ -122,6 +132,7 @@ mod tests {
             }],
             platform: RemotePlatform::of(&Platform::parse("linux/x86_64").unwrap()),
             timeout: Timeout::default(),
+            properties: PlatformProperties::default(),
         }
     }
 

@@ -9,6 +9,12 @@
 //! timeout, so a large blob that keeps arriving is never cut off, and a write allows the
 //! timeout from the moment the transport last took a chunk, so a large blob that keeps being
 //! taken is never cut off either.
+//!
+//! Each call to the cache is one unit that is tried again, whole, when it fails with a status the
+//! cache may recover from: one `FindMissingBlobs` request, one batch call (its answer
+//! included, so a batch whose entries carry such a status is made again as a whole), and one
+//! blob streamed in either direction. A blob streamed again is streamed from its start, and
+//! the messages it delivered before it failed do not start the count of retries over.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -185,14 +191,22 @@ pub(super) async fn find_missing(
 ) -> Result<Vec<Digest>, RemoteError> {
     let mut missing = Vec::new();
     for chunk in digests.chunks(FIND_CHUNK) {
-        let mut client = wire.cas();
         let request = FindMissingBlobsRequest {
             instance_name: wire.instance().to_owned(),
             blob_digests: chunk.to_vec(),
             digest_function: digest_function::Value::Sha256 as i32,
         };
+        let request = &request;
         let response = wire
-            .bounded(Method::FindMissingBlobs, client.find_missing_blobs(request))
+            .retry()
+            .run(|_| async move {
+                let mut client = wire.cas();
+                wire.bounded(
+                    Method::FindMissingBlobs,
+                    client.find_missing_blobs(request.clone()),
+                )
+                .await
+            })
             .await?;
         missing.extend(response.into_inner().missing_blob_digests);
     }
@@ -237,7 +251,8 @@ pub(super) async fn read_blobs(
         .collect()
 }
 
-/// Reads `digests`, which together fit one batch, with one call.
+/// Reads `digests`, which together fit one batch, with one call, made again whole when the call
+/// or any of its entries fails with a status the cache may recover from.
 ///
 /// A digest that appears more than once is asked for once and answered at each position.
 async fn batch_read(wire: &Wire<'_>, digests: &[&Digest]) -> Result<Vec<Vec<u8>>, RemoteError> {
@@ -251,45 +266,7 @@ async fn batch_read(wire: &Wire<'_>, digests: &[&Digest]) -> Result<Vec<Vec<u8>>
         *count += 1;
     }
 
-    let mut client = wire.cas();
-    let request = BatchReadBlobsRequest {
-        instance_name: wire.instance().to_owned(),
-        digests: unique.clone(),
-        digest_function: digest_function::Value::Sha256 as i32,
-        ..BatchReadBlobsRequest::default()
-    };
-    let response = wire
-        .bounded(Method::BatchReadBlobs, client.batch_read_blobs(request))
-        .await?
-        .into_inner();
-
-    let mut answers = BTreeMap::new();
-    for answer in response.responses {
-        if let Some(digest) = &answer.digest {
-            answers.insert(key(digest), answer);
-        }
-    }
-    let mut blobs = BTreeMap::new();
-    for digest in &unique {
-        let answer = answers
-            .remove(&key(digest))
-            .ok_or_else(|| RemoteError::Protocol {
-                call: Method::BatchReadBlobs,
-                detail: format!("no answer for the blob {}", label(digest)),
-            })?;
-        check(Method::BatchReadBlobs, digest, answer.status.as_ref())?;
-        if usize::try_from(digest.size_bytes) != Ok(answer.data.len()) {
-            return Err(RemoteError::Protocol {
-                call: Method::BatchReadBlobs,
-                detail: format!(
-                    "the blob {} came back with {} bytes",
-                    label(digest),
-                    answer.data.len()
-                ),
-            });
-        }
-        blobs.insert(key(digest), answer.data);
-    }
+    let mut blobs = wire.retry().run(|_| batch_read_once(wire, &unique)).await?;
     digests
         .iter()
         .map(|digest| {
@@ -309,8 +286,61 @@ async fn batch_read(wire: &Wire<'_>, digests: &[&Digest]) -> Result<Vec<Vec<u8>>
         .collect()
 }
 
-/// Reads one blob through `ByteStream`, allowing each message the client's timeout.
+/// Makes one `BatchReadBlobs` call for the distinct `unique` digests and checks its answer.
+async fn batch_read_once(
+    wire: &Wire<'_>,
+    unique: &[Digest],
+) -> Result<BTreeMap<(String, i64), Vec<u8>>, RemoteError> {
+    let mut client = wire.cas();
+    let request = BatchReadBlobsRequest {
+        instance_name: wire.instance().to_owned(),
+        digests: unique.to_vec(),
+        digest_function: digest_function::Value::Sha256 as i32,
+        ..BatchReadBlobsRequest::default()
+    };
+    let response = wire
+        .bounded(Method::BatchReadBlobs, client.batch_read_blobs(request))
+        .await?
+        .into_inner();
+
+    let mut answers = BTreeMap::new();
+    for answer in response.responses {
+        if let Some(digest) = &answer.digest {
+            answers.insert(key(digest), answer);
+        }
+    }
+    let mut blobs = BTreeMap::new();
+    for digest in unique {
+        let answer = answers
+            .remove(&key(digest))
+            .ok_or_else(|| RemoteError::Protocol {
+                call: Method::BatchReadBlobs,
+                detail: format!("no answer for the blob {}", label(digest)),
+            })?;
+        check(Method::BatchReadBlobs, digest, answer.status.as_ref())?;
+        if usize::try_from(digest.size_bytes) != Ok(answer.data.len()) {
+            return Err(RemoteError::Protocol {
+                call: Method::BatchReadBlobs,
+                detail: format!(
+                    "the blob {} came back with {} bytes",
+                    label(digest),
+                    answer.data.len()
+                ),
+            });
+        }
+        blobs.insert(key(digest), answer.data);
+    }
+    Ok(blobs)
+}
+
+/// Reads one blob through `ByteStream`, allowing each message the client's timeout, and reads it
+/// again from its start when the stream fails with a status the cache may recover from.
 async fn stream_read(wire: &Wire<'_>, digest: &Digest) -> Result<Vec<u8>, RemoteError> {
+    Ok(wire.retry().run(|_| stream_read_once(wire, digest)).await?)
+}
+
+/// Reads one blob through `ByteStream` once.
+async fn stream_read_once(wire: &Wire<'_>, digest: &Digest) -> Result<Vec<u8>, RemoteError> {
     let size = size_of(digest, Method::Read)?;
     let mut client = wire.bytestream();
     let request = ReadRequest {
@@ -380,8 +410,17 @@ pub(super) async fn write_blobs(
     Ok(())
 }
 
-/// Writes `blobs`, which together fit one batch, with one call.
+/// Writes `blobs`, which together fit one batch, with one call, made again whole when the call
+/// or any of its entries fails with a status the cache may recover from.
 async fn batch_write(wire: &Wire<'_>, blobs: &[&(Digest, Vec<u8>)]) -> Result<(), RemoteError> {
+    Ok(wire.retry().run(|_| batch_write_once(wire, blobs)).await?)
+}
+
+/// Makes one `BatchUpdateBlobs` call for `blobs` and checks its answer.
+async fn batch_write_once(
+    wire: &Wire<'_>,
+    blobs: &[&(Digest, Vec<u8>)],
+) -> Result<(), RemoteError> {
     let mut client = wire.cas();
     let request = BatchUpdateBlobsRequest {
         instance_name: wire.instance().to_owned(),
@@ -418,10 +457,24 @@ async fn batch_write(wire: &Wire<'_>, blobs: &[&(Digest, Vec<u8>)]) -> Result<()
     Ok(())
 }
 
-/// Writes one blob through `ByteStream` in 1 MiB chunks under a fresh upload name.
+/// Writes one blob through `ByteStream` in 1 MiB chunks under a fresh upload name, and writes it
+/// again from its start, under another name, when the stream fails with a status the cache may
+/// recover from.
+async fn stream_write(wire: &Wire<'_>, digest: &Digest, data: &[u8]) -> Result<(), RemoteError> {
+    Ok(wire
+        .retry()
+        .run(|_| stream_write_once(wire, digest, data))
+        .await?)
+}
+
+/// Writes one blob through `ByteStream` once.
 ///
 /// The call is allowed the client's timeout from the moment the transport last took a chunk.
-async fn stream_write(wire: &Wire<'_>, digest: &Digest, data: &[u8]) -> Result<(), RemoteError> {
+async fn stream_write_once(
+    wire: &Wire<'_>,
+    digest: &Digest,
+    data: &[u8],
+) -> Result<(), RemoteError> {
     let name = write_resource(wire.instance(), Uuid::new_v4(), digest);
     let pieces: Vec<&[u8]> = if data.is_empty() {
         vec![data]

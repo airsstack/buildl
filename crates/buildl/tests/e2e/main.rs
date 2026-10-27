@@ -32,6 +32,7 @@ mod recovery;
 // The server these tests run against is built only with the `test-server` feature.
 #[cfg(feature = "test-server")]
 mod remote;
+mod remote_gates;
 mod remote_switch;
 mod sandbox;
 mod test;

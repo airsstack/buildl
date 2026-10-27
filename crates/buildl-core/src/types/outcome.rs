@@ -71,6 +71,9 @@ pub enum OutcomeClass {
     /// It did not run: its result was fetched from the remote cache, and its outputs are in
     /// place.
     Fetched,
+    /// It did not run here: the remote cache's server ran it, or held its result, and its
+    /// outputs are in place.
+    Remote,
     /// It ran and exited with a status other than zero.
     ActionFailure {
         /// The exit status.
@@ -109,10 +112,14 @@ pub enum OutcomeClass {
 
 impl OutcomeClass {
     /// Whether the target's outputs are in place: true for [`OutcomeClass::Cached`],
-    /// [`OutcomeClass::Built`] and [`OutcomeClass::Fetched`], false for every other class.
+    /// [`OutcomeClass::Built`], [`OutcomeClass::Fetched`] and [`OutcomeClass::Remote`], false
+    /// for every other class.
     #[must_use]
     pub const fn succeeded(&self) -> bool {
-        matches!(self, Self::Cached | Self::Built | Self::Fetched)
+        matches!(
+            self,
+            Self::Cached | Self::Built | Self::Fetched | Self::Remote
+        )
     }
 }
 
@@ -151,6 +158,9 @@ pub struct Tally {
     pub cached: usize,
     /// Targets that did not run because their result was fetched from the remote cache.
     pub fetched: usize,
+    /// Targets that did not run here because the remote cache's server ran them or held their
+    /// result.
+    pub remote: usize,
 }
 
 impl Tally {
@@ -163,6 +173,7 @@ impl Tally {
                 OutcomeClass::Cached => tally.cached += 1,
                 OutcomeClass::Built => tally.built += 1,
                 OutcomeClass::Fetched => tally.fetched += 1,
+                OutcomeClass::Remote => tally.remote += 1,
                 OutcomeClass::ActionFailure { .. }
                 | OutcomeClass::Killed { .. }
                 | OutcomeClass::OutputMissing { .. }
@@ -285,6 +296,7 @@ mod tests {
                     built: 1,
                     cached: 1,
                     fetched: 1,
+                    remote: 0,
                 },
                 tests: Tally::default(),
             }
@@ -320,6 +332,7 @@ mod tests {
                     built: 3,
                     cached: 1,
                     fetched: 0,
+                    remote: 0,
                 },
                 tests: Tally::default(),
             }
@@ -349,6 +362,7 @@ mod tests {
                     built: 1,
                     cached: 2,
                     fetched: 0,
+                    remote: 0,
                 },
                 tests: Tally {
                     failed: 1,
@@ -356,6 +370,7 @@ mod tests {
                     built: 0,
                     cached: 1,
                     fetched: 0,
+                    remote: 0,
                 },
             }
         );
@@ -383,6 +398,22 @@ mod tests {
         ];
         let tally = Tally::of(&outcomes);
         assert_eq!((tally.fetched, tally.built), (2, 1));
+    }
+
+    #[test]
+    fn remote_is_a_success_and_is_tallied() {
+        assert!(OutcomeClass::Remote.succeeded());
+        let tally = Tally::of(&[outcome(OutcomeClass::Remote)]);
+        assert_eq!(tally.remote, 1);
+        assert_eq!((tally.built, tally.fetched, tally.failed), (0, 0, 0));
+    }
+
+    #[test]
+    fn remote_serializes_as_its_name() {
+        let rendered = canonical::to_string(&OutcomeClass::Remote).unwrap();
+        assert_eq!(rendered, r#""Remote""#);
+        let read = canonical::from_slice::<OutcomeClass>(rendered.as_bytes()).unwrap();
+        assert_eq!(read, OutcomeClass::Remote);
     }
 
     #[test]

@@ -13,13 +13,14 @@
 //! which is the wiring's; and showing anything, which is the caller's.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
     ActionOutcome, ApproverMode, Checkup, Collected, Diagnostic, Directory, Error, Label,
-    LiveOutput, Loaded, OnFailure, Pipeline, Plan, PortName, Query, RemotePolicy, Reporter, Rerun,
-    Result, Sample, Scope, SettingName, SettingValue, Shown, TargetGraph, Verification, WantedSet,
-    Watched, pipeline,
+    LiveOutput, Loaded, OnFailure, Pipeline, Plan, PortName, Query, RemotePolicy, RemoteSettings,
+    Reporter, Rerun, Result, Sample, Scope, SettingName, SettingValue, Shown, TargetGraph,
+    Verification, WantedSet, Watched, pipeline,
 };
 
 use crate::approver::{Console, NoTerminal};
@@ -156,16 +157,40 @@ impl Workspace {
         self.wiring.out()
     }
 
-    /// Whether `buildl.toml` has a `[remote]` table.
+    /// The remote cache `buildl.toml`'s `[remote]` table names, when it has one.
     #[must_use]
-    pub const fn names_remote(&self) -> bool {
-        self.wiring.names_remote()
+    pub const fn remote_settings(&self) -> Option<&RemoteSettings> {
+        self.wiring.remote_settings()
+    }
+
+    /// How many actions may run here at once: the manifest's `[execution] workers`, resolved for
+    /// this machine.
+    #[must_use]
+    pub fn local_workers(&self) -> NonZeroUsize {
+        self.wiring.local_workers()
+    }
+
+    /// Refuses `remote` when it writes to or executes on the remote cache while this workspace's
+    /// strategy is `bare`, as a build does once it has planned. A workspace with no `[remote]`
+    /// table uses no remote, so nothing is refused there.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error::UploadUnsandboxed`](buildl_core::Error::UploadUnsandboxed) when
+    /// `buildl.toml` has a `[remote]` table, `remote` writes or executes, and the strategy is
+    /// `bare`.
+    pub fn ensure_sandboxed_remote(&self, remote: RemotePolicy) -> Result<()> {
+        if self.remote_settings().is_some() {
+            self.wiring.ensure_sandboxed_remote(remote)
+        } else {
+            Ok(())
+        }
     }
 
     /// How a run with `options` uses the remote cache: as `options` say when `buildl.toml` names
     /// one, and not at all when it names none.
     const fn remote_policy(&self, options: RunOptions) -> RemotePolicy {
-        if self.names_remote() {
+        if self.remote_settings().is_some() {
             options.remote
         } else {
             RemotePolicy::OFF
@@ -228,7 +253,7 @@ impl Workspace {
     pub fn check(&self) -> Result<Loaded> {
         pipeline::check(
             &self.wiring.source()?,
-            &mut self.wiring.dispatcher(),
+            &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
             &self.history(),
             &self.cas(),
@@ -248,7 +273,7 @@ impl Workspace {
     pub fn graph(&self) -> Result<(TargetGraph, Vec<Label>)> {
         pipeline::graph(
             &self.wiring.source()?,
-            &mut self.wiring.dispatcher(),
+            &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
             &self.history(),
             &self.cas(),
@@ -269,7 +294,7 @@ impl Workspace {
     pub fn query(&self, query: &Query) -> Result<(BTreeSet<Label>, Vec<Label>)> {
         pipeline::query(
             &self.wiring.source()?,
-            &mut self.wiring.dispatcher(),
+            &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
             &self.history(),
             &self.cas(),
@@ -293,7 +318,7 @@ impl Workspace {
     pub fn doctor(&self) -> Result<(Doctor, Vec<Label>)> {
         let (checkup, missing) = pipeline::doctor(
             &self.wiring.source()?,
-            &mut self.wiring.dispatcher(),
+            &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.manifest(),
             self.wiring.entry(),
             &self.history(),
@@ -548,7 +573,7 @@ impl Workspace {
         let log = LocalLog::new(layout);
         let collected = pipeline::gc(
             &source,
-            &mut self.wiring.dispatcher(),
+            &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
             &mut cache,
             &cas,
@@ -670,13 +695,15 @@ mod tests {
 
     use std::collections::{BTreeMap, BTreeSet};
     use std::fs;
+    use std::num::NonZeroUsize;
     use std::path::{Path, PathBuf};
 
     use buildl_core::json::canonical;
     use buildl_core::{
         Captured, Channel, Diagnostic, Error, Label, LiveOutput, NameKind, OnFailure, OutcomeClass,
-        OutcomeEvent, PortName, ReadyAction, RemoteFailure, RemoteNotice, RemotePolicy, RemoteUse,
-        Reporter, Rerun, Result, Sample, Scope, Summary, Tally, Verdict, Want,
+        OutcomeEvent, PortName, ReadyAction, RemoteExecution, RemoteFailure, RemoteJobs,
+        RemoteNotice, RemotePolicy, RemoteUse, Reporter, Rerun, Result, Sample, Scope, Summary,
+        Tally, Verdict, Want,
     };
 
     use crate::approver::NoTerminal;
@@ -1118,6 +1145,7 @@ mod tests {
                         built: 1,
                         cached: 0,
                         fetched: 0,
+                        remote: 0,
                     },
                     tests: Tally::default()
                 },
@@ -1128,6 +1156,7 @@ mod tests {
                         built: 0,
                         cached: 1,
                         fetched: 0,
+                        remote: 0,
                     },
                     tests: Tally::default()
                 }
@@ -1533,13 +1562,48 @@ mod tests {
     }
 
     #[test]
-    fn a_workspace_names_a_remote_only_with_a_remote_table() {
-        let (_without, bare) = workspace(&[("buildl.toml", "")]);
-        let (_with, named) =
-            workspace(&[("buildl.toml", "[remote]\nurl = \"grpc://127.0.0.1:1\"\n")]);
+    fn local_workers_is_the_manifest_worker_count() {
+        let (_dir, root) =
+            workspace(&[("buildl.toml", &BARE.replace("workers = 1", "workers = 3"))]);
 
-        assert!(!Workspace::open(&bare).unwrap().names_remote());
-        assert!(Workspace::open(&named).unwrap().names_remote());
+        assert_eq!(Workspace::open(&root).unwrap().local_workers().get(), 3);
+    }
+
+    #[test]
+    fn writing_or_executing_remotely_is_refused_under_bare_only_with_a_remote_table() {
+        let remote = "[remote]\nurl = \"grpc://127.0.0.1:1\"\n";
+        let sandbox = BARE.replace("\"bare\"", "\"sandbox\"");
+        let uploading = RemotePolicy {
+            use_: RemoteUse::ReadWrite,
+            ..RemotePolicy::OFF
+        };
+        let executing = RemotePolicy {
+            execution: RemoteExecution::On {
+                jobs: RemoteJobs::default(),
+                local: NonZeroUsize::MIN,
+            },
+            ..RemotePolicy::OFF
+        };
+        let open = |manifest: &str| {
+            let (dir, root) = workspace(&[("buildl.toml", manifest)]);
+            (dir, Workspace::open(&root).unwrap())
+        };
+        let (_bare_dir, bare) = open(&format!("{BARE}\n{remote}"));
+        let (_sandbox_dir, sandboxed) = open(&format!("{sandbox}\n{remote}"));
+        let (_none_dir, no_table) = open(BARE);
+
+        for policy in [uploading, executing] {
+            assert!(
+                matches!(
+                    bare.ensure_sandboxed_remote(policy),
+                    Err(Error::UploadUnsandboxed { .. })
+                ),
+                "{policy:?}"
+            );
+            assert!(sandboxed.ensure_sandboxed_remote(policy).is_ok());
+            assert!(no_table.ensure_sandboxed_remote(policy).is_ok());
+        }
+        assert!(bare.ensure_sandboxed_remote(RemotePolicy::OFF).is_ok());
     }
 
     #[test]
@@ -1550,6 +1614,7 @@ mod tests {
         let upload = RemotePolicy {
             use_: RemoteUse::ReadWrite,
             failure: RemoteFailure::Strict,
+            execution: RemoteExecution::Off,
         };
         let options = RunOptions::new(OnFailure::Stop, LiveOutput::Off).with_remote(upload);
 

@@ -181,8 +181,8 @@ pub fn verify<P: Ports>(
 /// How a re-run that `ended` compares with what was cached: `names` are the outputs the target
 /// declares and `cached` what each was when it was cached.
 ///
-/// A re-run never asks the remote cache, so one that ended by fetching or by a failed remote call
-/// is the builder's own failure.
+/// A re-run never asks the remote cache, so one that ended by fetching, by the remote running the
+/// action or by a failed remote call is the builder's own failure.
 ///
 /// # Errors
 ///
@@ -206,7 +206,7 @@ fn rechecked<C: ContentStore>(
             stdout: shown(cas, label, printed.map(|printed| printed.stdout))?,
             stderr: shown(cas, label, printed.map(|printed| printed.stderr))?,
         },
-        Ended::Fetched { .. } | Ended::RemoteFailed(_) => Check::Failed {
+        Ended::Fetched { .. } | Ended::Executed { .. } | Ended::RemoteFailed(_) => Check::Failed {
             class: OutcomeClass::InfraFailure {
                 kind: InfraKind::Run,
             },

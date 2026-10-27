@@ -32,6 +32,10 @@ pub enum Method {
     GetActionResult,
     /// `ActionCache.UpdateActionResult`.
     UpdateActionResult,
+    /// `Execution.Execute`.
+    Execute,
+    /// `Execution.WaitExecution`.
+    WaitExecution,
 }
 
 impl Method {
@@ -51,6 +55,8 @@ impl Method {
             Self::Write => "ByteStream.Write",
             Self::GetActionResult => "ActionCache.GetActionResult",
             Self::UpdateActionResult => "ActionCache.UpdateActionResult",
+            Self::Execute => "Execution.Execute",
+            Self::WaitExecution => "Execution.WaitExecution",
         }
     }
 }
@@ -89,5 +95,7 @@ mod tests {
             Method::BatchUpdateBlobs.to_string(),
             "ContentAddressableStorage.BatchUpdateBlobs"
         );
+        assert_eq!(Method::Execute.to_string(), "Execution.Execute");
+        assert_eq!(Method::WaitExecution.to_string(), "Execution.WaitExecution");
     }
 }

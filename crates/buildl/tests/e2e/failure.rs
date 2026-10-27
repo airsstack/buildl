@@ -35,6 +35,7 @@ fn a_failure_stops_the_build_by_default() {
                 built: 0,
                 cached: 0,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally::default()
         }
@@ -67,6 +68,7 @@ fn keep_going_builds_what_does_not_depend_on_the_failure() {
                 built: 2,
                 cached: 0,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally::default()
         }

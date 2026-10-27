@@ -22,6 +22,16 @@ pub struct ReadRequest {
     #[prost(int64, tag = "3")]
     pub read_limit: i64,
 }
+impl ::prost::Name for ReadRequest {
+    const NAME: &'static str = "ReadRequest";
+    const PACKAGE: &'static str = "google.bytestream";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.bytestream.ReadRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.bytestream.ReadRequest".into()
+    }
+}
 /// Response object for ByteStream.Read.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct ReadResponse {
@@ -31,6 +41,16 @@ pub struct ReadResponse {
     /// generate more data.
     #[prost(bytes = "vec", tag = "10")]
     pub data: ::prost::alloc::vec::Vec<u8>,
+}
+impl ::prost::Name for ReadResponse {
+    const NAME: &'static str = "ReadResponse";
+    const PACKAGE: &'static str = "google.bytestream";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.bytestream.ReadResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.bytestream.ReadResponse".into()
+    }
 }
 /// Request object for ByteStream.Write.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -66,6 +86,16 @@ pub struct WriteRequest {
     #[prost(bytes = "vec", tag = "10")]
     pub data: ::prost::alloc::vec::Vec<u8>,
 }
+impl ::prost::Name for WriteRequest {
+    const NAME: &'static str = "WriteRequest";
+    const PACKAGE: &'static str = "google.bytestream";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.bytestream.WriteRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.bytestream.WriteRequest".into()
+    }
+}
 /// Response object for ByteStream.Write.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct WriteResponse {
@@ -73,12 +103,32 @@ pub struct WriteResponse {
     #[prost(int64, tag = "1")]
     pub committed_size: i64,
 }
+impl ::prost::Name for WriteResponse {
+    const NAME: &'static str = "WriteResponse";
+    const PACKAGE: &'static str = "google.bytestream";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.bytestream.WriteResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.bytestream.WriteResponse".into()
+    }
+}
 /// Request object for ByteStream.QueryWriteStatus.
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
 pub struct QueryWriteStatusRequest {
     /// The name of the resource whose write status is being requested.
     #[prost(string, tag = "1")]
     pub resource_name: ::prost::alloc::string::String,
+}
+impl ::prost::Name for QueryWriteStatusRequest {
+    const NAME: &'static str = "QueryWriteStatusRequest";
+    const PACKAGE: &'static str = "google.bytestream";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.bytestream.QueryWriteStatusRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.bytestream.QueryWriteStatusRequest".into()
+    }
 }
 /// Response object for ByteStream.QueryWriteStatus.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, ::prost::Message)]
@@ -90,6 +140,16 @@ pub struct QueryWriteStatusResponse {
     /// `finish_write` set to true, and the server has processed that request.
     #[prost(bool, tag = "2")]
     pub complete: bool,
+}
+impl ::prost::Name for QueryWriteStatusResponse {
+    const NAME: &'static str = "QueryWriteStatusResponse";
+    const PACKAGE: &'static str = "google.bytestream";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.bytestream.QueryWriteStatusResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.bytestream.QueryWriteStatusResponse".into()
+    }
 }
 /// Generated client implementations.
 pub mod byte_stream_client {

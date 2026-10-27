@@ -127,8 +127,8 @@
 //!
 //! A target no cache row stands for may be served by a cache other machines share, reached
 //! through the [`RemoteCache`] port. [`Pipeline::set_remote`] sets the [`RemotePolicy`] of a
-//! build and a test run: a [`RemoteUse`] and a [`RemoteFailure`]. With the remote on, a worker
-//! asks the port for the result of a [`RemoteAction`] built from the ready action before it runs
+//! build and a test run: a [`RemoteUse`], a [`RemoteFailure`] and a [`RemoteExecution`]. With
+//! the remote on, a worker asks the port for the result of a [`RemoteAction`] built from the ready action before it runs
 //! anything. A [`RemoteHit`] is used only when it is a clean success for the declared outputs;
 //! every blob is checked against its digest and stored before the row is written, and the target
 //! ends as [`OutcomeClass::Fetched`]. A miss runs the action, and under [`RemoteUse::ReadWrite`]
@@ -171,8 +171,9 @@ pub mod watch;
 pub use error::{
     ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
     EvaluationLimit, NameKind, PortName, RemoteFlagConflict, RemoteVariable, Result, TreeFault,
+    UnsandboxedRemote,
 };
-pub use execute::execute;
+pub use execute::{ensure_sandboxed_remote, execute};
 pub use grants::negotiate;
 pub use history::LastRun;
 pub use load::load;
@@ -187,26 +188,27 @@ pub use resolve::{narrow, reach, resolve};
 pub use types::{
     Action, ActionKey, ActionOutcome, Alias, Approval, ApproverMode, Argument, Attribution, Blob,
     BuildFile, Built, CacheRow, Captured, Ceiling, ChangeBatch, ChangedPath, Channel, Check,
-    Checkup, Command, CommitId, Cycle, Declaration, DeclarationOrder, Declared, DenialReason,
-    DepProducts, Description, Diagnostic, Difference, Digest, Direction, Directory, DirtyReason,
-    Discovered, EntryChange, EntryName, EnvName, EnvValue, Evaluated, Execution, Exit,
-    ExpandedDescription, FieldName, FileChange, FileMode, FileStat, Found, FoundEntry, FoundKind,
-    Freshness, GitUrl, Hasher, HeaderName, HostPath, InfraKind, InputDigest, InputKind, InputStat,
-    InstanceName, Isolation, KeyComponents, Label, LiveOutput, LiveSink, Loaded, LogLine,
-    LoggedRun, NetworkAccess, Node, NodeId, OnFailure, Origin, OutcomeClass, OutcomeEvent,
-    OutputDifference, OutputManifest, OutputName, OutputPath, OutputRefusal, OwnComponents, Plan,
-    PlannedKey, Platform, PluginCap, PluginChain, PluginName, PluginNetwork, PluginRef,
-    PluginSource, PluginVersion, PluginViolation, Produced, Program, Provenance, Purpose, Query,
-    RawOutcome, Reaction, ReadyAction, Reference, RemoteAction, RemoteCall, RemoteContent,
-    RemoteFailure, RemoteFile, RemoteHit, RemoteNotice, RemoteOutput, RemoteOutputDirectory,
-    RemoteOutputFile, RemotePlatform, RemotePolicy, RemoteScheme, RemoteSettings,
-    RemoteSettingsBuilder, RemoteSwitch, RemoteTree, RemoteTreeFile, RemoteUpload, RemoteUrl,
-    RemoteUse, Rerun, Rev, RootPath, Rule, RunChoices, Sample, Scope, Setting, SettingName,
-    SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule,
-    StagedSetting, StagedSubdir, StagedTarget, StatEntry, StoredFile, Summary, TagName, Tally,
-    Target, TargetGraph, TargetName, TargetRole, Timeout, Timestamp, TokenSource, ToolIdentity,
-    Tree, TreeEntry, TreePath, Trigger, Turn, Unfinished, Uploaded, Verdict, Verification, Want,
-    WantedSet, WatchLayout, Watched, Workers, Workspace, Written,
+    Checkup, Command, CommitId, Cycle, Declaration, DeclarationOrder, Declared, DecodedTree,
+    DenialReason, DepProducts, Description, Diagnostic, Difference, Digest, Direction, Directory,
+    DirtyReason, Discovered, EntryChange, EntryName, EnvName, EnvValue, Evaluated, Executed,
+    Execution, Exit, ExpandedDescription, FieldName, FileChange, FileMode, FileStat, Found,
+    FoundEntry, FoundKind, Freshness, GitUrl, Hasher, HeaderName, HostPath, InfraKind, InputDigest,
+    InputKind, InputStat, InstanceName, Isolation, KeyComponents, Label, LiveOutput, LiveSink,
+    Loaded, LogLine, LoggedRun, NetworkAccess, Node, NodeId, OnFailure, Origin, OutcomeClass,
+    OutcomeEvent, OutputDifference, OutputManifest, OutputName, OutputPath, OutputRefusal,
+    OwnComponents, Plan, PlannedKey, Platform, PlatformProperties, PlatformPropertyName, PluginCap,
+    PluginChain, PluginName, PluginNetwork, PluginRef, PluginSource, PluginVersion,
+    PluginViolation, Produced, Program, Provenance, Purpose, Query, RawOutcome, Reaction,
+    ReadyAction, Reference, RemoteAction, RemoteCall, RemoteContent, RemoteExecution,
+    RemoteFailure, RemoteFile, RemoteHit, RemoteJobs, RemoteNotice, RemoteOutput,
+    RemoteOutputDirectory, RemoteOutputFile, RemotePlatform, RemotePolicy, RemoteScheme,
+    RemoteSettings, RemoteSettingsBuilder, RemoteSwitch, RemoteTree, RemoteTreeFile, RemoteUpload,
+    RemoteUrl, RemoteUse, Rerun, RetryCount, Rev, RootPath, Rule, RunChoices, Sample, Scope,
+    Setting, SettingName, SettingValue, SourcePath, StagedAlias, StagedDeclaration, StagedFile,
+    StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, StatEntry, StoredFile,
+    Summary, TagName, Tally, Target, TargetGraph, TargetName, TargetRole, Timeout, Timestamp,
+    TokenSource, ToolIdentity, Tree, TreeEntry, TreePath, Trigger, Turn, Unfinished, Uploaded,
+    Verdict, Verification, Want, WantedSet, WatchLayout, Watched, Workers, Workspace, Written,
 };
 pub use verify::verify;
 pub use watch::{react, watch};

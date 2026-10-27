@@ -49,6 +49,16 @@ pub mod operation {
         Response(::prost_types::Any),
     }
 }
+impl ::prost::Name for Operation {
+    const NAME: &'static str = "Operation";
+    const PACKAGE: &'static str = "google.longrunning";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.longrunning.Operation".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.longrunning.Operation".into()
+    }
+}
 /// The request message for
 /// \[Operations.GetOperation\]\[google.longrunning.Operations.GetOperation\].
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -56,6 +66,16 @@ pub struct GetOperationRequest {
     /// The name of the operation resource.
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
+}
+impl ::prost::Name for GetOperationRequest {
+    const NAME: &'static str = "GetOperationRequest";
+    const PACKAGE: &'static str = "google.longrunning";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.longrunning.GetOperationRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.longrunning.GetOperationRequest".into()
+    }
 }
 /// The request message for
 /// \[Operations.ListOperations\]\[google.longrunning.Operations.ListOperations\].
@@ -86,6 +106,16 @@ pub struct ListOperationsRequest {
     #[prost(bool, tag = "5")]
     pub return_partial_success: bool,
 }
+impl ::prost::Name for ListOperationsRequest {
+    const NAME: &'static str = "ListOperationsRequest";
+    const PACKAGE: &'static str = "google.longrunning";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.longrunning.ListOperationsRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.longrunning.ListOperationsRequest".into()
+    }
+}
 /// The response message for
 /// \[Operations.ListOperations\]\[google.longrunning.Operations.ListOperations\].
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -103,6 +133,16 @@ pub struct ListOperationsResponse {
     #[prost(string, repeated, tag = "3")]
     pub unreachable: ::prost::alloc::vec::Vec<::prost::alloc::string::String>,
 }
+impl ::prost::Name for ListOperationsResponse {
+    const NAME: &'static str = "ListOperationsResponse";
+    const PACKAGE: &'static str = "google.longrunning";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.longrunning.ListOperationsResponse".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.longrunning.ListOperationsResponse".into()
+    }
+}
 /// The request message for
 /// \[Operations.CancelOperation\]\[google.longrunning.Operations.CancelOperation\].
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -111,6 +151,16 @@ pub struct CancelOperationRequest {
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
 }
+impl ::prost::Name for CancelOperationRequest {
+    const NAME: &'static str = "CancelOperationRequest";
+    const PACKAGE: &'static str = "google.longrunning";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.longrunning.CancelOperationRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.longrunning.CancelOperationRequest".into()
+    }
+}
 /// The request message for
 /// \[Operations.DeleteOperation\]\[google.longrunning.Operations.DeleteOperation\].
 #[derive(Clone, PartialEq, Eq, Hash, ::prost::Message)]
@@ -118,6 +168,16 @@ pub struct DeleteOperationRequest {
     /// The name of the operation resource to be deleted.
     #[prost(string, tag = "1")]
     pub name: ::prost::alloc::string::String,
+}
+impl ::prost::Name for DeleteOperationRequest {
+    const NAME: &'static str = "DeleteOperationRequest";
+    const PACKAGE: &'static str = "google.longrunning";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.longrunning.DeleteOperationRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.longrunning.DeleteOperationRequest".into()
+    }
 }
 /// The request message for
 /// \[Operations.WaitOperation\]\[google.longrunning.Operations.WaitOperation\].
@@ -131,6 +191,16 @@ pub struct WaitOperationRequest {
     /// If RPC context deadline is also specified, the shorter one will be used.
     #[prost(message, optional, tag = "2")]
     pub timeout: ::core::option::Option<::prost_types::Duration>,
+}
+impl ::prost::Name for WaitOperationRequest {
+    const NAME: &'static str = "WaitOperationRequest";
+    const PACKAGE: &'static str = "google.longrunning";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.longrunning.WaitOperationRequest".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.longrunning.WaitOperationRequest".into()
+    }
 }
 /// A message representing the message types used by a long-running operation.
 ///
@@ -165,6 +235,16 @@ pub struct OperationInfo {
     /// Note: Altering this value constitutes a breaking change.
     #[prost(string, tag = "2")]
     pub metadata_type: ::prost::alloc::string::String,
+}
+impl ::prost::Name for OperationInfo {
+    const NAME: &'static str = "OperationInfo";
+    const PACKAGE: &'static str = "google.longrunning";
+    fn full_name() -> ::prost::alloc::string::String {
+        "google.longrunning.OperationInfo".into()
+    }
+    fn type_url() -> ::prost::alloc::string::String {
+        "type.googleapis.com/google.longrunning.OperationInfo".into()
+    }
 }
 /// Generated client implementations.
 pub mod operations_client {

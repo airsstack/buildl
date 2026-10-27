@@ -115,6 +115,7 @@ fn main() -> ExitCode {
     let remote = remote_switches::RemoteSwitches {
         upload: env::var_os("BUILDL_REMOTE_UPLOAD"),
         strict: env::var_os("BUILDL_REMOTE_STRICT"),
+        execute: env::var_os("BUILDL_REMOTE_EXECUTE"),
     };
     let exit = run::run(
         env::args_os(),

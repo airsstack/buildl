@@ -10,13 +10,14 @@
 use crate::error::{Error, PortName, Result};
 use crate::ports::{BlobSource, RemoteCache};
 use crate::types::{
-    Blob, Diagnostic, RemoteAction, RemoteHit, RemoteTreeFile, RemoteUpload, Uploaded,
+    Blob, DecodedTree, Diagnostic, Executed, RemoteAction, RemoteHit, RemoteUpload, Uploaded,
 };
 
 /// A remote cache that holds nothing and stores nothing.
 ///
 /// Every lookup misses and every upload is accepted and dropped, so a build that has no remote
-/// behaves as one that was never offered one.
+/// behaves as one that was never offered one. It runs nothing: a request to run an action is
+/// refused.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct NoRemote;
 
@@ -32,8 +33,8 @@ impl RemoteCache for NoRemote {
         })
     }
 
-    fn decode_tree(&self, _bytes: &[u8]) -> Result<Option<Vec<RemoteTreeFile>>> {
-        Ok(None)
+    fn decode_tree(&self, _bytes: &[u8]) -> Result<DecodedTree> {
+        Ok(DecodedTree::Unreadable)
     }
 
     fn upload(
@@ -43,6 +44,13 @@ impl RemoteCache for NoRemote {
         _blobs: &dyn BlobSource,
     ) -> Result<Uploaded> {
         Ok(Uploaded::Done)
+    }
+
+    fn execute(&self, _action: &RemoteAction) -> Result<Executed> {
+        Err(Error::Adapter {
+            port: PortName::RemoteCache,
+            diagnostic: Diagnostic::new("there is no remote cache to run an action"),
+        })
     }
 }
 
@@ -59,8 +67,8 @@ mod tests {
     use crate::error::{Error, PortName, Result};
     use crate::ports::{BlobSource, RemoteCache};
     use crate::types::{
-        Argument, Blob, Command, Digest, Platform, RemoteAction, RemotePlatform, RemoteUpload,
-        Timeout, Uploaded,
+        Argument, Blob, Command, DecodedTree, Digest, Platform, PlatformProperties, RemoteAction,
+        RemotePlatform, RemoteUpload, Timeout, Uploaded,
     };
 
     fn action() -> RemoteAction {
@@ -72,6 +80,7 @@ mod tests {
             files: Vec::new(),
             platform: RemotePlatform::of(&Platform::parse("linux/x86_64").unwrap()),
             timeout: Timeout::default(),
+            properties: PlatformProperties::default(),
         }
     }
 
@@ -107,8 +116,28 @@ mod tests {
     }
 
     #[test]
+    fn no_remote_refuses_to_execute() {
+        let error = NoRemote.execute(&action()).unwrap_err();
+
+        assert!(
+            matches!(
+                error,
+                Error::Adapter {
+                    port: PortName::RemoteCache,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+        assert!(error.to_string().starts_with("remote cache: "), "{error}");
+    }
+
+    #[test]
     fn no_remote_reads_no_tree() {
-        assert_eq!(NoRemote.decode_tree(b"tree").unwrap(), None);
+        assert_eq!(
+            NoRemote.decode_tree(b"tree").unwrap(),
+            DecodedTree::Unreadable
+        );
     }
 
     #[test]

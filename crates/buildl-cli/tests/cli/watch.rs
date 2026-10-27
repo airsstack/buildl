@@ -23,16 +23,16 @@ const COPY: &str =
     "buildl.target(\"copy\", { inputs = { \"a.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\n";
 
 /// The line a watch opens with.
-const BUILDING: &str = "watch: building";
+pub(crate) const BUILDING: &str = "watch: building";
 
 /// The line a watch writes when a build is done and nothing has changed since.
-const WAITING: &str = "watch: waiting for changes";
+pub(crate) const WAITING: &str = "watch: waiting for changes";
 
 /// A running `buildl watch` and the lines it writes to standard error.
 ///
 /// Dropping it kills the process and reaps it, so a test that fails part way leaves nothing
 /// running.
-struct Watching {
+pub(crate) struct Watching {
     child: Child,
     lines: Receiver<String>,
 }
@@ -40,7 +40,7 @@ struct Watching {
 impl Watching {
     /// Starts the binary with `args` in `root`, its environment cleared down to the search path
     /// of this process.
-    fn start(root: &Path, args: &[&str]) -> Self {
+    pub(crate) fn start(root: &Path, args: &[&str]) -> Self {
         let mut command = Command::new(env!("CARGO_BIN_EXE_buildl"));
         command
             .args(args)
@@ -66,7 +66,7 @@ impl Watching {
     }
 
     /// The lines up to and including the next `last`.
-    fn until(&self, last: &str) -> Vec<String> {
+    pub(crate) fn until(&self, last: &str) -> Vec<String> {
         let mut seen = Vec::new();
         loop {
             let received = self.lines.recv_timeout(BOUND);
@@ -93,7 +93,7 @@ impl Watching {
     }
 
     /// The lines the process writes until it closes its standard error, and how it ended.
-    fn finish(&mut self) -> (Vec<String>, ExitStatus) {
+    pub(crate) fn finish(&mut self) -> (Vec<String>, ExitStatus) {
         let mut rest = Vec::new();
         loop {
             match self.lines.recv_timeout(BOUND) {

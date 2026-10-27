@@ -167,10 +167,11 @@ mod tests {
     use crate::execute::perform::{Printed, Task};
     use crate::ports::{BlobSource, ContentStore, RemoteCache};
     use crate::types::{
-        Blob, Diagnostic, Digest, FileMode, NetworkAccess, NodeId, OutputPath, Platform,
-        ReadyAction, RemoteAction, RemoteCall, RemoteContent, RemoteHit, RemoteNotice,
-        RemoteOutput, RemotePlatform, RemoteTree, RemoteTreeFile, RemoteUpload, RootPath,
-        SourcePath, TargetRole, Timeout, TreePath, Uploaded,
+        Blob, DecodedTree, Diagnostic, Digest, Executed, FileMode, NetworkAccess, NodeId,
+        OutputPath, Platform, PlatformProperties, ReadyAction, RemoteAction, RemoteCall,
+        RemoteContent, RemoteHit, RemoteNotice, RemoteOutput, RemotePlatform, RemoteTree,
+        RemoteTreeFile, RemoteUpload, RootPath, SourcePath, TargetRole, Timeout, TreePath,
+        Uploaded,
     };
 
     const TARGET: &str = "//app:app";
@@ -241,7 +242,7 @@ mod tests {
             unreachable!("an upload downloads nothing")
         }
 
-        fn decode_tree(&self, _bytes: &[u8]) -> Result<Option<Vec<RemoteTreeFile>>> {
+        fn decode_tree(&self, _bytes: &[u8]) -> Result<DecodedTree> {
             unreachable!("an upload decodes no tree")
         }
 
@@ -257,6 +258,10 @@ mod tests {
                 .unwrap()
                 .push(blobs.read(&produced.stdout.digest)?);
             self.answer.lock().unwrap().take().unwrap()
+        }
+
+        fn execute(&self, _action: &RemoteAction) -> Result<Executed> {
+            unreachable!("an upload runs nothing")
         }
     }
 
@@ -304,6 +309,7 @@ mod tests {
             files: Vec::new(),
             platform: RemotePlatform::of(&Platform::parse("linux/x86_64").unwrap()),
             timeout: Timeout::parse("1m").unwrap(),
+            properties: PlatformProperties::default(),
         }
     }
 

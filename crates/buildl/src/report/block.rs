@@ -54,8 +54,8 @@ fn reads_as_one_word(text: &str) -> bool {
 
 /// The line that closes a build: each count of `tally` that is not zero.
 ///
-/// The counts read `2 failed, 1 skipped, 3 built, 4 cached, 5 fetched`, in that order, and the
-/// line is `nothing to build` when every count is zero. Ends with a newline.
+/// The counts read `2 failed, 1 skipped, 3 built, 4 cached, 5 fetched, 6 remote`, in that order,
+/// and the line is `nothing to build` when every count is zero. Ends with a newline.
 #[must_use]
 pub fn summary_line(tally: Tally) -> String {
     let counts: Vec<String> = [
@@ -64,6 +64,7 @@ pub fn summary_line(tally: Tally) -> String {
         (tally.built, "built"),
         (tally.cached, "cached"),
         (tally.fetched, "fetched"),
+        (tally.remote, "remote"),
     ]
     .into_iter()
     .filter(|(count, _)| *count > 0)
@@ -78,20 +79,24 @@ pub fn summary_line(tally: Tally) -> String {
 
 /// The line that closes a test run: `tests: 3 passed (2 cached), 1 failed, 1 skipped`.
 ///
-/// A test that was built, cached or fetched passed; the shares of those that were cached and
-/// fetched follow the passed count in parentheses. Each count that is zero is left out, and the
-/// line is `no tests` when every count is zero. Under [`Rerun::Tests`] the prefix is
+/// A test that was built, cached, fetched or run on the remote passed; the shares of those that
+/// were cached, fetched and run on the remote follow the passed count in parentheses. Each count
+/// that is zero is left out, and the line is `no tests` when every count is zero. Under [`Rerun::Tests`] the prefix is
 /// `tests (rerun): `. Ends with a newline.
 #[must_use]
 pub fn test_line(tally: Tally, rerun: Rerun) -> String {
-    let passed = tally.built + tally.cached + tally.fetched;
+    let passed = tally.built + tally.cached + tally.fetched + tally.remote;
     let mut parts = Vec::new();
     if passed > 0 {
-        let shares: Vec<String> = [(tally.cached, "cached"), (tally.fetched, "fetched")]
-            .into_iter()
-            .filter(|(count, _)| *count > 0)
-            .map(|(count, word)| format!("{count} {word}"))
-            .collect();
+        let shares: Vec<String> = [
+            (tally.cached, "cached"),
+            (tally.fetched, "fetched"),
+            (tally.remote, "remote"),
+        ]
+        .into_iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, word)| format!("{count} {word}"))
+        .collect();
         parts.push(if shares.is_empty() {
             format!("{passed} passed")
         } else {
@@ -138,13 +143,14 @@ const fn refusal_text(refusal: OutputRefusal) -> &'static str {
 }
 
 /// How a failed target ended, in words; `None` for a target that did not fail: one that was
-/// built, cached, fetched or skipped. The [`trailer`] of a failed target and the header of a
-/// last run word a failure with it alike.
+/// built, cached, fetched, run on the remote or skipped. The [`trailer`] of a failed target and
+/// the header of a last run word a failure with it alike.
 pub(crate) fn failure_text(class: &OutcomeClass) -> Option<String> {
     match class {
         OutcomeClass::Cached
         | OutcomeClass::Built
         | OutcomeClass::Fetched
+        | OutcomeClass::Remote
         | OutcomeClass::Skipped { .. } => None,
         OutcomeClass::ActionFailure { status } => {
             Some(format!("action failure (exit status {status})"))
@@ -211,8 +217,9 @@ fn push_lines(block: &mut Vec<u8>, bytes: &[u8]) {
 
 /// Everything shown for one target once it has its outcome.
 ///
-/// A target that printed something gets a header, marked ` (cached)` when it did not run and
-/// ` (fetched)` when its result came from the remote cache, then
+/// A target that printed something gets a header, marked ` (cached)` when it did not run,
+/// ` (fetched)` when its result came from the remote cache and ` (remote)` when the remote ran
+/// it or held its result, then
 /// what it wrote to standard output, then what it wrote to standard error. The bytes are
 /// written as they are, valid text or not, and each of the two is given a newline when it does
 /// not end with one. A target that failed then gets its [`trailer`], whether or not it printed.
@@ -225,6 +232,7 @@ pub fn block(event: &OutcomeEvent, printed: Captured<'_>, paint: Paint) -> Vec<u
         match event.outcome.class {
             OutcomeClass::Cached => block.extend_from_slice(b" (cached)"),
             OutcomeClass::Fetched => block.extend_from_slice(b" (fetched)"),
+            OutcomeClass::Remote => block.extend_from_slice(b" (remote)"),
             _ => {}
         }
         block.push(b'\n');
@@ -250,7 +258,7 @@ mod tests {
         TargetRole, Timestamp,
     };
 
-    use super::{block, command_text, summary_line, test_line, trailer};
+    use super::{block, command_text, failure_text, summary_line, test_line, trailer};
     use crate::report::paint::Paint;
 
     fn command(arguments: &[&str]) -> Command {
@@ -295,6 +303,7 @@ mod tests {
             built,
             cached,
             fetched: 0,
+            remote: 0,
         }
     }
 
@@ -328,6 +337,42 @@ mod tests {
             ..counts(0, 0, 1, 3)
         };
         assert_eq!(summary_line(tally), "1 built, 3 cached, 2 fetched\n");
+    }
+
+    #[test]
+    fn the_summary_counts_remote_after_fetched() {
+        let tally = Tally {
+            fetched: 2,
+            remote: 4,
+            ..counts(0, 0, 1, 3)
+        };
+        assert_eq!(
+            summary_line(tally),
+            "1 built, 3 cached, 2 fetched, 4 remote\n"
+        );
+    }
+
+    #[test]
+    fn a_zero_remote_count_is_not_shown() {
+        let tally = Tally {
+            fetched: 2,
+            remote: 0,
+            ..counts(0, 0, 1, 3)
+        };
+        assert_eq!(summary_line(tally), "1 built, 3 cached, 2 fetched\n");
+    }
+
+    #[test]
+    fn a_remote_test_passed_and_shows_its_share() {
+        let tally = Tally {
+            fetched: 2,
+            remote: 3,
+            ..counts(0, 0, 0, 1)
+        };
+        assert_eq!(
+            test_line(tally, Rerun::Off),
+            "tests: 6 passed (1 cached, 2 fetched, 3 remote)\n"
+        );
     }
 
     #[test]
@@ -430,10 +475,33 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_block_is_marked_remote() {
+        let shown = block(
+            &event(OutcomeClass::Remote, None),
+            Captured {
+                stdout: b"ok\n",
+                stderr: b"",
+            },
+            Paint::Plain,
+        );
+        assert_eq!(shown, b"--- //lib:text (remote)\nok\n");
+    }
+
+    #[test]
+    fn a_remote_target_has_no_failure_text() {
+        assert_eq!(failure_text(&OutcomeClass::Remote), None);
+        assert_eq!(
+            trailer(&event(OutcomeClass::Remote, None), Paint::Plain),
+            ""
+        );
+    }
+
+    #[test]
     fn a_target_that_did_not_fail_has_no_trailer() {
         for class in [
             OutcomeClass::Built,
             OutcomeClass::Cached,
+            OutcomeClass::Remote,
             OutcomeClass::Skipped {
                 because: Label::parse("//:docs").unwrap(),
             },

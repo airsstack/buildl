@@ -11,8 +11,8 @@
 use std::path::Path;
 
 use buildl_core::{
-    Blob, BlobSource, NoRemote, RemoteAction, RemoteCache, RemoteHit, RemotePolicy, RemoteSettings,
-    RemoteTreeFile, RemoteUpload, RemoteUse, Result, Uploaded,
+    Blob, BlobSource, DecodedTree, Executed, NoRemote, RemoteAction, RemoteCache, RemoteHit,
+    RemotePolicy, RemoteSettings, RemoteUpload, RemoteUse, Result, Uploaded,
 };
 
 use super::Reapi;
@@ -68,7 +68,7 @@ impl RemoteCache for Remote {
         }
     }
 
-    fn decode_tree(&self, bytes: &[u8]) -> Result<Option<Vec<RemoteTreeFile>>> {
+    fn decode_tree(&self, bytes: &[u8]) -> Result<DecodedTree> {
         match self {
             Self::Off => NoRemote.decode_tree(bytes),
             Self::Reapi(reapi) => reapi.decode_tree(bytes),
@@ -86,6 +86,13 @@ impl RemoteCache for Remote {
             Self::Reapi(reapi) => reapi.upload(action, produced, blobs),
         }
     }
+
+    fn execute(&self, action: &RemoteAction) -> Result<Executed> {
+        match self {
+            Self::Off => NoRemote.execute(action),
+            Self::Reapi(reapi) => reapi.execute(action),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -98,8 +105,8 @@ mod tests {
     use std::path::Path;
 
     use buildl_core::{
-        EnvName, Error, RemoteFailure, RemotePolicy, RemoteSettings, RemoteUrl, RemoteUse,
-        TokenSource,
+        EnvName, Error, RemoteExecution, RemoteFailure, RemotePolicy, RemoteSettings, RemoteUrl,
+        RemoteUse, TokenSource,
     };
 
     use super::Remote;
@@ -119,6 +126,7 @@ mod tests {
     const READING: RemotePolicy = RemotePolicy {
         use_: RemoteUse::Read,
         failure: RemoteFailure::Lenient,
+        execution: RemoteExecution::Off,
     };
 
     #[test]

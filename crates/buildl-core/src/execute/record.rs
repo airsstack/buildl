@@ -5,10 +5,11 @@
 //! build hands back, and the event is what the log keeps. Each is put together here in one
 //! place, so that what a class of outcome carries is decided once.
 //!
-//! Responsibilities: [`row`]; the outcomes [`built`], [`cached`], [`fetched`], [`failed`],
-//! [`unstored`], [`unplaced`], [`mismatched`] and [`skipped`]; [`event`] with [`Progress`]; and
-//! the four steps that reach a port, in the order that keeps a crash harmless: [`store`] puts a
-//! built or fetched target's outputs in place and only then records its row,
+//! Responsibilities: [`row`]; the outcomes [`built`], [`cached`], [`fetched`], [`remote`],
+//! [`failed`], [`unstored`], [`unplaced`], [`mismatched`] and [`skipped`]; [`event`] with
+//! [`Progress`]; [`recorded`], which turns how a task ended into its outcome; and the four steps
+//! that reach a port, in the order that keeps a crash harmless: [`store`] puts a built, fetched
+//! or remotely run target's outputs in place and only then records its row,
 //! [`forget_contradicted`] removes the row a failed action contradicts, [`restore`] puts a
 //! cached target's outputs in place, and [`append`] logs an outcome whatever it is. An output
 //! that cannot be put in place whole is removed from its path again. [`shown`] reads back what
@@ -18,7 +19,7 @@
 //! written, which are the ports'.
 
 use crate::error::{Error, PortName, Result};
-use crate::execute::perform::{Kept, NOT_STORED, Printed, Span};
+use crate::execute::perform::{Ended, Kept, NOT_STORED, Printed, Span, remote_failure};
 use crate::ports::{ActionCache, Clock, ContentStore, EventLog};
 use crate::types::{
     ActionKey, ActionOutcome, CacheRow, Command, Diagnostic, Digest, Label, Node, OutcomeClass,
@@ -67,6 +68,12 @@ pub(crate) fn cached(label: Label, role: TargetRole, row: &CacheRow) -> ActionOu
 /// cache, and `row`, recorded for it, holds what it reports.
 pub(crate) fn fetched(label: Label, role: TargetRole, row: &CacheRow) -> ActionOutcome {
     succeeded(label, role, OutcomeClass::Fetched, row)
+}
+
+/// The outcome of a target of `role` that did not run here: the remote cache ran its action, and
+/// `row`, recorded for it, holds what it reports.
+pub(crate) fn remote(label: Label, role: TargetRole, row: &CacheRow) -> ActionOutcome {
+    succeeded(label, role, OutcomeClass::Remote, row)
 }
 
 /// The outcome of a target of `role` whose action did not get as far as producing its outputs:
@@ -179,6 +186,8 @@ pub(crate) enum Made {
     Built,
     /// The remote cache held them: [`OutcomeClass::Fetched`].
     Fetched,
+    /// The remote cache ran the action and left them: [`OutcomeClass::Remote`].
+    Remote,
 }
 
 /// What a target that has its outputs in hand has to record: the key it ran or was fetched
@@ -187,7 +196,7 @@ pub(crate) enum Made {
 pub(crate) struct Finished {
     /// The key the outputs belong to.
     pub(crate) key: ActionKey,
-    /// Whether an action ran or the remote cache held the result.
+    /// Whether an action ran, the remote cache held the result, or the remote cache ran it.
     pub(crate) made: Made,
     /// What the target left, in the order its outputs were declared.
     pub(crate) outputs: Vec<Kept>,
@@ -196,7 +205,8 @@ pub(crate) struct Finished {
 }
 
 /// Records `target`, which ended as `finished` says, and returns its outcome, which is
-/// [`OutcomeClass::Built`] or [`OutcomeClass::Fetched`] as `finished.made` says.
+/// [`OutcomeClass::Built`], [`OutcomeClass::Fetched`] or [`OutcomeClass::Remote`] as
+/// `finished.made` says.
 ///
 /// Each output is put at its path of `paths`, in the order the outputs were written, and only
 /// then is the row stored: a row therefore exists only for content the store already holds.
@@ -226,12 +236,55 @@ pub(crate) fn store<A: ActionCache, C: ContentStore>(
     let outcome = match made {
         Made::Fetched => fetched(label.clone(), role, &row),
         Made::Built => built(label.clone(), role, &row),
+        Made::Remote => remote(label.clone(), role, &row),
     };
     let stored = place(&manifests, paths, cas).and_then(|()| cache.record(label.clone(), row));
     match stored {
         Ok(()) => outcome,
         Err(error) => unstored(label, role, &error, printed),
     }
+}
+
+/// The outcome of `target`, whose task `ended` under `key`: a result is stored with
+/// [`store`] and a failure is the outcome it says.
+///
+/// # Errors
+///
+/// Returns the error of a failed remote call in a build that fails when one does.
+pub(crate) fn recorded<A: ActionCache, C: ContentStore>(
+    target: &Node,
+    key: ActionKey,
+    ended: Ended,
+    paths: &[OutputPath],
+    cas: &C,
+    cache: &mut A,
+) -> Result<ActionOutcome> {
+    let (made, outputs, printed) = match ended {
+        Ended::Produced { outputs, printed } => (Made::Built, outputs, printed),
+        Ended::Fetched { outputs, printed } => (Made::Fetched, outputs, printed),
+        Ended::Executed { outputs, printed } => (Made::Remote, outputs, printed),
+        Ended::RemoteFailed(notice) => return Err(remote_failure(&notice)),
+        Ended::Failed {
+            class,
+            diagnostic,
+            printed,
+        } => {
+            return Ok(failed(
+                target.label.clone(),
+                target.role,
+                class,
+                diagnostic,
+                printed,
+            ));
+        }
+    };
+    let finished = Finished {
+        key,
+        made,
+        outputs,
+        printed,
+    };
+    Ok(store(target, finished, paths, cas, cache))
 }
 
 /// Takes the `outcome` of a target whose action just ran under `key`, and removes the row the
@@ -400,15 +453,15 @@ mod tests {
     use std::sync::{Mutex, PoisonError};
 
     use super::{
-        Finished, Made, Progress, built, cached, event, failed, forget_contradicted, mismatched,
-        place, row, shown, skipped, store, unplaced, unstored,
+        Finished, Made, Progress, append, built, cached, event, failed, forget_contradicted,
+        mismatched, place, recorded, row, shown, skipped, store, unplaced, unstored,
     };
     use crate::error::{Error, PortName, Result};
     use crate::execute::fixtures::{
-        command, digest_of, file, key, label, node, output_path, row as recorded, tree,
+        command, digest_of, file, kept, key, label, node, output_path, row as row_of, tree,
     };
-    use crate::execute::perform::{Kept, Printed, Span};
-    use crate::ports::{ActionCache, ContentStore};
+    use crate::execute::perform::{Ended, Kept, Printed, Span};
+    use crate::ports::{ActionCache, Clock, ContentStore, EventLog};
     use crate::types::{
         ActionOutcome, CacheRow, Diagnostic, Digest, FileMode, InfraKind, Label, OutcomeClass,
         OutcomeEvent, OutputManifest, OutputName, OutputPath, StoredFile, TargetRole, Timestamp,
@@ -576,7 +629,7 @@ mod tests {
 
     #[test]
     fn a_built_targets_outcome_is_what_its_row_holds() {
-        let row = recorded(&["app", "app.map"]);
+        let row = row_of(&["app", "app.map"]);
         assert_eq!(
             built(label("//:app"), TargetRole::Build, &row),
             ActionOutcome {
@@ -590,7 +643,7 @@ mod tests {
 
     #[test]
     fn a_cached_targets_outcome_is_taken_from_its_row() {
-        let row = recorded(&["app", "app.map"]);
+        let row = row_of(&["app", "app.map"]);
         assert_eq!(
             cached(label("//:app"), TargetRole::Build, &row),
             ActionOutcome {
@@ -664,7 +717,7 @@ mod tests {
 
     #[test]
     fn a_cached_target_that_could_not_be_placed_reports_what_its_row_printed() {
-        let row = recorded(&["app"]);
+        let row = row_of(&["app"]);
         assert_eq!(
             unplaced(
                 label("//:app"),
@@ -845,7 +898,7 @@ mod tests {
 
     #[test]
     fn every_outcome_carries_the_role_it_was_given() {
-        let row = recorded(&["app"]);
+        let row = row_of(&["app"]);
         let error = store_error("out/app cannot be written");
         let class = OutcomeClass::ActionFailure { status: 2 };
         let test = TargetRole::Test;
@@ -974,7 +1027,7 @@ mod tests {
         /// A cache holding `//:app` under the key of `names`.
         fn holding(names: &[&str]) -> Self {
             Self {
-                rows: BTreeMap::from([(label("//:app"), recorded(names))]),
+                rows: BTreeMap::from([(label("//:app"), row_of(names))]),
                 unforgettable: BTreeSet::new(),
             }
         }
@@ -1009,8 +1062,8 @@ mod tests {
     #[test]
     fn rows_lists_its_labels_in_order() {
         let mut cache = Rows::default();
-        cache.record(label("//b:x"), recorded(&["x"])).unwrap();
-        cache.record(label("//a:y"), recorded(&["y"])).unwrap();
+        cache.record(label("//b:x"), row_of(&["x"])).unwrap();
+        cache.record(label("//a:y"), row_of(&["y"])).unwrap();
 
         assert_eq!(cache.labels(), [label("//a:y"), label("//b:x")]);
     }
@@ -1040,7 +1093,7 @@ mod tests {
         let returned = forget_contradicted(outcome.clone(), &key(&["lib"]), &mut cache);
 
         assert_eq!(returned, outcome);
-        assert_eq!(cache.row(&label("//:app")), Some(&recorded(&["app"])));
+        assert_eq!(cache.row(&label("//:app")), Some(&row_of(&["app"])));
     }
 
     #[test]
@@ -1079,7 +1132,7 @@ mod tests {
                 ..bare(STORE)
             }
         );
-        assert_eq!(cache.row(&label("//:app")), Some(&recorded(&["app"])));
+        assert_eq!(cache.row(&label("//:app")), Some(&row_of(&["app"])));
     }
 
     #[test]
@@ -1096,18 +1149,18 @@ mod tests {
         let returned = forget_contradicted(outcome.clone(), &key(&["app"]), &mut cache);
 
         assert_eq!(returned, outcome);
-        assert_eq!(cache.row(&label("//:app")), Some(&recorded(&["app"])));
+        assert_eq!(cache.row(&label("//:app")), Some(&row_of(&["app"])));
     }
 
     #[test]
     fn a_success_forgets_nothing() {
         let mut cache = Rows::holding(&["app"]);
-        let outcome = built(label("//:app"), TargetRole::Build, &recorded(&["app"]));
+        let outcome = built(label("//:app"), TargetRole::Build, &row_of(&["app"]));
 
         let returned = forget_contradicted(outcome.clone(), &key(&["app"]), &mut cache);
 
         assert_eq!(returned, outcome);
-        assert_eq!(cache.row(&label("//:app")), Some(&recorded(&["app"])));
+        assert_eq!(cache.row(&label("//:app")), Some(&row_of(&["app"])));
     }
 
     #[test]
@@ -1115,6 +1168,7 @@ mod tests {
         for (made, class) in [
             (Made::Built, OutcomeClass::Built),
             (Made::Fetched, OutcomeClass::Fetched),
+            (Made::Remote, OutcomeClass::Remote),
         ] {
             let mut cache = Rows::default();
             let kept = Kept {
@@ -1143,5 +1197,138 @@ mod tests {
                 "the row is recorded"
             );
         }
+    }
+
+    /// What a remote ran, with one output `app`.
+    fn executed() -> Ended {
+        Ended::Executed {
+            outputs: vec![kept(file("app"))],
+            printed: printed(),
+        }
+    }
+
+    #[test]
+    fn an_executed_result_is_placed_and_recorded_as_remote() {
+        let paths = [output_path("//:app", "app")];
+        let target = node("//:app", |_| {});
+        let store = Recording::default();
+        let mut cache = Rows::default();
+
+        let outcome = recorded(
+            &target,
+            key(&["app"]),
+            executed(),
+            &paths,
+            &store,
+            &mut cache,
+        )
+        .unwrap();
+
+        assert_eq!(outcome.class, OutcomeClass::Remote);
+        assert_eq!(outcome.outputs.len(), 1);
+        assert!(
+            store
+                .asked()
+                .iter()
+                .any(|asked| asked.starts_with("place app")),
+            "the output is put in place"
+        );
+        assert_eq!(
+            cache.row(&label("//:app")).map(CacheRow::key),
+            Some(&key(&["app"])),
+            "the row is recorded"
+        );
+
+        let refusing = Recording {
+            unplaceable: Some(paths[0].clone()),
+            ..Recording::default()
+        };
+        let mut untouched = Rows::default();
+        let refused = recorded(
+            &target,
+            key(&["app"]),
+            executed(),
+            &paths,
+            &refusing,
+            &mut untouched,
+        )
+        .unwrap();
+
+        assert_eq!(refused.class, STORE);
+        assert_eq!(
+            untouched.row(&label("//:app")),
+            None,
+            "no row names content not placed"
+        );
+    }
+
+    /// A log that keeps the events it is given.
+    #[derive(Default)]
+    struct Logged(Vec<OutcomeEvent>);
+
+    impl EventLog for Logged {
+        fn append(&mut self, event: &OutcomeEvent) -> Result<()> {
+            self.0.push(event.clone());
+            Ok(())
+        }
+    }
+
+    /// A clock that always reads the same instant.
+    struct Fixed(Timestamp);
+
+    impl Clock for Fixed {
+        fn now(&self) -> Timestamp {
+            self.0
+        }
+    }
+
+    #[test]
+    fn an_executed_result_logs_remote_with_its_key_and_span() {
+        let target = node("//:app", |_| {});
+        let command = command(&["cc", "-o", "out/app"]);
+        let span = Span {
+            started: Timestamp::from_unix_nanos(10),
+            finished: Timestamp::from_unix_nanos(20),
+        };
+        let mut cache = Rows::default();
+        let outcome = recorded(
+            &target,
+            key(&["app"]),
+            executed(),
+            &[output_path("//:app", "app")],
+            &Recording::default(),
+            &mut cache,
+        )
+        .unwrap();
+        let stored = cache.row(&label("//:app")).map(|row| row.key().digest());
+        let mut log = Logged::default();
+
+        let appended = append(
+            &mut log,
+            &Fixed(Timestamp::from_unix_nanos(30)),
+            &target.provenance,
+            &command,
+            Progress::Began {
+                key: stored.unwrap(),
+                span,
+            },
+            outcome.clone(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            appended,
+            OutcomeEvent {
+                at: Timestamp::from_unix_nanos(30),
+                provenance: target.provenance.clone(),
+                command,
+                key: Some(key(&["app"]).digest()),
+                started: Some(Timestamp::from_unix_nanos(10)),
+                finished: Some(Timestamp::from_unix_nanos(20)),
+                outcome,
+            }
+        );
+        assert_eq!(appended.outcome.class, OutcomeClass::Remote);
+        assert_eq!(log.0, [appended]);
     }
 }

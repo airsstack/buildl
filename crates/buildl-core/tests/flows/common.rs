@@ -19,8 +19,9 @@ use buildl_core::{
     WantedSet, Workspace, Written,
 };
 use buildl_core::{
-    ActionOutcome, Blob, BlobSource, Pipeline, RemoteAction, RemoteCache, RemoteHit, RemoteNotice,
-    RemoteOutputFile, RemoteTreeFile, RemoteUpload, RootPath, Uploaded,
+    ActionOutcome, Blob, BlobSource, DecodedTree, Executed, Pipeline, RemoteAction, RemoteCache,
+    RemoteHit, RemoteNotice, RemoteOutputDirectory, RemoteOutputFile, RemoteUpload, RootPath,
+    Uploaded,
 };
 use buildl_core::{
     Captured, Channel, DenialReason, GraphRecord, LiveSink, OutcomeClass, Reporter, Summary,
@@ -1108,8 +1109,14 @@ pub struct Held {
     pub outputs: Vec<(OutputPath, Vec<u8>)>,
     /// What the original run wrote to standard output.
     pub stdout: Vec<u8>,
+    /// What the original run wrote to standard error; nothing is kept when it is empty.
+    pub stderr: Vec<u8>,
     /// The exit status the original run ended with.
     pub exit_code: i32,
+    /// The output paths the result reports as symbolic links.
+    pub symlinks: Vec<OutputPath>,
+    /// The outputs that are directories, with what the tree that lists each decodes to.
+    pub directories: Vec<(OutputPath, DecodedTree)>,
 }
 
 impl Held {
@@ -1119,9 +1126,59 @@ impl Held {
         Self {
             outputs: vec![(at, bytes.to_vec())],
             stdout: stdout.to_vec(),
+            stderr: Vec::new(),
             exit_code: 0,
+            symlinks: Vec::new(),
+            directories: Vec::new(),
         }
     }
+
+    /// The bytes of the tree that lists the output directory `at`.
+    fn tree_bytes(at: &OutputPath) -> Vec<u8> {
+        format!("the tree of {at}").into_bytes()
+    }
+
+    /// The result as a server answers it.
+    fn hit(&self) -> RemoteHit {
+        RemoteHit {
+            exit_code: self.exit_code,
+            files: self
+                .outputs
+                .iter()
+                .map(|(path, bytes)| RemoteOutputFile {
+                    path: path.to_string(),
+                    blob: Blob::of(bytes),
+                    mode: FileMode::Plain,
+                })
+                .collect(),
+            directories: self
+                .directories
+                .iter()
+                .map(|(path, _)| RemoteOutputDirectory {
+                    path: path.to_string(),
+                    tree: Blob::of(&Self::tree_bytes(path)),
+                })
+                .collect(),
+            symlinks: self.symlinks.iter().map(ToString::to_string).collect(),
+            stdout: Some(Blob::of(&self.stdout)),
+            stderr: (!self.stderr.is_empty()).then(|| Blob::of(&self.stderr)),
+        }
+    }
+}
+
+/// What a [`FakeRemote`] answers when it is asked to run the action of a target.
+#[derive(Debug, Clone)]
+pub enum Runs {
+    /// The server ran it and this is the result.
+    Ran(Held),
+    /// The server held this result for it already.
+    Cached(Held),
+    /// The server gave up on it after its time limit, having kept this as its standard output.
+    TimedOut(Option<Vec<u8>>),
+    /// An input file changed after its digest was taken.
+    InputChanged(RootPath),
+    /// The call fails.
+    Fails,
 }
 
 /// One thing a build did that the order of matters for.
@@ -1161,6 +1218,7 @@ struct RemoteCalls {
     lookups: Vec<RemoteAction>,
     downloads: Vec<Vec<Blob>>,
     uploads: Vec<(RemoteAction, RemoteUpload)>,
+    executions: Vec<RemoteAction>,
 }
 
 /// A remote cache held in memory: it holds results by the first output path of the action it is
@@ -1181,6 +1239,9 @@ pub struct FakeRemote {
     pub upload_fails: bool,
     /// The input file every upload answers has changed since its digest was taken, when set.
     pub input_changed: Option<RootPath>,
+    /// What it answers when asked to run the action of a target, by the output path of the
+    /// target. A target not named here fails the call.
+    pub runs: BTreeMap<OutputPath, Runs>,
     /// Where each upload is noted.
     pub trace: Trace,
     calls: Mutex<RemoteCalls>,
@@ -1210,11 +1271,29 @@ impl FakeRemote {
         self.calls().uploads.clone()
     }
 
+    /// Every action it was asked to run, in the order asked.
+    #[must_use]
+    pub fn executions(&self) -> Vec<RemoteAction> {
+        self.calls().executions.clone()
+    }
+
     /// Whether it received no call at all.
     #[must_use]
     pub fn untouched(&self) -> bool {
         let calls = self.calls();
-        calls.lookups.is_empty() && calls.downloads.is_empty() && calls.uploads.is_empty()
+        calls.lookups.is_empty()
+            && calls.downloads.is_empty()
+            && calls.uploads.is_empty()
+            && calls.executions.is_empty()
+    }
+
+    /// Every result it holds or answers a request to run with.
+    fn everything_held(&self) -> impl Iterator<Item = &Held> {
+        let ran = self.runs.values().filter_map(|run| match run {
+            Runs::Ran(held) | Runs::Cached(held) => Some(held),
+            Runs::TimedOut(_) | Runs::InputChanged(_) | Runs::Fails => None,
+        });
+        self.holds.values().chain(ran)
     }
 
     /// The bytes it serves under `digest`.
@@ -1222,14 +1301,20 @@ impl FakeRemote {
         if let Some(bytes) = self.tampered.get(digest) {
             return Some(bytes.clone());
         }
-        self.holds.values().find_map(|held| {
-            held.outputs
-                .iter()
-                .map(|(_, bytes)| bytes)
-                .chain(core::iter::once(&held.stdout))
-                .find(|bytes| Digest::of(bytes) == *digest)
-                .cloned()
-        })
+        let timed_out = self.runs.values().filter_map(|run| match run {
+            Runs::TimedOut(Some(stdout)) => Some(stdout.clone()),
+            _ => None,
+        });
+        self.everything_held()
+            .flat_map(|held| {
+                let files = held.outputs.iter().map(|(_, bytes)| bytes.clone());
+                let trees = held.directories.iter().map(|(at, _)| Held::tree_bytes(at));
+                files
+                    .chain([held.stdout.clone(), held.stderr.clone()])
+                    .chain(trees)
+            })
+            .chain(timed_out)
+            .find(|bytes| Digest::of(bytes) == *digest)
     }
 }
 
@@ -1250,22 +1335,7 @@ impl RemoteCache for FakeRemote {
         let Some(held) = action.outputs.first().and_then(|at| self.holds.get(at)) else {
             return Ok(None);
         };
-        Ok(Some(RemoteHit {
-            exit_code: held.exit_code,
-            files: held
-                .outputs
-                .iter()
-                .map(|(path, bytes)| RemoteOutputFile {
-                    path: path.to_string(),
-                    blob: Blob::of(bytes),
-                    mode: FileMode::Plain,
-                })
-                .collect(),
-            directories: Vec::new(),
-            symlinks: false,
-            stdout: Some(Blob::of(&held.stdout)),
-            stderr: None,
-        }))
+        Ok(Some(held.hit()))
     }
 
     fn download(&self, blobs: &[Blob]) -> Result<Vec<Vec<u8>>> {
@@ -1282,8 +1352,12 @@ impl RemoteCache for FakeRemote {
             .collect()
     }
 
-    fn decode_tree(&self, _bytes: &[u8]) -> Result<Option<Vec<RemoteTreeFile>>> {
-        Ok(Some(Vec::new()))
+    fn decode_tree(&self, bytes: &[u8]) -> Result<DecodedTree> {
+        Ok(self
+            .everything_held()
+            .flat_map(|held| &held.directories)
+            .find(|(path, _)| Held::tree_bytes(path) == bytes)
+            .map_or_else(|| DecodedTree::Files(Vec::new()), |(_, tree)| tree.clone()))
     }
 
     fn upload(
@@ -1305,6 +1379,21 @@ impl RemoteCache for FakeRemote {
             .input_changed
             .clone()
             .map_or(Uploaded::Done, Uploaded::InputChanged))
+    }
+
+    fn execute(&self, action: &RemoteAction) -> Result<Executed> {
+        self.calls().executions.push(action.clone());
+        let run = action.outputs.first().and_then(|at| self.runs.get(at));
+        match run {
+            Some(Runs::Ran(held)) => Ok(Executed::Ran(held.hit())),
+            Some(Runs::Cached(held)) => Ok(Executed::Cached(held.hit())),
+            Some(Runs::TimedOut(stdout)) => Ok(Executed::TimedOut {
+                stdout: stdout.as_deref().map(Blob::of),
+                stderr: None,
+            }),
+            Some(Runs::InputChanged(path)) => Ok(Executed::InputChanged(path.clone())),
+            Some(Runs::Fails) | None => Err(remote_failure("the server cannot run it")),
+        }
     }
 }
 
@@ -2050,6 +2139,7 @@ mod tests {
                 built: 1,
                 cached: 1,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally::default(),
         };

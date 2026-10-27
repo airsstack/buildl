@@ -46,16 +46,20 @@
 //!   root a remote action is given.
 //! - [`RemoteAction`], [`RemoteFile`] and [`RemotePlatform`] — the action a remote cache is
 //!   asked about; [`RemoteHit`] with [`RemoteOutputFile`], [`RemoteOutputDirectory`] and
-//!   [`RemoteTreeFile`] — the result it answers with, unchecked; [`RemoteUpload`] with
+//!   [`RemoteTreeFile`] — the result it answers with, unchecked, and [`DecodedTree`], what the
+//!   blob that lists one of its directories holds; [`RemoteUpload`] with
 //!   [`RemoteOutput`], [`RemoteContent`] and [`RemoteTree`], and [`Uploaded`] — what a run stores
 //!   there and how that ended.
-//! - [`RemoteUse`], [`RemoteFailure`] and [`RemotePolicy`] — what a run does with the remote;
+//! - [`Executed`] — how a remote ended a request to run an action.
+//! - [`RemoteUse`], [`RemoteFailure`], [`RemoteExecution`] and [`RemotePolicy`] — what a run does
+//!   with the remote;
 //!   [`RemoteCall`] and [`RemoteNotice`] — what a build says about it; [`RemoteSwitch`] — whether
 //!   a failed call has turned it off; [`RunChoices`] — those and the other choices a command
 //!   makes about one run.
 //! - [`RemoteSettings`] — the remote cache a workspace names, built through
 //!   [`RemoteSettingsBuilder`], with its parts [`RemoteUrl`], [`RemoteScheme`], [`InstanceName`],
-//!   [`HostPath`], [`TokenSource`] and [`HeaderName`].
+//!   [`HostPath`], [`TokenSource`], [`HeaderName`], [`RemoteJobs`], [`RetryCount`],
+//!   [`PlatformPropertyName`] and [`PlatformProperties`].
 //! - [`PluginName`], [`PluginVersion`], [`PluginRef`], [`PluginCap`] and [`PluginNetwork`] — a
 //!   plugin, what its manifest asks for, and what the workspace lets it have; [`PluginChain`]
 //!   — the plugins that made a declaration; [`Origin`] — whose
@@ -131,6 +135,7 @@ pub mod discovered;
 pub mod entry_name;
 pub mod env_name;
 pub mod env_value;
+pub mod executed;
 pub mod field_name;
 pub mod file_stat;
 pub(crate) mod forcing;
@@ -223,6 +228,7 @@ pub use discovered::Discovered;
 pub use entry_name::EntryName;
 pub use env_name::EnvName;
 pub use env_value::EnvValue;
+pub use executed::Executed;
 pub use field_name::FieldName;
 pub use file_stat::{FileStat, StatEntry};
 pub(crate) use forcing::Forcing;
@@ -257,12 +263,14 @@ pub use raw_outcome::{Exit, RawOutcome};
 pub use reaction::Reaction;
 pub use ready_action::ReadyAction;
 pub use remote_action::{RemoteAction, RemoteFile, RemotePlatform};
-pub use remote_hit::{RemoteHit, RemoteOutputDirectory, RemoteOutputFile, RemoteTreeFile};
+pub use remote_hit::{
+    DecodedTree, RemoteHit, RemoteOutputDirectory, RemoteOutputFile, RemoteTreeFile,
+};
 pub use remote_notice::{RemoteCall, RemoteNotice};
-pub use remote_policy::{RemoteFailure, RemotePolicy, RemoteUse};
+pub use remote_policy::{RemoteExecution, RemoteFailure, RemotePolicy, RemoteUse};
 pub use remote_settings::{
-    HeaderName, HostPath, InstanceName, RemoteScheme, RemoteSettings, RemoteSettingsBuilder,
-    RemoteUrl, TokenSource,
+    HeaderName, HostPath, InstanceName, PlatformProperties, PlatformPropertyName, RemoteJobs,
+    RemoteScheme, RemoteSettings, RemoteSettingsBuilder, RemoteUrl, RetryCount, TokenSource,
 };
 pub use remote_switch::RemoteSwitch;
 pub use remote_upload::{RemoteContent, RemoteOutput, RemoteTree, RemoteUpload, Uploaded};

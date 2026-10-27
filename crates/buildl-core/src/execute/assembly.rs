@@ -19,13 +19,11 @@
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::collections::{BTreeMap, VecDeque};
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, UnsandboxedRemote};
 use crate::execute::admission::admit;
-use crate::execute::perform::{
-    Ended, Performed, RemoteRun, Shared, Task, Told, Worked, perform, remote_failure,
-};
+use crate::execute::perform::{Gates, Performed, RemoteRun, Shared, Task, Told, Worked, perform};
 use crate::execute::record::{
-    Finished, Made, Progress, append, failed, forget_contradicted, restore, shown, skipped, store,
+    Progress, append, forget_contradicted, recorded, restore, shown, skipped,
 };
 use crate::execute::schedule::{Finish, Schedule};
 use crate::execute::settle::{Settled, settle};
@@ -35,25 +33,32 @@ use crate::ports::{Dispatcher, Manifest, PortSet, Ports, Reporter};
 use crate::types::{
     ActionOutcome, Captured, Ceiling, Command, EnvName, EnvValue, ExpandedDescription, Forcing,
     Isolation, Label, LiveOutput, Node, NodeId, OutcomeEvent, OutputPath, OwnComponents, Plan,
-    PlannedKey, ReadyAction, RemotePolicy, RemoteSwitch, RemoteUse, Rerun, RunChoices, Summary,
-    TargetGraph, Turn, Verdict,
+    PlannedKey, PlatformProperties, ReadyAction, RemoteExecution, RemotePolicy, RemoteSettings,
+    RemoteSwitch, RemoteUse, Rerun, RunChoices, Summary, TargetGraph, Turn, Verdict,
 };
 
-/// Refuses a run that would upload to the remote cache while actions run `strategy`.
+/// Refuses a run that would upload to the remote cache, or have the remote run actions, while
+/// actions run `strategy`.
 ///
 /// A bare action can read files it did not declare, so what it produced is not known to depend
-/// only on its declared inputs, and no one else could trust it. Reading from the remote is not
-/// refused.
+/// only on its declared inputs, and no one else could trust it; a worker receives only declared
+/// files, so an action that ran there could differ from one that ran here. Reading from the
+/// remote is not refused.
 ///
 /// # Errors
 ///
-/// Returns [`Error::UploadUnsandboxed`] when `remote` writes and `strategy` is
-/// [`Isolation::Bare`].
-pub(crate) fn ensure_sandboxed_upload(remote: RemotePolicy, strategy: Isolation) -> Result<()> {
-    if remote.use_ == RemoteUse::ReadWrite && strategy == Isolation::Bare {
-        return Err(Error::UploadUnsandboxed);
+/// Returns [`Error::UploadUnsandboxed`] when `remote` writes or executes and `strategy` is
+/// [`Isolation::Bare`]; execution is the one it names when both are asked for.
+pub fn ensure_sandboxed_remote(remote: RemotePolicy, strategy: Isolation) -> Result<()> {
+    if strategy != Isolation::Bare {
+        return Ok(());
     }
-    Ok(())
+    let which = match (remote.execution, remote.use_) {
+        (RemoteExecution::On { .. }, _) => UnsandboxedRemote::Execute,
+        (RemoteExecution::Off, RemoteUse::ReadWrite) => UnsandboxedRemote::Upload,
+        (RemoteExecution::Off, _) => return Ok(()),
+    };
+    Err(Error::UploadUnsandboxed { which })
 }
 
 /// Builds every target of `graph` as `plan` says, and returns one outcome per target, in id
@@ -131,8 +136,8 @@ pub(crate) fn ensure_sandboxed_upload(remote: RemotePolicy, strategy: Isolation)
 ///
 /// 1. [`Error::ForeignPlan`] when `plan` was not made from `graph`;
 /// 2. whatever the manifest port returns;
-/// 3. [`Error::UploadUnsandboxed`] when `choices.remote` writes to the remote and the
-///    workspace's actions run bare;
+/// 3. [`Error::UploadUnsandboxed`] when `choices.remote` writes to the remote or has it run
+///    actions, and the workspace's actions run bare;
 /// 4. [`Error::OutputConflict`] when two outputs of `whole` would be written to one place;
 /// 5. for the first target, in id order, whose expanded command cannot run:
 ///    [`Error::NoProgram`] when it names no program, and [`Error::Refused`] when the program
@@ -170,7 +175,7 @@ pub fn execute<P: Ports>(
         return Err(Error::ForeignPlan);
     }
     let workspace = ports.manifest.workspace()?;
-    ensure_sandboxed_upload(remote, workspace.execution.strategy)?;
+    ensure_sandboxed_remote(remote, workspace.execution.strategy)?;
     Layout::of(whole, &workspace.out)?;
     let layout = Layout::of(graph, &workspace.out)?;
     let targets = prepared(graph, plan, &layout, &workspace.ceiling)?;
@@ -187,11 +192,17 @@ pub fn execute<P: Ports>(
         ..
     } = ports;
     let (cas, strategy, clock) = (&*cas, &*strategy, &*clock);
+    let no_properties = PlatformProperties::default();
     let remote = RemoteRun {
         port: &*remote_cache,
         policy: remote,
         execution: &workspace.execution,
+        properties: workspace
+            .remote
+            .as_ref()
+            .map_or(&no_properties, RemoteSettings::properties),
         down: remote_off,
+        gates: Gates::of(remote.execution),
     };
     let stop = AtomicBool::new(false);
     let place = AtomicBool::new(false);
@@ -531,45 +542,20 @@ impl<P: Ports> Build<'_, P> {
         let Some(target) = self.targets.get(node.index()) else {
             return Ok(());
         };
-        let role = target.node.role;
         let was_live = performed.live;
         let progress = Progress::Began {
             key: performed.key.digest(),
             span: performed.span,
         };
         let key = performed.key.clone();
-        let outcome = match performed.ended {
-            Ended::Produced { outputs, printed } => store(
-                target.node,
-                Finished {
-                    key: performed.key,
-                    made: Made::Built,
-                    outputs,
-                    printed,
-                },
-                self.layout.outputs(node),
-                self.cas,
-                self.cache,
-            ),
-            Ended::Fetched { outputs, printed } => store(
-                target.node,
-                Finished {
-                    key: performed.key,
-                    made: Made::Fetched,
-                    outputs,
-                    printed,
-                },
-                self.layout.outputs(node),
-                self.cas,
-                self.cache,
-            ),
-            Ended::RemoteFailed(notice) => return Err(remote_failure(&notice)),
-            Ended::Failed {
-                class,
-                diagnostic,
-                printed,
-            } => failed(target.node.label.clone(), role, class, diagnostic, printed),
-        };
+        let outcome = recorded(
+            target.node,
+            performed.key,
+            performed.ended,
+            self.layout.outputs(node),
+            self.cas,
+            self.cache,
+        )?;
         // Before the outcome is finished, so the row is gone before the log line is written.
         let outcome = forget_contradicted(outcome, &key, self.cache);
         self.finish(node, progress, outcome)?;

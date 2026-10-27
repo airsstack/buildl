@@ -20,6 +20,8 @@
 //! - [`PortName`] — which port an [`Error::Adapter`] came through.
 //! - [`RemoteVariable`] and [`RemoteFlagConflict`] — which switch variable an
 //!   [`Error::RemoteSwitch`] refused, and which flag combination an [`Error::RemoteFlags`] did.
+//! - [`UnsandboxedRemote`] — what an [`Error::UploadUnsandboxed`] found asked for while actions run
+//!   bare.
 //! - [`TreeFault`] — why a list of files an [`Error::InvalidTree`] is about is not a tree.
 //! - [`Result`] — the crate-wide alias.
 //!
@@ -402,16 +404,16 @@ pub enum Error {
     /// A plan was handed over with a graph it was not made from.
     #[error("the plan was not made from this graph")]
     ForeignPlan,
-    /// Uploading to the remote cache was asked for, and actions run bare.
+    /// Uploading to the remote cache, or having the remote run actions, was asked for, and
+    /// actions run bare.
     ///
     /// A bare action can read files it did not declare, so a result it produced is not known to
     /// depend only on its declared inputs, and no one else could trust it.
-    #[error(
-        "uploading to the remote cache needs actions to run in the input sandbox, \
-         but strategy is \"bare\"; set strategy to \"sandbox\", or stop uploading by \
-         unsetting BUILDL_REMOTE_UPLOAD or dropping --remote-upload"
-    )]
-    UploadUnsandboxed,
+    #[error("{}", which.diagnostic())]
+    UploadUnsandboxed {
+        /// What was asked for.
+        which: UnsandboxedRemote,
+    },
     /// The remote cache's token is named, and cannot be used: the variable is unset or not text,
     /// the file is unreadable, or the token holds a character a header cannot carry.
     ///
@@ -985,6 +987,38 @@ impl fmt::Display for ActionFound {
     }
 }
 
+/// What a run asked of the remote that actions run bare cannot give.
+///
+/// Non-exhaustive for the same reason [`Error`] is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum UnsandboxedRemote {
+    /// Sending what ran here to the remote cache.
+    Upload,
+    /// Having the remote run the actions its cache cannot answer. When a run asks for both, this
+    /// is the one named.
+    Execute,
+}
+
+impl UnsandboxedRemote {
+    /// The whole refusal: what was asked for, why bare cannot give it, and the ways out.
+    const fn diagnostic(self) -> &'static str {
+        match self {
+            Self::Upload => {
+                "uploading to the remote cache needs actions to run in the input sandbox, \
+                 but strategy is \"bare\"; set strategy to \"sandbox\", or stop uploading by \
+                 unsetting BUILDL_REMOTE_UPLOAD or dropping --remote-upload"
+            }
+            Self::Execute => {
+                "executing on the remote needs actions to run in the input sandbox, \
+                 but strategy is \"bare\"; set strategy to \"sandbox\", or stop executing by \
+                 setting execute to false in [remote], unsetting BUILDL_REMOTE_EXECUTE or \
+                 dropping --remote-execute"
+            }
+        }
+    }
+}
+
 /// The variable of a remote cache switch.
 ///
 /// Non-exhaustive for the same reason [`Error`] is.
@@ -995,6 +1029,8 @@ pub enum RemoteVariable {
     Upload,
     /// `BUILDL_REMOTE_STRICT`, which makes a remote failure fail the build.
     Strict,
+    /// `BUILDL_REMOTE_EXECUTE`, which turns remote execution on.
+    Execute,
 }
 
 impl fmt::Display for RemoteVariable {
@@ -1002,6 +1038,7 @@ impl fmt::Display for RemoteVariable {
         f.write_str(match self {
             Self::Upload => "BUILDL_REMOTE_UPLOAD",
             Self::Strict => "BUILDL_REMOTE_STRICT",
+            Self::Execute => "BUILDL_REMOTE_EXECUTE",
         })
     }
 }
@@ -1017,6 +1054,15 @@ pub enum RemoteFlagConflict {
     /// `--remote-upload` or `--remote-strict` in a workspace whose `buildl.toml` has no
     /// `[remote]` table.
     SwitchWithoutRemote,
+    /// `--remote-execute` together with `--no-remote`.
+    NoRemoteWithExecute,
+    /// `--remote-execute` together with `--no-remote-execute`.
+    ExecuteBothWays,
+    /// `--remote-execute`, `--no-remote-execute` or `--remote-jobs` in a workspace whose
+    /// `buildl.toml` has no `[remote]` table.
+    ExecutionWithoutRemote,
+    /// `--remote-jobs` in a run where remote execution is off.
+    JobsWithoutExecution,
 }
 
 impl fmt::Display for RemoteFlagConflict {
@@ -1028,6 +1074,15 @@ impl fmt::Display for RemoteFlagConflict {
             Self::SwitchWithoutRemote => {
                 "--remote-upload and --remote-strict need a [remote] table in buildl.toml, \
                  and this workspace has none"
+            }
+            Self::NoRemoteWithExecute => "--no-remote cannot be combined with --remote-execute",
+            Self::ExecuteBothWays => "--remote-execute cannot be combined with --no-remote-execute",
+            Self::ExecutionWithoutRemote => {
+                "--remote-execute, --no-remote-execute and --remote-jobs need a [remote] table \
+                 in buildl.toml, and this workspace has none"
+            }
+            Self::JobsWithoutExecution => {
+                "--remote-jobs needs remote execution, and it is off in this run"
             }
         })
     }
@@ -1106,6 +1161,12 @@ pub enum NameKind {
     HeaderName,
     /// A workspace-relative path a file event named.
     ChangedPath,
+    /// How many remote calls a run keeps in flight at once.
+    RemoteJobs,
+    /// How many times a failed remote call is tried again.
+    RetryCount,
+    /// The name of a platform property asked of the remote executor.
+    PlatformProperty,
 }
 
 impl fmt::Display for NameKind {
@@ -1144,6 +1205,9 @@ impl fmt::Display for NameKind {
             Self::HostPath => "host path",
             Self::HeaderName => "header name",
             Self::ChangedPath => "changed path",
+            Self::RemoteJobs => "remote job count",
+            Self::RetryCount => "retry count",
+            Self::PlatformProperty => "platform property name",
         })
     }
 }
@@ -1186,6 +1250,7 @@ mod tests {
     use super::{
         ActionFound, DeclarationField, DeclarationSite, DeclaredKind, Error, EvaluationFailure,
         EvaluationLimit, NameKind, PortName, RemoteFlagConflict, RemoteVariable, TreeFault,
+        UnsandboxedRemote,
     };
     use crate::types::{
         Argument, Ceiling, Command, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName,
@@ -1840,6 +1905,7 @@ mod tests {
             "BUILDL_REMOTE_UPLOAD is \"yes\", and must be 1 or 0"
         );
         assert_eq!(RemoteVariable::Strict.to_string(), "BUILDL_REMOTE_STRICT");
+        assert_eq!(RemoteVariable::Execute.to_string(), "BUILDL_REMOTE_EXECUTE");
     }
 
     #[test]
@@ -1862,12 +1928,51 @@ mod tests {
     }
 
     #[test]
+    fn refused_execution_flags_name_the_flags() {
+        let text = |conflict| Error::RemoteFlags { conflict }.to_string();
+        assert_eq!(
+            text(RemoteFlagConflict::NoRemoteWithExecute),
+            "--no-remote cannot be combined with --remote-execute"
+        );
+        assert_eq!(
+            text(RemoteFlagConflict::ExecuteBothWays),
+            "--remote-execute cannot be combined with --no-remote-execute"
+        );
+        assert_eq!(
+            text(RemoteFlagConflict::ExecutionWithoutRemote),
+            "--remote-execute, --no-remote-execute and --remote-jobs need a [remote] table \
+             in buildl.toml, and this workspace has none"
+        );
+        assert_eq!(
+            text(RemoteFlagConflict::JobsWithoutExecution),
+            "--remote-jobs needs remote execution, and it is off in this run"
+        );
+    }
+
+    #[test]
     fn an_unsandboxed_upload_says_how_to_sandbox_or_stop_uploading() {
         assert_eq!(
-            Error::UploadUnsandboxed.to_string(),
+            Error::UploadUnsandboxed {
+                which: UnsandboxedRemote::Upload
+            }
+            .to_string(),
             "uploading to the remote cache needs actions to run in the input sandbox, \
              but strategy is \"bare\"; set strategy to \"sandbox\", or stop uploading by \
              unsetting BUILDL_REMOTE_UPLOAD or dropping --remote-upload"
+        );
+    }
+
+    #[test]
+    fn an_unsandboxed_execution_says_how_to_sandbox_or_stop_executing() {
+        assert_eq!(
+            Error::UploadUnsandboxed {
+                which: UnsandboxedRemote::Execute
+            }
+            .to_string(),
+            "executing on the remote needs actions to run in the input sandbox, \
+             but strategy is \"bare\"; set strategy to \"sandbox\", or stop executing by \
+             setting execute to false in [remote], unsetting BUILDL_REMOTE_EXECUTE or \
+             dropping --remote-execute"
         );
     }
 
@@ -2179,6 +2284,12 @@ mod tests {
         assert_eq!(NameKind::HostPath.to_string(), "host path");
         assert_eq!(NameKind::HeaderName.to_string(), "header name");
         assert_eq!(NameKind::ChangedPath.to_string(), "changed path");
+        assert_eq!(NameKind::RemoteJobs.to_string(), "remote job count");
+        assert_eq!(NameKind::RetryCount.to_string(), "retry count");
+        assert_eq!(
+            NameKind::PlatformProperty.to_string(),
+            "platform property name"
+        );
     }
 
     #[test]

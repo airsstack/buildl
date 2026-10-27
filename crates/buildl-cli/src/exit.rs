@@ -49,6 +49,7 @@ impl Exit {
             OutcomeClass::Cached
             | OutcomeClass::Built
             | OutcomeClass::Fetched
+            | OutcomeClass::Remote
             | OutcomeClass::Skipped { .. } => Self::Success,
             OutcomeClass::ActionFailure { .. }
             | OutcomeClass::Killed { .. }
@@ -101,7 +102,7 @@ impl Exit {
             | Error::InvalidQuery { .. }
             | Error::NoRun { .. }
             | Error::NotATest { .. }
-            | Error::UploadUnsandboxed
+            | Error::UploadUnsandboxed { .. }
             | Error::RemoteToken { .. }
             | Error::RemoteSwitch { .. }
             | Error::RemoteFlags { .. } => Self::Usage,
@@ -185,8 +186,8 @@ mod tests {
         Error, EvaluationFailure, FileChange, InfraKind, InputKind, Label, Origin, OutcomeClass,
         OutputDifference, OutputName, OutputPath, OutputRefusal, PluginName, PluginRef,
         PluginVersion, PluginViolation, PortName, Program, Provenance, RemoteFlagConflict,
-        RemoteVariable, SettingName, SourcePath, TargetRole, TokenSource, TreeFault, Verification,
-        Want, WantedSet,
+        RemoteVariable, SettingName, SourcePath, TargetRole, TokenSource, TreeFault,
+        UnsandboxedRemote, Verification, Want, WantedSet,
     };
 
     use super::Exit;
@@ -250,7 +251,9 @@ mod tests {
                 declared_with: TargetRole::Build,
                 site: Box::new(site()),
             },
-            Error::UploadUnsandboxed,
+            Error::UploadUnsandboxed {
+                which: UnsandboxedRemote::Upload,
+            },
             Error::RemoteToken {
                 from: TokenSource::Env(EnvName::parse("CACHE_TOKEN").unwrap()),
             },
@@ -540,6 +543,7 @@ mod tests {
             (OutcomeClass::Cached, Exit::Success),
             (OutcomeClass::Built, Exit::Success),
             (OutcomeClass::Fetched, Exit::Success),
+            (OutcomeClass::Remote, Exit::Success),
             (
                 OutcomeClass::Skipped {
                     because: label("//:lib"),
@@ -687,6 +691,17 @@ mod tests {
     }
 
     #[test]
+    fn refusing_to_upload_or_to_execute_under_bare_is_a_usage_error() {
+        for which in [UnsandboxedRemote::Upload, UnsandboxedRemote::Execute] {
+            assert_eq!(
+                Exit::of_error(&Error::UploadUnsandboxed { which }),
+                Exit::Usage,
+                "{which:?}"
+            );
+        }
+    }
+
+    #[test]
     fn every_error_variant_has_its_code() {
         let rows = [
             (Exit::Usage, usage_errors()),
@@ -768,6 +783,16 @@ mod tests {
                 "{class:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_remote_class_exits_as_success() {
+        assert_eq!(Exit::of_class(&OutcomeClass::Remote), Exit::Success);
+        assert_eq!(
+            Exit::of_outcomes(&[ended(OutcomeClass::Remote), ended(OutcomeClass::Built)]),
+            Exit::Success
+        );
+        assert_eq!(verified_as(failed_as(OutcomeClass::Remote)), Exit::Success);
     }
 
     #[test]

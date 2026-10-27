@@ -64,9 +64,11 @@ pub enum Report {
 /// Which tests of a test run get a block: those that failed, or every one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TestBlocks {
-    /// Only a test that failed. A test that was built, cached or fetched shows nothing.
+    /// Only a test that failed. A test that was built, cached, fetched or run on the remote
+    /// shows nothing.
     Failed,
-    /// Every test, a passing one with what it printed, and a cached or fetched one marked as such.
+    /// Every test, a passing one with what it printed, and a cached, fetched or remote one marked
+    /// as such.
     Every,
 }
 
@@ -168,7 +170,10 @@ impl<W: Write> TerminalReporter<W> {
         ) && event.outcome.role == TargetRole::Test
             && matches!(
                 event.outcome.class,
-                OutcomeClass::Built | OutcomeClass::Cached | OutcomeClass::Fetched
+                OutcomeClass::Built
+                    | OutcomeClass::Cached
+                    | OutcomeClass::Fetched
+                    | OutcomeClass::Remote
             )
     }
 
@@ -460,6 +465,7 @@ mod tests {
                 built,
                 cached,
                 fetched: 0,
+                remote: 0,
             },
             tests: Tally {
                 failed: 0,
@@ -467,6 +473,7 @@ mod tests {
                 built: 0,
                 cached: 0,
                 fetched: 0,
+                remote: 0,
             },
         }
     }
@@ -591,6 +598,17 @@ mod tests {
     }
 
     #[test]
+    fn a_passed_remote_test_is_hidden_when_only_failures_are_shown() {
+        let mut reporter = test_reporter(TestBlocks::Failed, Rerun::Off);
+        reporter.begun(1);
+        reporter.finished(
+            &test_event("//:check", OutcomeClass::Remote),
+            on_stdout(b"ok\n"),
+        );
+        assert_eq!(written(&mut reporter), b"");
+    }
+
+    #[test]
     fn a_test_run_shows_the_block_of_a_failing_test() {
         let failing = test_event("//:check", OutcomeClass::ActionFailure { status: 1 });
         let mut reporter = test_reporter(TestBlocks::Failed, Rerun::Off);
@@ -660,6 +678,7 @@ mod tests {
             built: 1,
             cached: 0,
             fetched: 0,
+            remote: 0,
         };
         reporter.summary(summary);
         assert_eq!(written(&mut reporter), b"tests: 1 passed, 1 failed\n");
@@ -684,6 +703,17 @@ mod tests {
     }
 
     #[test]
+    fn the_terminal_summary_counts_remote() {
+        let mut reporter = reporter(Mode::Plain, Paint::Plain);
+        reporter.begun(5);
+        let mut summary = counts(0, 0, 1, 0);
+        summary.all.fetched = 2;
+        summary.all.remote = 4;
+        reporter.summary(summary);
+        assert_eq!(written(&mut reporter), b"1 built, 2 fetched, 4 remote\n");
+    }
+
+    #[test]
     fn a_test_run_of_nothing_ends_with_the_test_line() {
         let mut reporter = test_reporter(TestBlocks::Failed, Rerun::Off);
         reporter.begun(0);
@@ -702,6 +732,7 @@ mod tests {
             built: 0,
             cached: 1,
             fetched: 0,
+            remote: 0,
         };
         reporter.summary(summary);
         assert_eq!(written(&mut reporter), b"tests: 1 passed (1 cached)\n");
@@ -718,6 +749,7 @@ mod tests {
             built: 1,
             cached: 0,
             fetched: 0,
+            remote: 0,
         };
         reporter.summary(summary);
         assert_eq!(written(&mut reporter), b"tests (rerun): 1 passed\n");

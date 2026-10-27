@@ -17,8 +17,9 @@
 use std::collections::BTreeMap;
 
 use buildl_core::{
-    Blob, Digest, FileMode, RemoteAction, RemoteContent, RemoteHit, RemoteOutputDirectory,
-    RemoteOutputFile, RemoteTreeFile, RemoteUpload, Timeout, TreePath,
+    Blob, DecodedTree, Digest, Executed, FileMode, RemoteAction, RemoteContent, RemoteHit,
+    RemoteOutputDirectory, RemoteOutputFile, RemotePlatform, RemoteTreeFile, RemoteUpload, Timeout,
+    TreePath,
 };
 use prost::Message;
 
@@ -132,16 +133,29 @@ pub(crate) fn command(action: &RemoteAction) -> wire::Command {
     }
 }
 
-/// The `Platform` of `action`: its `ISA` and `OSFamily`, sorted by name and then value.
+/// The `Platform` of `action`: its `ISA` and `OSFamily` and the workspace's own properties,
+/// sorted by name and then value, as the protocol requires.
+///
+/// Rust compares `str` by UTF-8 bytes, the order the protocol names, so upper-case names such as
+/// `ISA` come before lower-case ones.
 pub(crate) fn platform(action: &RemoteAction) -> wire::Platform {
     let property = |name: &str, value: &str| wire::platform::Property {
         name: name.to_owned(),
         value: value.to_owned(),
     };
     let mut properties = vec![
-        property("ISA", action.platform.isa()),
-        property("OSFamily", action.platform.os_family()),
+        property(RemotePlatform::ISA_PROPERTY, action.platform.isa()),
+        property(
+            RemotePlatform::OS_FAMILY_PROPERTY,
+            action.platform.os_family(),
+        ),
     ];
+    properties.extend(
+        action
+            .properties
+            .iter()
+            .map(|(name, value)| property(name.as_str(), value)),
+    );
     properties.sort_by(|left, right| (&left.name, &left.value).cmp(&(&right.name, &right.value)));
     wire::Platform { properties }
 }
@@ -285,15 +299,23 @@ pub(crate) fn action_result(upload: &RemoteUpload) -> Result<ResultMessages, Rem
     })
 }
 
-/// Whether `result` names an output symlink in any of the three lists that can hold one.
+/// The paths `result` names as output symlinks, from any of the three lists that can hold one,
+/// each once and in path order.
 #[expect(
     deprecated,
     reason = "a v2.0 server reports symlinks only in these fields"
 )]
-const fn names_symlinks(result: &wire::ActionResult) -> bool {
-    !result.output_symlinks.is_empty()
-        || !result.output_file_symlinks.is_empty()
-        || !result.output_directory_symlinks.is_empty()
+fn symlink_paths(result: &wire::ActionResult) -> Vec<String> {
+    let mut paths: Vec<String> = result
+        .output_symlinks
+        .iter()
+        .chain(&result.output_file_symlinks)
+        .chain(&result.output_directory_symlinks)
+        .map(|symlink| symlink.path.clone())
+        .collect();
+    paths.sort_unstable();
+    paths.dedup();
+    paths
 }
 
 /// The mode a file node's executable bit gives.
@@ -306,7 +328,7 @@ const fn mode_of(is_executable: bool) -> FileMode {
 }
 
 /// The answer a cache gave, as the values the core checks: every output file and directory as
-/// the server wrote it, and whether it names an output symlink.
+/// the server wrote it, and the paths it names as output symlinks.
 ///
 /// # Errors
 ///
@@ -344,10 +366,74 @@ pub(crate) fn hit(result: &wire::ActionResult) -> Result<RemoteHit, RemoteError>
         exit_code: result.exit_code,
         files,
         directories,
-        symlinks: names_symlinks(result),
+        symlinks: symlink_paths(result),
         stdout: log(result.stdout_digest.as_ref(), "stdout")?,
         stderr: log(result.stderr_digest.as_ref(), "stderr")?,
     })
+}
+
+/// How the server ended an execution, from the response that finished it.
+///
+/// A status of OK, or none, is a run: [`Executed::Cached`] when the server held the result
+/// already and the exit code is 0, and [`Executed::Ran`] otherwise, so a result with a non-zero
+/// exit code is a run whatever `cached_result` says. `DEADLINE_EXCEEDED` is
+/// [`Executed::TimedOut`], holding the logs the result names when it has any.
+///
+/// # Errors
+///
+/// Returns [`RemoteError::Status`] for any other status, [`RemoteError::Protocol`] when an OK
+/// response holds no result or a digest of the result is not one buildl can use.
+pub(crate) fn executed(response: &wire::ExecuteResponse) -> Result<Executed, RemoteError> {
+    answered(response).map_err(|error| match error {
+        RemoteError::Protocol { detail, .. } => RemoteError::Protocol {
+            call: Method::Execute,
+            detail,
+        },
+        other => other,
+    })
+}
+
+/// [`executed`], whose protocol failures name the call that read the result and not `Execute`.
+fn answered(response: &wire::ExecuteResponse) -> Result<Executed, RemoteError> {
+    let code = response
+        .status
+        .as_ref()
+        .map_or(tonic::Code::Ok, |status| tonic::Code::from_i32(status.code));
+    match code {
+        tonic::Code::Ok => {
+            let result = response
+                .result
+                .as_ref()
+                .ok_or_else(|| protocol("the response holds no result".to_owned()))?;
+            let found = hit(result)?;
+            Ok(if response.cached_result && found.exit_code == 0 {
+                Executed::Cached(found)
+            } else {
+                Executed::Ran(found)
+            })
+        }
+        tonic::Code::DeadlineExceeded => {
+            let log = |digest: Option<&wire::Digest>, what: &str| {
+                digest.map(|digest| blob_of(Some(digest), what)).transpose()
+            };
+            let result = response.result.as_ref();
+            Ok(Executed::TimedOut {
+                stdout: log(result.and_then(|r| r.stdout_digest.as_ref()), "stdout")?,
+                stderr: log(result.and_then(|r| r.stderr_digest.as_ref()), "stderr")?,
+            })
+        }
+        other => Err(RemoteError::Status {
+            call: Method::Execute,
+            source: tonic::Status::new(
+                other,
+                response
+                    .status
+                    .as_ref()
+                    .map(|status| status.message.clone())
+                    .unwrap_or_default(),
+            ),
+        }),
+    }
 }
 
 /// The most files and directories a `Tree` may expand to.
@@ -357,27 +443,52 @@ pub(crate) fn hit(result: &wire::ActionResult) -> Result<RemoteHit, RemoteError>
 /// not used.
 const MAX_TREE_ENTRIES: usize = 1 << 18;
 
-/// The regular files of the `Tree` that `bytes` encode, in path order.
+/// What the `Tree` that `bytes` encode holds.
 ///
-/// `None` when the tree cannot be used as a directory of files: `bytes` are not a `Tree`, it
-/// holds a symlink or an empty directory below the root, it refers to a directory it does not
-/// hold, a name in it is not one `TreePath` takes, or it expands to more than
+/// [`DecodedTree::Files`] holds its regular files in path order. A symlink, or a directory that
+/// holds nothing (the root included), is named by the first such path in path order. The bytes
+/// are [`DecodedTree::Unreadable`] when they are not a `Tree`, when it refers to a directory it
+/// does not hold, when a name in it is not one `TreePath` takes, or when it expands to more than
 /// [`MAX_TREE_ENTRIES`] files and directories.
-pub(crate) fn tree_files(bytes: &[u8]) -> Option<Vec<RemoteTreeFile>> {
-    let tree = wire::Tree::decode(bytes).ok()?;
+pub(crate) fn tree_files(bytes: &[u8]) -> DecodedTree {
+    let Ok(tree) = wire::Tree::decode(bytes) else {
+        return DecodedTree::Unreadable;
+    };
+    let Some(root) = tree.root.as_ref() else {
+        return DecodedTree::Unreadable;
+    };
+    read_tree(&tree, root).unwrap_or(DecodedTree::Unreadable)
+}
+
+/// Something in a tree a build cannot place.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Unplaceable {
+    Symlink,
+    EmptyDirectory,
+}
+
+/// The contents of `tree`, below `root`; `None` when it cannot be read as a directory.
+fn read_tree(tree: &wire::Tree, root: &wire::Directory) -> Option<DecodedTree> {
     let by_blob: BTreeMap<Blob, &wire::Directory> = tree
         .children
         .iter()
         .map(|child| (Encoded::of(child).blob, child))
         .collect();
     let mut files = Vec::new();
-    let mut pending = vec![(String::new(), tree.root.as_ref()?, true)];
+    let mut unplaceable: Vec<(String, Unplaceable)> = Vec::new();
+    let mut pending = vec![(String::new(), root)];
     // The root, and then every file and directory as it is queued.
     let mut expanded = 1_usize;
-    while let Some((prefix, directory, is_root)) = pending.pop() {
-        let empty = directory.files.is_empty() && directory.directories.is_empty();
-        if !directory.symlinks.is_empty() || (empty && !is_root) {
-            return None;
+    while let Some((prefix, directory)) = pending.pop() {
+        if directory.files.is_empty()
+            && directory.directories.is_empty()
+            && directory.symlinks.is_empty()
+        {
+            let at = prefix.trim_end_matches('/').to_owned();
+            unplaceable.push((at, Unplaceable::EmptyDirectory));
+        }
+        for link in &directory.symlinks {
+            unplaceable.push((format!("{prefix}{}", link.name), Unplaceable::Symlink));
         }
         for file in &directory.files {
             expanded += 1;
@@ -396,11 +507,18 @@ pub(crate) fn tree_files(bytes: &[u8]) -> Option<Vec<RemoteTreeFile>> {
                 return None;
             }
             let child = by_blob.get(&blob_of(node.digest.as_ref(), &node.name).ok()?)?;
-            pending.push((format!("{prefix}{}/", node.name), child, false));
+            pending.push((format!("{prefix}{}/", node.name), child));
         }
     }
+    unplaceable.sort();
+    if let Some((path, kind)) = unplaceable.into_iter().next() {
+        return Some(match kind {
+            Unplaceable::Symlink => DecodedTree::Symlink(path),
+            Unplaceable::EmptyDirectory => DecodedTree::EmptyDirectory(path),
+        });
+    }
     files.sort_by(|left, right| left.path.cmp(&right.path));
-    Some(files)
+    Some(DecodedTree::Files(files))
 }
 
 #[cfg(test)]
@@ -413,14 +531,15 @@ mod tests {
     use std::collections::BTreeMap;
 
     use buildl_core::{
-        Argument, Blob, Command, Digest, Directory, EnvName, EnvValue, FileMode, Label, OutputName,
-        OutputPath, Platform, RemoteAction, RemoteContent, RemoteOutput, RemotePlatform,
+        Argument, Blob, Command, DecodedTree, Digest, Directory, EnvName, EnvValue, Executed,
+        FileMode, Label, OutputName, OutputPath, Platform, PlatformProperties,
+        PlatformPropertyName, RemoteAction, RemoteContent, RemoteOutput, RemotePlatform,
         RemoteTree, RemoteTreeFile, RemoteUpload, Timeout, TreePath,
     };
     use prost::Message;
 
     use super::{
-        Encoded, RemoteError, action, action_result, command, hit, platform, tree_files,
+        Encoded, RemoteError, action, action_result, command, executed, hit, platform, tree_files,
         wire_digest,
     };
     use crate::remote::proto::build::bazel::remote::execution::v2 as wire;
@@ -455,6 +574,7 @@ mod tests {
             files: Vec::new(),
             platform: RemotePlatform::of(&Platform::parse("linux/x86_64").unwrap()),
             timeout: Timeout::parse("90s").unwrap(),
+            properties: PlatformProperties::default(),
         }
     }
 
@@ -511,6 +631,64 @@ mod tests {
         assert_eq!(
             platform(&remote_action()).properties,
             [property("ISA", "x86-64"), property("OSFamily", "linux")]
+        );
+    }
+
+    fn with_properties(pairs: &[(&str, &str)]) -> RemoteAction {
+        let mut remote = remote_action();
+        remote.properties = PlatformProperties::new(
+            pairs
+                .iter()
+                .map(|(name, value)| {
+                    (
+                        PlatformPropertyName::parse(*name).unwrap(),
+                        (*value).to_owned(),
+                    )
+                })
+                .collect(),
+        );
+        remote
+    }
+
+    #[test]
+    fn the_platform_lists_every_property_sorted_by_name() {
+        let remote = with_properties(&[
+            ("pool", "large"),
+            ("arch-hint", "x"),
+            ("Pool", "z"),
+            ("Arch", "y"),
+        ]);
+
+        let listed: Vec<(String, String)> = platform(&remote)
+            .properties
+            .into_iter()
+            .map(|property| (property.name, property.value))
+            .collect();
+
+        let expected = [
+            ("Arch", "y"),
+            ("ISA", "x86-64"),
+            ("OSFamily", "linux"),
+            ("Pool", "z"),
+            ("arch-hint", "x"),
+            ("pool", "large"),
+        ]
+        .map(|(name, value)| (name.to_owned(), value.to_owned()));
+        assert_eq!(listed, expected);
+    }
+
+    #[test]
+    fn properties_change_the_action_digest() {
+        let command_digest = digest_of(b"command");
+        let root = digest_of(b"root");
+        let digest_of_action = |remote: &RemoteAction| {
+            Encoded::of(&action(&command_digest, &root, remote))
+                .blob
+                .digest
+        };
+        assert_ne!(
+            digest_of_action(&remote_action()),
+            digest_of_action(&with_properties(&[("pool", "large")]))
         );
     }
 
@@ -582,7 +760,7 @@ mod tests {
         assert_eq!(result.directories[0].tree, built.trees[0].blob);
         assert_eq!(result.stdout, Some(Blob::of(b"out text")));
         assert_eq!(result.stderr, Some(Blob::of(b"")));
-        assert!(!result.symlinks);
+        assert_eq!(result.symlinks, Vec::<String>::new());
     }
 
     #[test]
@@ -601,7 +779,7 @@ mod tests {
         let built = action_result(&upload).unwrap();
         assert_eq!(
             tree_files(&built.trees[0].bytes),
-            Some(tree.files().to_vec())
+            DecodedTree::Files(tree.files().to_vec())
         );
         // the same files encode to the same tree every time
         assert_eq!(
@@ -611,7 +789,7 @@ mod tests {
     }
 
     #[test]
-    fn a_tree_with_a_symlink_or_an_empty_directory_decodes_to_none() {
+    fn a_tree_with_a_symlink_or_an_empty_directory_names_it() {
         let file = |name: &str| wire::FileNode {
             name: name.to_owned(),
             digest: Some(digest_of(name.as_bytes())),
@@ -629,7 +807,10 @@ mod tests {
             }),
             children: Vec::new(),
         };
-        assert_eq!(tree_files(&with_symlink.encode_to_vec()), None);
+        assert_eq!(
+            tree_files(&with_symlink.encode_to_vec()),
+            DecodedTree::Symlink("link".to_owned())
+        );
 
         let empty_child = wire::Directory::default();
         let with_empty_directory = wire::Tree {
@@ -643,7 +824,10 @@ mod tests {
             }),
             children: vec![empty_child],
         };
-        assert_eq!(tree_files(&with_empty_directory.encode_to_vec()), None);
+        assert_eq!(
+            tree_files(&with_empty_directory.encode_to_vec()),
+            DecodedTree::EmptyDirectory("empty".to_owned())
+        );
 
         let bad_name = wire::Tree {
             root: Some(wire::Directory {
@@ -652,7 +836,10 @@ mod tests {
             }),
             children: Vec::new(),
         };
-        assert_eq!(tree_files(&bad_name.encode_to_vec()), None);
+        assert_eq!(
+            tree_files(&bad_name.encode_to_vec()),
+            DecodedTree::Unreadable
+        );
     }
 
     #[test]
@@ -682,7 +869,7 @@ mod tests {
         let root = children.pop();
         let tree = wire::Tree { root, children };
 
-        assert_eq!(tree_files(&tree.encode_to_vec()), None);
+        assert_eq!(tree_files(&tree.encode_to_vec()), DecodedTree::Unreadable);
     }
 
     #[test]
@@ -715,7 +902,7 @@ mod tests {
             node_properties: None,
         };
         let plain = hit(&wire::ActionResult::default()).unwrap();
-        assert!(!plain.symlinks);
+        assert_eq!(plain.symlinks, Vec::<String>::new());
         for result in [
             wire::ActionResult {
                 output_symlinks: vec![symlink.clone()],
@@ -730,7 +917,145 @@ mod tests {
                 ..wire::ActionResult::default()
             },
         ] {
-            assert!(hit(&result).unwrap().symlinks);
+            assert_eq!(hit(&result).unwrap().symlinks, ["out/link"]);
         }
+    }
+
+    #[test]
+    #[expect(
+        deprecated,
+        reason = "the test builds a result the way a v2.0 server does"
+    )]
+    fn a_hit_names_its_symlinked_outputs() {
+        let link = |path: &str| wire::OutputSymlink {
+            path: path.to_owned(),
+            target: "x".to_owned(),
+            node_properties: None,
+        };
+        let one = wire::ActionResult {
+            output_symlinks: vec![link("out/link")],
+            ..wire::ActionResult::default()
+        };
+        assert_eq!(hit(&one).unwrap().symlinks, ["out/link"]);
+
+        // A v2.1 server may repeat a link in the older field as well; it is named once.
+        let repeated = wire::ActionResult {
+            output_symlinks: vec![link("out/link")],
+            output_file_symlinks: vec![link("out/link")],
+            output_directory_symlinks: vec![link("out/dir-link")],
+            ..wire::ActionResult::default()
+        };
+        assert_eq!(
+            hit(&repeated).unwrap().symlinks,
+            ["out/dir-link", "out/link"]
+        );
+    }
+
+    fn response(code: tonic::Code, cached_result: bool, exit_code: i32) -> wire::ExecuteResponse {
+        wire::ExecuteResponse {
+            result: Some(wire::ActionResult {
+                exit_code,
+                stdout_digest: Some(digest_of(b"out")),
+                stderr_digest: Some(digest_of(b"err")),
+                ..wire::ActionResult::default()
+            }),
+            cached_result,
+            status: Some(crate::remote::proto::google::rpc::Status {
+                code: code as i32,
+                message: "said so".to_owned(),
+                details: Vec::new(),
+            }),
+            ..wire::ExecuteResponse::default()
+        }
+    }
+
+    #[test]
+    fn an_ok_response_that_ran_is_ran() {
+        let found = executed(&response(tonic::Code::Ok, false, 0)).unwrap();
+
+        let Executed::Ran(hit) = found else {
+            unreachable!("expected Ran, got {found:?}");
+        };
+        assert_eq!(hit.exit_code, 0);
+        assert_eq!(hit.stdout, Some(Blob::of(b"out")));
+    }
+
+    #[test]
+    fn a_response_without_a_status_is_ok() {
+        let mut bare = response(tonic::Code::Ok, false, 0);
+        bare.status = None;
+
+        assert!(matches!(executed(&bare).unwrap(), Executed::Ran(_)));
+    }
+
+    #[test]
+    fn a_cached_ok_response_with_exit_zero_is_cached() {
+        let found = executed(&response(tonic::Code::Ok, true, 0)).unwrap();
+
+        assert!(matches!(found, Executed::Cached(_)), "{found:?}");
+    }
+
+    #[test]
+    fn a_non_zero_exit_is_ran_whether_or_not_the_result_was_cached() {
+        for cached in [false, true] {
+            let found = executed(&response(tonic::Code::Ok, cached, 3)).unwrap();
+
+            let Executed::Ran(hit) = found else {
+                unreachable!("expected Ran, got {found:?}");
+            };
+            assert_eq!(hit.exit_code, 3);
+        }
+    }
+
+    #[test]
+    fn a_deadline_exceeded_response_is_timed_out_with_its_logs() {
+        let found = executed(&response(tonic::Code::DeadlineExceeded, false, -1)).unwrap();
+
+        assert_eq!(
+            found,
+            Executed::TimedOut {
+                stdout: Some(Blob::of(b"out")),
+                stderr: Some(Blob::of(b"err")),
+            }
+        );
+    }
+
+    #[test]
+    fn a_deadline_exceeded_response_without_a_result_is_timed_out_without_logs() {
+        let mut bare = response(tonic::Code::DeadlineExceeded, false, 0);
+        bare.result = None;
+
+        assert_eq!(
+            executed(&bare).unwrap(),
+            Executed::TimedOut {
+                stdout: None,
+                stderr: None,
+            }
+        );
+    }
+
+    #[test]
+    fn any_other_status_is_a_failed_call_that_names_it() {
+        let error = executed(&response(tonic::Code::InvalidArgument, false, 0)).unwrap_err();
+
+        let text = error.to_string();
+        assert!(text.contains("Execution.Execute"), "{text}");
+        assert!(text.contains("InvalidArgument"), "{text}");
+        assert!(text.contains("said so"), "{text}");
+        assert_eq!(
+            crate::remote::retry::Failure::code(&error),
+            Some(tonic::Code::InvalidArgument)
+        );
+    }
+
+    #[test]
+    fn an_ok_response_without_a_result_breaks_the_protocol() {
+        let mut empty = response(tonic::Code::Ok, false, 0);
+        empty.result = None;
+
+        let error = executed(&empty).unwrap_err();
+
+        assert!(matches!(error, RemoteError::Protocol { .. }), "{error:?}");
+        assert!(error.to_string().contains("Execution.Execute"), "{error}");
     }
 }

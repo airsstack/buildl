@@ -97,10 +97,11 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use prost::Message;
     use prost::encoding::{DecodeContext, WireType, decode_key, skip_field};
+    use prost::{Message, Name};
 
     use super::build::bazel::remote::execution::v2::{Action, Command, Digest, Platform};
+    use super::google::rpc::{PreconditionFailure, precondition_failure::Violation};
 
     /// The field numbers of `bytes`, in the order they were written.
     fn tags(mut bytes: &[u8]) -> Vec<u32> {
@@ -148,6 +149,31 @@ mod tests {
         assert_eq!(
             Action::decode(action.encode_to_vec().as_slice()).unwrap(),
             action
+        );
+    }
+
+    #[test]
+    fn a_precondition_failure_round_trips() {
+        let failure = PreconditionFailure {
+            violations: vec![Violation {
+                r#type: "MISSING".to_owned(),
+                subject: format!("blobs/{}/12", "a".repeat(64)),
+                description: String::new(),
+            }],
+        };
+        assert_eq!(
+            PreconditionFailure::decode(failure.encode_to_vec().as_slice()).unwrap(),
+            failure
+        );
+        // A server puts this name after the last `/` of the `type_url` of the `Any` that
+        // carries the message.
+        assert_eq!(
+            PreconditionFailure::full_name(),
+            "google.rpc.PreconditionFailure"
+        );
+        assert_eq!(
+            PreconditionFailure::type_url(),
+            "type.googleapis.com/google.rpc.PreconditionFailure"
         );
     }
 }
