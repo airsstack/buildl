@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-27
 depends-on: [03]
 built-on: 5947af3e315f
@@ -13,8 +13,8 @@ built-on: 5947af3e315f
 entry returning a helper that declares a Go binary target. `buildl.toml` names it as
 `[plugins.gobin] path = "plugins/gobin"` with a cap, and the build file calls
 `buildl.use("gobin")`. The workspace is one Go module with two programs under `hello/` and
-`bye/`, so each target runs `go build -o $out ./<dir>` from the module root, which is the
-action's working directory. Checked by `examples/check.sh` (plan 03).
+`bye/`, so each target runs `go build -o $out ./<dir>` from the module root, which the
+action reads its paths from (the workspace root, or the exec dir laid out as it). Checked by `examples/check.sh` (plan 03).
 
 **Tech Stack:** Lua (airsl), Go 1.22, the `buildl` binary.
 
@@ -63,8 +63,33 @@ examples/plugins/{hello,bye}/main.go                                — [create]
 
 - **Manifest details** (`entry` file name, `api` value) — taken from the existing fixture, not guessed.
 - **Chose not to:** a `git` plugin (needs a hosted repository and the network); one Go module per
-  program (the action runs at the workspace root, where `.` would be neither module).
+  program (the action reads its paths from the workspace root, where `.` would be neither module).
 
 ## Proof
 
 - `cargo make examples` green locally and in the CI `examples` job on both operating systems.
+
+## Review findings
+
+- false claim — the README and this plan said the action "runs at the workspace root", true only
+  under `bare`; now "reads its paths from the workspace root". Fixed at `3b6737a` and here.
+- robustness — `assert.sh` would stop with a Python traceback, not its named failure, if a
+  target's origin were not a plugin; it now prints the origin and fails by name. Fixed.
+
+## Probe results
+
+- `plugin_path` fixture read for the manifest shape (`[extension]` `name`, `version`, `entry`,
+  `api = 1`; `[capabilities]`); followed as is.
+- Scratch copy, macOS: `plan` prints `go: declared by plugin gobin@0.1.0 for //:bye` and the same
+  for `HOME`; `build` → `2 built`; `doctor` lists both wants with that line; `graph --json` gives
+  `//:bye` and `//:hello` the origin `{"Plugins":[{"name":"gobin","version":"0.1.0",…}]}`.
+- `BUILDL=target/debug/buildl sh examples/check.sh examples/plugins` → `plugins: ok`.
+- CI run 40632551313 (at `7431351`): `Examples (ubuntu-latest)` and `Examples (macos-latest)`
+  success with `plugins` included; again in run 40633614431 (at `b1cc0f0`), after the
+  `assert.sh` fix.
+
+## Deviations
+
+- 2026-10-28 — `plan` and `doctor` name one target in the attribution line (`for //:bye`), so
+  `assert.sh` matches `declared by plugin gobin@0.1.0 for //:`.
+- 2026-10-28 — Task 1 also added a row to `examples/README.md`.
