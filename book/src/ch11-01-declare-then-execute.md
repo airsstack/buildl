@@ -229,7 +229,7 @@ A few choices in that picture carry a lot of weight:
 
 Load turns build files into declarations. A queue of directories drives it, and each build file
 gets a fresh engine of its own, which is thrown away afterwards, so one file's stray globals can
-never leak into the next. An engine costs about 136 microseconds to make.
+never leak into the next. An engine costs about 128 microseconds to make.
 
 ```mermaid
 %% Load phase internals

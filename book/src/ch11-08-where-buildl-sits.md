@@ -124,8 +124,8 @@ image digest means the registry already has these bytes, so skipping the push is
 to do the same thing twice. The nouns do nothing the second time, `push` does nothing while the
 digest matches, and `deploy` runs every time.
 
-This is also why the summary line has the words it has. `1 failed, 1 skipped, 1 built`, from
-[Errors](ch11-04-errors.md), names states a pure task runner has no use for: *cached* and
+This is also why the summary line has the words it has. `1 failed, 2 skipped, 2 built, 9 cached`, from
+[Declare, Then Execute](ch11-01-declare-then-execute.md#execute-the-scheduler-loop), names states a pure task runner has no use for: *cached* and
 *skipped* are the rebuilder's words.
 
 ## The capability gradient

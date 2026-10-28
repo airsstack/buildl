@@ -371,8 +371,8 @@ in the core's tests, `Remote::Off` in `LocalPorts`. `Ports::Log` is bound by bot
 target from the log they append to. The two stay separate traits, since a writer and a reader never
 share a method.
 
-Commands that need only a few ports are free functions instead of `Pipeline` methods, so they need
-no state directory and take no lock: `pipeline::check`, `pipeline::graph` and `pipeline::query`
+Commands that need only a few ports are also free functions, beside the `Pipeline` methods. The
+free functions need no state directory and take no lock: `pipeline::check`, `pipeline::graph` and `pipeline::query`
 over a `DeclarationSource`, a `Dispatcher`, a `RunHistory` and a `ContentStore`; `pipeline::doctor`
 with a `Manifest` as well; `pipeline::log` over just `RunHistory` and `ContentStore`; and
 `pipeline::gc`, which adds an `ActionCache` and a `Sweep`.

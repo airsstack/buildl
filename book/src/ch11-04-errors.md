@@ -149,13 +149,14 @@ before any action runs, so there is no target whose outcome could hold one.
 
 One variant is different: `Error::Adapter { port, diagnostic }`. It carries an adapter's own
 failure as text, for display only, and `port` is a `PortName` saying which port's adapter failed:
-`Manifest`, `ContentStore`, `ActionCache`, `RemoteCache`, `Approver`, `PluginStore`, `Changes` and
-so on, one for each port. Every variant above is kept out of `Adapter` because a caller branches on
+`Manifest`, `ContentStore`, `ActionCache`, `RemoteCache`, `Approver`, `Changes` and so on, one
+for each port whose adapter can fail, plus `PluginStore` for the plugin store, which is not a port. Every variant above is kept out of `Adapter` because a caller branches on
 its fields; `Adapter` is only ever shown.
 
-The pair `UnreadableJson` and `NonCanonicalJson` shows why the line matters. A storage adapter that
-cannot read `cache.json` at all returns `Error::Adapter`. One that read it and found bytes the
-canonical reader refuses returns `CorruptState`, naming the file and wrapping the JSON error. The
+`Adapter` and `CorruptState` show why the line matters. A storage adapter that cannot read
+`cache.json` at all returns `Error::Adapter`. One that read it and found bytes the canonical reader
+refuses returns `CorruptState`, naming the file and wrapping the JSON error (`UnreadableJson` or
+`NonCanonicalJson`). The
 first is the machine's trouble, the second a damaged file, and they end with different exit codes.
 
 ### What a message looks like
