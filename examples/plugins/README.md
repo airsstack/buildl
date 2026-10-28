@@ -21,8 +21,8 @@ build.lua ── buildl.use("gobin") ─► plugins/gobin/main.lua ─► module
 | attribution | `buildl plan`, `buildl doctor` and the approver show a want the plugin's targets declared as `declared by plugin gobin@0.1.0 for //:…`, and `buildl graph --json` gives each target the plugin as its origin |
 
 The helper declares nothing a build file could not: a plugin calls the same `buildl.target`.
-Both programs share the one `go.mod` because a command runs at the workspace root, where
-`go build ./hello` finds it.
+Both programs share the one `go.mod` because a command reads its paths from the workspace
+root, where `go build ./hello` finds it.
 
 ## Plugins fetched from git
 

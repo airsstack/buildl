@@ -24,8 +24,9 @@ schema/schema.json ─► //schema:gen (python3 generate.py)
 
 ## Where each language reads the generated file
 
-A command runs at the workspace root, and an input path never leaves its build file's
-directory, so each language directory holds its own project file:
+A command reads its paths from the workspace root (in the sandbox, from a directory laid out
+as it), and an input path never leaves its build file's directory, so each language directory
+holds its own project file:
 
 | Language | How it finds `out/schema/` |
 |---|---|
@@ -42,7 +43,7 @@ buildl build                          # 4 built
 ./out/go/service                      # go service 1.0: hello from the schema
 ./out/rust/cli/bin/cli                # rust cli 1.0: hello from the schema
 python3 out/python/tool.pyz           # python tool 1.0: hello from the schema
-buildl query 'rdeps(//schema:gen)'    # //go:service //python:tool.pyz //rust:cli
+buildl query 'rdeps(//schema:gen)'    # one label a line: //go:service, //python:tool.pyz, //rust:cli
 ```
 
 From `examples/`, `sh check.sh polyglot` runs the shared checks on a copy, then `assert.sh`:
