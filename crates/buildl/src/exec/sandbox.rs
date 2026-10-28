@@ -212,10 +212,10 @@ fn make_parent(path: &Path) -> io::Result<()> {
 }
 
 /// Gives the file or directory at `path` the pinned build time ([`Isolation::BUILD_EPOCH`]) as
-/// its access and modification times.
+/// its modification time. The access time is left alone: on Linux any later read moves it.
 fn pin_time(path: &Path) -> io::Result<()> {
     let pinned = SystemTime::UNIX_EPOCH + Duration::from_secs(Isolation::BUILD_EPOCH);
-    File::open(path)?.set_times(FileTimes::new().set_accessed(pinned).set_modified(pinned))
+    File::open(path)?.set_times(FileTimes::new().set_modified(pinned))
 }
 
 /// The program of the command when it is named by a relative path: the first argument, when it
@@ -243,8 +243,8 @@ impl Copier<'_> {
     /// Copies the file at `relative` below the root to the same place below the exec directory,
     /// mode kept, making the directories above it. A copy already there is left alone.
     ///
-    /// The copy's access and modification times are the pinned build time
-    /// ([`Isolation::BUILD_EPOCH`]), so a tool that records them, such as a ZIP packer, writes
+    /// The copy's modification time is the pinned build time
+    /// ([`Isolation::BUILD_EPOCH`]), so a tool that records it, such as a ZIP packer, writes
     /// the same times on every run and every system: left to itself, `fs::copy` keeps the
     /// original's times on macOS and stamps the time of the copy on Linux.
     fn file(&self, relative: &Path) -> io::Result<()> {
@@ -631,8 +631,7 @@ mod tests {
             "out",
         ] {
             let copy = fs::metadata(dir.path().join(relative)).unwrap();
-            assert_eq!(copy.mtime(), pinned, "{relative} modified");
-            assert_eq!(copy.atime(), pinned, "{relative} accessed");
+            assert_eq!(copy.mtime(), pinned, "{relative}");
         }
     }
 
