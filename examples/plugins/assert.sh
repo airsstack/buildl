@@ -31,8 +31,9 @@ origins="$("${BUILDL}" graph --json | python3 -c '
 import json, sys
 targets = json.load(sys.stdin)["targets"]
 for label in sorted(targets):
-    names = [p["name"] for p in (targets[label]["origin"] or {}).get("Plugins", [])]
-    print(label, " ".join(names))
+    origin = targets[label]["origin"]
+    plugins = origin.get("Plugins", []) if isinstance(origin, dict) else []
+    print(label, " ".join(p["name"] for p in plugins) or origin)
 ')"
 [ "${origins}" = "//:bye gobin
 //:hello gobin" ] || fail "graph gives both targets the plugin's origin" "${origins}"
