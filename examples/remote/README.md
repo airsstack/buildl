@@ -26,11 +26,19 @@ uploaded for the next checkout to fetch.
 The server keeps its cache in the container, so `docker compose down` empties it. It asks for
 no login and runs what it is sent, so `compose.yaml` publishes its port on `127.0.0.1` only.
 
-## Run it
+## Where it runs
 
-Linux x86_64 only: NativeLink's image is x86_64, and its worker runs an action only for a
-client of the same OS family and instruction set. Nothing is claimed for other machines. Needs
-the `buildl` binary, Python 3 and Docker.
+Needs the `buildl` binary, Python 3 and Docker. NativeLink's image is x86_64, and its worker
+runs an action only for a client of the same OS family and instruction set:
+
+| Client | Cache: `--remote-upload`, then `fetched` | Execution: `--remote-execute` |
+|---|---|---|
+| Linux x86_64 | yes; CI runs it | yes; CI runs it |
+| macOS on Apple silicon, the server under Docker Desktop's x86_64 emulation | yes, tried by hand | no: no worker matches a macOS client, so the action waits in the server's queue (`queue_timeout`, 1 hour by default) |
+
+Nothing is claimed for other machines.
+
+## Run it on Linux x86_64
 
 ```sh
 docker compose up -d --build      # wait for 'Worker registered with scheduler' in docker compose logs
@@ -50,3 +58,15 @@ buildl build                      # copy 2: 1 fetched
 `assert.sh` adds a line no earlier run wrote to `app/greet.py` in each copy, so the server's
 cache never holds the actions already and it can run against a server that has served it
 before. The repository's CI runs it in the `examples-remote` job.
+
+## Run the cache half on a Mac
+
+`assert.sh` runs execution too, so on a Mac run the cache half by hand, in two fresh copies of
+this directory (each copy's own `.buildl` cache answers before the server is asked):
+
+```sh
+docker compose up -d --build                    # wait for 'Worker registered with scheduler'
+buildl build --remote-strict --remote-upload    # copy 1: 1 built, and the result is sent
+buildl build --remote-strict                    # copy 2: 1 fetched
+docker compose down
+```
