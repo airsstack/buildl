@@ -12,6 +12,7 @@ toolchain, nothing else.
 | [`python`](python/) | the same for a Python zipapp tested with `unittest`, standard library only | Python 3 |
 | [`go-discovery`](go-discovery/) | a discovery target running `go list` with `stdout = true`, read back with `buildl.decode_all`: one test target per Go package, none written by hand | Go 1.22 |
 | [`polyglot`](polyglot/) | a Go service, a Rust CLI and a Python tool built from one generated schema; labels across directories; early cutoff after a comment edit; `buildl query 'rdeps(…)'` | Go 1.22, a Rust toolchain, Python 3 |
+| [`plugins`](plugins/) | two Go programs declared through a plugin kept in the workspace, `buildl.use`; its manifest and the workspace's cap; `plan` and `doctor` naming the plugin | Go 1.22 |
 
 ## Checking an example
 
