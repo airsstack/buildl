@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-27
 built-on: 5947af3e315f
 ---
@@ -63,7 +63,7 @@ docs/design.md                    — [modify] §9.3 Rust example
 - `examples/README.md` says `check.sh` itself needs `python3` (it reads `plan --json` with it),
   beside each example's own toolchain.
 - `cargo make examples` (`Makefile.toml`, shell-script task like `guard-crate-edges`):
-  `cargo build -p buildl-cli`, puts `target/debug` first on `PATH`, runs `check.sh` for every
+  `cargo build -p buildl-cli`, exports `BUILDL` as the absolute path of the built binary, runs `check.sh` for every
   `examples/*/` that holds an `assert.sh`, except `examples/remote`.
 - First step of the task, before writing the example around them: run the Go commands through
   `buildl` in a scratch copy (spec §8 risk 1).
@@ -141,8 +141,9 @@ cargo cache as the `dod` job does (`ci.yml:46-58`); cargo-make install (`:59-65`
 **Change:** §9.3 (`:583-594`) shows the Rust target in the form the starter uses,
 `cargo install --path . --root $out --no-track`, and says why: `outputs = { "target/release/mytool" }`
 is never produced, because an output is placed under `out/` while cargo writes under `target/`
-(spec §1). The paragraph about cargo's own cache keeps its point: cargo's `--target-dir` is
-cargo's cache.
+(spec §1). The paragraph about cargo's own cache is corrected too: in the input sandbox cargo's
+`--target-dir` lies in the exec dir, which is removed after each run (design §12.2), so cargo's
+cache lasts across runs only under `strategy = "bare"`; §12's `rust` plugin line says the same.
 
 **Proof:** `cargo make dod` green.
 
@@ -166,3 +167,26 @@ cargo's cache.
 
 - `cargo make examples` passes locally and in CI on `ubuntu-latest` and `macos-latest`.
 - `cargo make dod` and `cargo deny check` stay green.
+
+## Review findings
+
+- doc truth — design §9.3 said cargo's `--target-dir` stays cargo's cache; in the input sandbox `target` lies in the exec dir, removed after each run (design §12.2). §9.3 and §12's `rust` plugin line now say the cache lasts across runs only under `strategy = "bare"`; Task 5's Change amended. Fixed at the Task 5 commit.
+- comment-vs-code — `check.sh` copied an example's `out/` and `.buildl/` left by building in place, so the copy was not fresh; the copy now drops both. Fixed; `check.sh` passed for go, rust and python with a relative `BUILDL`.
+- `check.sh` nits — the copy's temp directory now goes on INT/TERM too; a relative `BUILDL` is made absolute before the `cd`. Fixed.
+- README nits — the Go error text named as macOS's wording; the linker error quoted exactly (``error: linker `cc` not found``); Go version stated as 1.22 throughout; "CI runs it" moved to the Task 4 commit. Fixed.
+- `Makefile.toml` nits — the comment no longer claims a `remote` CI job; the binary path follows `CARGO_TARGET_DIR`. Fixed.
+- plan drift — Task 1 said the task puts `target/debug` on `PATH`; it exports `BUILDL` as the binary's absolute path. Plan amended.
+- Left as is — the empty `[workspace]` table in `examples/rust/Cargo.toml` has no test that fails without it: `check.sh` copies outside the repository. The table stays for a reader running cargo in the checkout.
+
+## Probe results
+
+- Go, Rust and Python commands through `buildl` in scratch copies before each example was written: each built, tested, reported `Clean` in `plan --json` and `1 verified, 0 mismatched` in `verify`; after an edit `plan` printed `input <file> changed`, the next `test` ran, the one after printed `tests: 1 passed (1 cached)`, and `log //:unit` printed `ok` / `test result: ok` / `OK`. Not against the plan.
+- `cargo make examples` failed with `assert: out/hello prints its greeting` when the Go expected line was changed, then passed once restored.
+- Task 4: CI run 40630488346 (workflow_dispatch on `worktree-prep-publish`, the branch pushed with no PR, by the author's choice): `Examples (ubuntu-latest)` and `Examples (macos-latest)` success, every other job success. Task 3's `zipapp` file-time risk did not occur on Linux: `verify` reported no mismatch, so the fixed-time packer was not needed.
+
+## Deviations
+
+- 2026-10-28 — Task 4 proved by a hand-started CI run on the pushed branch, not on a PR, as the author chose.
+- 2026-10-28 — `cargo make examples` exports `BUILDL` instead of putting `target/debug` on `PATH`; Task 1 amended.
+- 2026-10-28 — Task 5 also corrects design §9.3's cargo-cache sentence and §12's `rust` plugin line (review finding); Task 5 amended.
+- 2026-10-28 — `examples/README.md` gained each starter's row in that starter's commit, and the "CI runs it" line in Task 4's.
