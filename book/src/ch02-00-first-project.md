@@ -74,8 +74,9 @@ a list is flattened, so `sources` is `go.mod` followed by every `.go` file.
 
 `hello` builds the program into `$out`, which is `out/hello`. `unit` is declared with `b.test`
 instead of `b.target`: it makes no file, and what `buildl` keeps for it is whether it passed and
-what it printed. Both name `HOME` in `env`. A command sees only the variables its target lists, so
-a build cannot read the rest of your environment by accident.
+what it printed. Both name `HOME` in `env`. A command sees only the variables its target lists, plus
+a few that `buildl` pins itself ([The Sandbox](ch06-00-sandbox.md)), so a build cannot read the rest of
+your environment by accident.
 
 Go is already good at deciding what to recompile. `buildl` does not try to do that job again: it
 runs the whole `go build` as one action, and adds what Go lacks, such as a cache shared by every

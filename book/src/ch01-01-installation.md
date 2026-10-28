@@ -1,7 +1,7 @@
 # Installation
 
 `buildl` is not on crates.io yet, and there are no prebuilt binaries. You build it from source with
-Cargo, which takes a couple of minutes.
+Cargo, which takes several minutes.
 
 ## What you need
 

@@ -76,7 +76,7 @@ lines it printed follow; [A First Project](ch02-00-first-project.md) shows one.
 
 ```console
 $ buildl doctor
-workspace  /private/tmp/claude-501/-Users-hiraq-Projects-airsstack-buildl/d0ec1268-0f0e-4174-9a4e-5ea9fa3db955/scratchpad/p02/hello
+workspace  /private/tmp/buildl-book/hello
 approver   manifest
 execution  workers 0 (one per core), timeout 10m, strategy sandbox
 remote: none
@@ -101,7 +101,7 @@ refused and you want to see why. [Approvers](ch04-03-approvers.md) covers the ap
 
 ## Each command stops somewhere
 
-Every `buildl` command runs the same pipeline, and stops at a different point in it:
+Every command that reads the build files runs the same pipeline, and stops at a different point in it:
 
 | Step | What happens | Commands that stop here |
 |---|---|---|
