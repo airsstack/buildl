@@ -23,3 +23,7 @@ target
 # Agent context-handoff scratch (claudestacks). Ephemeral, per-worktree.
 .airsstack/
 .DS_*
+
+# What building an example in place leaves behind
+examples/*/out/
+examples/*/.buildl/

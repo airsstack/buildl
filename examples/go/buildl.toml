@@ -1,0 +1,11 @@
+[workspace]
+name   = "go"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["go"]
+env.read = ["HOME"]
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]

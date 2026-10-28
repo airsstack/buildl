@@ -355,6 +355,30 @@ fi
 '''
 
 # ---------------------------------------------------------------------------
+# Examples
+# ---------------------------------------------------------------------------
+
+[tasks.examples]
+category = "Examples"
+description = "Run examples/check.sh for every example under examples/ but remote"
+# Each example needs its own toolchain beside the buildl binary, so this is not a
+# step of `dod`. `remote` is left out: it needs a remote execution server.
+script_runner = "@shell"
+script = '''
+set -e
+cargo build -p buildl-cli
+BUILDL="${CARGO_TARGET_DIR:-$(pwd)/target}/debug/buildl"
+export BUILDL
+
+for example in examples/*/; do
+    example="${example%/}"
+    [ -f "${example}/assert.sh" ] || continue
+    [ "${example}" = "examples/remote" ] && continue
+    sh examples/check.sh "${example}"
+done
+'''
+
+# ---------------------------------------------------------------------------
 # Development helpers
 # ---------------------------------------------------------------------------
 
