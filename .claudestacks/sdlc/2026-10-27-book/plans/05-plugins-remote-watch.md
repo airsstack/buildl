@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-28
 depends-on: [01]
 built-on: 136d5b098d7e
@@ -102,7 +102,7 @@ Sources: `docs/design.md:855-935` (§11.2) and `docs/architecture.md:414-513` (�
   - `--remote-strict` failing, with the exit code it ends with quoted from the capture and matched to `crates/buildl-cli/src/exit.rs` (`Exit::of_error`);
   - `--no-remote`.
 - The cache half captured against `examples/remote`'s `docker compose up`: copy 1 `build --remote-strict --remote-upload`, then copy 2 `build --remote-strict` gives `1 fetched`.
-- Execution output (`1 remote`) is taken from the passing CI job `examples-remote` (run 40633614431, job "Remote example on NativeLink", as `.claudestacks/sdlc/2026-10-27-examples/plans/07-remote.md:141` records it) and cited as such. On macOS, execution queues (examples/remote/README.md).
+- Execution output is taken from the passing CI job `examples-remote` (run 40633614431, job "Remote example on NativeLink", as `.claudestacks/sdlc/2026-10-27-examples/plans/07-remote.md:141` records it) and cited as such. The CI log never prints buildl's own `1 remote` line: `examples/remote/assert.sh` checks it and prints its own lines, so the chapter quotes those and says what the script checked. On macOS, execution queues (examples/remote/README.md).
 - `mdbook build book` exits 0.
 
 **Done when:** all hold. Commit `docs(repo): book chapter 9, remote cache and execution`.
@@ -141,3 +141,63 @@ Sources: `docs/design.md:478-502` (§8.6) and `docs/architecture.md:514-556` (§
   |---|---|
   | design | §8.6 (ch10); §10 and §10.1 (ch08-01, ch08-03); §10.3 (ch08-01); §11.2 (ch09); §14's plugin API rule (ch08-01) |
   | architecture | §3.7 (ch08-03); §3.8 (ch09); §3.9 (ch10) |
+
+## Review findings
+
+- risk — `ch10` "How it ends" lacked the exit 5 a `buildl.toml` that cannot be read before the first
+  build gives (reviewer captured `invalid array: expected ']'`, exit 5). Row added. Fixed.
+- spec — Task 3's premise that the CI log shows `1 remote` was disproven; the plan's Proof is
+  amended (see Deviations). Fixed.
+- nit — `ch09:279` "plus 0–50 ms": the jitter is `draw % jitter_millis`, under 50 ms
+  (`crates/buildl/src/remote/retry.rs:92`). Now "under 50 ms". Fixed.
+- nit — `ch09:84,96` `os error 61` is the macOS number; one clause now says Linux prints 111.
+  Fixed.
+- nit — `ch10`'s watch-loop diagram drops `[14]` and the `§7` label without a record. Recorded
+  under Deviations. Fixed.
+- nit — `ch08-02`'s git URL `file:///tmp/buildl-book/p05/git/gobin.git` carries the capture
+  folder's name. Declined: it is a neutral `/tmp` path with no user or machine name, and a
+  re-capture would change every commit hash on the page for no reader gain.
+
+## Probe results
+
+- Plugins (`examples/plugins` copy): `2 built`, `hello from a plugin`, `bye from a plugin`; `plan`
+  shows `go: declared by plugin gobin@0.1.0 for //:bye`; `api = 2` → exit 5
+  `manifest declares api 2; this runtime supports api 1`.
+- From git (local bare repo, tag `v0.1.0`): build before fetch → exit 5 `plugin gobin is not
+  fetched`; `fetched gobin c6a408f…`, `buildl.lock` shown; second fetch `unchanged`; an edited
+  stored file → exit 6 `was changed after it was fetched`; a fetch restores it.
+- Narrowing: `[plugins.gobin] env.read = []` → exit 4 `environment variable HOME is outside plugin
+  gobin@0.1.0 (env.read allows: nothing)`; manifest `proc.run = []` → exit 4 `program go is
+  outside plugin gobin@0.1.0 (proc.run allows: nothing)`. Reviewer re-ran both: byte-identical.
+- Remote, no server: warning `… (after 6 calls); the build goes on without it`, `1 built`;
+  `--remote-strict` and `BUILDL_REMOTE_STRICT=1` → exit 3 (`Exit::of_error`, Adapter → 3);
+  `--no-remote` → `1 built`; `--remote-upload`/`--remote-execute` under `bare`,
+  `--remote-jobs 4` without execution, `BUILDL_REMOTE_UPLOAD=yes` → exit 2.
+- Remote cache half (NativeLink in Docker on the Mac): copy 1 `build --remote-strict
+  --remote-upload` → `1 built`; copy 2 `build --remote-strict` → `1 fetched`, tests
+  `tests: 1 passed (1 fetched)`; both `out/app.pyz` identical. Execution cited from CI run
+  40633614431, job "Remote example on NativeLink" (id 122635436196).
+- Retries and defaults match `retry.rs:19,22,71-74` and `remote_settings.rs:37-60` (reviewer).
+- Watch (`examples/python` copy): an input edit rebuilds; README and `out/` edits print nothing; a
+  new `app/extra.py` rebuilds; a broken `build.lua` prints the error and keeps waiting; Ctrl-C →
+  130. `watch --remote-jobs 0` and `watch --remote-upload` without `[remote]` → exit 2.
+- Diagrams: ch08-01 ×1, ch09 ×4, ch10 ×2 render `<pre class="mermaid">`; opened in Chrome from a
+  local build, each is an SVG with no error box.
+- Spec §3 rows landed: design §8.6 → ch10; §10, §10.1 → ch08-01, ch08-03; §10.3 → ch08-01; §11.2
+  → ch09; §14's plugin API rule → ch08-01; architecture §3.7 → ch08-03 (lock and store in
+  ch08-02); §3.8 → ch09; §3.9 → ch10.
+
+## Deviations
+
+- 2026-10-28 — Docker ran on the development Mac, so the cache half was captured here rather than
+  by the user.
+- 2026-10-28 — the CI log never prints buildl's `1 remote` line; `examples/remote/assert.sh`
+  checks it and prints its own lines. `ch09` quotes those lines with a table of what the script
+  checks. Plan amended.
+- 2026-10-28 — the `deny` approver's refusal does not name the plugin; only the interactive prompt
+  does, and it needs a terminal, so it is not captured. `ch08-03` says so and links `ch04-03`.
+- 2026-10-28 — on macOS one save sometimes gave watch an extra cycle ending `1 cached`; `ch10`
+  shows it and says watch can build once too often. `watch nosuch` is a failed cycle, not an exit.
+- 2026-10-28 — the design:480 watch-loop diagram drops `[14]` and "the whole of §7" becomes "a
+  whole build", for the book's no-`§` rule.
+- 2026-10-28 — `ch09` runs 339 lines (four diagrams) and `ch08-01` 212, past the ~150-line guide.

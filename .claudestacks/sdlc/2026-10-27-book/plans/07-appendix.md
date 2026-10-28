@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-28
 depends-on: [01]
 built-on: 136d5b098d7e
@@ -66,7 +66,10 @@ book/src/appendix-05-references.md   — [modify] merged reference list
 
 **Proof:**
 - Every field of `Raw` and of each table above is on the page under its key name. The task's report lists the fields and their `file:line`.
-- A `buildl.toml` holding every table, written in a scratch workspace, passes `buildl check`.
+- A `buildl.toml` holding every table, written in a scratch workspace, passes `buildl check`. The
+  git plugin keys (`git`, `github`, `rev`) are the exception: `check` refuses an unfetched git
+  plugin with exit 5 (`PluginNotFetched` → Definition, `crates/buildl-cli/src/exit.rs:141`), and
+  fetching needs the network, so they are shown in their own snippet with that refusal.
 - `mdbook build book` exits 0.
 
 **Done when:** all hold. Commit `docs(repo): book appendix B, buildl.toml reference`.
@@ -116,7 +119,7 @@ The page also says that `print`, `math.random` and `math.randomseed` are removed
   | 7 | Internal |
 
   Each gets its meaning from the doc comments, and the outcome classes that map to it come from `Exit::of_class` and the other three mappings in the same file. Note that codes stay clear of 126, 127 and anything above 128.
-- **References.** Merge the four documents' numbered reference lists into one numbered list, with duplicates removed:
+- **References.** Merge the four documents' numbered reference lists into one numbered list, with duplicates removed and the entry naming buildl's own `docs/` files left out (the book replaces them):
 
   | Document | Reference list |
   |---|---|
@@ -155,3 +158,43 @@ The page also says that `print`, `math.random` and `math.randomseed` are removed
   | `docs/design.md` | §4 | B |
   | `docs/design.md` | §5 | C |
   | all four documents | References | E |
+
+## Review findings
+
+- wrong output — `appendix-04:159` showed a `build.lua` missing only `)`, but the captured error
+  (`'}' expected (to close '{' at line 2)`) came from a fixture missing `})`. The page now shows
+  the captured fixture; re-run: same error, exit 5. Fixed.
+- nit — `appendix-04:182` described code 7 as only "no row for"; `exit.rs:146-155` also sends nine
+  named errors to Internal. Now "an error that should never happen, or … no row for". Fixed.
+- nit — the `schema.rs` line column goes stale on edits. Kept: the plan requires each key cited to
+  its field.
+- spec risk — the two deviations below were not in the plan. The plan's Task 2 Proof and Task 4
+  references line are amended. Fixed.
+
+## Probe results
+
+- Appendix A: `--help` for all 13 commands and `plugins fetch`; flags per command on the page vs
+  in `--help` (own + 3 global): check 3/3, graph 5/5, query 4/4, plan 5/5, build 12/12,
+  watch 12/12, test 14/14, verify 5/5, doctor 3/3, log 5/5, clean 3/3, gc 3/3, plugins 3/3,
+  plugins fetch 3/3. Env vars read at `main.rs:112-118` (plan said 110-119; same block).
+- Appendix B: all 45 fields of `Raw` and its 11 tables are on the page under their key names, each
+  cited to `schema.rs`; struct lines match the plan. The all-tables `buildl.toml` (minus the git
+  keys) passes `buildl check`: `ok: 1 declaration in 1 build file`. Reviewer spot-checked 10
+  defaults against `toml_manifest.rs`/`interpret.rs`/`timeout.rs`: all correct.
+- Appendix C: `pairs(buildl)` reported through `error()`: `alias decode_all discover discovered
+  option rule sources subdir target test use` (11), equal to the page. `print`, `math.random`,
+  `math.randomseed` are nil; `airsstack.buildl == buildl`.
+- Appendix D: captured 0 (build), 1 (`sh` exits 1), 2 (`--fast`), 3 (`--remote-strict` against
+  `grpc://127.0.0.1:1`, after 6 calls), 4 (`python3` outside the ceiling), 5 (syntax error);
+  6 and 7 from source. Enum at `exit.rs:23-40` as planned.
+- Appendix E: 37 URLs in the four lists, 24 distinct, each once on the page and no other URL.
+- Spec §3 rows landed: design §4 → B; design §5 → C; References of all four documents → E.
+
+## Deviations
+
+- 2026-10-28 — the git plugin keys cannot sit in a file that passes `check` (unfetched git plugin
+  → exit 5, and fetching needs the network); they are shown in their own snippet with the real
+  refusal. Plan amended.
+- 2026-10-28 — the references page leaves out the entry naming buildl's own `docs/` files, and its
+  intro no longer names them: the book replaces those documents, and plan 08's search forbids
+  their names in `book/src`. Plan amended.

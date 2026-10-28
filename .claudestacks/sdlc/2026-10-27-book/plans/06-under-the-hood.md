@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-28
 depends-on: [01]
 built-on: 136d5b098d7e
@@ -171,3 +171,60 @@ Sources: `docs/fundamental-walkthrough.md` `:7-62` (§1, §2), `:157-208` (§6, 
   | | §13's scope decisions | `ch11-08`, `ch11-09` |
   | `docs/fundamental-walkthrough.md` | §1, §2 and §7–§9 | `ch11-08` |
   | | §6 (the depfile gap; its ch07 half is plan 04) | `ch11-09` |
+
+## Review findings
+
+- wrong fact — `ch11-04:151` said `PortName` has one variant per port; `error.rs:798-833` has none
+  for `DeclarationSource`, `Clock`, `Reporter`, `Cycles` or `WatchReport`, and adds `PluginStore`,
+  which is not a port. Now "one for each port whose adapter can fail, plus `PluginStore`". Fixed.
+- nit — `ch11-01:232` gave 136 µs to make an engine; 128 µs is the make cost (136 µs is make plus
+  one evaluation, kept at `:257`), matching `ch11-06`. Fixed.
+- nit — `ch11-03:374` said the narrow commands are free functions "instead of" `Pipeline` methods;
+  `Pipeline` also has `check`, `graph`, `query` (`pipeline/driver.rs:114,137,155`). Now "beside".
+  Fixed.
+- nit — `ch11-04:156` led with the `UnreadableJson`/`NonCanonicalJson` pair; now leads with
+  `Adapter` vs `CorruptState`. Fixed.
+- nit — `ch11-06` row labels "(building blocks)" / "(architecture)" named source files the reader
+  never sees; tags dropped, the rows' own titles keep them apart. Fixed.
+- nit — `ch11-08:127` quoted `1 failed, 1 skipped, 1 built`, which lacks *cached*; now quotes
+  `1 failed, 2 skipped, 2 built, 9 cached` from `ch11-01`. Fixed.
+
+## Probe results
+
+- Names: every type, port, error variant and module the pages give was grepped against `crates/`
+  (198 names on ch11-01..03; the ch11-04..09 set incl. `OutcomeClass`, `InfraKind`, `PortName`,
+  `Exit::of_*`, `Fake*` in `tests/flows/common.rs`); only std and airsl names lack a hit. The
+  reviewer re-checked crate edges (`crates/expected-edges.txt`), the 22 port traits and `Ports`
+  (`ports/bundle.rs:272-307`), exit codes (`exit.rs:23-155`) and the cas → row → log order
+  (`execute/record.rs:241`, `assembly.rs:561,629`).
+- Numbered rules: `ch11-03` keeps dependency rules 1–5 and `ch11-05` determinism rules 1–5 in the
+  old order; every "rule N" cited from `Cargo.toml`, `deny.toml`, `Makefile.toml` and
+  `crates/buildl-core/clippy.toml` matches its page (reviewer).
+- `clippy.toml` holds 130 bans; the family counts on `ch11-03` sum to it.
+- `ch11-04`'s transcript (head debug binary): `build --keep-going` → `1 failed, 1 skipped, 1 built`
+  (exit 1), a ceiling refusal (exit 4), an unknown target (exit 2).
+- Diagrams: ch11-01 ×5, ch11-02 ×1, ch11-03 ×7, ch11-07 ×1, ch11-08 ×5 (19) render
+  `<pre class="mermaid">`; opened in Chrome from a local build, each is an SVG with no error box.
+- Decision records: 56 from architecture §6 + 19 from building blocks §10 + the Lua/airsl record
+  = 76 rows.
+- Spec §3 rows landed: building blocks §1–§7, §9 → ch11-03, §8 → ch11-07, §10 → ch11-06;
+  architecture §1 → ch11-03, §2, §3.1–§3.4, §3.6 → ch11-01, §3.5 → ch11-02, §4 → ch11-04,
+  §5 → ch11-05, §6 → ch11-06, §7 → ch11-07; design §1.1 → ch11-06, §2, §8.1–§8.4, §11, §11.1 →
+  ch11-01, §8.5, §8.7 → ch11-02, §12.1, §12.3 → ch11-05, §12.4 → ch11-05, ch11-09, §13 scope →
+  ch11-08, ch11-09; walkthrough §1, §2, §7–§9 → ch11-08, §6 → ch11-09.
+
+## Deviations
+
+- 2026-10-28 — run as two parallel writers (tasks 1–2, tasks 3–4); file sets were disjoint.
+- 2026-10-28 — diagrams redrawn where the code moved on: the executor loop (design:440) with the
+  settle step and cas, row, log, counters; the action lifecycle (design:454) with its own
+  "place into out/" step; abb:15 as logic, ports, adapters and root (it was a copy of arch:29);
+  C4 level 1 names "Remote cache and executor"; level 4 adds `build_watched()` and `test()`; the
+  summary mindmap moves discovery, remote and parallel load to covered.
+- 2026-10-28 — rewritten to the code: `ActionOutcome.role`, `Error::Refused`/`DependencyCycle`/
+  `DuplicateLabel`, `FakeClock`, `Dispatcher::dispatch(work, step)` with `Turn`, the ledger's
+  network row (no `b.fetch`), the sandbox's pinned modification times.
+- 2026-10-28 — "Nothing is published yet" and the crates.io name-claim date were dropped; both
+  go stale at the first publish.
+- 2026-10-28 — `ch11-09` links `ch07`'s depfile-gap section, which already holds those diagrams,
+  rather than repeating them.
