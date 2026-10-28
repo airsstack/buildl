@@ -12,13 +12,13 @@ cargo install --git https://github.com/airsstack/buildl buildl-cli --locked
 ```
 
 Commands: `check`, `graph`, `query`, `plan`, `build`, `test`, `verify`, `watch`, `log`, `clean`,
-`gc`, `doctor`, `plugins fetch` — each described in
-[the command line](https://airsstack.github.io/buildl/appendix-01-cli.html).
+`gc`, `doctor`, `plugins fetch` — see [the command line](https://airsstack.github.io/buildl/appendix-01-cli.html).
 
 buildl is four crates, published in this order: `buildl-core`, `buildl-lua`, `buildl`,
 **`buildl-cli`**. This crate depends on `buildl`.
 
-[The buildl Book](https://airsstack.github.io/buildl/) · [Repository](https://github.com/airsstack/buildl)
+[The buildl Book](https://airsstack.github.io/buildl/) · [The four crates](https://airsstack.github.io/buildl/ch11-03-four-crates.html) ·
+[Repository](https://github.com/airsstack/buildl)
 
 ## License
 

@@ -51,19 +51,15 @@ Then `buildl build`, `buildl test` and `buildl plan` in that example.
 
 ## Learn more
 
-[The buildl Book](https://airsstack.github.io/buildl/):
-[getting started](https://airsstack.github.io/buildl/ch01-00-getting-started.html),
-[build files](https://airsstack.github.io/buildl/ch03-00-build-files.html),
-[permission](https://airsstack.github.io/buildl/ch04-00-asking-permission.html),
-[caching](https://airsstack.github.io/buildl/ch05-00-caching.html),
-[the sandbox](https://airsstack.github.io/buildl/ch06-00-sandbox.html),
-[plugins](https://airsstack.github.io/buildl/ch08-00-plugins.html),
-[the remote cache](https://airsstack.github.io/buildl/ch09-00-remote.html),
-[watch mode](https://airsstack.github.io/buildl/ch10-00-watch.html),
-[under the hood](https://airsstack.github.io/buildl/ch11-00-under-the-hood.html),
-[the command line](https://airsstack.github.io/buildl/appendix-01-cli.html) and
-[exit codes](https://airsstack.github.io/buildl/appendix-04-exit-codes.html).
-Working workspaces for Go, Rust and Python are in [`examples/`](examples/).
+**[The buildl Book](https://airsstack.github.io/buildl/)** is the full guide.
+
+| | |
+|---|---|
+| Start | [Getting started](https://airsstack.github.io/buildl/ch01-00-getting-started.html) · [Build files](https://airsstack.github.io/buildl/ch03-00-build-files.html) |
+| Concepts | [Permission](https://airsstack.github.io/buildl/ch04-00-asking-permission.html) · [Caching](https://airsstack.github.io/buildl/ch05-00-caching.html) · [Sandbox](https://airsstack.github.io/buildl/ch06-00-sandbox.html) |
+| Features | [Plugins](https://airsstack.github.io/buildl/ch08-00-plugins.html) · [Remote cache and execution](https://airsstack.github.io/buildl/ch09-00-remote.html) · [Watch mode](https://airsstack.github.io/buildl/ch10-00-watch.html) |
+| Reference | [Command line](https://airsstack.github.io/buildl/appendix-01-cli.html) · [Exit codes](https://airsstack.github.io/buildl/appendix-04-exit-codes.html) · [Under the hood](https://airsstack.github.io/buildl/ch11-00-under-the-hood.html) |
+| Examples | [`examples/`](examples/): working workspaces for Go, Rust and Python |
 
 ## Crates
 

@@ -9,7 +9,8 @@ Load, Resolve, Plan, Execute and Record. It performs no I/O and knows nothing of
 of a build is tested here against fake ports.
 
 buildl is four crates, published in this order: **`buildl-core`**, `buildl-lua`, `buildl`,
-`buildl-cli`. This crate depends on none of the others; all three depend on it.
+`buildl-cli`. This crate depends on none of the others; `buildl-lua` and `buildl` depend on it,
+and `buildl-cli` reaches it through `buildl`.
 
 - [The buildl Book](https://airsstack.github.io/buildl/), and its page on
   [the four crates](https://airsstack.github.io/buildl/ch11-03-four-crates.html)
