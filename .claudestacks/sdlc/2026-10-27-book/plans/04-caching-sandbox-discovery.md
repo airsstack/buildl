@@ -196,3 +196,11 @@ Sources: `docs/design.md` §10's discovery text (`:663-758`), `docs/architecture
   architecture:380 in plain words (review).
 - 2026-10-28 — `ch05-01` (219 lines), `ch06` (217) and `ch07` (276) run past the ~150-line guide,
   mostly from the full `plan --json` and ch07's four diagrams.
+- 2026-10-28 — CI run 40698998488 (after these chapters) failed `Examples (ubuntu-latest)`:
+  `MISMATCH //:app.pyz: output app.pyz differs: bytes`. Cause: `fs::copy` stamps the copy time on
+  Linux (macOS keeps the source's), and `zipapp` records file and directory times. By the user's
+  choice the sandbox now gives every copied file and directory `Isolation::BUILD_EPOCH`
+  (`1903a28`), and `ch06` says so (`668b9eb`). Proven: `copies_carry_the_pinned_build_time` failed
+  first (`tools/run.sh modified`), then passed; `cargo make dod` exit 0, 2830 passed; the Python
+  example's archive entries read `(1980, 1, 1, 0, 0, 0)` and `verify` reports 0 mismatched. A
+  review pass found directories uncovered and a tar claim too broad; both fixed.
