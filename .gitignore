@@ -24,6 +24,9 @@ target
 .airsstack/
 .DS_*
 
+# The book's build output. Pages builds its own copy; nothing built is committed.
+book/book/
+
 # What building an example in place leaves behind
 examples/*/out/
 examples/*/.buildl/

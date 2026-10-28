@@ -1,0 +1,19 @@
+[book]
+title = "The buildl Book"
+authors = ["airsstack"]
+language = "en"
+src = "src"
+
+# Turns ```mermaid blocks into diagrams. mermaid.min.js and mermaid-init.js
+# beside this file are written by `mdbook-mermaid install book`, at the
+# mdbook-mermaid version pinned in Makefile.toml, ci.yml and pages.yml.
+[preprocessor.mermaid]
+command = "mdbook-mermaid"
+
+[output.html]
+# Pages serves this repository as a project site under /buildl/, so the 404 page
+# needs the prefix to load its own stylesheets.
+site-url = "/buildl/"
+git-repository-url = "https://github.com/airsstack/buildl"
+edit-url-template = "https://github.com/airsstack/buildl/edit/main/book/{path}"
+additional-js = ["mermaid.min.js", "mermaid-init.js"]
