@@ -11,6 +11,7 @@ toolchain, nothing else.
 | [`rust`](rust/) | the same for a Rust binary, built with `cargo install --root $out` | a Rust toolchain |
 | [`python`](python/) | the same for a Python zipapp tested with `unittest`, standard library only | Python 3 |
 | [`go-discovery`](go-discovery/) | a discovery target running `go list` with `stdout = true`, read back with `buildl.decode_all`: one test target per Go package, none written by hand | Go 1.22 |
+| [`polyglot`](polyglot/) | a Go service, a Rust CLI and a Python tool built from one generated schema; labels across directories; early cutoff after a comment edit; `buildl query 'rdeps(…)'` | Go 1.22, a Rust toolchain, Python 3 |
 
 ## Checking an example
 
