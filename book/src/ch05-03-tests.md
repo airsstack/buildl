@@ -1,7 +1,7 @@
 # Tests
 
 A test target is declared with `buildl.test` instead of `buildl.target`. It has inputs and a
-command like any target, but no outputs: what it produces is a pass or a fail. The Go project
+command like any target, but no outputs unless it names some: what it produces is a pass or a fail. The Go project
 declares one:
 
 ```lua

@@ -23,7 +23,8 @@ graph TD
 
 `buildl` keeps the pieces of each key, not only the digest. So when a key changes, it can compare
 the old pieces with the new ones and tell you which one moved. Here is the Go project from
-[A First Project](ch02-00-first-project.md), with an edit to `main.go`:
+[A First Project](ch02-00-first-project.md), with an edit to `main.go`. The edits in this chapter
+use `sed -i ''`, the macOS form; on Linux, drop the `''`:
 
 ```console
 $ buildl plan
@@ -145,7 +146,7 @@ differs from the last build: the words `input main.go changed` come from it. The
 |---|---|
 | `command` | the command as written, before `$out` and the others are filled in |
 | `inputs` | the path and a SHA-256 of the contents of every input file |
-| `deps` | for each dependency, the digest of each output it produced |
+| `deps` | for each dependency, a digest of each output it produced: its name, a hash of its bytes and whether it is executable |
 | `env` | the value of each variable the target declared, and nothing of the rest of the environment |
 | `tool` | the program the command runs, and a fingerprint of that program's file |
 | `settings` | the [build settings](ch03-05-build-settings.md) the target uses, with their values for this run |
@@ -161,7 +162,8 @@ build runs, not what an action is given, so none of them is part of the key.
 
 The `deps` list above is empty, because `//:hello` depends on nothing. In the polyglot workspace
 from [Many Directories](ch03-04-many-directories.md), `//go:service` depends on `//schema:gen`, and
-its key holds the digest of each file `//schema:gen` wrote:
+its key holds a digest of each file `//schema:gen` wrote. That digest covers the file's name, a
+hash of its bytes and whether it is executable, so it is not the same number `shasum` prints:
 
 ```console
 $ buildl plan --json //go:service | python3 -c 'import json,sys; t=json.load(sys.stdin)["targets"]["//go:service"]; print(json.dumps(t["key"]["components"]["deps"], indent=2))'

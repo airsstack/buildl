@@ -124,7 +124,7 @@ The three edits this workspace can see, side by side:
 |---|---|---|
 | the comment in `schema.json` | `//schema:gen` only | its outputs are byte-for-byte the same, so the programs' keys are too |
 | the greeting in `schema.json` | all four | the generated files differ, so every program's key changes |
-| `go/main.go` | `//go:service` only | the other columns do not depend on it; `cargo` and the packer are never started |
+| `go/main.go` | `//go:service` only | the other programs do not depend on it; `cargo` and the packer are never started |
 
 Early cutoff is why it pays for a generator to write only what it was asked for: anything it
 copies blindly, such as a comment or a time stamp, turns every edit into a full rebuild.

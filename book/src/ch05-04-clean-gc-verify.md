@@ -55,7 +55,7 @@ files first, so run it from a checkout whose build files declare everything you 
 
 ## `buildl verify`
 
-The action key promises that the same inputs give the same command. It cannot promise that the
+The action key promises that the same inputs give the same key, and so a cache hit. It cannot promise that the
 command gives the same bytes. A tool that writes the time, a random number or the order a hash
 table happened to iterate in will not. If such an output reaches the cache, every later build
 trusts it.

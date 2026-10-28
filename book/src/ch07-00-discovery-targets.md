@@ -203,7 +203,7 @@ second pass declared `//:shout`, which ran, and the three old tests came from th
 | default scope | `build` and `test` leave discovery targets out of what they run by default; `buildl build //:pkgs` builds just that one |
 | two approvals | the discovery run and the build proper are each put to the approver. `interactive` asks the second time only about what the first yes did not cover |
 | a failure stops it | a discovery target that fails ends the command, and nothing is declared from it |
-| other commands | `plan`, `graph`, `check`, `query`, `doctor`, `verify` and `gc` never run a discovery target. They read the last result this checkout recorded |
+| other commands | `plan`, `graph`, `check`, `query`, `doctor`, `verify` and `gc` never run a discovery target to get the targets it declares. They read the last result this checkout recorded |
 | no discovery from discovery | the second pass must declare exactly the discovery targets the first did. One added, removed or changed is refused, with exit code 5 |
 
 The second load, and what each step does when something goes wrong, in more detail:
@@ -211,16 +211,16 @@ The second load, and what each step does when something goes wrong, in more deta
 ```mermaid
 %% build and test — the two passes, with the discovery run between them
 flowchart TD
-    L1["load, no results"] --> Q{"a discovery<br/>target?"}
-    Q -- no --> R1["resolve · record graph"] --> RUN
-    Q -- yes --> R0["resolve · record graph<br/>narrow to the discovery targets"]
-    R0 --> D["plan · negotiate · execute<br/>own approval, own summary"]
+    L1["load the build files,<br/>no results yet"] --> Q{"a discovery<br/>target?"}
+    Q -- no --> R1["check the graph, save it"] --> RUN
+    Q -- yes --> R0["check the graph, save it<br/>keep only the discovery targets"]
+    R0 --> D["plan · ask the approver · run<br/>its own approval and summary"]
     D --> F{"all succeeded?"}
-    F -- no --> STOP["return the discovery outcomes<br/>and nothing else"]
-    F -- yes --> RES["read the results<br/>unreadable: infrastructure error"]
-    RES --> L2["second load with the results<br/>same discovery targets, or DiscoveryChanged"]
-    L2 --> R2["resolve · record graph"] --> RUN
-    RUN["narrow to the scope · plan · negotiate · execute"]
+    F -- no --> STOP["report the discovery run<br/>and stop"]
+    F -- yes --> RES["read what they printed<br/>unreadable: exit code 3"]
+    RES --> L2["load again with the results<br/>other discovery targets: exit code 5"]
+    L2 --> R2["check the graph, save it"] --> RUN
+    RUN["keep the targets asked for · plan · ask the approver · run"]
 ```
 
 ## The depfile gap
