@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-10-28
 depends-on: [01]
 built-on: 053dd1fe3030
@@ -61,7 +61,7 @@ Sources: `docs/design.md:9-59` (design §1, §1.1, §2) and `README.md:1-30`.
 - The opener lists the chapter's three sections.
 - Installation gives two ways to install:
   - `cargo install --git https://github.com/airsstack/buildl buildl-cli --locked`;
-  - from a checkout, `cargo make install`, which runs `cargo install --path crates/buildl-cli --locked --force` (`Makefile.toml:385-389`).
+  - from a checkout, `cargo make install`, which runs `cargo install --path crates/buildl-cli --locked --force` (`Makefile.toml` `[tasks.install]`).
 - It also gives:
   - the Rust needed: the `rust-version` in `Cargo.toml` and the channel in `rust-toolchain.toml`;
   - `buildl --version` to confirm.
@@ -131,3 +131,40 @@ Sources: `docs/design.md:551-567` and `:587-601` (§9, §9.1, §9.3), and `examp
 - `cargo make book-build` exits 0.
 - The 1 `docs/` Mermaid diagrams this plan owns each appear as a ` ```mermaid ` block in the chapter named, and each such page renders `<pre class="mermaid">` in `book/book/`; open each page once in a browser (`cargo make book`) and confirm the diagram draws, not an error box: `docs/design.md:37` → `introduction.md`.
 - The spec §3 rows this plan lands are: design §1 and §1.1 (introduction), §2 (introduction), §3 (ch01-02), §7 (ch01-03), §9, §9.1 and §9.3 (ch02). Mark each one in the execution record.
+
+## Review findings
+
+- risk — `ch01-03`'s `doctor` transcript showed the session's scratch path (local user name and
+  session id) — `book/src/ch01-03-what-did-it-do.md:79`. Re-captured in `/tmp/buildl-book/hello`:
+  `workspace  /private/tmp/buildl-book/hello`, the rest identical, exit 0. Fixed.
+- nit — "Every `buildl` command runs the same pipeline" overstated (`log`, `clean`, `gc`,
+  `plugins` read no build file); now "Every command that reads the build files". Fixed.
+- nit — `ch02-00:77` said a command sees only its listed variables; now adds the variables buildl
+  pins, linking The Sandbox. Fixed.
+- nit — `ch01-01:4` "a couple of minutes"; now "several minutes" (the measured install took
+  2m02s). Fixed.
+- nit — Task 2 cited `Makefile.toml:385-389`, since moved; now cites `[tasks.install]`. Fixed.
+
+## Probe results
+
+- Task 2: `cargo install --git https://github.com/airsstack/buildl buildl-cli --locked --root
+  <scratch>/inst` exit 0 in 2m02s: ``Installed package `buildl-cli v0.1.0
+  (https://github.com/airsstack/buildl#d99e72c9)` (executable `buildl`)``; `inst/bin/buildl
+  --version` → `buildl 0.1.0`. Spec §8's "not verified" install line is now verified.
+- Task 3 smallest ceiling: removing each line makes `build` exit 4 naming it — `program sort is
+  outside the ceiling`, `input names.in is outside the ceiling`, `directory .buildl is outside the
+  ceiling`. A fresh copy of the page's files: `ok: 1 declaration in 1 build file`, `1 built`,
+  `ada mia zoe`, `1 cached`. Re-run independently by the reviewer: same output.
+- Introduction's "a build file that loops forever is stopped": `error: build.lua: instruction
+  ceiling reached: script `build.lua` exceeded its instruction limit of 10000000`, exit 5.
+- `introduction.html` renders one `<pre class="mermaid">`; opened in Chrome, the diagram draws
+  with all 7 nodes and no error box.
+- Spec §3 rows landed: design §1, §1.1, §2 → `introduction.md`; §3 → `ch01-02`; §7 → `ch01-03`;
+  §9, §9.1, §9.3 → `ch02-00`.
+
+## Deviations
+
+- 2026-10-28 — the introduction's diagram (from `docs/design.md:37`) labels the execute step "run
+  each action in a sandbox", not "run compilers": the binary sandboxes by default.
+- 2026-10-28 — transcripts that print a workspace path are captured under `/tmp/buildl-book/`, so
+  the book shows no local user or session path.

@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-10-28
 depends-on: [01]
 built-on: 053dd1fe3030
@@ -170,3 +170,49 @@ Sources: `docs/design.md:244-278` (§6).
 - These spec §3 rows land in this plan; mark each one in the execution record:
   - `docs/design.md`: §3 (ch03-02), §4 (ch04-02), §5 (ch03-01 to ch03-03), §6 (ch04-01, ch04-03), §9.5 (ch03-04), §9.6 (ch04-01), §10.2 (ch03-05), and §14's three settled rules (ch03-01, ch03-04; the plugin API rule goes to plan 05).
   - `docs/fundamental-walkthrough.md`: §4 (ch04-01).
+
+## Review findings
+
+- close-out — the execution record was missing; written here. Fixed.
+- nit — `ch03-01:171` and `ch04-01:35` ran past 100 characters; wrapped. Fixed.
+- nit — `ch03-03:109` stray blank line inside a console block; removed. Fixed.
+- nit — `ch04-03:66` `<workspace>.json` read as the workspace's name; the file is named from the
+  root path's bytes (`crates/buildl/src/approver/approvals.rs:38-40`); now "a JSON file named for
+  the workspace's location". Fixed.
+- nit — `ch04-01:19`, `ch04-02:68` said a build writes into `out`; now the output directory,
+  `out` unless `[workspace] out` names another. Fixed.
+- nit — `ch03-01:123` "canonical JSON" → "JSON with sorted keys, the same bytes every time". Fixed.
+
+## Probe results
+
+- `//lib` as a dep: `error: build.lua: declaration #2: invalid dep: invalid label: "//lib" — must
+  hold ':' and a target name`, exit 5. Re-run by the reviewer: same.
+- Input rule: `"lib/../README" — must not contain a '.' or '..' segment`, exit 5.
+- Toolbox: a build file raising `airsstack`'s sorted keys gives `buildl, glob, hash, json, path,
+  regex; one table: true`; source `crates/buildl-lua/src/engine.rs:29-34`. `glob.walk` and
+  `hash.hash_file` are refused ("none are granted").
+- `examples/polyglot` copy: `rdeps(//schema:gen)` gives the three programs; `build` → `4 built`.
+  An unnamed `extra/build.lua` is not read.
+- `plan --set greeting=goodbye` → `run //:message: setting greeting changed`; an undeclared `--set`
+  exits 2.
+- `curl` outside the ceiling: `program curl is outside the ceiling (proc.run allows: go)`, exit 4
+  from `plan` and `build`. A program a dependency built runs with only `go` in `proc.run`:
+  `2 built`. Re-run by the reviewer: same.
+- `[approver] kind = "deny"`: `build` exit 4; `doctor` exit 0. `interactive` with no terminal: exit
+  4, "no terminal to ask on"; the rest described from `crates/buildl/src/approver/` and
+  `crates/buildl-cli/src/console.rs`.
+- Diagrams: `ch03-04` ×1, `ch04-01` ×2 render `<pre class="mermaid">`; opened in Chrome from a
+  local build, each is an SVG with no error box (nodes 7, 5/12).
+- Spec §3 rows landed: design §3 → ch03-02; §4 → ch04-02; §5 → ch03-01 to ch03-03; §6 → ch04-01,
+  ch04-03; §9.5 → ch03-04; §9.6 → ch04-01; §10.2 → ch03-05; §14's label rule → ch03-01 and subdir
+  rule → ch03-04; walkthrough §4 → ch04-01.
+
+## Deviations
+
+- 2026-10-28 — the binary differs from `docs/`, and the book follows the binary: `graph` prints
+  JSON by default; a rule's `desc` shows only in the live status line; going back to a setting's
+  default runs the target again; refusals name the file and target, with no line number.
+- 2026-10-28 — `docs/fundamental-walkthrough.md:109`'s diagram is redrawn with the binary's real
+  refusal message and exit 4, and without the unused approver participant.
+- 2026-10-28 — transcripts that print paths are captured under `/tmp/buildl-book/` with `TMPDIR`
+  set there, so the book shows no local user or session path.

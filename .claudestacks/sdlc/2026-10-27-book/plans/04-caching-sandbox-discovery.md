@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-10-28
 depends-on: [01]
 built-on: 053dd1fe3030
@@ -144,3 +144,55 @@ Sources: `docs/design.md` §10's discovery text (`:663-758`), `docs/architecture
   | walkthrough | §3 | ch05-01 |
   | walkthrough | §5 | ch05-02 |
   | walkthrough | §6 | ch07 |
+
+## Review findings
+
+- wrong fact — `ch05-03:3-4` said a test target has no outputs; `b.test` accepts `outputs`
+  (`TEST_FIELDS`, `crates/buildl-lua/src/primitives.rs`). Now "no outputs unless it names some".
+  Fixed.
+- wrong fact — `ch07-00:206` listed `verify` among commands that never run a discovery target,
+  but `buildl verify //:pkgs` re-runs it. Now "never run a discovery target to get the targets it
+  declares". Fixed.
+- nit — `ch05-01:148,164` "the digest of each output" read as a file hash; now says it covers the
+  name, a hash of the bytes and the executable bit (`Produced::digest`). Fixed.
+- nit — `ch05-02:127` "other columns" → "other programs". Fixed.
+- nit — `sed -i ''` is the macOS form; `ch05-01` now says so once for the chapter. Fixed.
+- nit — `ch05-04:58` "same inputs give the same command" → "the same key, and so a cache hit".
+  Fixed.
+- nit — the `ch07` diagram carried from `docs/architecture.md:380` used internal terms
+  ("negotiate", "record graph", `DiscoveryChanged`); redrawn in plain words with exit codes 3 and
+  5 (`crates/buildl-cli/src/exit.rs:31,35`). Fixed.
+
+## Probe results
+
+- Plain `plan` after editing `main.go`: `run    //:hello: input main.go changed`; `plan --json`:
+  `"reason": {"Changed":[{"Input":"main.go"}]}`.
+- `examples/polyglot` comment edit: `plan` → `1 to run, 3 conditional, 0 clean` with `maybe` rows;
+  `build` → `1 built, 3 cached` (as `examples/polyglot/assert.sh` asserts). Re-run independently by
+  the reviewer: same.
+- `examples/go`: `tests: 1 passed`, then `tests: 1 passed (1 cached)`; `clean: removed out`;
+  `gc: dropped 1 row, removed 4 blobs (4059395 bytes)`; `verify` → `1 verified, 0 mismatched`; a
+  stamp target → `MISMATCH //:stamp.txt: output stamp.txt differs: bytes`; `--sample 1` →
+  `1 not sampled`.
+- Sandbox: an undeclared `notes.txt` read fails with `FileNotFoundError` in the sandbox and gives
+  `1 built` under `bare`. `strategy = "container"` / `"os-sandbox"`: `strategy is "container", and
+  this version of buildl runs "bare" and "sandbox" only: write strategy = "sandbox" under
+  [execution]`, exit 5.
+- `examples/go-discovery` after adding package `shout`: `tests: 4 passed (3 cached)`, as expected.
+- Diagrams: ch05-01 ×2, ch05-02 ×1, ch06 ×1, ch07 ×4 each render `<pre class="mermaid">`; opened
+  in Chrome from a local build, every one is an SVG with no error box (nodes 10/11, 5, 4,
+  5/11/13/6).
+- Spec §3 rows landed: design §7 → ch05-03, ch05-04; §8.3 → ch05-01; §10 (discovery) → ch07;
+  §12.2, §12.3 → ch06; architecture §3.6 → ch07; walkthrough §3 → ch05-01, §5 → ch05-02,
+  §6 → ch07.
+
+## Deviations
+
+- 2026-10-28 — transcripts are captured under `/tmp/buildl-book/` with `HOME` and `TMPDIR` set
+  there, so the book shows no local user or session path. The neutral `HOME` holds links to the
+  real Go SDK and Rust toolchains.
+- 2026-10-28 — diagrams redrawn: walkthrough:76 for `main.go` and `//:hello`; walkthrough:136 as
+  the real polyglot graph; design:949 with the strategy names and which are refused today;
+  architecture:380 in plain words (review).
+- 2026-10-28 — `ch05-01` (219 lines), `ch06` (217) and `ch07` (276) run past the ~150-line guide,
+  mostly from the full `plan --json` and ch07's four diagrams.

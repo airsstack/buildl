@@ -1,7 +1,8 @@
 ---
-status: approved
+status: executing
 created: 2026-10-28
 built-on: 053dd1fe3030
+disproves: 053dd1fe3030
 ---
 
 # Book Skeleton Implementation Plan
@@ -30,7 +31,7 @@ book/mermaid-init.js           — [create] written by `mdbook-mermaid install b
 book/src/SUMMARY.md            — [create] the table of contents: all 45 files below
 book/src/*.md (45 files)       — [create] one stub per chapter/section, holding only its `# Title`
 .gitignore                     — [modify] ignore `book/book/`
-Makefile.toml                  — [modify] `book`, `book-build` and `book-mermaid` tasks
+Makefile.toml                  — [modify] `book`, `book-build`, `book-mdbook` and `book-mermaid` tasks
 .github/workflows/ci.yml       — [modify] a `book` job
 .github/workflows/pages.yml    — [create] build and deploy the book to GitHub Pages
 ```
@@ -121,12 +122,13 @@ Makefile.toml                  — [modify] `book`, `book-build` and `book-merma
 
 **Files:** Modify `Makefile.toml`.
 
-**Change:** Add a `Book` section, modelled on `airsl/Makefile.toml:160-182`, with three tasks:
-- `book-mermaid`: installs `mdbook-mermaid` at exactly `0.16.2` through cargo-make's `install_crate = { crate_name = "mdbook-mermaid", binary = "mdbook-mermaid", test_arg = "--version", version = "0.16.2" }`.
-- `book`: `mdbook serve book --open`. It depends on `book-mermaid`.
-- `book-build`: `mdbook build book`. It depends on `book-mermaid`.
+**Change:** Add a `Book` section, modelled on `airsl/Makefile.toml:160-182`, with four tasks:
+- `book-mdbook`: a script that runs `mdbook --version` and, unless it prints `mdbook v0.4.52`, runs `cargo install mdbook --version 0.4.52 --locked --force`; if the binary on PATH is still not that version, it fails and names the binary.
+- `book-mermaid`: the same for `mdbook-mermaid` at exactly `0.16.2`.
+- `book`: `mdbook serve book --open`. It depends on `book-mdbook` and `book-mermaid`.
+- `book-build`: `mdbook build book`. It depends on `book-mdbook` and `book-mermaid`.
 
-Both `book` and `book-build` carry `install_crate = { crate_name = "mdbook", binary = "mdbook", test_arg = "--version", version = "0.4.52" }`. Use the exact `version` key, not airsl's `min_version` floor: under a floor, a missing `mdbook-mermaid` installs as 0.17.x, which needs mdBook 0.5. cargo-make documents the key at `README.md:2177-2183`: "If you want to ensure a specific version is used, you can define the **version** attribute instead".
+Versions are exact, not airsl's `min_version` floor: under a floor, a missing `mdbook-mermaid` installs as 0.17.x, which needs mdBook 0.5. cargo-make's `install_crate { …, version = … }` key is not used: the Task 2 probe (see `## Probe results`) showed it reads the version from cargo's install record, not from the binary on PATH. (Amended 2026-10-28 during execution.)
 
 The section's comment names the two other places the versions are pinned (`ci.yml` job `book`, `pages.yml`). Add `cargo make book` and `cargo make book-build` to the usage list in the header (`Makefile.toml:1-14`).
 
@@ -177,3 +179,41 @@ The header comment keeps airsl's two points: the site is deployed from an artifa
 - `cargo make book-build` exits 0 on a clean checkout.
 - One CI run on the branch (`gh workflow run ci.yml --ref worktree-prep-publish`) shows the `Book` job green. Every other job stays as it was.
 - `.gitignore` keeps `book/book/` out of `git status`.
+
+## Review findings
+
+- risk — the version-check scripts reinstalled on every run and still built with a wrong binary
+  first on PATH; each now re-checks after installing and fails naming the binary —
+  `Makefile.toml` `book-mdbook`/`book-mermaid`. Fixed; verified with the fake `mdbook v0.4.40`
+  first on PATH: `mdbook on PATH is …/fakebin/mdbook, not v0.4.52; put ~/.cargo/bin first`, exit 1.
+- nit — section comment said "Both tasks"; now names `book` and `book-build`. Fixed.
+- nit — `book-mermaid` description said "unless it is on PATH"; now "unless that version is the one
+  on PATH". Fixed.
+- nit — no blank line before `---` in `book/src/SUMMARY.md`; added. Fixed.
+- plan hygiene — Task 2 and the Files list still named `install_crate … version`; amended. Fixed.
+- spec hygiene — spec §4's `Makefile.toml` row (`spec.md:204`) names `install_crate … version` as
+  the mechanism; the probe below disproves it. Recorded as `disproves` in this plan's frontmatter;
+  the spec amendment is the `design` skill's.
+
+## Probe results
+
+- Claim (spec §4, plan Risks): cargo-make's `install_crate { version = "<v>" }` makes the task use
+  that version. Command: a fake `mdbook` printing `mdbook v0.4.40` first on PATH, then
+  `cargo make book-build`. Output: `Execute Command: "mdbook-mermaid" "--version"`,
+  `WARN - Unable to read currently installed version for crate: mdbook-mermaid`,
+  `Execute Command: "mdbook" "build" "book"`, `mdbook v0.4.40`. **Against the plan**: the key
+  reads cargo's install record (`~/.cargo/.crates.toml`), not the binary; the wrong `mdbook` ran
+  and nothing was installed.
+- `mdbook build book` exited 0; `ls book/src/*.md | wc -l` → `46`; `book/book/mermaid.min.js`
+  exists; `git status --short book/book` printed nothing.
+- `cargo make --list-all-steps` lists `book`, `book-build`, `book-mdbook`, `book-mermaid` under
+  `Book`; `cargo make book-build` exited 0.
+- `ruby -ryaml` parsed `ci.yml` and `pages.yml`.
+- CI run 40695748537 at `4028365`: the `Book` job and all 9 other jobs green.
+
+## Deviations
+
+- 2026-10-28 — Task 2 uses version-checking scripts (`book-mdbook`, `book-mermaid`) instead of
+  `install_crate`, per the plan's Risks fallback, after the probe above.
+- 2026-10-28 — `mdbook-mermaid` 0.16.2 was put on PATH by copying the binary built earlier into
+  the scratchpad, not by a second `cargo install`.
