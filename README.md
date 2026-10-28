@@ -4,7 +4,7 @@
 
 The positioning in one sentence: Lua where Starlark sits in Bazel [5], ninja's execution discipline underneath [4], and airsl's capability model as the trust layer neither of them has.
 
-> **Status: the core pipeline is built.** The `buildl` binary runs `check`, `graph`, `query`, `plan`, `build`, `test`, `verify`, `log`, `clean`, `gc`, `doctor`, `plugins fetch` and `watch` on a real workspace: it evaluates build files on airsl, in parallel, keys every target, runs what is dirty in parallel with its output captured, and keeps results in a local content-addressed store and action cache, so a second build runs nothing and a build repeated in another directory is byte-identical. Actions run by default at isolation tier 2, the input sandbox: each in a directory of its own outside the workspace, holding copies of its declared inputs and nothing else of the workspace, with `TZ`, `LC_ALL` and `SOURCE_DATE_EPOCH` fixed; tier 1, a plain process holding only its declared environment, runs on request. That is the first item of the [roadmap](#roadmap), with `query`, `test`, `log`, `clean`, `gc` and parallel loading from the second, the input sandbox and `verify` from the third, grant negotiation — the approver and `doctor` — from the fourth, plugins with discovery targets from the fifth, the remote cache from the sixth, watch mode from the seventh: `buildl watch` builds, then builds again when a file the build reads changes, reading the workspace anew each cycle, and remote execution from the eighth: with `execute` on, a target that neither the local cache nor the remote cache can serve is run by the server, and its result is checked and stored as a fetched one is and reported `remote`. The design and internal architecture are specified in [`design.md`](./docs/design.md) and [`architecture.md`](./docs/architecture.md). The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([design §10](./docs/design.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
+> **Status: the core pipeline is built.** The `buildl` binary runs `check`, `graph`, `query`, `plan`, `build`, `test`, `verify`, `log`, `clean`, `gc`, `doctor`, `plugins fetch` and `watch` on a real workspace: it evaluates build files on airsl, in parallel, keys every target, runs what is dirty in parallel with its output captured, and keeps results in a local content-addressed store and action cache, so a second build runs nothing and a build repeated in another directory is byte-identical. Actions run by default at isolation tier 2, the input sandbox: each in a directory of its own outside the workspace, holding copies of its declared inputs and nothing else of the workspace, with `TZ`, `LC_ALL` and `SOURCE_DATE_EPOCH` fixed; tier 1, a plain process holding only its declared environment, runs on request. That is the first item of the [roadmap](#roadmap), with `query`, `test`, `log`, `clean`, `gc` and parallel loading from the second, the input sandbox and `verify` from the third, grant negotiation — the approver and `doctor` — from the fourth, plugins with discovery targets from the fifth, the remote cache from the sixth, watch mode from the seventh: `buildl watch` builds, then builds again when a file the build reads changes, reading the workspace anew each cycle, and remote execution from the eighth: with `execute` on, a target that neither the local cache nor the remote cache can serve is run by the server, and its result is checked and stored as a fetched one is and reported `remote`. The design and internal architecture are described in [The buildl Book](./book/src/SUMMARY.md), whose [Under the Hood](./book/src/ch11-00-under-the-hood.md) part covers the internals. The one open correctness question — dynamic input discovery — is resolved: the mechanism is the discovery target ([discovery targets](./book/src/ch07-00-discovery-targets.md)), with fine-grained per-file C/C++ compilation out of scope for v1.
 
 ---
 
@@ -242,18 +242,16 @@ buildl/
     buildl-lua/                       # evaluates build.lua through airsl
     buildl/                           # adapters + composition root: the complete framework
     buildl-cli/                       # the `buildl` binary: thin clap shell
-  docs/
-    design.md                         # what buildl is and why
-    architecture.md                   # how each part works in Rust
-    architecture-building-blocks.md   # how the parts fit: C4 views, crates, ports
-    fundamental-walkthrough.md        # the design mapped onto build-system theory
+  book/
+    book.toml                         # The buildl Book (mdBook)
+    src/                              # its chapters, Under the Hood and the appendix
 ```
 
 Workspace policy is inherited verbatim from airsl [1]: `unsafe_code = "forbid"`, `unwrap_used` and `panic` denied, pedantic + nursery clippy at warn, every dependency commented with its reason.
 
 ## Roadmap
 
-Dependency-ordered, from [`design.md` §13](./docs/design.md); progress is tracked as claudestacks-sdlc chains grouped by the milestones of [`.claudestacks/sdlc/roadmaps/buildl/`](./.claudestacks/sdlc/roadmaps/buildl/). buildl is a **build system first** — the defining capability is answering *"does this need to run at all?"*; task-runner use is a degenerate case the model yields for free.
+Dependency-ordered, from the [roadmap](./.claudestacks/sdlc/roadmaps/buildl/roadmap.md); progress is tracked as claudestacks-sdlc chains grouped by the milestones of [`.claudestacks/sdlc/roadmaps/buildl/`](./.claudestacks/sdlc/roadmaps/buildl/). buildl is a **build system first** — the defining capability is answering *"does this need to run at all?"*; task-runner use is a degenerate case the model yields for free.
 
 1. **Core pipeline** — Load/Resolve/Plan/Execute/Record, `check`/`graph`/`plan`/`build`, local cache and cas; built
 2. **`query` (`deps()`, `rdeps()`)** — small work, transforms CI for large repos; with it the `test`, `log`, `clean` and `gc` commands, and parallel loading of build files; built
@@ -266,7 +264,7 @@ Dependency-ordered, from [`design.md` §13](./docs/design.md); progress is track
 
 ## Part of airsstack
 
-buildl is a project of the [airsstack](https://github.com/airsstack) ecosystem and is the first consumer of airsl's policy model, host-module seam, and (proposed) extension system. Design feedback is welcome — open an issue against `docs/design.md` or `docs/architecture.md`.
+buildl is a project of the [airsstack](https://github.com/airsstack) ecosystem and is the first consumer of airsl's policy model, host-module seam, and (proposed) extension system. Design feedback is welcome — open an issue.
 
 ## License
 
