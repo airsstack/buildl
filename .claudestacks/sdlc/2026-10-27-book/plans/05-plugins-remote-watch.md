@@ -2,7 +2,7 @@
 status: approved
 created: 2026-10-28
 depends-on: [01]
-built-on: 053dd1fe3030
+built-on: 136d5b098d7e
 ---
 
 # Plugins, Remote and Watch Chapters Implementation Plan
