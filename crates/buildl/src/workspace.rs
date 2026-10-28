@@ -914,7 +914,8 @@ mod tests {
             canonical::to_string(&graph).unwrap(),
             "{\"aliases\":{},\"settings\":{},\"targets\":{\"//:copy\":{\"deps\":[],\
              \"description\":null,\"env\":[],\"freshness\":\"Cached\",\"inputs\":[\"a.txt\"],\
-             \"network\":\"Sealed\",\"origin\":\"BuildFile\",\"outputs\":[\"copy\"],\"provenance\":{\"directory\":\"\",\
+             \"network\":\"Sealed\",\"origin\":\"BuildFile\",\"output_source\":\"Command\",\
+             \"outputs\":[\"copy\"],\"provenance\":{\"directory\":\"\",\
              \"file\":\"build.lua\"},\"role\":\"Build\",\"run\":[\"cp\",\"$in\",\"$out\"]}}}"
         );
         assert_eq!(names(&root), ["a.txt", "build.lua", "buildl.toml"]);

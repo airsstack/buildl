@@ -66,6 +66,48 @@ jobs:
       - name: cargo make dod
         run: cargo make dod
 
+  examples:
+    name: Examples
+    # Each example under examples/ is a workspace of its own, built and tested by
+    # the buildl binary with its language's toolchain. `remote` is left out: it needs
+    # a remote execution server.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the latest stable Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup show
+          cargo --version
+
+      - name: Cache cargo registry and target dir
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: examples-${{ matrix.os }}
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: examples/go/go.mod
+
+      # check.sh reads `plan --json` with python3, and the Python example builds with it.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: cargo make examples
+        run: cargo make examples
+
   deny:
     name: Supply chain
     runs-on: ubuntu-latest
@@ -94,6 +136,26 @@ jobs:
       # through cargo-make, so the promotion has to be written in both places.
       - name: cargo deny check
         run: cargo deny check -D unused-wrapper
+
+  book:
+    name: Book
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # pages.yml only builds the book after a merge, when a broken build would
+    # already be on main. This is the same build, on every pull request.
+    steps:
+      - uses: actions/checkout@v5
+
+      # Pinned to the versions the book is written against; keep in step with
+      # pages.yml and the book tasks in Makefile.toml. mdbook-mermaid 0.16.2 is
+      # the last release for mdBook 0.4.
+      - name: Install mdBook and mdbook-mermaid
+        uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.4.52,mdbook-mermaid@0.16.2
+
+      - name: mdbook build
+        run: mdbook build book
 
   msrv:
     name: Minimum supported Rust
@@ -223,3 +285,49 @@ jobs:
       - name: NativeLink's log
         if: failure()
         run: docker logs nativelink
+
+  examples-remote:
+    name: Remote example on NativeLink
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # examples/remote runs on a NativeLink server it starts itself with docker
+    # compose. Linux only, for the reason the remote-execution job gives.
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the latest stable Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: examples-remote
+
+      # The copies that build locally run python3, and so does assert.sh.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build buildl
+        run: cargo build -p buildl-cli
+
+      - name: Start the example's server
+        run: docker compose -f examples/remote/compose.yaml up -d --build
+
+      - name: Wait for NativeLink's worker
+        run: |
+          for _ in $(seq 60); do
+            if docker compose -f examples/remote/compose.yaml logs nativelink 2>&1 | grep -q 'Worker registered with scheduler'; then exit 0; fi
+            sleep 1
+          done
+          echo "NativeLink's worker did not register within 60 s" >&2
+          docker compose -f examples/remote/compose.yaml logs nativelink
+          exit 1
+
+      - name: The four copies
+        env:
+          BUILDL: target/debug/buildl
+        run: sh examples/remote/assert.sh
+
+      - name: NativeLink's log
+        if: failure()
+        run: docker compose -f examples/remote/compose.yaml logs nativelink

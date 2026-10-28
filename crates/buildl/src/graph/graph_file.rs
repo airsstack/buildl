@@ -59,8 +59,8 @@ mod tests {
 
     use buildl_core::{
         Action, Alias, Argument, Command, Declaration, Declared, Directory, Error, Freshness,
-        GraphRecord, Label, NetworkAccess, Origin, OutputName, PortName, Provenance, Target,
-        TargetGraph, TargetRole, resolve,
+        GraphRecord, Label, NetworkAccess, Origin, OutputName, OutputSource, PortName, Provenance,
+        Target, TargetGraph, TargetRole, resolve,
     };
 
     use super::GraphFile;
@@ -99,6 +99,7 @@ mod tests {
                     outputs: vec![OutputName::parse(name).unwrap()],
                     env: Vec::new(),
                     network: NetworkAccess::Sealed,
+                    output_source: OutputSource::Command,
                     freshness: Freshness::Cached,
                 }),
             )
@@ -137,11 +138,13 @@ mod tests {
             concat!(
                 r#"{"aliases":{"//:default":"//:app"},"settings":{},"targets":{"#,
                 r#""//:app":{"deps":["//:lib"],"description":null,"env":[],"#,
-                r#""freshness":"Cached","inputs":[],"network":"Sealed","origin":"BuildFile","outputs":["app"],"#,
+                r#""freshness":"Cached","inputs":[],"network":"Sealed","origin":"BuildFile","#,
+                r#""output_source":"Command","outputs":["app"],"#,
                 r#""provenance":{"directory":"","file":"build.lua"},"role":"Build","#,
                 r#""run":["cc"]},"#,
                 r#""//:lib":{"deps":[],"description":null,"env":[],"#,
-                r#""freshness":"Cached","inputs":[],"network":"Sealed","origin":"BuildFile","outputs":["lib"],"#,
+                r#""freshness":"Cached","inputs":[],"network":"Sealed","origin":"BuildFile","#,
+                r#""output_source":"Command","outputs":["lib"],"#,
                 r#""provenance":{"directory":"","file":"build.lua"},"role":"Build","#,
                 r#""run":["cc"]}}}"#
             )

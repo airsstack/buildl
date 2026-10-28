@@ -12,8 +12,9 @@
 //!   exactly as written, or the one failure that stopped it.
 //! - Installing the `buildl` module table, reachable from Lua both as `airsstack.buildl` and as
 //!   the global `buildl`: `target`, `test`, `discover`, `rule`, `alias`, `option`, `subdir`,
-//!   `sources`, `discovered`, which returns the result a discovery target last produced, and
-//!   `use`, which loads a plugin under an environment of its own.
+//!   `sources`, `discovered`, which returns the result a discovery target last produced,
+//!   `decode_all`, which returns the JSON values of a stream as a list, and `use`, which loads a
+//!   plugin under an environment of its own.
 //! - Keeping the declaration phase sandboxed: airsl's minimal language surface, no grant of any
 //!   kind, only the `json`, `path`, `regex`, `hash` and `glob` modules, and no `math.random`,
 //!   `math.randomseed`, `print` or `airsstack.path.absolute`, and with `tostring` and
@@ -43,6 +44,7 @@
 //! | `snapshot` | one-level copies of the library and module tables a plugin must not share |
 //! | `module` | the `buildl` host module, which raises refusals |
 //! | `plugin` | `buildl.use`: a plugin's manifest, environment, `require` and instances |
+//! | `decode_all` | `buildl.decode_all`: a stream of JSON values as a list |
 //! | `primitives` | each primitive's argument shape |
 //! | `values` | the Lua value readers every primitive shares |
 //! | `refusal` | why a primitive call was refused |
@@ -57,6 +59,7 @@
 
 mod classify;
 mod curated;
+mod decode_all;
 mod engine;
 mod limits;
 mod module;

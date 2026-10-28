@@ -13,20 +13,25 @@
 
 use airsl::mlua::Value;
 use buildl_core::{
-    Directory, EvaluationFailure, Freshness, Label, NetworkAccess, SettingName, StagedAlias,
-    StagedRule, StagedSetting, StagedTarget, TargetName, TargetRole, Written,
+    Directory, EvaluationFailure, Freshness, Label, NetworkAccess, OutputSource, SettingName,
+    StagedAlias, StagedRule, StagedSetting, StagedTarget, TargetName, TargetRole, Written,
 };
 
 use crate::refusal::Refusal;
 use crate::values::{closed, field, flag, list, optional_list, optional_text, string, table, text};
 
-/// The fields `buildl.target` and `buildl.test` accept, in the order they are read.
-const TARGET_FIELDS: [&str; 8] = [
+/// The fields `buildl.target` accepts, in the order they are read.
+const TARGET_FIELDS: [&str; 9] = [
+    "rule", "run", "inputs", "deps", "outputs", "env", "network", "stdout", "always",
+];
+/// The fields `buildl.test` accepts: those of a target, less `stdout`. A test is a record of its
+/// exit status and what it printed, so what it prints is never its output.
+const TEST_FIELDS: [&str; 8] = [
     "rule", "run", "inputs", "deps", "outputs", "env", "network", "always",
 ];
 /// The fields `buildl.discover` accepts: those of a target, less the two a discovery target
 /// does not take. Its one output is placed by buildl, and it is never always-run.
-const DISCOVER_FIELDS: [&str; 6] = ["rule", "run", "inputs", "deps", "env", "network"];
+const DISCOVER_FIELDS: [&str; 7] = ["rule", "run", "inputs", "deps", "env", "network", "stdout"];
 /// The fields `buildl.rule` accepts, in the order they are read.
 const RULE_FIELDS: [&str; 2] = ["run", "desc"];
 /// The fields `buildl.option` accepts.
@@ -56,7 +61,8 @@ fn target_fields(
     closed(
         &options,
         match role {
-            TargetRole::Build | TargetRole::Test => &TARGET_FIELDS[..],
+            TargetRole::Build => &TARGET_FIELDS[..],
+            TargetRole::Test => &TEST_FIELDS[..],
             TargetRole::Discovery => &DISCOVER_FIELDS[..],
         },
     )?;
@@ -72,6 +78,10 @@ fn target_fields(
         network: match flag(&field(&options, "network")?, "network")? {
             Some(true) => NetworkAccess::Declared,
             Some(false) | None => NetworkAccess::Sealed,
+        },
+        output_source: match flag(&field(&options, "stdout")?, "stdout")? {
+            Some(true) => OutputSource::Stdout,
+            Some(false) | None => OutputSource::Command,
         },
         freshness: match flag(&field(&options, "always")?, "always")? {
             Some(true) => Freshness::Always,
@@ -150,8 +160,8 @@ mod tests {
 
     use airsl::mlua::{Lua, Value};
     use buildl_core::{
-        Directory, EvaluationFailure, Freshness, Label, NetworkAccess, StagedAlias, StagedRule,
-        StagedSetting, StagedTarget, TargetRole, Written,
+        Directory, EvaluationFailure, Freshness, Label, NetworkAccess, OutputSource, StagedAlias,
+        StagedRule, StagedSetting, StagedTarget, TargetRole, Written,
     };
 
     use super::{alias, discovered, option, pattern, rule, subdir, target};
@@ -191,6 +201,7 @@ mod tests {
                 outputs: Some(strings(&["app"])),
                 env: strings(&["HOME"]),
                 network: NetworkAccess::Declared,
+                output_source: OutputSource::Command,
                 freshness: Freshness::Always,
             }
         );
@@ -217,7 +228,78 @@ mod tests {
                 outputs: None,
                 env: Vec::new(),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
                 freshness: Freshness::Cached,
+            }
+        );
+    }
+
+    #[test]
+    fn target_reads_stdout_as_the_output_source() {
+        let lua = Lua::new();
+        let stdout = |source: &str, role| {
+            target(&eval(&lua, "return 'gen'"), &eval(&lua, source), role)
+                .unwrap()
+                .output_source
+        };
+        assert_eq!(
+            stdout(
+                "return { run = { 'gen' }, stdout = true }",
+                TargetRole::Build
+            ),
+            OutputSource::Stdout
+        );
+        assert_eq!(
+            stdout(
+                "return { run = { 'gen' }, stdout = false }",
+                TargetRole::Build
+            ),
+            OutputSource::Command
+        );
+    }
+
+    #[test]
+    fn a_discovery_target_takes_stdout() {
+        let lua = Lua::new();
+        let staged = target(
+            &eval(&lua, "return 'pkgs'"),
+            &eval(&lua, "return { run = { 'list' }, stdout = true }"),
+            TargetRole::Discovery,
+        )
+        .unwrap();
+        assert_eq!(staged.output_source, OutputSource::Stdout);
+    }
+
+    #[test]
+    fn a_test_refuses_stdout() {
+        let lua = Lua::new();
+        let refusal = target(
+            &eval(&lua, "return 'app_test'"),
+            &eval(&lua, "return { run = { 't' }, stdout = true }"),
+            TargetRole::Test,
+        )
+        .unwrap_err();
+        assert_eq!(
+            refusal.failure(),
+            &EvaluationFailure::UnknownField {
+                field: Written::new("stdout"),
+            }
+        );
+    }
+
+    #[test]
+    fn stdout_must_be_a_boolean() {
+        let lua = Lua::new();
+        let refusal = target(
+            &eval(&lua, "return 'gen'"),
+            &eval(&lua, "return { run = { 'gen' }, stdout = 'yes' }"),
+            TargetRole::Build,
+        )
+        .unwrap_err();
+        assert_eq!(
+            refusal.failure(),
+            &EvaluationFailure::WrongFieldType {
+                field: Written::new("stdout"),
             }
         );
     }

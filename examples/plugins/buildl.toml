@@ -1,0 +1,18 @@
+[workspace]
+name   = "plugins"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["go"]
+env.read = ["HOME"]
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
+
+# A plugin kept in the workspace. Its targets may want at most what this table
+# allows, and what its own extension.toml allows, and what the ceiling allows.
+[plugins.gobin]
+path     = "plugins/gobin"
+proc.run = ["go"]
+env.read = ["HOME"]

@@ -1,0 +1,65 @@
+name: Pages
+
+# Publishes https://airsstack.github.io/buildl/: the book.
+#
+# Deployed from an Actions artifact rather than a branch, so the built site is
+# never committed and nothing but this workflow can change what is served. The
+# repository's Pages source must be set to "GitHub Actions" for the deploy job
+# to succeed.
+on:
+  push:
+    branches: [main]
+    paths:
+      - book/**
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time, and never cancel one halfway: a cancelled deploy can
+# leave the previous site half-replaced.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the site
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # Pinned to the versions the book is written against; keep in step with
+      # the `book` job in ci.yml and the book tasks in Makefile.toml.
+      - name: Install mdBook and mdbook-mermaid
+        uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.4.52,mdbook-mermaid@0.16.2
+
+      - name: Build the book
+        run: mdbook build book
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: book/book
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only this job can publish, and only through the OIDC token deploy-pages
+    # exchanges; the build job never holds either permission.
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

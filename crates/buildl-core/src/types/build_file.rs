@@ -15,7 +15,8 @@ use std::path::Path;
 
 use crate::types::{
     Argument, Description, Directory, EnvName, Freshness, Label, NetworkAccess, Origin, OutputName,
-    Provenance, SettingName, SettingValue, SourcePath, TargetName, TargetRole, Written,
+    OutputSource, Provenance, SettingName, SettingValue, SourcePath, TargetName, TargetRole,
+    Written,
 };
 
 /// The position of a call among the calls one build file made, counting from zero.
@@ -147,6 +148,8 @@ pub struct StagedTarget {
     pub env: Vec<Written<EnvName>>,
     /// The `network` field.
     pub network: NetworkAccess,
+    /// The `stdout` field.
+    pub output_source: OutputSource,
     /// The `always` field.
     pub freshness: Freshness,
 }

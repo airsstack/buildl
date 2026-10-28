@@ -12,7 +12,7 @@ use buildl_core::{
     ContentStore, DeclarationOrder, DeclarationSource, Diagnostic, Digest, Digester, Directory,
     Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EvaluationFailure, EventLog,
     ExecStrategy, Exit, FileStat, Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest,
-    NetworkAccess, Origin, OutcomeEvent, OutputPath, Platform, PluginName, PluginRef,
+    NetworkAccess, Origin, OutcomeEvent, OutputPath, OutputSource, Platform, PluginName, PluginRef,
     PluginVersion, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory,
     SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
     StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver,
@@ -699,6 +699,7 @@ pub enum Leaf {
 /// An unscripted action exits with zero, prints its label and a newline to standard output and
 /// nothing to standard error, and leaves at each output path text made of its label, the path
 /// and the digest of each of its inputs — so the output changes exactly when an input does.
+/// The action of a target whose output is its standard output leaves nothing at its output path.
 #[derive(Debug, Clone, Default)]
 pub struct Script {
     /// How the action goes.
@@ -861,11 +862,13 @@ impl ExecStrategy for FakeStrategy {
         }
         let mut entries = Vec::new();
         for path in &action.outputs {
-            let content = script
-                .outputs
-                .get(path)
-                .cloned()
-                .unwrap_or_else(|| Content::Holds(self.unscripted(action, path)));
+            let content = script.outputs.get(path).cloned().unwrap_or_else(|| {
+                if action.output_source == OutputSource::Stdout {
+                    Content::Missing
+                } else {
+                    Content::Holds(self.unscripted(action, path))
+                }
+            });
             entries.push(match content {
                 Content::Holds(bytes) => Found::File(stored(cas, &bytes, FileMode::Plain)?),
                 Content::Missing => Found::Nothing,
@@ -1133,6 +1136,19 @@ impl Held {
         }
     }
 
+    /// A successful run of a stdout target that printed `stdout` and left nothing at its path.
+    #[must_use]
+    pub fn printed(stdout: &[u8]) -> Self {
+        Self {
+            outputs: Vec::new(),
+            stdout: stdout.to_vec(),
+            stderr: Vec::new(),
+            exit_code: 0,
+            symlinks: Vec::new(),
+            directories: Vec::new(),
+        }
+    }
+
     /// The bytes of the tree that lists the output directory `at`.
     fn tree_bytes(at: &OutputPath) -> Vec<u8> {
         format!("the tree of {at}").into_bytes()
@@ -1164,6 +1180,16 @@ impl Held {
             stderr: (!self.stderr.is_empty()).then(|| Blob::of(&self.stderr)),
         }
     }
+}
+
+/// Whether the results a [`FakeRemote`] answers with name the blob of standard output.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub enum StdoutDigest {
+    /// They do.
+    #[default]
+    Named,
+    /// They leave it out, as a server that does not send it does.
+    Omitted,
 }
 
 /// What a [`FakeRemote`] answers when it is asked to run the action of a target.
@@ -1235,6 +1261,8 @@ pub struct FakeRemote {
     pub download_fails: bool,
     /// Blobs it serves with other bytes than the ones they are named for, by digest.
     pub tampered: BTreeMap<Digest, Vec<u8>>,
+    /// Whether the results it answers with name the standard output blob.
+    pub stdout_digest: StdoutDigest,
     /// Whether every upload fails.
     pub upload_fails: bool,
     /// The input file every upload answers has changed since its digest was taken, when set.
@@ -1250,6 +1278,15 @@ pub struct FakeRemote {
 impl FakeRemote {
     fn calls(&self) -> MutexGuard<'_, RemoteCalls> {
         self.calls.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// `held` as this remote answers with it.
+    fn answer(&self, held: &Held) -> RemoteHit {
+        let mut hit = held.hit();
+        if self.stdout_digest == StdoutDigest::Omitted {
+            hit.stdout = None;
+        }
+        hit
     }
 
     /// Every action it was asked about, in the order asked.
@@ -1335,7 +1372,7 @@ impl RemoteCache for FakeRemote {
         let Some(held) = action.outputs.first().and_then(|at| self.holds.get(at)) else {
             return Ok(None);
         };
-        Ok(Some(held.hit()))
+        Ok(Some(self.answer(held)))
     }
 
     fn download(&self, blobs: &[Blob]) -> Result<Vec<Vec<u8>>> {
@@ -1385,8 +1422,8 @@ impl RemoteCache for FakeRemote {
         self.calls().executions.push(action.clone());
         let run = action.outputs.first().and_then(|at| self.runs.get(at));
         match run {
-            Some(Runs::Ran(held)) => Ok(Executed::Ran(held.hit())),
-            Some(Runs::Cached(held)) => Ok(Executed::Cached(held.hit())),
+            Some(Runs::Ran(held)) => Ok(Executed::Ran(self.answer(held))),
+            Some(Runs::Cached(held)) => Ok(Executed::Cached(self.answer(held))),
             Some(Runs::TimedOut(stdout)) => Ok(Executed::TimedOut {
                 stdout: stdout.as_deref().map(Blob::of),
                 stderr: None,
@@ -1615,6 +1652,12 @@ pub fn target(name: &str, deps: &[&str]) -> StagedItem {
     })
 }
 
+/// A `b.target(name, { run = { "cc" }, stdout = true })` call: its output is what it prints.
+#[must_use]
+pub fn stdout_target(name: &str) -> StagedItem {
+    target_with(name, |target| target.output_source = OutputSource::Stdout)
+}
+
 /// A `b.target(name, { run = { "cc" } })` call, after `change` is applied to it.
 #[must_use]
 pub fn target_with(name: &str, change: impl FnOnce(&mut StagedTarget)) -> StagedItem {
@@ -1628,6 +1671,7 @@ pub fn target_with(name: &str, change: impl FnOnce(&mut StagedTarget)) -> Staged
         outputs: None,
         env: Vec::new(),
         network: NetworkAccess::Sealed,
+        output_source: OutputSource::Command,
         freshness: Freshness::Cached,
     };
     change(&mut target);
@@ -1775,9 +1819,9 @@ mod tests {
         ActionCache, ActionKey, ActionOutcome, Argument, CacheRow, Captured, Channel, Clock,
         Command, ContentStore, Digest, Directory, Discovered, Dispatcher, EntryName, Error,
         EventLog, ExecStrategy, Exit, GraphRecord, KeyComponents, Label, NetworkAccess,
-        OutcomeClass, OutcomeEvent, OutputName, OutputPath, OwnComponents, Platform, PortName,
-        Provenance, ReadyAction, Reporter, SourcePath, Summary, Tally, TargetGraph, TargetRole,
-        Timestamp, json, load, resolve,
+        OutcomeClass, OutcomeEvent, OutputName, OutputPath, OutputSource, OwnComponents, Platform,
+        PortName, Provenance, ReadyAction, Reporter, SourcePath, Summary, Tally, TargetGraph,
+        TargetRole, Timestamp, json, load, resolve,
     };
 
     use super::{
@@ -1818,6 +1862,7 @@ mod tests {
             deps: Vec::new(),
             outputs: outputs.iter().map(|name| out_path(raw, name)).collect(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
         }
     }
 
@@ -1866,6 +1911,7 @@ mod tests {
                 tool: None,
                 settings: BTreeMap::new(),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
                 platform: Platform::parse("linux/x86_64").unwrap(),
             },
             deps: Vec::new(),

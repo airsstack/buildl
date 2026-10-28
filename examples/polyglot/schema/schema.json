@@ -1,0 +1,5 @@
+{
+  "comment": "The values every program prints. The generator ignores this line.",
+  "version": "1.0",
+  "greeting": "hello from the schema"
+}

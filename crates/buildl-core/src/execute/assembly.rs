@@ -295,6 +295,7 @@ fn ready(
         deps,
         outputs: outputs.to_vec(),
         network: node.network,
+        output_source: node.output_source,
     }
 }
 

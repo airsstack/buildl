@@ -1,8 +1,8 @@
 #
 # Purity bans for buildl-core.
 #
-# architecture-building-blocks.md §1.2: this crate may use `std`, excluding its
-# I/O, process, thread, environment and clock APIs. The crate boundary does not
+# book/src/ch11-03-four-crates.md, what buildl-core may depend on: this crate
+# may use `std`, excluding its I/O, process, thread, environment and clock APIs. The crate boundary does not
 # enforce that — `std` is in scope for every crate — so the rule is enumerated
 # here and asserted by `cargo make guard-core-purity`.
 #
@@ -15,10 +15,10 @@
 # that would silence one, `allow-invalid = true` on a ban entry, and a
 # crate-local `[lints]` override in this crate's Cargo.toml. The documented path
 # for a legitimate need is to move the call into an adapter behind a port, or —
-# failing that — to delete the entry, amend §1.2 and add a decision record to
-# architecture.md §6.
+# failing that — to delete the entry, amend book/src/ch11-03-four-crates.md and add a decision
+# record to book/src/ch11-06-decision-records.md.
 #
-# Derivation and per-family counts: docs/architecture-building-blocks.md §1.2.
+# Derivation and per-family counts: book/src/ch11-03-four-crates.md.
 #
 disallowed-methods = [
     { path = "std::fs::read", reason = "the filesystem is the Storage port's; buildl-core reads and writes nothing" },
@@ -130,9 +130,9 @@ disallowed-types = [
     { path = "std::thread::Thread", reason = "scheduling is the executor adapter's; core logic is single-threaded and pure" },
     { path = "std::thread::LocalKey", reason = "scheduling is the executor adapter's; core logic is single-threaded and pure" },
     { path = "std::thread::AccessError", reason = "scheduling is the executor adapter's; core logic is single-threaded and pure" },
-    { path = "std::time::Instant", reason = "the wall clock is the Clock port's (architecture.md §5 rule 4)" },
-    { path = "std::time::SystemTime", reason = "the wall clock is the Clock port's (architecture.md §5 rule 4)" },
-    { path = "std::time::SystemTimeError", reason = "the wall clock is the Clock port's (architecture.md §5 rule 4)" },
+    { path = "std::time::Instant", reason = "the wall clock is the Clock port's (book/src/ch11-05-determinism-rules.md rule 4)" },
+    { path = "std::time::SystemTime", reason = "the wall clock is the Clock port's (book/src/ch11-05-determinism-rules.md rule 4)" },
+    { path = "std::time::SystemTimeError", reason = "the wall clock is the Clock port's (book/src/ch11-05-determinism-rules.md rule 4)" },
     { path = "std::io::Stdin", reason = "the standard streams are the Reporter port's" },
     { path = "std::io::Stdout", reason = "the standard streams are the Reporter port's" },
     { path = "std::io::Stderr", reason = "the standard streams are the Reporter port's" },
@@ -146,8 +146,8 @@ disallowed-types = [
     { path = "std::os::unix::fs::FileTypeExt", reason = "platform filesystem extensions belong to an adapter, never to core" },
     { path = "std::os::unix::fs::DirEntryExt", reason = "platform filesystem extensions belong to an adapter, never to core" },
     { path = "std::os::unix::fs::DirBuilderExt", reason = "platform filesystem extensions belong to an adapter, never to core" },
-    { path = "f32", reason = "no float reaches canonical JSON; a non-finite float serializes as `null`, which would make an action key disagree with the value it was computed from (architecture.md §5 rule 2)" },
-    { path = "f64", reason = "no float reaches canonical JSON; a non-finite float serializes as `null`, which would make an action key disagree with the value it was computed from (architecture.md §5 rule 2)" },
+    { path = "f32", reason = "no float reaches canonical JSON; a non-finite float serializes as `null`, which would make an action key disagree with the value it was computed from (book/src/ch11-05-determinism-rules.md rule 2)" },
+    { path = "f64", reason = "no float reaches canonical JSON; a non-finite float serializes as `null`, which would make an action key disagree with the value it was computed from (book/src/ch11-05-determinism-rules.md rule 2)" },
 ]
 
 disallowed-macros = [

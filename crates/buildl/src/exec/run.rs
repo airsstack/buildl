@@ -105,7 +105,9 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
 
-    use buildl_core::{Argument, Command, EnvName, EnvValue, Label, NetworkAccess, ReadyAction};
+    use buildl_core::{
+        Argument, Command, EnvName, EnvValue, Label, NetworkAccess, OutputSource, ReadyAction,
+    };
 
     use super::start;
     use crate::search_path::SearchPath;
@@ -124,6 +126,7 @@ mod tests {
             deps: Vec::new(),
             outputs: Vec::new(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
         }
     }
 

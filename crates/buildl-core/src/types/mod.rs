@@ -217,8 +217,8 @@ pub use check::{Check, EntryChange, FileChange, OutputDifference};
 pub use checkup::Checkup;
 pub use cycle::{Cycle, Watched};
 pub use declaration::{
-    Action, Alias, Declaration, Declared, Freshness, NetworkAccess, Rule, Setting, Target,
-    TargetRole,
+    Action, Alias, Declaration, Declared, Freshness, NetworkAccess, OutputSource, Rule, Setting,
+    Target, TargetRole,
 };
 pub use description::{Description, ExpandedDescription};
 pub use diagnostic::Diagnostic;

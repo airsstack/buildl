@@ -176,8 +176,8 @@ mod tests {
 
     use buildl_core::{
         DeclarationOrder, Diagnostic, EvaluationFailure, EvaluationLimit, Freshness, NetworkAccess,
-        Origin, PluginName, PluginRef, PluginVersion, StagedAlias, StagedItem, StagedRule,
-        StagedSetting, StagedSubdir, StagedTarget, TargetRole, Written,
+        Origin, OutputSource, PluginName, PluginRef, PluginVersion, StagedAlias, StagedItem,
+        StagedRule, StagedSetting, StagedSubdir, StagedTarget, TargetRole, Written,
     };
 
     use super::{Exceeded, Staging, item_bytes, record_size};
@@ -292,6 +292,7 @@ mod tests {
             outputs: Some(vec![Written::new("app")]),
             env: vec![Written::new("HOME")],
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
             freshness: Freshness::Cached,
         });
         assert_eq!(item_bytes(&target), 3 + 2 + 2 + 2 + 3 + 10 + 3 + 4);

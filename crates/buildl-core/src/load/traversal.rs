@@ -24,9 +24,9 @@ use crate::error::{ActionFound, DeclarationField, Error, NameKind, Result};
 use crate::ports::{DeclarationSource, Dispatcher};
 use crate::types::{
     Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
-    Directory, Discovered, EntryName, Freshness, Label, Origin, OutputName, Provenance, Rule,
-    Setting, SourcePath, StagedAlias, StagedDeclaration, StagedItem, StagedRule, StagedSetting,
-    StagedSubdir, StagedTarget, Target, TargetName, TargetRole, Turn, Written,
+    Directory, Discovered, EntryName, Freshness, Label, Origin, OutputName, OutputSource,
+    Provenance, Rule, Setting, SourcePath, StagedAlias, StagedDeclaration, StagedItem, StagedRule,
+    StagedSetting, StagedSubdir, StagedTarget, Target, TargetName, TargetRole, Turn, Written,
 };
 
 /// Evaluates the workspace's build files and returns their declarations, validated and sorted.
@@ -265,6 +265,14 @@ fn convert_target(staged: StagedTarget, site: &Site<'_>) -> Result<Target> {
             ],
         },
     };
+    if staged.output_source == OutputSource::Stdout && outputs.len() != 1 {
+        return Err(site.invalid(DeclarationField::Stdout)(
+            Error::StdoutOutputs {
+                target: label,
+                outputs: outputs.len(),
+            },
+        ));
+    }
     let mut env = Vec::with_capacity(staged.env.len());
     for name in &staged.env {
         env.push(name.parse().map_err(site.invalid(DeclarationField::Env))?);
@@ -278,6 +286,7 @@ fn convert_target(staged: StagedTarget, site: &Site<'_>) -> Result<Target> {
         outputs,
         env,
         network: staged.network,
+        output_source: staged.output_source,
         freshness: staged.freshness,
     })
 }
@@ -348,9 +357,9 @@ mod tests {
     use crate::error::{ActionFound, DeclarationField, Error};
     use crate::types::{
         Action, Declaration, DeclarationOrder, Declared, Directory, EntryName, Freshness, Label,
-        NetworkAccess, Origin, OutputName, PluginName, PluginRef, PluginVersion, Provenance,
-        StagedAlias, StagedDeclaration, StagedItem, StagedRule, StagedSetting, StagedSubdir,
-        StagedTarget, Target, TargetRole, Written,
+        NetworkAccess, Origin, OutputName, OutputSource, PluginName, PluginRef, PluginVersion,
+        Provenance, StagedAlias, StagedDeclaration, StagedItem, StagedRule, StagedSetting,
+        StagedSubdir, StagedTarget, Target, TargetRole, Written,
     };
 
     fn file_in(directory: &str) -> Provenance {
@@ -374,6 +383,7 @@ mod tests {
             outputs: None,
             env: Vec::new(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
             freshness: Freshness::Cached,
         }
     }
@@ -510,6 +520,62 @@ mod tests {
                 other => unreachable!("expected InvalidDeclaration, got {other:?}"),
             }
         }
+    }
+
+    #[test]
+    fn a_stdout_target_with_two_outputs_is_refused() {
+        let mut staged = staged_target("gen");
+        staged.output_source = OutputSource::Stdout;
+        staged.outputs = Some(vec![Written::new("a.txt"), Written::new("b.txt")]);
+        let err = convert_target_in("svc", staged).unwrap_err();
+        match &err {
+            Error::InvalidDeclaration { field, .. } => {
+                assert_eq!(*field, DeclarationField::Stdout);
+            }
+            other => unreachable!("expected InvalidDeclaration, got {other:?}"),
+        }
+        let rendered = err.to_string();
+        assert!(rendered.contains("invalid stdout: "), "{rendered}");
+        assert!(rendered.contains("//svc:gen"), "{rendered}");
+        assert!(rendered.contains("2 outputs"), "{rendered}");
+    }
+
+    #[test]
+    fn a_stdout_target_with_no_output_is_refused() {
+        let mut staged = staged_target("gen");
+        staged.output_source = OutputSource::Stdout;
+        staged.outputs = Some(Vec::new());
+        let err = convert_target_in("svc", staged).unwrap_err();
+        match &err {
+            Error::InvalidDeclaration { field, .. } => {
+                assert_eq!(*field, DeclarationField::Stdout);
+            }
+            other => unreachable!("expected InvalidDeclaration, got {other:?}"),
+        }
+        let rendered = err.to_string();
+        assert!(rendered.contains("invalid stdout: "), "{rendered}");
+        assert!(rendered.contains("//svc:gen"), "{rendered}");
+        assert!(rendered.contains("0 outputs"), "{rendered}");
+    }
+
+    #[test]
+    fn a_stdout_target_with_one_output_is_accepted() {
+        let mut named = staged_target("gen");
+        named.output_source = OutputSource::Stdout;
+        named.outputs = Some(vec![Written::new("gen.txt")]);
+        let declaration = convert_target_in("svc", named).unwrap();
+        assert_eq!(target_of(&declaration).output_source, OutputSource::Stdout);
+
+        let mut defaulted = staged_target("gen");
+        defaulted.output_source = OutputSource::Stdout;
+        let declaration = convert_target_in("svc", defaulted).unwrap();
+        assert_eq!(target_of(&declaration).outputs.len(), 1);
+
+        let mut discovery = staged_target("pkgs");
+        discovery.role = TargetRole::Discovery;
+        discovery.output_source = OutputSource::Stdout;
+        let declaration = convert_target_in("svc", discovery).unwrap();
+        assert_eq!(target_of(&declaration).output_source, OutputSource::Stdout);
     }
 
     #[test]

@@ -54,7 +54,8 @@ impl Exit {
             OutcomeClass::ActionFailure { .. }
             | OutcomeClass::Killed { .. }
             | OutcomeClass::OutputMissing { .. }
-            | OutcomeClass::OutputRefused { .. } => Self::ActionFailure,
+            | OutcomeClass::OutputRefused { .. }
+            | OutcomeClass::OutputWritten { .. } => Self::ActionFailure,
             OutcomeClass::InfraFailure { .. } => Self::Infrastructure,
             _ => Self::Internal,
         }
@@ -144,6 +145,7 @@ impl Exit {
             | Error::PluginChanged { .. } => Self::CorruptState,
             Error::InvalidName { .. }
             | Error::NotAccepted { .. }
+            | Error::StdoutOutputs { .. }
             | Error::CanonicalJson { .. }
             | Error::FloatRejected { .. }
             | Error::ForeignPlan
@@ -567,12 +569,30 @@ mod tests {
                 Exit::ActionFailure,
             ),
             (
+                OutcomeClass::OutputWritten {
+                    name: OutputName::parse("listing").unwrap(),
+                },
+                Exit::ActionFailure,
+            ),
+            (
                 OutcomeClass::InfraFailure {
                     kind: InfraKind::TimedOut,
                 },
                 Exit::Infrastructure,
             ),
         ]
+    }
+
+    #[test]
+    fn output_written_is_an_action_failure() {
+        let written = OutcomeClass::OutputWritten {
+            name: OutputName::parse("listing").unwrap(),
+        };
+        assert_eq!(Exit::of_class(&written), Exit::ActionFailure);
+        assert_eq!(
+            Exit::of_outcomes(&[ended(OutcomeClass::Built), ended(written)]),
+            Exit::ActionFailure
+        );
     }
 
     #[test]

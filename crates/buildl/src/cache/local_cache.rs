@@ -182,7 +182,8 @@ mod tests {
 
     use buildl_core::{
         ActionCache, ActionKey, Argument, CacheRow, Command, Digest, Directory, Error,
-        KeyComponents, Label, NetworkAccess, OutputName, OwnComponents, Platform, PortName,
+        KeyComponents, Label, NetworkAccess, OutputName, OutputSource, OwnComponents, Platform,
+        PortName,
     };
 
     use super::LocalCache;
@@ -214,6 +215,7 @@ mod tests {
                 tool: None,
                 settings: BTreeMap::new(),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
                 platform: Platform::parse("linux/x86_64").unwrap(),
             },
             deps: Vec::new(),
@@ -228,7 +230,7 @@ mod tests {
     fn written(name: &str, key: &str, output: &str) -> String {
         [
             r#"{"key":{"components":{"deps":[],"own":{"command":["cc"],"env":{},"inputs":[],"#,
-            r#""network":"Sealed","outputs":[""#,
+            r#""network":"Sealed","output_source":"Command","outputs":[""#,
             name,
             r#""],"platform":"linux/x86_64","settings":{},"tool":null}},"digest":""#,
             key,
@@ -244,7 +246,7 @@ mod tests {
     fn written_a() -> String {
         written(
             "a",
-            "c39a0161a4194c4ef0cedffc45bb82fdea72693ef4b6cc1f36177bed109be4d7",
+            "06ff22740d6f5f789d0a8f80e0ff1cc7a5177a3747ab772ac1cb4a409b6db82f",
             "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
         )
     }
@@ -253,7 +255,7 @@ mod tests {
     fn written_b() -> String {
         written(
             "b",
-            "74b4485d5a6d40dc17ae98fd2b5dc4979cdf3bbd33288c24dbad18927a330ed8",
+            "ae55ab4380cf4f86aa8fbe640660bccc3946276babd1f9d8e2d75156268c5c24",
             "3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d",
         )
     }
@@ -262,7 +264,7 @@ mod tests {
     fn written_c() -> String {
         written(
             "c",
-            "d110aa5671e75762b1cc66260c40a2309b8c6fb40944b8368a6e5cf7d351e2e9",
+            "500a943e2c8dba30dedc3181722445a245d0d206b1161d95796b407f26bf6e78",
             "2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25aefc6",
         )
     }
@@ -543,7 +545,7 @@ mod tests {
     fn a_damaged_journal_line_is_refused_naming_the_journal() {
         let (_dir, layout) = workspace();
         // The first line's key no longer has the digest written beside it.
-        let damaged = line("a", &written_a()).replacen("c39a0161", "c39a0162", 1);
+        let damaged = line("a", &written_a()).replacen("06ff2274", "06ff2275", 1);
         let journal = format!("{damaged}\n{}\n", line("b", &written_b()));
         fs::write(layout.journal(), &journal).unwrap();
 

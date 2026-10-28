@@ -1,0 +1,9 @@
+[package]
+name = "hello"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# A workspace of its own: without this table, cargo run inside a checkout of the
+# buildl repository would take the package for an unlisted member of buildl's workspace.
+[workspace]

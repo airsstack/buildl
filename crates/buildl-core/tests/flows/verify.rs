@@ -17,8 +17,8 @@ use buildl_core::{
 
 use crate::common::{
     Answer, Content, Ends, FakeApprover, FakeContent, FakePorts, FakeSource, Loss, Script, Touch,
-    dir, ending, file, label, ports, program, root_only, script, target, target_with, tree,
-    workspace,
+    dir, ending, file, label, ports, program, root_only, script, stdout_target, target,
+    target_with, tree, workspace,
 };
 
 fn entry() -> EntryName {
@@ -150,6 +150,44 @@ fn a_target_whose_rerun_writes_other_bytes_is_mismatched_naming_the_output() {
         }
     );
     assert_eq!(check(&verification, "//:docs"), &Check::Verified);
+}
+
+/// A script in which the action prints `stdout`.
+fn printing(stdout: &[u8]) -> Script {
+    Script {
+        stdout: Some(stdout.to_vec()),
+        ..Script::default()
+    }
+}
+
+#[test]
+fn verify_reruns_a_stdout_target_and_finds_it_identical() {
+    let mut pipeline = root_only(vec![stdout_target("listing")]);
+    script(&mut pipeline, "//:listing", printing(b"one\n"));
+    build(&mut pipeline);
+
+    let verification = verify(&mut pipeline);
+
+    assert_eq!(check(&verification, "//:listing"), &Check::Verified);
+    assert_eq!(pipeline.ports().strategy.runs(&label("//:listing")), 2);
+}
+
+#[test]
+fn verify_names_a_stdout_target_that_prints_differently() {
+    let mut pipeline = root_only(vec![stdout_target("listing")]);
+    script(&mut pipeline, "//:listing", printing(b"one\n"));
+    build(&mut pipeline);
+    script(&mut pipeline, "//:listing", printing(b"two\n"));
+
+    let verification = verify(&mut pipeline);
+
+    assert_eq!(
+        check(&verification, "//:listing"),
+        &Check::Mismatched {
+            output: OutputName::parse("listing").unwrap(),
+            difference: OutputDifference::File(FileChange::Bytes),
+        }
+    );
 }
 
 #[test]

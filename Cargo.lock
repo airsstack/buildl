@@ -193,6 +193,8 @@ dependencies = [
  "airsl",
  "buildl-core",
  "globset",
+ "serde",
+ "serde_json",
  "tempfile",
  "walkdir",
 ]

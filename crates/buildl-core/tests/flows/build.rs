@@ -20,7 +20,7 @@ use buildl_core::{LiveOutput, Scope};
 use crate::common::{
     Answer, Content, Ends, FakeApprover, FakeContent, FakeFile, FakePorts, FakeSource, Leaf, Loss,
     Order, Script, classes, dir, ending, expected, file, file_by, label, plugin, ports, program,
-    root_only, rule, script, setting, skipped, target, target_with, tree, workspace,
+    root_only, rule, script, setting, skipped, stdout_target, target, target_with, tree, workspace,
 };
 
 /// The events of [`two_directories`] built once, one canonical JSON object per line, pinned.
@@ -787,6 +787,112 @@ fn every_way_an_action_can_fail_is_a_class_of_its_own_and_none_is_recorded() {
             "a worker began {raw}"
         );
     }
+}
+
+/// A workspace of one target, `//:listing`, whose output is what its command prints.
+fn printing(stdout: &[u8]) -> Pipeline<FakePorts> {
+    let mut pipeline = root_only(vec![stdout_target("listing")]);
+    let printing = Script {
+        stdout: Some(stdout.to_vec()),
+        ..Script::default()
+    };
+    script(&mut pipeline, "//:listing", printing);
+    pipeline
+}
+
+#[test]
+fn a_stdout_target_builds_from_what_it_printed() {
+    let mut pipeline = printing(b"one\ntwo\n");
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    let built = outcome(&outcomes, "//:listing");
+    assert_eq!(built.class, OutcomeClass::Built);
+    let printed = Digest::of(b"one\ntwo\n");
+    assert_eq!(built.stdout, Some(printed));
+    assert_eq!(built.outputs.len(), 1);
+    let file = file_of(&pipeline, &built.outputs[0].digest);
+    assert_eq!(file.digest, printed, "the output is the captured stdout");
+    assert_eq!(file.mode, FileMode::Plain);
+    let ports = pipeline.ports();
+    assert_eq!(ports.cas.blob(&printed), Some(b"one\ntwo\n".to_vec()));
+    let row = ports.cache.rows.get(&label("//:listing")).unwrap();
+    assert_eq!(
+        row.stdout(),
+        file.digest,
+        "the row and the output share a blob"
+    );
+    assert_eq!(
+        ports.cas.placed().get(&out("//:listing", "listing")),
+        Some(&printed)
+    );
+}
+
+#[test]
+fn a_stdout_target_is_cached_on_the_second_build() {
+    let mut pipeline = printing(b"one\n");
+    build(&mut pipeline, OnFailure::Stop);
+    let rows = pipeline.ports().cache.rows.clone();
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    let cached = outcome(&outcomes, "//:listing");
+    assert_eq!(cached.class, OutcomeClass::Cached);
+    assert_eq!(
+        cached.outputs,
+        rows.get(&label("//:listing")).unwrap().produced()
+    );
+    let ports = pipeline.ports();
+    assert_eq!(ports.strategy.runs(&label("//:listing")), 1, "it ran once");
+    assert_eq!(ports.cache.rows, rows);
+}
+
+#[test]
+fn a_failed_stdout_target_stores_nothing() {
+    let mut pipeline = root_only(vec![stdout_target("listing")]);
+    let failing = Script {
+        ends: Ends::Exits(1),
+        stdout: Some(b"partial".to_vec()),
+        ..Script::default()
+    };
+    script(&mut pipeline, "//:listing", failing);
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    let failed = outcome(&outcomes, "//:listing");
+    assert_eq!(failed.class, OutcomeClass::ActionFailure { status: 1 });
+    assert_eq!(failed.outputs, []);
+    let ports = pipeline.ports();
+    assert_eq!(ports.cache.rows.len(), 0, "a failure is never recorded");
+    assert_eq!(ports.cas.placed().len(), 0);
+}
+
+#[test]
+fn a_stdout_target_whose_command_wrote_its_path_fails_and_stores_nothing() {
+    let mut pipeline = root_only(vec![stdout_target("listing")]);
+    let writing = Script {
+        outputs: BTreeMap::from([(
+            out("//:listing", "listing"),
+            Content::Holds(b"written".to_vec()),
+        )]),
+        ..Script::default()
+    };
+    script(&mut pipeline, "//:listing", writing);
+
+    let outcomes = build(&mut pipeline, OnFailure::Stop);
+
+    let failed = outcome(&outcomes, "//:listing");
+    assert_eq!(
+        failed.class,
+        OutcomeClass::OutputWritten {
+            name: OutputName::parse("listing").unwrap()
+        }
+    );
+    assert_eq!(failed.outputs, []);
+    assert!(failed.stdout.is_some(), "what it printed is still logged");
+    let ports = pipeline.ports();
+    assert_eq!(ports.cache.rows.len(), 0, "a failure is never recorded");
+    assert_eq!(ports.cas.placed().len(), 0);
 }
 
 #[test]

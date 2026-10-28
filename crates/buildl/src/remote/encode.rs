@@ -623,6 +623,17 @@ mod tests {
     }
 
     #[test]
+    fn a_stdout_upload_has_a_stdout_digest_and_no_output_files() {
+        let messages = action_result(&upload_of(Vec::new())).unwrap();
+
+        assert_eq!(messages.result.stdout_digest, Some(digest_of(b"out text")));
+        assert_eq!(messages.result.output_files, []);
+        assert_eq!(messages.result.output_directories, []);
+        assert_eq!(messages.trees.len(), 0);
+        assert_eq!(messages.result.exit_code, 0);
+    }
+
+    #[test]
     fn the_platform_is_two_sorted_properties() {
         let property = |name: &str, value: &str| wire::platform::Property {
             name: name.to_owned(),

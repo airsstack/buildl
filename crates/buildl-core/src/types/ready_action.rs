@@ -15,7 +15,8 @@
 use std::collections::BTreeMap;
 
 use crate::types::{
-    Command, EnvName, EnvValue, ExpandedDescription, Label, NetworkAccess, OutputPath, SourcePath,
+    Command, EnvName, EnvValue, ExpandedDescription, Label, NetworkAccess, OutputPath,
+    OutputSource, SourcePath,
 };
 
 /// One target's action as an execution strategy receives it.
@@ -45,4 +46,6 @@ pub struct ReadyAction {
     pub outputs: Vec<OutputPath>,
     /// Whether the command may reach the network.
     pub network: NetworkAccess,
+    /// Where the action's one output comes from.
+    pub output_source: OutputSource,
 }

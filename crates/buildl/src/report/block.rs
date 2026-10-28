@@ -165,6 +165,9 @@ pub(crate) fn failure_text(class: &OutcomeClass) -> Option<String> {
             "action failure (output {name} cannot be kept: {})",
             refusal_text(*refusal)
         )),
+        OutcomeClass::OutputWritten { name } => Some(format!(
+            "action failure (output {name} is written from stdout, and the command wrote it too)"
+        )),
         OutcomeClass::InfraFailure { kind } => {
             Some(format!("infrastructure failure ({})", infra_text(*kind)))
         }
@@ -569,6 +572,16 @@ mod tests {
         assert_eq!(
             first_line(OutcomeClass::Killed { signal: 11 }),
             "FAILED //lib:text: action failure (ended by signal 11)"
+        );
+    }
+
+    #[test]
+    fn output_written_names_the_output() {
+        assert_eq!(
+            first_line(OutcomeClass::OutputWritten {
+                name: OutputName::parse("listing").unwrap(),
+            }),
+            "FAILED //lib:text: action failure (output listing is written from stdout, and the command wrote it too)"
         );
     }
 

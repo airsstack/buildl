@@ -146,7 +146,8 @@ mod tests {
 
     use buildl_core::{
         Action, Argument, Command, Declaration, Declared, Directory, Error, Freshness, Label,
-        NetworkAccess, Origin, Provenance, Setting, SettingName, SettingValue, Target, TargetRole,
+        NetworkAccess, Origin, OutputSource, Provenance, Setting, SettingName, SettingValue,
+        Target, TargetRole,
     };
 
     use buildl_core::Collected;
@@ -299,6 +300,7 @@ mod tests {
                 outputs: Vec::new(),
                 env: Vec::new(),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
                 freshness: Freshness::Cached,
             }),
         )
@@ -356,12 +358,14 @@ mod tests {
                 "error: lib/build.lua: declarations differ between two evaluations\n",
                 "    first evaluation:  {\"item\":{\"Target\":{\"action\":{\"Run\":[\"cc\"]},",
                 "\"deps\":[],\"env\":[],\"freshness\":\"Cached\",\"inputs\":[],",
-                "\"label\":\"//lib:text\",\"network\":\"Sealed\",\"outputs\":[],",
+                "\"label\":\"//lib:text\",\"network\":\"Sealed\",\"output_source\":\"Command\",",
+                "\"outputs\":[],",
                 "\"role\":\"Build\"}},\"origin\":\"BuildFile\",",
                 "\"provenance\":{\"directory\":\"lib\",\"file\":\"lib/build.lua\"}}\n",
                 "    second evaluation: {\"item\":{\"Target\":{\"action\":{\"Run\":[\"cc\"]},",
                 "\"deps\":[\"//:main.o\"],\"env\":[],\"freshness\":\"Cached\",\"inputs\":[],",
-                "\"label\":\"//lib:text\",\"network\":\"Sealed\",\"outputs\":[],",
+                "\"label\":\"//lib:text\",\"network\":\"Sealed\",\"output_source\":\"Command\",",
+                "\"outputs\":[],",
                 "\"role\":\"Build\"}},\"origin\":\"BuildFile\",",
                 "\"provenance\":{\"directory\":\"lib\",\"file\":\"lib/build.lua\"}}\n",
             )

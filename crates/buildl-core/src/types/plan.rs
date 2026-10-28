@@ -44,6 +44,8 @@ pub enum Difference {
     Setting(SettingName),
     /// Whether the action may reach the network.
     Network,
+    /// Where the action's one output comes from.
+    Stdout,
     /// The platform.
     Platform,
     /// A dependency that was added, removed, or that produced something else.
@@ -322,8 +324,8 @@ mod tests {
     use crate::json::canonical;
     use crate::types::{
         ActionKey, Argument, Attribution, Command, Directory, EnvName, KeyComponents, Label,
-        NetworkAccess, NodeId, OutputName, OwnComponents, Platform, Program, SettingName,
-        SettingValue, SourcePath, WantedSet,
+        NetworkAccess, NodeId, OutputName, OutputSource, OwnComponents, Platform, Program,
+        SettingName, SettingValue, SourcePath, WantedSet,
     };
 
     fn label(raw: &str) -> Label {
@@ -340,6 +342,7 @@ mod tests {
             tool: None,
             settings: BTreeMap::new(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
             platform: Platform::parse("linux/x86_64").unwrap(),
         }
     }
@@ -499,6 +502,7 @@ mod tests {
                 r#"{"Setting":"test_filter"}"#,
             ),
             (Difference::Network, r#""Network""#),
+            (Difference::Stdout, r#""Stdout""#),
             (Difference::Platform, r#""Platform""#),
             (
                 Difference::Dep(label("//lib:text")),

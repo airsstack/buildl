@@ -27,21 +27,23 @@ authors      = ["rstlix0x0 <rstlix.dev@gmail.com>"]
 airsl      = "0.1.4"
 # Serialization for every phase handoff (Vec<Declaration> → TargetGraph → Plan →
 # Vec<ActionOutcome>) and the durable stores. NOTE: all JSON output must leave
-# through the one canonical sorted-key serializer (architecture.md §5 rule 2), built on
-# serde_json — never through serde_json::to_string directly.
+# through the one canonical sorted-key serializer
+# (book/src/ch11-05-determinism-rules.md rule 2), built on serde_json — never
+# through serde_json::to_string directly.
 serde      = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 # Errors. One structured enum in `buildl-core`, airsl-style — structured fields,
-# no message parsing anywhere (architecture.md §4).
+# no message parsing anywhere (book/src/ch11-04-errors.md).
 thiserror  = "2.0.18"
 # SHA-256 for the Digest type — files, outputs, action keys, log blobs. SHA-256
-# over blake3 for REAPI compatibility (decision record, architecture.md §6); the
+# over blake3 for REAPI compatibility (decision record, book/src/ch11-06-decision-records.md); the
 # stat cache makes hashing rare on warm builds anyway. A dependency of
 # `buildl-core` only: an adapter that hashes a file streams it through the core's
 # `Hasher`, so every digest in the workspace comes from one implementation.
 sha2       = "0.10"
 # Parallel file hashing in the Plan phase. Confined to the `Digester` adapter in
-# `buildl` (decision record §6) so the executor's plain-threads model stays singular.
+# `buildl` (book/src/ch11-06-decision-records.md) so the executor's plain-threads
+# model stays singular.
 rayon      = "1.12.0"
 # buildl.toml (the ceiling) parsing in the `Manifest` adapter. Read-only, like
 # airsl's extension manifests: the `display` (serialization) default feature is dropped.
@@ -54,12 +56,12 @@ toml       = { version = "0.8.23", default-features = false, features = ["parse"
 toml_edit  = { version = "0.22.27", default-features = false, features = ["parse"] }
 # Source globbing for `b.sources()` — the declaration phase's only filesystem
 # read; results are sorted host-side so declaration is deterministic regardless
-# of filesystem order (design.md).
+# of filesystem order (book/src/appendix-03-lua-api.md).
 globset    = "0.4"
 walkdir    = "2.5"
 # Temp-file-then-rename writes in `buildl`'s shared `state` module, which every
-# storage adapter writes a whole file through (architecture.md §3.5,
-# architecture-building-blocks.md §6), and the temp workspaces of tests. The floor
+# storage adapter writes a whole file through (book/src/ch11-02-crash-safety.md,
+# book/src/ch11-03-four-crates.md), and the temp workspaces of tests. The floor
 # is the release whose source was read for what those writes rely on:
 # `Builder::permissions` hands the mode to `open(2)`, and `persist` is a rename.
 tempfile   = "3.27.0"

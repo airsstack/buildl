@@ -565,3 +565,18 @@ fn sources_in_a_plugin_walks_the_calling_file_s_directory() {
     assert_eq!(inputs, ["a.c", "b.c"]);
     assert_eq!(origins(&staged), ["p@1.0.0"]);
 }
+
+#[test]
+fn a_plugin_can_call_decode_all() {
+    let (_dir, root) = with_p(
+        "buildl.use('p')",
+        "local values = buildl.decode_all('{\"n\":\"a\"}{\"n\":\"b\"}')\n\
+         for _, value in ipairs(values) do\n\
+           buildl.target(value.n, { run = { 'p' } })\n\
+         end\n\
+         return {}",
+        &[],
+    );
+    let staged = staged(&root, &["p"]).unwrap();
+    assert_eq!(origins(&staged), ["p@1.0.0", "p@1.0.0"]);
+}

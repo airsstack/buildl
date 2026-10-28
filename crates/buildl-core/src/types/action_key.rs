@@ -20,8 +20,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use crate::error::Result;
 use crate::json::canonical;
 use crate::types::{
-    Command, Digest, EnvName, EnvValue, Label, NetworkAccess, OutputName, Platform, Program,
-    SettingName, SettingValue, SourcePath,
+    Command, Digest, EnvName, EnvValue, Label, NetworkAccess, OutputName, OutputSource, Platform,
+    Program, SettingName, SettingValue, SourcePath,
 };
 
 /// One workspace file a target reads, with the digest of its content.
@@ -92,6 +92,8 @@ pub struct OwnComponents {
     pub settings: BTreeMap<SettingName, SettingValue>,
     /// Whether the action may reach the network.
     pub network: NetworkAccess,
+    /// Where the action's one output comes from.
+    pub output_source: OutputSource,
     /// The platform the action runs on.
     pub platform: Platform,
 }
@@ -120,8 +122,8 @@ pub struct KeyComponents {
 /// use std::collections::BTreeMap;
 ///
 /// use buildl_core::{
-///     ActionKey, Argument, Command, KeyComponents, NetworkAccess, OutputName, OwnComponents,
-///     Platform,
+///     ActionKey, Argument, Command, KeyComponents, NetworkAccess, OutputName, OutputSource,
+///     OwnComponents, Platform,
 /// };
 ///
 /// let components = KeyComponents {
@@ -133,6 +135,7 @@ pub struct KeyComponents {
 ///         tool: None,
 ///         settings: BTreeMap::new(),
 ///         network: NetworkAccess::Sealed,
+///         output_source: OutputSource::Command,
 ///         platform: Platform::parse("linux/x86_64")?,
 ///     },
 ///     deps: Vec::new(),
@@ -216,8 +219,8 @@ mod tests {
     use crate::error::Error;
     use crate::json::canonical;
     use crate::types::{
-        Argument, Command, Digest, EnvName, EnvValue, Label, NetworkAccess, OutputName, Platform,
-        Program, SettingName, SettingValue, SourcePath,
+        Argument, Command, Digest, EnvName, EnvValue, Label, NetworkAccess, OutputName,
+        OutputSource, Platform, Program, SettingName, SettingValue, SourcePath,
     };
 
     fn command(arguments: &[&str]) -> Command {
@@ -288,6 +291,7 @@ mod tests {
                 }),
                 settings: settings(&[("test_filter", "TestLogin")]),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
                 platform: Platform::parse("linux/x86_64").unwrap(),
             },
             deps: vec![DepProducts {
@@ -308,7 +312,8 @@ mod tests {
             &Digest::of(b"z").to_string(),
             r#"","path":"src/z.c"},{"digest":""#,
             &Digest::of(b"a").to_string(),
-            r#"","path":"src/a.c"}],"network":"Sealed","outputs":["app","app.map"],"#,
+            r#"","path":"src/a.c"}],"network":"Sealed","output_source":"Command","#,
+            r#""outputs":["app","app.map"],"#,
             r#""platform":"linux/x86_64","settings":{"test_filter":"TestLogin"},"#,
             r#""tool":{"fingerprint":""#,
             &Digest::of(b"cc 14.2").to_string(),
@@ -369,7 +374,7 @@ mod tests {
 
     #[test]
     fn changing_any_one_component_changes_the_key() {
-        let cases: [(&str, Change); 12] = [
+        let cases: [(&str, Change); 13] = [
             ("command", |c| c.own.command = command(&["cc", "$in"])),
             ("input digest", |c| {
                 c.own.inputs = vec![input("src/z.c", "z2"), input("src/a.c", "a")];
@@ -394,6 +399,9 @@ mod tests {
                 c.own.settings = settings(&[("test_filter", "TestLogout")]);
             }),
             ("network", |c| c.own.network = NetworkAccess::Declared),
+            ("output source", |c| {
+                c.own.output_source = OutputSource::Stdout;
+            }),
             ("platform", |c| {
                 c.own.platform = Platform::parse("macos/aarch64").unwrap();
             }),
@@ -428,6 +436,7 @@ mod tests {
         let mut components = components();
         components.own.settings = settings(&[("test_filter", "TestLogin"), ("opt-level", "3")]);
         components.own.network = NetworkAccess::Declared;
+        components.own.output_source = OutputSource::Stdout;
         components.deps.push(DepProducts {
             label: Label::parse("//:gen").unwrap(),
             outputs: vec![produced("gen.h", "header"), produced("gen.c", "source")],
@@ -511,6 +520,7 @@ mod tests {
             ("/components/own/tool/fingerprint", other.clone()),
             ("/components/own/settings/opt-level", Value::from("0")),
             ("/components/own/network", Value::from("Sealed")),
+            ("/components/own/output_source", Value::from("Command")),
             ("/components/own/platform", Value::from("macos/aarch64")),
             ("/components/deps/0/label", Value::from("//lib:other")),
             ("/components/deps/1/outputs/0/digest", other),

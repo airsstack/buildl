@@ -11,7 +11,9 @@
 //! Non-responsibilities: reaching a verdict, which the phase that plans does; and writing the
 //! text anywhere.
 
-use buildl_core::{Difference, DirtyReason, NodeId, OwnComponents, Plan, PlannedKey, Verdict};
+use buildl_core::{
+    Difference, DirtyReason, NodeId, OutputSource, OwnComponents, Plan, PlannedKey, Verdict,
+};
 
 /// One way a key differs from the recorded one, in words. `own` is the key as planned: it
 /// names the program a changed tool is.
@@ -28,6 +30,10 @@ fn difference_text(difference: &Difference, own: &OwnComponents) -> String {
         ),
         Difference::Setting(name) => format!("setting {name} changed"),
         Difference::Network => "network access changed".to_owned(),
+        Difference::Stdout => match own.output_source {
+            OutputSource::Stdout => "its output now comes from stdout".to_owned(),
+            OutputSource::Command => "its output now comes from the command".to_owned(),
+        },
         Difference::Platform => "platform changed".to_owned(),
         Difference::Dep(label) => format!("dependency {label} changed"),
         Difference::DepOrder => "dependencies reordered".to_owned(),
@@ -139,18 +145,19 @@ mod tests {
     use buildl_core::{
         Action, ActionCache, ActionKey, Approval, Approver, ApproverMode, Argument, Attribution,
         BuildFile, CacheRow, Ceiling, Clock, Command, ContentStore, Declaration, DeclarationSource,
-        Declared, DepProducts, Diagnostic, Digest, Digester, Directory, DirtyReason, Discovered,
-        Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy, Execution,
-        FileMode, FileStat, Found, Freshness, GraphRecord, Host, InputDigest, InputStat,
+        Declared, DepProducts, Diagnostic, Difference, Digest, Digester, Directory, DirtyReason,
+        Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy,
+        Execution, FileMode, FileStat, Found, Freshness, GraphRecord, Host, InputDigest, InputStat,
         KeyComponents, Label, LiveSink, LogLine, Manifest, NetworkAccess, NoRemote, Origin,
-        OutcomeEvent, OutputName, OutputPath, OwnComponents, Plan, PlannedKey, Platform, PluginCap,
-        PluginName, PluginRef, PluginVersion, PortName, PortSet, Ports, Produced, Program,
-        Provenance, RawOutcome, ReadyAction, Rerun, Result, RunHistory, Setting, SettingName,
-        SettingValue, SourcePath, StatCache, StatEntry, Target, TargetGraph, TargetRole, Timestamp,
-        ToolIdentity, ToolResolver, Turn, Verdict, WantedSet, Workspace, plan, resolve,
+        OutcomeEvent, OutputName, OutputPath, OutputSource, OwnComponents, Plan, PlannedKey,
+        Platform, PluginCap, PluginName, PluginRef, PluginVersion, PortName, PortSet, Ports,
+        Produced, Program, Provenance, RawOutcome, ReadyAction, Rerun, Result, RunHistory, Setting,
+        SettingName, SettingValue, SourcePath, StatCache, StatEntry, Target, TargetGraph,
+        TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn, Verdict, WantedSet, Workspace,
+        plan, resolve,
     };
 
-    use super::{plan_text, reason_text};
+    use super::{difference_text, plan_text, reason_text};
     use crate::report::silent::Silent;
 
     /// The machine a plan asks about: every file exists and holds its own path, every program
@@ -434,6 +441,7 @@ mod tests {
             outputs: Vec::new(),
             env: Vec::new(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
             freshness: Freshness::Cached,
         }
     }
@@ -603,6 +611,7 @@ mod tests {
                 SettingValue::parse("release").unwrap(),
             )]),
             network: NetworkAccess::Declared,
+            output_source: OutputSource::Command,
             platform: Platform::parse("macos/aarch64").unwrap(),
         };
         record("//:changed", row(&graph, before, &[]));
@@ -627,6 +636,23 @@ mod tests {
                 "  write into:     .buildl, out\n",
                 "6 to run, 1 conditional, 2 clean\n",
             )
+        );
+    }
+
+    #[test]
+    fn a_stdout_difference_is_worded() {
+        let graph = graph();
+        let first = planned(&graph, Rows::default());
+        let mut components = own(&first, &graph, "//:new");
+        components.output_source = OutputSource::Stdout;
+        assert_eq!(
+            difference_text(&Difference::Stdout, &components),
+            "its output now comes from stdout"
+        );
+        components.output_source = OutputSource::Command;
+        assert_eq!(
+            difference_text(&Difference::Stdout, &components),
+            "its output now comes from the command"
         );
     }
 

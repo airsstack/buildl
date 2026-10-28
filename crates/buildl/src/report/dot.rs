@@ -63,7 +63,7 @@ mod tests {
 
     use buildl_core::{
         Action, Alias, Argument, Command, Declaration, Declared, Freshness, Label, NetworkAccess,
-        Origin, Provenance, Target, TargetRole, resolve,
+        Origin, OutputSource, Provenance, Target, TargetRole, resolve,
     };
 
     use super::graph_dot;
@@ -93,6 +93,7 @@ mod tests {
                 outputs: Vec::new(),
                 env: Vec::new(),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
                 freshness: Freshness::Cached,
             }),
         )

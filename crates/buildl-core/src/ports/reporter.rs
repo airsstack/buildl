@@ -111,8 +111,8 @@ mod tests {
     use super::Reporter;
     use crate::types::{
         ActionOutcome, Argument, Captured, Channel, Command, Diagnostic, Directory, Label,
-        NetworkAccess, OutcomeClass, OutcomeEvent, Provenance, ReadyAction, RemoteCall,
-        RemoteNotice, Summary, Tally, TargetRole, Timestamp,
+        NetworkAccess, OutcomeClass, OutcomeEvent, OutputSource, Provenance, ReadyAction,
+        RemoteCall, RemoteNotice, Summary, Tally, TargetRole, Timestamp,
     };
 
     /// Keeps the name of each call it receives, in order.
@@ -159,6 +159,7 @@ mod tests {
             deps: Vec::new(),
             outputs: Vec::new(),
             network: NetworkAccess::Sealed,
+            output_source: OutputSource::Command,
         });
         reporter.printed(&label, Channel::Stdout, b"hi");
         reporter.finished(

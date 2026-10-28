@@ -27,8 +27,9 @@ pub(crate) struct Known<'a> {
 ///
 /// The differences come in a fixed order: the command; each input that was added, removed or
 /// changed, in path order; the inputs' order; the outputs; each environment variable, in name
-/// order; the tool; each setting, in name order; the network; the platform; each dependency
-/// that was added, removed or produced something else, in label order; the dependencies' order.
+/// order; the tool; each setting, in name order; the network; where the output comes from; the
+/// platform; each dependency that was added, removed or produced something else, in label order;
+/// the dependencies' order.
 ///
 /// A dependency whose products are not known cannot be said to have produced something else, so
 /// it is reported only when it was added. When every dependency's products are known the list
@@ -66,6 +67,9 @@ pub(crate) fn between(
     );
     if own.network != old.network {
         found.push(Difference::Network);
+    }
+    if own.output_source != old.output_source {
+        found.push(Difference::Stdout);
     }
     if own.platform != old.platform {
         found.push(Difference::Platform);
@@ -157,7 +161,8 @@ mod tests {
     use crate::plan::fixtures::{components, produced};
     use crate::types::{
         DepProducts, Difference, Digest, EnvValue, InputDigest, KeyComponents, Label,
-        NetworkAccess, OutputName, OwnComponents, Platform, Produced, SettingName, ToolIdentity,
+        NetworkAccess, OutputName, OutputSource, OwnComponents, Platform, Produced, SettingName,
+        ToolIdentity,
     };
     use std::collections::BTreeMap;
 
@@ -302,6 +307,13 @@ mod tests {
     }
 
     #[test]
+    fn a_changed_output_source_is_a_stdout_difference() {
+        let mut own = full();
+        own.output_source = OutputSource::Stdout;
+        assert_eq!(own_differences(&own), [Difference::Stdout]);
+    }
+
+    #[test]
     fn a_dependency_is_reported_when_added_removed_or_producing_something_else() {
         let previous = recorded();
         let mut produced_other = same_deps(&previous);
@@ -359,6 +371,7 @@ mod tests {
             own.tool = Some(tool("cc 15.1"));
             own.settings = settings(&[("arch", "arm"), ("test_filter", "U")]);
             own.network = NetworkAccess::Declared;
+            own.output_source = OutputSource::Stdout;
             own.platform = Platform::parse("macos/aarch64").unwrap();
         });
         let deps = [
@@ -381,6 +394,7 @@ mod tests {
                 Difference::Setting(SettingName::parse("mode").unwrap()),
                 Difference::Setting(SettingName::parse("test_filter").unwrap()),
                 Difference::Network,
+                Difference::Stdout,
                 Difference::Platform,
                 Difference::Dep(label("//lib:added")),
                 Difference::Dep(label("//lib:util")),

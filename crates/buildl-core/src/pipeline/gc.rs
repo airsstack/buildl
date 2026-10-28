@@ -153,9 +153,9 @@ mod tests {
         ActionKey, Argument, BuildFile, CacheRow, Command, DeclarationOrder, Diagnostic, Digest,
         Discovered, EntryName, Evaluated, FileMode, Freshness, KeyComponents, Label, LogLine,
         LoggedRun, NetworkAccess, Origin, OutcomeClass, OutputManifest, OutputName, OutputPath,
-        OwnComponents, Platform, Provenance, StagedDeclaration, StagedFile, StagedItem,
-        StagedTarget, StoredFile, TargetName, TargetRole, Timestamp, Tree, TreeEntry, TreePath,
-        Turn, Written,
+        OutputSource, OwnComponents, Platform, Provenance, StagedDeclaration, StagedFile,
+        StagedItem, StagedTarget, StoredFile, TargetName, TargetRole, Timestamp, Tree, TreeEntry,
+        TreePath, Turn, Written,
     };
 
     /// The calls the cache and the sweep received, in order, shared by both.
@@ -216,6 +216,7 @@ mod tests {
                         outputs: None,
                         env: Vec::new(),
                         network: NetworkAccess::Sealed,
+                        output_source: OutputSource::Command,
                         freshness: Freshness::Cached,
                     }),
                 })
@@ -370,6 +371,7 @@ mod tests {
                 tool: None,
                 settings: BTreeMap::new(),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
                 platform: Platform::parse("linux/x86_64").unwrap(),
             },
             deps: Vec::new(),

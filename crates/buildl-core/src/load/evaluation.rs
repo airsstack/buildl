@@ -93,8 +93,8 @@ mod tests {
     use crate::ports::DeclarationSource;
     use crate::types::{
         BuildFile, DeclarationOrder, Diagnostic, Directory, Discovered, EntryName, Evaluated,
-        Freshness, Label, NetworkAccess, Origin, StagedDeclaration, StagedFile, StagedItem,
-        StagedSubdir, StagedTarget, TargetRole, Written,
+        Freshness, Label, NetworkAccess, Origin, OutputSource, StagedDeclaration, StagedFile,
+        StagedItem, StagedSubdir, StagedTarget, TargetRole, Written,
     };
 
     /// A source that answers every call with one canned reply and counts the calls.
@@ -162,6 +162,7 @@ mod tests {
                 outputs: None,
                 env: Vec::new(),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
                 freshness: Freshness::Cached,
             }),
         }

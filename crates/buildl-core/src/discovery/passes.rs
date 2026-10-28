@@ -132,7 +132,8 @@ mod tests {
     use crate::error::Error;
     use crate::types::{
         Action, Argument, Command, Declaration, Declared, Directory, Freshness, Label,
-        NetworkAccess, Origin, Provenance, Setting, SettingName, SettingValue, Target, TargetRole,
+        NetworkAccess, Origin, OutputSource, Provenance, Setting, SettingName, SettingValue,
+        Target, TargetRole,
     };
 
     fn file_in(directory: &str) -> Provenance {
@@ -160,6 +161,7 @@ mod tests {
                 outputs: Vec::new(),
                 env: Vec::new(),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
                 freshness: Freshness::Cached,
             }),
         )

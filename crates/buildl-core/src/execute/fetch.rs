@@ -20,11 +20,11 @@
 use core::slice;
 
 use crate::error::{Error, PortName, Result};
-use crate::execute::perform::{Kept, Printed, Task, Unkept, collected};
+use crate::execute::perform::{Kept, OutputsFrom, Printed, Task, Unkept, collected_from, written};
 use crate::ports::{ContentStore, RemoteCache};
 use crate::types::{
     Blob, DecodedTree, Diagnostic, Digest, FileMode, Found, FoundEntry, FoundKind, OutputManifest,
-    OutputPath, RemoteHit, RemoteTreeFile, StoredFile, TargetRole, Tree, TreeEntry,
+    OutputPath, OutputSource, RemoteHit, RemoteTreeFile, StoredFile, TargetRole, Tree, TreeEntry,
 };
 
 /// The error for a result that cannot be used, saying what is wrong with it.
@@ -35,14 +35,23 @@ fn refused(what: impl Into<String>) -> Error {
     }
 }
 
-/// Whether `hit` may stand for a task with `role` that declares `outputs`.
+/// Whether `hit` may stand for `task`.
 ///
 /// It may when the command exited with status zero, it names every declared output path exactly
 /// once, as a file or as a directory, and no other path, and it names no symbolic link. The
 /// output of a discovery target must be a file, so a directory is never usable for one.
-pub(crate) fn usable(hit: &RemoteHit, outputs: &[OutputPath], role: TargetRole) -> bool {
+///
+/// A target whose output is its standard output reads the other way: its path is declared, so
+/// that a server reports a file the command wrote there, but the result must not name it, or
+/// any other path, and must hold a standard output digest, since an absent one cannot be told
+/// from empty output.
+pub(crate) fn usable(hit: &RemoteHit, task: &Task) -> bool {
+    let (outputs, role) = (&task.action.outputs, task.role);
     if hit.exit_code != 0 || !hit.symlinks.is_empty() {
         return false;
+    }
+    if task.action.output_source == OutputSource::Stdout {
+        return hit.stdout.is_some() && hit.files.is_empty() && hit.directories.is_empty();
     }
     if role == TargetRole::Discovery && !hit.directories.is_empty() {
         return false;
@@ -78,14 +87,27 @@ pub(crate) fn unasked<'hit>(hit: &'hit RemoteHit, outputs: &[OutputPath]) -> Opt
 ///
 /// The outputs are examined in declared order and the first that fails decides. A directory is
 /// judged by being a directory; what it holds is checked when it is fetched.
+///
+/// For a target whose output is its standard output nothing may be at the path, and anything
+/// there is [`OutcomeClass::OutputWritten`], whether or not the result holds a standard output
+/// digest. A result that holds none and nothing at the path is not judged here: it is not the
+/// action's fault, and [`fetch`] refuses it.
+///
+/// [`OutcomeClass::OutputWritten`]: crate::types::OutcomeClass::OutputWritten
 pub(crate) fn unusable(hit: &RemoteHit, task: &Task) -> Option<Unkept> {
-    let found = task
+    let found: Vec<Found> = task
         .action
         .outputs
         .iter()
         .map(|at| found_at(hit, at.as_str()))
         .collect();
-    collected(task.role, &task.key.components().own.outputs, found).err()
+    let names = &task.key.components().own.outputs;
+    match task.action.output_source {
+        OutputSource::Command => {
+            collected_from(task.role, &OutputsFrom::Command, names, found).err()
+        }
+        OutputSource::Stdout => written(names, &found),
+    }
 }
 
 /// What `hit` reports at the output path `at`.
@@ -258,6 +280,9 @@ impl Checked {
 /// nothing is handed back until every blob has passed. A hit without a standard output or error
 /// digest stands for empty content. Nothing is stored here; see [`Checked::keep`].
 ///
+/// For a target whose output is its standard output the output is the standard output blob
+/// itself, a plain file, so it is downloaded once and stored once.
+///
 /// # Errors
 ///
 /// Returns [`Unfetched::Unkept`] when a directory holds a symlink or an empty directory, the
@@ -271,7 +296,7 @@ pub(crate) fn fetch<R: RemoteCache>(
     remote: &R,
 ) -> core::result::Result<Checked, Unfetched> {
     let declared = &task.action.outputs;
-    if !usable(hit, declared, task.role) {
+    if !usable(hit, task) {
         return Err(refused(format!(
             "the result it holds does not stand for {}",
             task.action.label
@@ -319,9 +344,12 @@ pub(crate) fn fetch<R: RemoteCache>(
             .position(|output| output.as_str() == dir.path)
             .and_then(|at| Some((at, names.get(at)?)))
             .ok_or_else(|| refused(format!("the result names no output at {}", dir.path)))?;
-        if let Err(refusal) =
-            collected(task.role, slice::from_ref(name), vec![Found::Tree(entries)])
-            && unkept.as_ref().is_none_or(|(first, _)| at < *first)
+        if let Err(refusal) = collected_from(
+            task.role,
+            &OutputsFrom::Command,
+            slice::from_ref(name),
+            vec![Found::Tree(entries)],
+        ) && unkept.as_ref().is_none_or(|(first, _)| at < *first)
         {
             unkept = Some((at, refusal));
         }
@@ -341,10 +369,24 @@ pub(crate) fn fetch<R: RemoteCache>(
     blobs.dedup();
     let contents = downloaded(remote, &blobs)?;
 
-    let manifests = declared
-        .iter()
-        .map(|at| manifest_of(at.as_str(), hit, &trees))
-        .collect::<Result<Vec<_>>>()?;
+    let manifests = match task.action.output_source {
+        OutputSource::Command => declared
+            .iter()
+            .map(|at| manifest_of(at.as_str(), hit, &trees))
+            .collect::<Result<Vec<_>>>()?,
+        OutputSource::Stdout => {
+            let printed = hit
+                .stdout
+                .ok_or_else(|| refused("the result holds no standard output"))?;
+            collected_from(
+                task.role,
+                &OutputsFrom::Stdout(printed.digest),
+                names,
+                declared.iter().map(|_| Found::Nothing).collect(),
+            )
+            .map_err(Unfetched::Unkept)?
+        }
+    };
     Ok(Checked {
         contents,
         stdout,
@@ -412,13 +454,13 @@ mod tests {
     use super::{Unfetched, fetch, logs, unasked, unusable, usable};
     use crate::error::{Error, PortName, Result};
     use crate::execute::fixtures::{command, key, label, output_path};
-    use crate::execute::perform::{Task, collected};
+    use crate::execute::perform::{OutputsFrom, Task, collected_from};
     use crate::ports::{BlobSource, ContentStore, RemoteCache};
     use crate::types::{
         Blob, DecodedTree, Diagnostic, Digest, FileMode, Found, FoundEntry, FoundKind,
         NetworkAccess, NodeId, OutcomeClass, OutputManifest, OutputName, OutputPath, OutputRefusal,
-        ReadyAction, RemoteAction, RemoteHit, RemoteOutputDirectory, RemoteOutputFile,
-        RemoteTreeFile, RemoteUpload, StoredFile, TargetRole, TreePath,
+        OutputSource, ReadyAction, RemoteAction, RemoteHit, RemoteOutputDirectory,
+        RemoteOutputFile, RemoteTreeFile, RemoteUpload, StoredFile, TargetRole, TreePath,
     };
 
     /// A remote that serves scripted bytes, and notes every download and decode asked of it.
@@ -544,6 +586,7 @@ mod tests {
                 deps: Vec::new(),
                 outputs: names.iter().map(|name| output_path(TARGET, name)).collect(),
                 network: NetworkAccess::Sealed,
+                output_source: OutputSource::Command,
             },
         }
     }
@@ -598,7 +641,7 @@ mod tests {
             vec![output_file("bin", Blob::of(b"bin"))],
             vec![output_directory("inc", Blob::of(b"inc"))],
         );
-        assert!(usable(&hit, declared(&task), task.role));
+        assert!(usable(&hit, &task));
     }
 
     #[test]
@@ -607,7 +650,7 @@ mod tests {
         for exit_code in [1, -1, 137] {
             let mut hit = hit(vec![output_file("bin", Blob::of(b"bin"))], Vec::new());
             hit.exit_code = exit_code;
-            assert!(!usable(&hit, declared(&task), task.role), "{exit_code}");
+            assert!(!usable(&hit, &task), "{exit_code}");
         }
     }
 
@@ -642,7 +685,7 @@ mod tests {
             (twice, "one twice"),
             (both, "one as a file and a directory"),
         ] {
-            assert!(!usable(&hit, declared(&task), task.role), "{what}");
+            assert!(!usable(&hit, &task), "{what}");
         }
     }
 
@@ -651,7 +694,7 @@ mod tests {
         let task = task(TargetRole::Build, &["bin"]);
         let mut hit = hit(vec![output_file("bin", Blob::of(b"bin"))], Vec::new());
         hit.symlinks = vec!["link".to_owned()];
-        assert!(!usable(&hit, declared(&task), task.role));
+        assert!(!usable(&hit, &task));
     }
 
     #[test]
@@ -662,8 +705,8 @@ mod tests {
             vec![output_directory("found", Blob::of(b"found"))],
         );
         let file = hit(vec![output_file("found", Blob::of(b"found"))], Vec::new());
-        assert!(!usable(&directory, declared(&task), task.role));
-        assert!(usable(&file, declared(&task), task.role));
+        assert!(!usable(&directory, &task));
+        assert!(usable(&file, &task));
     }
 
     #[test]
@@ -904,8 +947,9 @@ mod tests {
             }),
         };
         let names: Vec<OutputName> = vec![OutputName::parse("inc").unwrap()];
-        let local = collected(
+        let local = collected_from(
             TargetRole::Build,
+            &OutputsFrom::Command,
             &names,
             vec![Found::Tree(vec![
                 entry("bin/go", b"go", FileMode::Executable),
@@ -991,6 +1035,114 @@ mod tests {
                 refusal: OutputRefusal::NotAFile,
             }
         );
+    }
+
+    /// A task whose one output, `name`, is what its command prints.
+    fn printing(name: &str) -> Task {
+        let mut task = task(TargetRole::Build, &[name]);
+        task.action.output_source = OutputSource::Stdout;
+        task
+    }
+
+    /// A result of a stdout target: nothing at its path, and `stdout` printed.
+    fn printed_hit(stdout: Blob) -> RemoteHit {
+        RemoteHit {
+            stdout: Some(stdout),
+            ..hit(Vec::new(), Vec::new())
+        }
+    }
+
+    #[test]
+    fn a_stdout_hit_takes_its_output_from_stdout() {
+        let task = printing("pkgs");
+        let mut remote = Remote::default();
+        let stdout = remote.serve(b"{\"name\":\"a\"}\n");
+        let hit = printed_hit(stdout);
+        assert!(usable(&hit, &task));
+        let store = Store::default();
+
+        let (outputs, printed) = fetch(&hit, &task, &remote).unwrap().keep(&store).unwrap();
+
+        let manifest = OutputManifest::File(StoredFile {
+            digest: stdout.digest,
+            mode: FileMode::Plain,
+        });
+        assert_eq!(outputs.len(), 1);
+        assert_eq!(outputs[0].manifest, manifest);
+        assert_eq!(outputs[0].digest, Digest::of(&manifest.to_bytes().unwrap()));
+        assert_eq!(printed.stdout, stdout.digest, "one blob is output and log");
+        assert!(store.contains(&stdout.digest));
+        assert_eq!(remote.rounds(), vec![vec![stdout]], "downloaded once");
+    }
+
+    #[test]
+    fn a_stdout_hit_naming_the_path_is_output_written() {
+        let task = printing("pkgs");
+        let blob = Blob::of(b"x");
+        let written = OutcomeClass::OutputWritten {
+            name: OutputName::parse("pkgs").unwrap(),
+        };
+        let mut as_file = printed_hit(blob);
+        as_file.files = vec![output_file("pkgs", blob)];
+        let mut as_directory = printed_hit(blob);
+        as_directory.directories = vec![output_directory("pkgs", blob)];
+        let mut as_link = printed_hit(blob);
+        as_link.symlinks = vec![at("pkgs")];
+
+        for (hit, what) in [
+            (as_file, "a file"),
+            (as_directory, "a directory"),
+            (as_link, "a link"),
+        ] {
+            assert_eq!(unusable(&hit, &task).unwrap().class, written, "{what}");
+            assert!(!usable(&hit, &task), "{what}");
+        }
+    }
+
+    #[test]
+    fn a_stdout_hit_without_stdout_naming_the_path_is_output_written() {
+        let task = printing("pkgs");
+        let mut hit = hit(Vec::new(), Vec::new());
+        hit.files = vec![output_file("pkgs", Blob::of(b"x"))];
+
+        assert_eq!(
+            unusable(&hit, &task).unwrap().class,
+            OutcomeClass::OutputWritten {
+                name: OutputName::parse("pkgs").unwrap()
+            }
+        );
+    }
+
+    #[test]
+    fn a_stdout_hit_without_stdout_is_unusable() {
+        let task = printing("pkgs");
+        let hit = hit(Vec::new(), Vec::new());
+
+        assert!(!usable(&hit, &task));
+        assert_eq!(unusable(&hit, &task), None, "not a fault of the action");
+        let refused = fetch(&hit, &task, &Remote::default()).unwrap_err();
+        assert!(matches!(refused, Unfetched::Failed(_)), "{refused:?}");
+    }
+
+    #[test]
+    fn a_stdout_hit_with_a_failed_exit_or_another_path_is_unusable() {
+        let task = printing("pkgs");
+        let blob = Blob::of(b"x");
+        let mut failed = printed_hit(blob);
+        failed.exit_code = 1;
+        let mut other = printed_hit(blob);
+        other.files = vec![output_file("other", blob)];
+
+        assert!(!usable(&failed, &task));
+        assert!(!usable(&other, &task));
+    }
+
+    #[test]
+    fn an_executed_stdout_result_is_not_judged_output_missing() {
+        let task = printing("pkgs");
+        let hit = printed_hit(Blob::of(b"printed"));
+
+        assert_eq!(unusable(&hit, &task), None);
     }
 
     #[test]

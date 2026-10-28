@@ -35,6 +35,7 @@ mod remote;
 mod remote_gates;
 mod remote_switch;
 mod sandbox;
+mod stdout_output;
 mod test;
 mod verify;
 mod watch;

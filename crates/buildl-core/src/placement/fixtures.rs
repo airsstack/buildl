@@ -13,8 +13,8 @@ use std::path::PathBuf;
 
 use crate::types::{
     Argument, Command, Directory, Freshness, Label, NetworkAccess, Node, NodeId, Origin,
-    OutputName, OutputPath, Provenance, SettingName, SettingValue, SourcePath, TargetGraph,
-    TargetRole,
+    OutputName, OutputPath, OutputSource, Provenance, SettingName, SettingValue, SourcePath,
+    TargetGraph, TargetRole,
 };
 
 /// A directory from known-valid text.
@@ -91,6 +91,7 @@ pub(crate) fn node(raw: &str, change: impl FnOnce(&mut Node)) -> Node {
         outputs: outputs(&[label.name().as_str()]),
         env: Vec::new(),
         network: NetworkAccess::Sealed,
+        output_source: OutputSource::Command,
         freshness: Freshness::Cached,
         label,
     };

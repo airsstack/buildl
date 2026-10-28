@@ -1,0 +1,11 @@
+[workspace]
+name   = "python"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["python3"]
+env.read = []
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
