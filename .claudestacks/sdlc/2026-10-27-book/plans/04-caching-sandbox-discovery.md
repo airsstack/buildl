@@ -204,3 +204,9 @@ Sources: `docs/design.md` §10's discovery text (`:663-758`), `docs/architecture
   first (`tools/run.sh modified`), then passed; `cargo make dod` exit 0, 2830 passed; the Python
   example's archive entries read `(1980, 1, 1, 0, 0, 0)` and `verify` reports 0 mismatched. A
   review pass found directories uncovered and a tar claim too broad; both fixed.
+- 2026-10-28 — CI run 40705859653 failed `Definition of Done (ubuntu-latest)`:
+  `copies_carry_the_pinned_build_time` saw `tools accessed` `1793197624` against `315532800`.
+  On Linux, reading a directory whose access time is older than its change time moves the access
+  time (relatime), so the sandbox's own walk moved it. The sandbox now pins modification times
+  only (`6e5cb12`); `cargo make dod` exit 0, 2830 passed. CI run 40708080656 at `6e5cb12`: all
+  10 jobs green, `Book`, both `Examples` and both `Definition of Done` included.
