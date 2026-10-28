@@ -137,6 +137,26 @@ jobs:
       - name: cargo deny check
         run: cargo deny check -D unused-wrapper
 
+  book:
+    name: Book
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # pages.yml only builds the book after a merge, when a broken build would
+    # already be on main. This is the same build, on every pull request.
+    steps:
+      - uses: actions/checkout@v5
+
+      # Pinned to the versions the book is written against; keep in step with
+      # pages.yml and the book tasks in Makefile.toml. mdbook-mermaid 0.16.2 is
+      # the last release for mdBook 0.4.
+      - name: Install mdBook and mdbook-mermaid
+        uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.4.52,mdbook-mermaid@0.16.2
+
+      - name: mdbook build
+        run: mdbook build book
+
   msrv:
     name: Minimum supported Rust
     runs-on: ubuntu-latest
