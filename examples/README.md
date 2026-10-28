@@ -8,6 +8,7 @@ toolchain, nothing else.
 | Example | Shows | Needs |
 |---|---|---|
 | [`go`](go/) | a Go binary and its test; `plan` naming an edited input; a second `test` served from the cache; `buildl log` | Go 1.22 |
+| [`rust`](rust/) | the same for a Rust binary, built with `cargo install --root $out` | a Rust toolchain |
 
 ## Checking an example
 
