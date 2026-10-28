@@ -51,6 +51,12 @@ impl Isolation {
     /// Every strategy, least isolated first.
     const ALL: [Self; 4] = [Self::Bare, Self::Sandbox, Self::OsSandbox, Self::Container];
 
+    /// The build timestamp every strategy but `bare` pins, in whole seconds since the Unix
+    /// epoch: 1980-01-01T00:00:00Z, the earliest time a ZIP archive can record.
+    /// [`pinned`](Self::pinned) hands it to an action as `SOURCE_DATE_EPOCH`, and the input
+    /// sandbox gives every file it copies in this modification time.
+    pub const BUILD_EPOCH: u64 = 315_532_800;
+
     /// The strategy the word `raw` names.
     ///
     /// # Errors
@@ -72,8 +78,8 @@ impl Isolation {
     ///
     /// `bare` sets none. Every other strategy fixes the locale, the time zone and the build
     /// timestamp, so a tool's output does not vary with the machine it ran on. The timestamp is
-    /// 1980-01-01T00:00:00Z, the earliest time a ZIP archive can record. This is the one place the
-    /// names and values are written.
+    /// [`BUILD_EPOCH`](Self::BUILD_EPOCH), written here as text. This is the one place the names
+    /// are written.
     #[must_use]
     pub fn pinned(self) -> Vec<(EnvName, EnvValue)> {
         match self {
@@ -193,6 +199,16 @@ mod tests {
             assert_eq!(names, ["LC_ALL", "SOURCE_DATE_EPOCH", "TZ"], "{isolation}");
             assert_eq!(values, ["C", "315532800", "UTC"], "{isolation}");
         }
+    }
+
+    #[test]
+    fn source_date_epoch_is_the_build_epoch() {
+        let pinned = Isolation::Sandbox.pinned();
+        let epoch = pinned
+            .iter()
+            .find(|(name, _)| name.as_str() == "SOURCE_DATE_EPOCH")
+            .map(|(_, value)| value.as_str());
+        assert_eq!(epoch, Some(Isolation::BUILD_EPOCH.to_string().as_str()));
     }
 
     #[test]

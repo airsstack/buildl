@@ -10,10 +10,10 @@
 //! Non-responsibilities: confining the process once it runs. It can still reach any file by an
 //! absolute path; what it is spared is finding an undeclared workspace file by a relative one.
 
-use std::fs;
+use std::fs::{self, File, FileTimes};
 use std::io;
 use std::path::{Component, Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use buildl_core::{
     ContentStore, ExecStrategy, Found, Isolation, LiveSink, Program, RawOutcome, ReadyAction,
@@ -164,6 +164,9 @@ impl ExecStrategy for InputSandbox {
                 fault(label, &format!("making the directory of {output}"), error)
             })?;
         }
+        copier
+            .pin_directories()
+            .map_err(|error| fault(label, "setting the times of the copies", error))?;
         Ok(dir)
     }
 
@@ -208,6 +211,13 @@ fn make_parent(path: &Path) -> io::Result<()> {
     path.parent().map_or(Ok(()), fs::create_dir_all)
 }
 
+/// Gives the file or directory at `path` the pinned build time ([`Isolation::BUILD_EPOCH`]) as
+/// its access and modification times.
+fn pin_time(path: &Path) -> io::Result<()> {
+    let pinned = SystemTime::UNIX_EPOCH + Duration::from_secs(Isolation::BUILD_EPOCH);
+    File::open(path)?.set_times(FileTimes::new().set_accessed(pinned).set_modified(pinned))
+}
+
 /// The program of the command when it is named by a relative path: the first argument, when it
 /// is a valid program that holds a `/` and does not start with one.
 fn relative_program(action: &ReadyAction) -> Option<Program> {
@@ -232,13 +242,37 @@ struct Copier<'a> {
 impl Copier<'_> {
     /// Copies the file at `relative` below the root to the same place below the exec directory,
     /// mode kept, making the directories above it. A copy already there is left alone.
+    ///
+    /// The copy's access and modification times are the pinned build time
+    /// ([`Isolation::BUILD_EPOCH`]), so a tool that records them, such as a ZIP packer, writes
+    /// the same times on every run and every system: left to itself, `fs::copy` keeps the
+    /// original's times on macOS and stamps the time of the copy on Linux.
     fn file(&self, relative: &Path) -> io::Result<()> {
         let target = self.exec.join(relative);
         if fs::symlink_metadata(&target).is_ok() {
             return Ok(());
         }
         make_parent(&target)?;
-        fs::copy(self.root.join(relative), target).map(drop)
+        fs::copy(self.root.join(relative), &target)?;
+        pin_time(&target)
+    }
+
+    /// Gives every directory below the exec directory the pinned build time, as
+    /// [`file`](Self::file) gives each copy. Run once everything is in place: adding an entry
+    /// to a directory changes its modification time, and setting a child's times does not.
+    fn pin_directories(&self) -> io::Result<()> {
+        let mut pending = vec![self.exec.to_path_buf()];
+        while let Some(next) = pending.pop() {
+            for entry in fs::read_dir(&next)? {
+                let entry = entry?;
+                if entry.file_type()?.is_dir() {
+                    let path = entry.path();
+                    pin_time(&path)?;
+                    pending.push(path);
+                }
+            }
+        }
+        Ok(())
     }
 
     /// Copies what is at `relative` below the root to the same place below the exec directory:
@@ -287,8 +321,9 @@ mod tests {
 
     use buildl_core::{
         Argument, Command, Digest, Directory, EnvName, EnvValue, Error, ExecStrategy, Exit,
-        FileMode, Found, FoundEntry, FoundKind, Label, NetworkAccess, OutputName, OutputPath,
-        OutputSource, PortName, ReadyAction, SourcePath, StoredFile, TargetName, Timeout,
+        FileMode, Found, FoundEntry, FoundKind, Isolation, Label, NetworkAccess, OutputName,
+        OutputPath, OutputSource, PortName, ReadyAction, SourcePath, StoredFile, TargetName,
+        Timeout,
     };
 
     use super::{InputSandbox, OutPaths};
@@ -565,6 +600,40 @@ mod tests {
         }
         let mode = fs::metadata(dir.path().join("tool.sh")).unwrap().mode();
         assert_eq!(mode & 0o777, 0o755);
+    }
+
+    #[test]
+    fn copies_carry_the_pinned_build_time() {
+        let fixture = fixture();
+        fixture.write("tools/run.sh", "#!/bin/sh\n");
+        fs::set_permissions(
+            fixture.root.join("tools/run.sh"),
+            Permissions::from_mode(0o755),
+        )
+        .unwrap();
+        fixture.write("data.txt", "data");
+        fixture.write("out/lib/tree/sub/y", "y");
+        let mut action = action(&["tools/run.sh"]);
+        action.inputs = vec![source("data.txt")];
+        action.deps = vec![output("lib", "tree")];
+
+        let dir = fixture.sandbox().prepare(&action).unwrap();
+
+        let pinned = i64::try_from(Isolation::BUILD_EPOCH).unwrap();
+        for relative in [
+            "tools/run.sh",
+            "tools",
+            "data.txt",
+            "out/lib/tree/sub/y",
+            "out/lib/tree/sub",
+            "out/lib/tree",
+            "out/lib",
+            "out",
+        ] {
+            let copy = fs::metadata(dir.path().join(relative)).unwrap();
+            assert_eq!(copy.mtime(), pinned, "{relative} modified");
+            assert_eq!(copy.atime(), pinned, "{relative} accessed");
+        }
     }
 
     #[test]
