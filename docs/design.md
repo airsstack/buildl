@@ -738,10 +738,12 @@ run programs: go, protoc
 
 ```lua
 b.discover("pkgs", { run = { "go", "list", "-json", "./..." }, inputs = { "go.mod" },
-                     network = true })
+                     network = true, stdout = true })
 local text = b.discovered("//svc:pkgs")           -- the output's bytes as a string, or nil
-local pkgs = text and airsstack.json.decode(text) or {}
+local pkgs = text and b.decode_all(text) or {}    -- one value per package
 ```
+
+`go list` prints what it found to standard output and has no flag to name a file, so the target takes `stdout = true` (§5). What it prints is one JSON object per package, back to back, which is not one JSON value: `airsstack.json.decode` rejects it, and `b.decode_all` returns the list of values (§5). `examples/go-discovery` declares one test target per package this way, running `go list -json=ImportPath` so that what it stores holds no absolute path.
 
 |Rule|Detail|
 |---|---|
