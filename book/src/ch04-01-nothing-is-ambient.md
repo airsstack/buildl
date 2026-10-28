@@ -16,7 +16,7 @@ its outputs go. After reading the build files, buildl collects all of that into 
 | programs | the first argument of every command, after `$opt:`, `$in`, `$out` and `$deps` are put in |
 | variables | every name in an `env` list |
 | reads | every declared input |
-| writes | `out` and `.buildl`, where outputs and buildl's own state go |
+| writes | the output directory (`out` unless `[workspace] out` names another) and `.buildl`, where outputs and buildl's own state go |
 | network | every target with `network = true` |
 
 `buildl plan` prints the wanted set under its list of targets:
@@ -32,7 +32,8 @@ run    //tools:hello: never built
 ```
 
 The plan lists every want but the reads, which stay with the targets that declare them; each
-input is still checked. Then buildl holds each want against the workspace's ceiling, the lists in `buildl.toml`. Anything
+input is still checked. Then buildl holds each want against the workspace's ceiling, the lists
+in `buildl.toml`. Anything
 outside the ceiling stops the build before anything runs. Anything inside goes to the approver,
 which can only say yes or no:
 

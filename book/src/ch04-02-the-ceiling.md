@@ -65,8 +65,8 @@ $ buildl plan
 error: directory .buildl is outside the ceiling (fs.write allows: nothing)
 ```
 
-A build always writes into `.buildl`, where buildl keeps its state, and `out`, so `fs.write` needs
-both. An input outside `fs.read` is refused the same way, naming the target. Here the ceiling
+A build always writes into `.buildl`, where buildl keeps its state, and the output directory,
+`out` here, so `fs.write` needs both. An input outside `fs.read` is refused the same way, naming the target. Here the ceiling
 writes `fs.read = ["lib"]` and the root build file reads `hello.txt`:
 
 ```console

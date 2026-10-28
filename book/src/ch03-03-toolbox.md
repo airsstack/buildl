@@ -106,7 +106,6 @@ error: build.lua: operation refused: lua error in build.lua: glob.walk denied: `
 stack traceback:
 	[C]: in field 'walk'
 	build.lua:1: in main chunk
-
 ```
 
 `buildl.sources` is the way to list files, as the build file above does. buildl does the walk

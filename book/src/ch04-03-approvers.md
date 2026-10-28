@@ -63,7 +63,8 @@ asks again about the new wants only. When a plugin's targets are behind a new wa
 the list names the plugin.
 
 The remembered yeses live outside the workspace, in
-`$XDG_DATA_HOME/buildl/approved/<workspace>.json`, or under `$HOME/.local/share` when
+`$XDG_DATA_HOME/buildl/approved/`, in a JSON file named for the workspace's location, or under
+`$HOME/.local/share` when
 `XDG_DATA_HOME` is not set to an absolute path. That is on purpose: a repository can ship its own
 `.buildl/` directory, and an approval kept inside the workspace would arrive with the code it is
 meant to approve.

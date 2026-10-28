@@ -120,7 +120,7 @@ The command exits with code 5, the code for a mistake in a build file.
 
 ## Looking at the graph
 
-The targets and their `deps` form a graph. `buildl graph` prints it. Its default is canonical JSON,
+The targets and their `deps` form a graph. `buildl graph` prints it. Its default is JSON with sorted keys, the same bytes every time,
 the same bytes buildl keeps in `.buildl/graph.json`; `--dot` prints it for Graphviz instead:
 
 ```console
@@ -168,4 +168,5 @@ tests: 1 passed
 
 `buildl build` with no targets builds everything but tests, and `buildl test` runs every test,
 building what they need first. Under `---` and a label, buildl shows what that command printed. For
-a `stdout = true` target that is its output, which is why `hello` and `world` appear. The next page looks at what `$in`, `$out` and `$deps` turned into.
+a `stdout = true` target that is its output, which is why `hello` and `world` appear. The next
+page looks at what `$in`, `$out` and `$deps` turned into.
