@@ -1,0 +1,79 @@
+// One NativeLink process serving a CAS, an action cache, a scheduler and one local worker.
+// Everything lives under /tmp in the container, so a new container starts with an empty cache.
+{
+  stores: [
+    {
+      name: "AC_MAIN_STORE",
+      filesystem: {
+        content_path: "/tmp/nativelink/content_path-ac",
+        temp_path: "/tmp/nativelink/tmp_path-ac",
+        eviction_policy: { max_bytes: 1000000000 },
+      },
+    },
+    {
+      name: "WORKER_FAST_SLOW_STORE",
+      fast_slow: {
+        // The worker hard-links inputs from the fast store, which must be a filesystem store;
+        // the CAS and the worker share one machine, so the slow store discards.
+        fast: {
+          filesystem: {
+            content_path: "/tmp/nativelink/content_path-cas",
+            temp_path: "/tmp/nativelink/tmp_path-cas",
+            eviction_policy: { max_bytes: 10000000000 },
+          },
+        },
+        slow: { noop: {} },
+      },
+    },
+  ],
+  schedulers: [
+    {
+      name: "MAIN_SCHEDULER",
+      simple: {
+        // buildl sends the client's OSFamily and ISA; the worker below matches Linux x86-64.
+        supported_platform_properties: {
+          OSFamily: "priority",
+          ISA: "exact",
+        },
+      },
+    },
+  ],
+  workers: [
+    {
+      local: {
+        worker_api_endpoint: { uri: "grpc://127.0.0.1:50061" },
+        cas_fast_slow_store: "WORKER_FAST_SLOW_STORE",
+        upload_action_result: { ac_store: "AC_MAIN_STORE" },
+        work_directory: "/tmp/nativelink/work",
+        platform_properties: {
+          OSFamily: { values: ["linux"] },
+          ISA: { values: ["x86-64"] },
+        },
+      },
+    },
+  ],
+  servers: [
+    {
+      name: "public",
+      listener: { http: { socket_address: "0.0.0.0:50051" } },
+      services: {
+        cas: [{ instance_name: "", cas_store: "WORKER_FAST_SLOW_STORE" }],
+        ac: [{ instance_name: "", ac_store: "AC_MAIN_STORE" }],
+        execution: [{ instance_name: "", cas_store: "WORKER_FAST_SLOW_STORE", scheduler: "MAIN_SCHEDULER" }],
+        capabilities: [{ instance_name: "", remote_execution: { scheduler: "MAIN_SCHEDULER" } }],
+        bytestream: [{ instance_name: "", cas_store: "WORKER_FAST_SLOW_STORE" }],
+      },
+    },
+    {
+      // The worker's own API, on a port of its own: it is a backend, not for clients.
+      name: "private_workers_servers",
+      listener: { http: { socket_address: "0.0.0.0:50061" } },
+      services: {
+        worker_api: { scheduler: "MAIN_SCHEDULER" },
+        admin: {},
+        health: {},
+      },
+    },
+  ],
+  global: { max_open_files: 24576 },
+}

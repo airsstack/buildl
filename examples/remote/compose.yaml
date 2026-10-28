@@ -1,0 +1,10 @@
+# The remote example's server: NativeLink with a local worker that has python3.
+# `docker compose up -d --build` starts it; `docker compose down` removes it and its cache.
+services:
+  nativelink:
+    build: docker
+    ports:
+      - "50051:50051"
+    volumes:
+      - ./docker/nativelink.json5:/config:ro
+    command: ["/config"]
