@@ -216,8 +216,8 @@ description = "Assert no adapter module of buildl names another module of the cr
 # The compiler lets any module of a crate import any other, so nothing stops one
 # adapter from leaning on another — and adapters that lean on each other can no
 # longer be read, tested or replaced alone (book/src/ch11-03-four-crates.md
-# dependency rule 2). What several adapters need lives in the two shared modules, `state`
-# and `search_path`, which implement no port; adapters meet only in the
+# dependency rule 2). What several adapters need lives in the two shared modules,
+# `state` and `search_path`, which implement no port; adapters meet only in the
 # composition modules, `local_ports` and `workspace`.
 #
 # A rule check with no golden file: the rule is "no edge", so a committed list

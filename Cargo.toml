@@ -27,8 +27,9 @@ authors      = ["rstlix0x0 <rstlix.dev@gmail.com>"]
 airsl      = "0.1.4"
 # Serialization for every phase handoff (Vec<Declaration> → TargetGraph → Plan →
 # Vec<ActionOutcome>) and the durable stores. NOTE: all JSON output must leave
-# through the one canonical sorted-key serializer (book/src/ch11-05-determinism-rules.md rule 2), built on
-# serde_json — never through serde_json::to_string directly.
+# through the one canonical sorted-key serializer
+# (book/src/ch11-05-determinism-rules.md rule 2), built on serde_json — never
+# through serde_json::to_string directly.
 serde      = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.150"
 # Errors. One structured enum in `buildl-core`, airsl-style — structured fields,
@@ -41,7 +42,8 @@ thiserror  = "2.0.18"
 # `Hasher`, so every digest in the workspace comes from one implementation.
 sha2       = "0.10"
 # Parallel file hashing in the Plan phase. Confined to the `Digester` adapter in
-# `buildl` (book/src/ch11-06-decision-records.md) so the executor's plain-threads model stays singular.
+# `buildl` (book/src/ch11-06-decision-records.md) so the executor's plain-threads
+# model stays singular.
 rayon      = "1.12.0"
 # buildl.toml (the ceiling) parsing in the `Manifest` adapter. Read-only, like
 # airsl's extension manifests: the `display` (serialization) default feature is dropped.
@@ -54,7 +56,7 @@ toml       = { version = "0.8.23", default-features = false, features = ["parse"
 toml_edit  = { version = "0.22.27", default-features = false, features = ["parse"] }
 # Source globbing for `b.sources()` — the declaration phase's only filesystem
 # read; results are sorted host-side so declaration is deterministic regardless
-# of filesystem order (book/src/ch11-05-determinism-rules.md).
+# of filesystem order (book/src/appendix-03-lua-api.md).
 globset    = "0.4"
 walkdir    = "2.5"
 # Temp-file-then-rename writes in `buildl`'s shared `state` module, which every

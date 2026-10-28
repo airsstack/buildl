@@ -1,8 +1,8 @@
 #
 # Purity bans for buildl-core.
 #
-# book/src/ch11-03-four-crates.md, what buildl-core may depend on: this crate may use `std`, excluding its
-# I/O, process, thread, environment and clock APIs. The crate boundary does not
+# book/src/ch11-03-four-crates.md, what buildl-core may depend on: this crate
+# may use `std`, excluding its I/O, process, thread, environment and clock APIs. The crate boundary does not
 # enforce that — `std` is in scope for every crate — so the rule is enumerated
 # here and asserted by `cargo make guard-core-purity`.
 #

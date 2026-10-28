@@ -11,11 +11,11 @@ The pre-development blocker is **resolved** (2026-09-13): fine-grained per-file 
 ## Documents and their roles
 
 - `book/` — The buildl Book (mdBook; `cargo make book` serves it, `cargo make book-build` builds it), the authoritative description of buildl. `book/src/SUMMARY.md` lists its pages, in three parts:
-  - the user chapters `ch01`–`ch10` — getting started, build files, permission and the `buildl.toml` ceiling, caching and action keys, the sandbox and isolation ladder, discovery targets, plugins, the remote cache and execution, watch mode;
+  - the introduction and the user chapters `ch01`–`ch10` — getting started, a first project, build files, permission and the `buildl.toml` ceiling, caching and action keys, the sandbox and isolation ladder, discovery targets, plugins, the remote cache and execution, watch mode;
   - Under the Hood, `ch11-*` — the pipeline and core types, crash safety, the four crates, ports and adapters, dependency rules and the workspace layout (`ch11-03`), errors (`ch11-04`), determinism rules (`ch11-05`), decision records (`ch11-06`), testing layers (`ch11-07`), build-system theory (`ch11-08`) and what buildl can and cannot promise, with the depfile gap (`ch11-09`);
   - the appendix — command line, `buildl.toml`, build file API, exit codes, references.
 - `.claudestacks/sdlc/roadmaps/buildl/` — the claudestacks-sdlc roadmap: `roadmap.md` (vision, non-goals) and one file per milestone — the milestones `01`–`08`, and `09-first-publish`. A chain joins a milestone through the `milestone:` key in its `intent.md`. Progress is never written down: the status board counts it from the chains each time it runs.
-- `README.md` — condensed public summary of the design and architecture documents. Keep it consistent with the docs when either changes.
+- `README.md` — condensed public summary of the book. Keep it consistent with the book when either changes.
 
 Chapter files under `book/src/` are cited by name from `Cargo.toml`, `deny.toml`, `Makefile.toml` and `crates/buildl-core/clippy.toml`, and numbered rules keep their numbers (the dependency rules on `ch11-03`, the determinism rules on `ch11-05`) — keep both when restructuring the book.
 
