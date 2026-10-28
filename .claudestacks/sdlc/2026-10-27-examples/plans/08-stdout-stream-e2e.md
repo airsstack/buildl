@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-27
 depends-on: [01, 02]
 built-on: 5947af3e315f
@@ -42,7 +42,9 @@ its output. No production change.
 **Proof:** written first, seen failing, then passing —
 - `a_stdout_stream_declares_one_target_per_value` — after `build`, the graph holds the two
   declared targets and their outputs hold the values' text.
-- `the_read_back_is_byte_identical_in_a_second_checkout` — building a copy gives the same bytes.
+- a second checkout giving the same bytes is held by the existing
+  `a_stdout_output_is_built_twice_byte_identical`, whose snapshot and output list now hold
+  `out/alpha` and `out/beta`; `the_same_under_bare` compares them between `bare` and `sandbox`.
 
 **Done when:** `cargo test -p buildl --test e2e stdout_output` passes, `cargo make dod` and
 `cargo deny check` are green. Commit `test(buildl): read a stdout stream back with decode_all end to end`.
@@ -54,3 +56,24 @@ its output. No production change.
 ## Proof
 
 - `cargo test -p buildl --test e2e` green.
+
+## Review findings
+
+- duplicate — `the_read_back_is_byte_identical_in_a_second_checkout` repeated what
+  `a_stdout_output_is_built_twice_byte_identical` already checks once the fixture declares the two
+  targets; removed, the Proof amended, and `the_same_under_bare` now also compares `out/alpha` and
+  `out/beta` between `bare` and `sandbox`. Fixed.
+
+## Probe results
+
+- Red first: the new tests failed (`out/alpha` not found) before the fixture changed; green
+  after, with the existing tests counting `//:alpha` and `//:beta`.
+- `cargo test -p buildl --test e2e stdout_output` → 5 passed; `cargo make dod` and
+  `cargo deny check` green; CI run 40633614431 (at `b1cc0f0`) `Definition of Done` success on
+  Linux and macOS.
+
+## Deviations
+
+- 2026-10-28 — the existing tests' expected targets and outputs grew by `//:alpha` and `//:beta`,
+  since they build the same fixture.
+- 2026-10-28 — clippy's `assert_is_empty` asked for `assert_eq!(missing, Vec::new())`.
