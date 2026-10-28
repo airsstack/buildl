@@ -32,3 +32,4 @@ It reads `plan --json` with `python3`, so it needs Python 3 besides the example'
 toolchain. `buildl` is `$BUILDL` when set, else the first `buildl` on `PATH`.
 
 From the repository root, `cargo make examples` builds `buildl` and checks every example.
+CI runs it on Linux and macOS.

@@ -66,6 +66,48 @@ jobs:
       - name: cargo make dod
         run: cargo make dod
 
+  examples:
+    name: Examples
+    # Each example under examples/ is a workspace of its own, built and tested by
+    # the buildl binary with its language's toolchain. `remote` is left out: it needs
+    # a remote execution server.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the latest stable Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup show
+          cargo --version
+
+      - name: Cache cargo registry and target dir
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: examples-${{ matrix.os }}
+
+      - name: Install cargo-make
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-make
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: examples/go/go.mod
+
+      # check.sh reads `plan --json` with python3, and the Python example builds with it.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: cargo make examples
+        run: cargo make examples
+
   deny:
     name: Supply chain
     runs-on: ubuntu-latest
