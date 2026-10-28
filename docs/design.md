@@ -587,14 +587,17 @@ b.target("bundle", {
 ### 9.3 Rust
 
 ```lua
-b.target("release", {
-  inputs  = { "Cargo.toml", "Cargo.lock", b.sources("src/**/*.rs") },
-  run     = { "cargo", "build", "--release", "--locked" },
-  outputs = { "target/release/mytool" },
+b.target("mytool", {
+  inputs = { "Cargo.toml", "Cargo.lock", b.sources("src/**/*.rs") },
+  run    = { "cargo", "install", "--path", ".", "--root", "$out",
+             "--target-dir", "target", "--no-track" },
+  env    = { "HOME", "PATH" },
 })
 ```
 
-Cargo's `target/` stays cargo's cache (the ceiling grants `fs.write = ["target"]`): buildl decides _whether_ to invoke cargo, cargo decides how little to recompile. Two cache layers, each doing its own job.
+`cargo install --root $out` writes the binary to `out/mytool/bin/mytool`, a directory output holding regular files only (§8.7). The obvious form, `cargo build --release` with `outputs = { "target/release/mytool" }`, never produces its output: a declared output is looked for under `out/`, and cargo writes under `target/`. `--no-track` keeps cargo's install records out of `$out`; `HOME` is where cargo keeps its registry and `PATH` is where it finds the linker. `examples/rust` builds this way.
+
+In the input sandbox (§12.2) `target` lies in the action's exec dir, which is removed when the action is done, so every run compiles the crate from scratch: buildl's cache decides _whether_ cargo runs, and a run starts cold. Under `strategy = "bare"` the action runs in the workspace, `target` persists (the ceiling grants `fs.write = ["target"]`), and cargo decides how little to recompile — two cache layers, each doing its own job.
 
 ### 9.4 Docker
 
@@ -818,7 +821,7 @@ Each stack plugin is an idiom library — the encoded knowledge of how that tool
 
 **`bun`** — `deps` (lockfile-keyed install), `bundle`, `typecheck`, `test`, `lint`. Encodes: the stamp-file idiom for `node_modules`, frozen-lockfile discipline, parallel typecheck/bundle. Use cases: SPA bundles, server bundles, shared UI packages consumed across a monorepo.
 
-**`rust`** — `build` (profile option), `test`, `clippy`, `fmt_check`, `doc`. Encodes: `Cargo.lock` + `--locked`, the two-cache-layer contract (buildl decides _whether_ cargo runs, cargo's `target/` decides how little to recompile), `fs.write = ["target"]` in the requested capabilities. Use cases: workspace crates, wasm artifacts feeding a web bundle.
+**`rust`** — `build` (profile option), `test`, `clippy`, `fmt_check`, `doc`. Encodes: `Cargo.lock` + `--locked`, the two-cache-layer contract (buildl decides _whether_ cargo runs; under `strategy = "bare"`, cargo's `target/` decides how little to recompile, while in the input sandbox it starts empty each run, §9.3), `fs.write = ["target"]` in the requested capabilities. Use cases: workspace crates, wasm artifacts feeding a web bundle.
 
 **`docker`** — `image` (iidfile idiom), `push` (`network = true`, depends on the image), `run_in` (execute another target's action inside an image — the tier-4 bridge). Encodes: `--iidfile` digests as artifacts, `SOURCE_DATE_EPOCH`-aware BuildKit flags for reproducible layers [3] so users never learn they exist. Use cases: service images from compiled outputs, push-gated deploys, pinned build environments.
 
