@@ -156,11 +156,11 @@ A build file or `buildl.toml` is wrong, and editing it is the fix:
 - `buildl.toml` is missing, does not parse, or asks for what this version cannot do, such as
   `strategy = "container"`.
 
-This `build.lua` is missing the `)` that closes the call:
+This `build.lua` is missing the `})` that closes the options and the call:
 
 ```lua
 local b = buildl
-b.target("hello.txt", { run = { "sh", "-c", "echo hello > $out" } }
+b.target("hello.txt", { run = { "sh", "-c", "echo hello > $out" }
 ```
 
 ```console
@@ -179,5 +179,5 @@ is given when a fetched plugin's files in the store are no longer the ones `buil
 
 ## 7, Internal
 
-`buildl` reached a state it has no answer for: an error or an outcome this binary has no row for
-in its table of codes. This is a bug in `buildl`, never the user's fault.
+`buildl` reached a state it has no answer for: an error that should never happen, or an error or
+outcome this binary has no row for in its table of codes. This is a bug in `buildl`, never the user's fault.
