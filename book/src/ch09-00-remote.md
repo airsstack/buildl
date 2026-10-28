@@ -86,7 +86,7 @@ warning: remote cache lookup failed: grpc://127.0.0.1:50051: ActionCache.GetActi
 ```
 
 One warning, and the remote is off for the rest of the command. `after 6 calls` is the first call
-and five retries (below). A remote that is down never stops you working.
+and five retries (below). `os error 61` is how macOS numbers a refused connection; Linux says 111. A remote that is down never stops you working.
 
 If you would rather it did, as CI might, `--remote-strict` or `BUILDL_REMOTE_STRICT=1` makes a
 failed call fail the run:
@@ -276,7 +276,7 @@ the build above made six calls before giving up:
 ```text
  retries = 5 (default): the first call, then up to 5 retries
  call ─✗─► 100 ms ─► retry 1 ─✗─► 200 ms ─► retry 2 ─✗─► 400 ms ─► ... ─✗─► failed call
-            (each pause doubles, at most 5 s, plus 0–50 ms at random)
+            (each pause doubles, at most 5 s, plus under 50 ms at random)
  retries = 0: the first call only
 ```
 

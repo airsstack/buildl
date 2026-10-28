@@ -116,6 +116,7 @@ the others that were kept.
 |---|---|
 | Ctrl-C | ends `watch` as it ends `buildl build`; the shell reports 130 |
 | a usage error, found before the first build | 2 |
+| `buildl.toml` cannot be read before the first build | 5, as `buildl build` ends |
 | the file watcher cannot be set up or kept, or the system says it dropped events | 3 |
 
 A wrong flag is caught before anything starts:
