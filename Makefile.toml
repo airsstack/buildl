@@ -215,8 +215,8 @@ category = "Gate"
 description = "Assert no adapter module of buildl names another module of the crate"
 # The compiler lets any module of a crate import any other, so nothing stops one
 # adapter from leaning on another — and adapters that lean on each other can no
-# longer be read, tested or replaced alone (architecture-building-blocks.md §7
-# rule 2). What several adapters need lives in the two shared modules, `state`
+# longer be read, tested or replaced alone (book/src/ch11-03-four-crates.md
+# dependency rule 2). What several adapters need lives in the two shared modules, `state`
 # and `search_path`, which implement no port; adapters meet only in the
 # composition modules, `local_ports` and `workspace`.
 #
@@ -283,7 +283,7 @@ done < "${edges}"
 if [ "${status}" -ne 0 ]; then
     echo "       an adapter module may name state and search_path and no other module of the crate;" >&2
     echo "       state and search_path name none; adapters meet only in local_ports and workspace" >&2
-    echo "       (architecture-building-blocks §7 rule 2)" >&2
+    echo "       (book/src/ch11-03-four-crates.md dependency rule 2)" >&2
     exit 1
 fi
 echo "guard-adapter-isolation: OK ($(wc -l < "${edges}" | tr -d ' ') edges)"
@@ -340,7 +340,7 @@ fi
 if grep -rnE --include='*.rs' 'clippy::(disallowed_|all\b|style\b)' crates/buildl-core; then
     echo "guard: a purity ban was suppressed in source" >&2
     echo "       move the call to an adapter behind a port, or delete the ban" >&2
-    echo "       and record the decision in architecture.md §6" >&2
+    echo "       and record the decision in book/src/ch11-06-decision-records.md" >&2
     exit 1
 fi
 
