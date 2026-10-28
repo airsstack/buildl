@@ -1,0 +1,17 @@
+[workspace]
+name   = "remote"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["python3"]
+env.read = []
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
+
+# The server compose.yaml starts. With no flag, build looks a target up there when the
+# local cache cannot serve it; --remote-execute runs it there, --remote-upload sends
+# what ran here.
+[remote]
+url = "grpc://127.0.0.1:50051"
