@@ -13,7 +13,7 @@ toolchain, nothing else.
 | [`go-discovery`](go-discovery/) | a discovery target running `go list` with `stdout = true`, read back with `buildl.decode_all`: one test target per Go package, none written by hand | Go 1.22 |
 | [`polyglot`](polyglot/) | a Go service, a Rust CLI and a Python tool built from one generated schema; labels across directories; early cutoff after a comment edit; `buildl query 'rdeps(…)'` | Go 1.22, a Rust toolchain, Python 3 |
 | [`plugins`](plugins/) | two Go programs declared through a plugin kept in the workspace, `buildl.use`; its manifest and the workspace's cap; `plan` and `doctor` naming the plugin | Go 1.22 |
-| [`remote`](remote/) | the Python starter run on a NativeLink server it starts with `docker compose`: `--remote-execute`, a fresh copy fetching the result, `--remote-upload`; not run by `check.sh` | Linux x86_64, Python 3, Docker |
+| [`remote`](remote/) | the Python starter run on a NativeLink server it starts with `docker compose`: `--remote-execute`, a fresh copy fetching the result, `--remote-upload`; left out of `cargo make examples`, run by its own CI job | Linux x86_64, Python 3, Docker |
 
 ## Checking an example
 
@@ -35,5 +35,6 @@ fails:
 It reads `plan --json` with `python3`, so it needs Python 3 besides the example's own
 toolchain. `buildl` is `$BUILDL` when set, else the first `buildl` on `PATH`.
 
-From the repository root, `cargo make examples` builds `buildl` and checks every example.
-CI runs it on Linux and macOS.
+From the repository root, `cargo make examples` builds `buildl` and checks every example but
+`remote`, which needs its server. CI runs it on Linux and macOS, and runs `remote` in a job of
+its own on Linux.

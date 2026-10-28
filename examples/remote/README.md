@@ -23,7 +23,8 @@ uploaded for the next checkout to fetch.
 | `docker/Dockerfile` | NativeLink's static binary on a Debian base with `python3`: the worker runs each action as a process in the container, so the program it names must be there |
 | `docker/nativelink.json5` | one process serving the CAS, the action cache, the scheduler and a worker that matches Linux x86-64 |
 
-The server keeps its cache in the container, so `docker compose down` empties it.
+The server keeps its cache in the container, so `docker compose down` empties it. It asks for
+no login and runs what it is sent, so `compose.yaml` publishes its port on `127.0.0.1` only.
 
 ## Run it
 
@@ -37,10 +38,12 @@ sh assert.sh                      # the four copies A, B, C, D in temporary dire
 docker compose down
 ```
 
-By hand, in two fresh copies of this directory:
+By hand, against a server just started (one that already ran these actions answers `1 fetched`
+to the first command), in two fresh copies of this directory:
 
 ```sh
 buildl build --remote-execute     # copy 1: 1 remote
+buildl test --remote-execute      # copy 1: tests: 1 passed (1 remote)
 buildl build                      # copy 2: 1 fetched
 ```
 

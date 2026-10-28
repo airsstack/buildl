@@ -4,6 +4,7 @@
 # step works in a fresh copy of this directory, as a separate checkout would.
 #
 #   A  build --remote-execute    the server runs the target          1 remote
+#      test --remote-execute     the server runs the test            tests: 1 passed (1 remote)
 #   B  build                     a fresh copy fetches what A ran     1 fetched
 #   C  edit, --remote-upload     runs here and sends the result      1 built
 #   D  same edit, build          a fresh copy fetches what C sent    1 fetched
@@ -54,6 +55,12 @@ step() {
 
 copy a
 step a "1 remote" "the server runs the target" --remote-execute
+echo "remote: a: the server runs the test"
+tested="$(cd "${work}/a" && "${BUILDL}" test --remote-strict --remote-execute 2>&1)" \
+    || fail "a: test exits 0" "${tested}"
+[ "$(printf '%s\n' "${tested}" | tail -n 1)" = "tests: 1 passed (1 remote)" ] \
+    || fail "a: the server runs the test: expected 'tests: 1 passed (1 remote)'" "${tested}"
+
 copy b
 step b "1 fetched" "a fresh copy fetches what the server ran"
 
