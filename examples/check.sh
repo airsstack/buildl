@@ -45,7 +45,8 @@ step() {
     fi
 }
 
-# all_clean: every target `plan --json` reports has the verdict Clean.
+# all_clean: every target `plan --json` reports has the verdict Clean. An example
+# declaring only tests and discovery targets has none to report.
 all_clean() {
     "${BUILDL}" plan --json | python3 -c '
 import json, sys
@@ -53,7 +54,7 @@ targets = json.load(sys.stdin)["targets"]
 dirty = sorted(label for label, row in targets.items() if row["verdict"] != "Clean")
 for label in dirty:
     print(label, targets[label]["verdict"], targets[label]["reason"])
-sys.exit(1 if dirty or not targets else 0)
+sys.exit(1 if dirty else 0)
 '
 }
 

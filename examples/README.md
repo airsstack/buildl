@@ -10,6 +10,7 @@ toolchain, nothing else.
 | [`go`](go/) | a Go binary and its test; `plan` naming an edited input; a second `test` served from the cache; `buildl log` | Go 1.22 |
 | [`rust`](rust/) | the same for a Rust binary, built with `cargo install --root $out` | a Rust toolchain |
 | [`python`](python/) | the same for a Python zipapp tested with `unittest`, standard library only | Python 3 |
+| [`go-discovery`](go-discovery/) | a discovery target running `go list` with `stdout = true`, read back with `buildl.decode_all`: one test target per Go package, none written by hand | Go 1.22 |
 
 ## Checking an example
 
