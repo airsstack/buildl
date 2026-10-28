@@ -4,6 +4,8 @@
 #   cargo make            # the full Definition-of-Done gate
 #   cargo make fmt        # rewrite formatting (the only task that mutates the tree)
 #   cargo make clippy     # a single gate step
+#   cargo make book       # serve the book at http://localhost:3000
+#   cargo make book-build # build the book once into book/book/
 #   cargo make --list-all-steps
 #
 # The five gate steps are the canonical command set for this repository: fmt, clippy,
@@ -377,6 +379,57 @@ for example in examples/*/; do
     sh examples/check.sh "${example}"
 done
 '''
+
+# ---------------------------------------------------------------------------
+# Book
+# ---------------------------------------------------------------------------
+
+# Both tasks install mdBook and mdbook-mermaid on first use rather than failing
+# with a missing binary. The versions are exact, not floors: mdbook-mermaid
+# 0.17 needs mdBook 0.5, so a floor would install a pair that cannot build the
+# book. The same two versions are pinned in ci.yml's `book` job and in
+# pages.yml; change all three together. The output lands in `book/book/`,
+# which is ignored — the published copy is built by the Pages workflow.
+#
+# Each install task asks the binary on PATH for its version. cargo-make's
+# `install_crate` is not used: it reads the version from cargo's install
+# record, so it accepts a binary of another version found first on PATH.
+
+[tasks.book-mdbook]
+category = "Book"
+description = "Install mdBook 0.4.52 unless that version is the one on PATH"
+script_runner = "@shell"
+script = '''
+case "$(mdbook --version 2>/dev/null)" in
+    "mdbook v0.4.52") ;;
+    *) cargo install mdbook --version 0.4.52 --locked --force ;;
+esac
+'''
+
+[tasks.book-mermaid]
+category = "Book"
+description = "Install mdbook-mermaid 0.16.2, which draws the book's diagrams, unless it is on PATH"
+script_runner = "@shell"
+script = '''
+case "$(mdbook-mermaid --version 2>/dev/null)" in
+    "mdbook-mermaid 0.16.2") ;;
+    *) cargo install mdbook-mermaid --version 0.16.2 --locked --force ;;
+esac
+'''
+
+[tasks.book]
+category = "Book"
+description = "Serve the book at http://localhost:3000, rebuilding on every edit"
+dependencies = ["book-mdbook", "book-mermaid"]
+command = "mdbook"
+args = ["serve", "book", "--open"]
+
+[tasks.book-build]
+category = "Book"
+description = "Build the book once into book/book/, the same build Pages publishes"
+dependencies = ["book-mdbook", "book-mermaid"]
+command = "mdbook"
+args = ["build", "book"]
 
 # ---------------------------------------------------------------------------
 # Development helpers
