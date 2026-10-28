@@ -82,7 +82,7 @@ fn the_same_under_bare() {
         None
     );
 
-    for output in ["out/greeting", "out/pkgs.json"] {
+    for output in ["out/greeting", "out/pkgs.json", "out/alpha", "out/beta"] {
         assert_eq!(
             fs::read(bare.root().join(output)).unwrap(),
             fs::read(sandboxed.root().join(output)).unwrap(),
@@ -145,22 +145,4 @@ fn a_stdout_stream_declares_one_target_per_value() {
             "{label}"
         );
     }
-}
-
-#[test]
-fn the_read_back_is_byte_identical_in_a_second_checkout() {
-    let first = fixture(None);
-    let second = fixture(None);
-
-    first.build();
-    second.build();
-
-    for (name, _) in DECLARED {
-        assert_eq!(
-            fs::read(first.root().join("out").join(name)).unwrap(),
-            fs::read(second.root().join("out").join(name)).unwrap(),
-            "{name}"
-        );
-    }
-    assert_eq!(first.snapshot().first_difference(&second.snapshot()), None);
 }
