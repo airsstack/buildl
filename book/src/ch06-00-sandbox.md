@@ -33,6 +33,10 @@ The environment holds the variables the target declared and three that the sandb
 | `LC_ALL` | `C` | sorting, messages and number formats do not follow the machine's language |
 | `SOURCE_DATE_EPOCH` | `315532800` | the time a tool stamps into what it writes: 1980-01-01, the earliest a ZIP file can hold |
 
+Every file and folder copied in carries that same time, 1980-01-01, as the time it was last
+changed. A tool that records file times, such as a ZIP packer, then writes the same times on every
+run and every system.
+
 When the action is done, `buildl` reads its outputs into the store and removes the directory.
 
 The directory is outside the workspace on purpose. Tools such as `go`, `cargo` and `node` search
