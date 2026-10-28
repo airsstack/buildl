@@ -1,0 +1,11 @@
+[workspace]
+name   = "polyglot"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["go", "cargo", "python3"]
+env.read = ["HOME", "PATH"]
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
