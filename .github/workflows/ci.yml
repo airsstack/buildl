@@ -265,3 +265,49 @@ jobs:
       - name: NativeLink's log
         if: failure()
         run: docker logs nativelink
+
+  examples-remote:
+    name: Remote example on NativeLink
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # examples/remote runs on a NativeLink server it starts itself with docker
+    # compose. Linux only, for the reason the remote-execution job gives.
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the latest stable Rust toolchain
+        run: rustup toolchain install
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: examples-remote
+
+      # The copies that build locally run python3, and so does assert.sh.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build buildl
+        run: cargo build -p buildl-cli
+
+      - name: Start the example's server
+        run: docker compose -f examples/remote/compose.yaml up -d --build
+
+      - name: Wait for NativeLink's worker
+        run: |
+          for _ in $(seq 60); do
+            if docker compose -f examples/remote/compose.yaml logs nativelink 2>&1 | grep -q 'Worker registered with scheduler'; then exit 0; fi
+            sleep 1
+          done
+          echo "NativeLink's worker did not register within 60 s" >&2
+          docker compose -f examples/remote/compose.yaml logs nativelink
+          exit 1
+
+      - name: The four copies
+        env:
+          BUILDL: target/debug/buildl
+        run: sh examples/remote/assert.sh
+
+      - name: NativeLink's log
+        if: failure()
+        run: docker compose -f examples/remote/compose.yaml logs nativelink
