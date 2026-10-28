@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-28
 depends-on: [02, 03, 04, 05, 06, 07]
 built-on: 136d5b098d7e
@@ -125,3 +125,35 @@ Nothing else changes in either file.
 - The spec §6 search finds only `changed_path.rs`.
 - `cargo make dod`, `cargo deny check` and `cargo make book-build` are each green once.
 - One CI run on the branch (`gh workflow run ci.yml --ref worktree-prep-publish`) shows every job green, the `Book` job included.
+
+## Review findings
+
+- wrong citation — `Cargo.toml:57` cited `ch11-05` for sorted `b.sources()` results; ch11-05 does
+  not say it. Now cites `book/src/appendix-03-lua-api.md` ("relative to the folder, sorted").
+  Fixed.
+- nit — `CLAUDE.md:18` still called `README.md` a summary of "the design and architecture
+  documents"; now "the book". Fixed.
+- nit — `CLAUDE.md`'s book description left out the introduction and ch02 "A First Project".
+  Fixed.
+- nit — the longer citations pushed `Cargo.toml:30,44`, `clippy.toml:4` and `Makefile.toml:219`
+  past the surrounding comment width; rewrapped. Fixed.
+
+## Probe results
+
+- Task 1 grep over `Cargo.toml`, `deny.toml`, `Makefile.toml`, `crates/buildl-core/clippy.toml`
+  prints nothing; the five `book/src/` files they cite exist; every "rule N" / "dependency rule N"
+  matches its page (ch11-03 dependency rules 1–5, ch11-05 determinism rules 1–5, unchanged order).
+- `cargo make dod` exit 0 and `cargo deny check` ok, after Task 1 and again after the review fix.
+- Task 2 grep over `README.md` and `CLAUDE.md` prints nothing; all added links resolve.
+- Before `git rm`, every spec §3 row was found marked in the records of plans 02–07.
+- Task 3: repo-wide search finds only `crates/buildl-core/src/types/changed_path.rs`; the
+  `book/src` search prints nothing; 38 ` ```mermaid ` blocks in `book/src`; `test ! -e docs`
+  succeeds; `cargo make book-build` exit 0.
+- No other path in the repo (workflows, Makefile tasks, crate manifests, rustdoc) referred to
+  `docs/` (reviewer).
+
+## Deviations
+
+- 2026-10-28 — `CLAUDE.md:18` (the `README.md` line) changed though Task 2 did not name it: it
+  pointed at the deleted documents.
+- 2026-10-28 — CI run 40717680408 at `c5776e1`: all 10 jobs green, `Book` included.
