@@ -144,6 +144,11 @@ jobs:
       - name: Install airsl
         run: cargo install --locked airsl-cli
 
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
       - name: cargo make skills
         run: cargo make skills
 
