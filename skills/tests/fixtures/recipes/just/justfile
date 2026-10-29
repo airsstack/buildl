@@ -1,0 +1,10 @@
+set shell := ["bash", "-c"]
+alias b := build
+export RUST_LOG := "info"
+version := "1"
+
+build:
+    cargo build
+
+test arg:
+    cargo test {{arg}}
