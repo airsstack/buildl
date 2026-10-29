@@ -1,8 +1,8 @@
 ---
-status: approved
+status: done
 created: 2026-10-29
 depends-on: [01]
-built-on: 1703d7070b45
+built-on: 45bb359e2387
 ---
 
 # `buildl` Skill Implementation Plan
@@ -116,3 +116,27 @@ needing a plugin, or one calling `buildl.subdir` (it needs a child build file) i
 ## Proof
 
 `cargo make skills` passes with `skills/buildl/` in place, and fails on each probe above.
+
+## Review findings
+
+- correctness — the loop gave `plan` no failure branch and the mistakes rows said only `build` exits 4/5; `plan` already exits 4 on a ceiling or plugin refusal and 5 on a missing input (book/src/ch04-01-nothing-is-ambient.md:128-134; ch08-03-how-buildl-decides.md:142) — skills/buildl/SKILL.md:35, :95-96. Fixed; spec §3.3 B amended to match. Verified: `buildl plan` on a missing input → `input missing.c does not exist`, exit 5; `cargo make skills` green.
+- correctness — `exit-codes.md` named one `doctor` check for all three causes of exit 4; a plugin refusal shows `allowed` in the ceiling column and is listed under `plugin violations` (ch08-03:101-120), `deny` shows `no` under `approved` (ch04-03-approvers.md:123-127) — references/exit-codes.md:72, SKILL.md D. Fixed with a 3-row table. Verified: `cargo make skills` green.
+- correctness — `discovered` was said to give `nil` in the first pass; it gives `nil` only when the target never ran, else its last successful output (ch07-00-discovery-targets.md:20; appendix-03-lua-api.md:200) — references/lua-api.md:157. Fixed. Verified: `cargo make skills` green.
+- correctness (nits, fixed) — "every function refuses" → "every options table refuses" (lua-api.md:4); exit 4's who-fixes column as the book words it; the never-widen sentence names `extension.toml`; cap keys `proc.run`, `env.read`, `network`; fetch refusal scoped to commands that read build files (buildl-toml.md, plugins.md).
+- style (nits, declined) — "at the line the error names" wording, the exit-code causes left out for brevity, the clap sample cut; no fact changes.
+- spec additions (kept) — SKILL.md E's missing-input row and F's "one target over all its sources" line: both true, recorded here as additions to spec §3.3 E/F.
+
+## Probe results
+
+- starter build — SKILL.md's `build.lua` and `buildl.toml` copied to a scratch folder with `src/a.txt`: `buildl build` → `1 built`, `buildl test` → `tests: 1 passed` (coder and reviewer, separately).
+- `buildl check` passes a missing input, `build` refuses it — `error: build.lua: //:x.txt: input missing.c does not exist`, exit 5.
+- with a missing input and `sh` outside the ceiling, `build` exits 4 first: the ceiling is applied before inputs are read.
+- plugin refusal text is the same for a manifest and a cap refusal (`outside plugin X (env.read allows: nothing)`, ch08-03:66-75, :80-90); plugins.md tells the agent to compare the want with `extension.toml` and `[plugins.<name>]`.
+- Task 1 probe — `name: buildl-x` → `Directory name 'buildl' must match skill name 'buildl-x'`, exit 1; reverted.
+- Task 2 probe — `runn` in lua-api.md → `unknown field "runn"` and `skills: buildl check failed for buildl-references-lua-api.md-1`; reverted.
+- `wc -l < skills/buildl/SKILL.md` → 160.
+
+## Deviations
+
+- 2026-10-29 — spec §3.3 B amended: `plan` exits 4 and 5 like `build`. Plans re-stamped `built-on: 45bb359e2387`; their content is unaffected.
+- 2026-10-29 — the fix round touched Markdown only; `cargo make dod` (which reads no file under `skills/`) was not re-run for it; `cargo make skills` was.

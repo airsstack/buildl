@@ -145,7 +145,8 @@ well. Then the approver, `[approver]`, agrees to what the build wants. Commands 
         ▼
  buildl plan      what would rebuild, and why; --json gives, per target, its verdict, the reason and
                   the key's components, plus what the build wants (`wanted`); tests only when named
-        │
+        │ 0       exit 4 (ceiling or plugin refusal) / exit 5 (missing input): handled as at build
+        │         (book/src/ch04-01-nothing-is-ambient.md:128-134; ch08-03-how-buildl-decides.md:142)
         ▼
  buildl build ─── exit 1 ──► buildl log <target> ──► fix the code being built
         │ 0       exit 4 ──► buildl doctor ──► explain, and ask the user (3.3 D)
