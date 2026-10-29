@@ -110,4 +110,120 @@ function M.recipes(tool, files)
     return lister(files)
 end
 
+-- Raises `parity.json: <field> <what is wrong>`; the message is the whole error, with no
+-- position prefix.
+local function refuse(field, problem)
+    error("parity.json: " .. field .. " " .. problem, 0)
+end
+
+-- A list is a table whose keys are exactly 1..n. A decoded `[]` and `{}` are both empty tables.
+local function is_list(value)
+    if type(value) ~= "table" then
+        return false
+    end
+    local count = 0
+    for _ in pairs(value) do
+        count = count + 1
+    end
+    return count == #value
+end
+
+local function require_string_list(value, field, non_empty)
+    if not is_list(value) then
+        refuse(field, "must be a list of strings")
+    end
+    if non_empty and #value == 0 then
+        refuse(field, "must not be empty")
+    end
+    for i, item in ipairs(value) do
+        if type(item) ~= "string" then
+            refuse(field .. "[" .. i .. "]", "must be a string")
+        end
+    end
+end
+
+local function require_non_empty_string(value, field)
+    if type(value) ~= "string" or value == "" then
+        refuse(field, "must be a non-empty string")
+    end
+end
+
+local function require_table(value, field)
+    if type(value) ~= "table" then
+        refuse(field, "is required and must be a table")
+    end
+end
+
+local function check_old(old)
+    require_table(old, "old")
+    require_string_list(old.build, "old.build", true)
+    if old.test ~= nil then
+        require_string_list(old.test, "old.test", true)
+    end
+    require_string_list(old.programs, "old.programs")
+    require_string_list(old.env, "old.env")
+    if type(old.network) ~= "boolean" then
+        refuse("old.network", "is required and must be true or false")
+    end
+end
+
+-- Each recipe maps to a buildl target, or is dropped with a reason. Checked in name order so
+-- the first bad recipe named is the same on every run.
+local function check_recipes(recipes)
+    require_table(recipes, "recipes")
+    local names = {}
+    for name in pairs(recipes) do
+        names[#names + 1] = name
+    end
+    table.sort(names)
+    for _, name in ipairs(names) do
+        local field = "recipes." .. name
+        local entry = recipes[name]
+        require_table(entry, field)
+        if entry.target ~= nil and entry.dropped ~= nil then
+            refuse(field, "must hold either target or dropped, not both")
+        elseif entry.target ~= nil then
+            require_non_empty_string(entry.target, field .. ".target")
+        elseif entry.dropped ~= nil then
+            require_non_empty_string(entry.dropped, field .. ".dropped")
+        else
+            refuse(field, "must hold target or dropped")
+        end
+    end
+end
+
+local function check_outputs(outputs)
+    if not is_list(outputs) then
+        refuse("outputs", "is required and must be a list")
+    end
+    for i, entry in ipairs(outputs) do
+        local field = "outputs[" .. i .. "]"
+        require_table(entry, field)
+        require_non_empty_string(entry.old, field .. ".old")
+        require_non_empty_string(entry.new, field .. ".new")
+        if entry.judge ~= nil then
+            if entry.judge ~= "tests" then
+                refuse(field .. ".judge", 'must be "tests"')
+            end
+            require_non_empty_string(entry.reason, field .. ".reason")
+        end
+    end
+end
+
+-- Returns `decoded`, a decoded `parity.json`, once every field is known to be fit; raises
+-- naming the first field that is not. `old.test` and `skip` may be absent.
+function M.config(decoded)
+    require_table(decoded, "the file")
+    if LISTERS[decoded.tool] == nil then
+        refuse("tool", "must be one of make, just, shell, npm")
+    end
+    check_old(decoded.old)
+    check_recipes(decoded.recipes)
+    check_outputs(decoded.outputs)
+    if decoded.skip ~= nil then
+        require_string_list(decoded.skip, "skip")
+    end
+    return decoded
+end
+
 return M
