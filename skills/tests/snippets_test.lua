@@ -46,6 +46,6 @@ return {
         assert(not ok, "expected an error")
         err = tostring(err)
         assert(err:find("open.md", 1, true), err)
-        assert(err:find("3", 1, true), err)
+        assert(err:find("line 3:", 1, true), err)
     end,
 }

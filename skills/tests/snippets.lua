@@ -1,6 +1,6 @@
 -- Writes one buildl workspace per checkable lua block in the skills, for `buildl check`.
 -- Run from the repository root:
---   airsl run --allow-read skills --allow-write W skills/tests/snippets.lua W
+--   airsl run --allow-read skills --allow-read W --allow-write W skills/tests/snippets.lua W
 -- Each block lands in W/<md path, / as ->-<index>/build.lua beside a buildl.toml. The
 -- fixtures under skills/tests/fixtures/ are test inputs, not skill content, and are left out.
 local fs = airsstack.fs
@@ -35,6 +35,10 @@ for _, rel in ipairs(fs.walk(ROOT)) do
         local file = path.join(ROOT, rel)
         for _, block in ipairs(snippets.blocks(fs.read(file), file)) do
             local dir = path.join(out, rel:gsub("/", "-") .. "-" .. block.index)
+            if fs.exists(dir) then
+                error(string.format("%s: block %d maps to %s, which another file already took",
+                    file, block.index, dir), 0)
+            end
             fs.mkdir(dir)
             fs.write(path.join(dir, "build.lua"), block.body)
             fs.write(path.join(dir, "buildl.toml"), TOML)

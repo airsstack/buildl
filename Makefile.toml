@@ -419,13 +419,23 @@ done
 cp -R skills/tests/. "${T}/"
 for lib in skills/*/scripts/*.lua; do
     [ -f "${lib}" ] || continue
+    if [ -e "${T}/$(basename "${lib}")" ]; then
+        echo "skills: ${lib} has the name of another staged file" >&2
+        exit 1
+    fi
     cp "${lib}" "${T}/"
 done
 (cd "${T}" && airsl test --allow-read . .)
 
-airsl run --allow-read skills --allow-write "${W}" skills/tests/snippets.lua "${W}"
+airsl run --allow-read skills --allow-read "${W}" --allow-write "${W}" skills/tests/snippets.lua "${W}"
 for dir in "${W}"/*/; do
     [ -d "${dir}" ] || continue
+    case "$(basename "${dir}")" in
+        tests-fixtures-*)
+            echo "skills: a test fixture's lua block was taken as skill content" >&2
+            exit 1
+            ;;
+    esac
     if ! (cd "${dir}" && "${BUILDL}" check); then
         echo "skills: buildl check failed for $(basename "${dir}")" >&2
         exit 1
