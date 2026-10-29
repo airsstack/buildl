@@ -2,6 +2,11 @@
 -- `parity.lua` does the file work and calls this.
 local M = {}
 
+-- Returns `p` as a plain path: `.` and `..` resolved, no trailing slash.
+local function plain(p)
+    return airsstack.path.normalize(p)
+end
+
 -- Calls `fn(line)` for each line of `text`, without its line ending.
 local function each_line(text, fn)
     for raw in (text .. "\n"):gmatch("(.-)\r?\n") do
@@ -192,15 +197,27 @@ local function check_recipes(recipes)
     end
 end
 
+-- An output path names a file in a copy of the project, so it is relative and stays inside.
+local function require_inside_copy(value, field)
+    require_non_empty_string(value, field)
+    local normal = plain(value)
+    if airsstack.path.is_absolute(normal) or normal == ".." or normal:sub(1, 3) == "../" then
+        refuse(field, "must be a path inside the project copy, not " .. value)
+    end
+end
+
 local function check_outputs(outputs)
     if not is_list(outputs) then
         refuse("outputs", "is required and must be a list")
     end
+    if #outputs == 0 then
+        refuse("outputs", "must hold at least one entry")
+    end
     for i, entry in ipairs(outputs) do
         local field = "outputs[" .. i .. "]"
         require_table(entry, field)
-        require_non_empty_string(entry.old, field .. ".old")
-        require_non_empty_string(entry.new, field .. ".new")
+        require_inside_copy(entry.old, field .. ".old")
+        require_inside_copy(entry.new, field .. ".new")
         if entry.judge ~= nil then
             if entry.judge ~= "tests" then
                 refuse(field .. ".judge", 'must be "tests"')
@@ -314,6 +331,15 @@ local function recipe_rows(input, out)
     end
 end
 
+-- What is wrong with a status value that is not a number: `nil` is a missing file, `false` a
+-- file that holds no exit code.
+local function status_problem(value)
+    if value == false then
+        return "holds no exit code"
+    end
+    return "is missing"
+end
+
 -- Check 2: the old build ran twice and buildl built, each ending in status 0.
 local function build_rows(input, out)
     local problems = {}
@@ -323,8 +349,8 @@ local function build_rows(input, out)
         { "new.build.status", input.status.new_build },
     }
     for _, file in ipairs(files) do
-        if file[2] == nil then
-            problems[#problems + 1] = file[1] .. " is missing"
+        if type(file[2]) ~= "number" then
+            problems[#problems + 1] = file[1] .. " " .. status_problem(file[2])
         elseif file[2] ~= 0 then
             problems[#problems + 1] = file[1] .. " is " .. tostring(file[2])
         end
@@ -336,9 +362,11 @@ local function build_rows(input, out)
     end
 end
 
--- Checks 3, 4 and 4b: one row for each output pair.
+-- Checks 3, 4 and 4b: one row for each output pair. Returns true when a row leaves an output
+-- to the tests (`NOT REPEATABLE` or `JUDGED BY TESTS`), which check 5 then holds to account.
 local function output_rows(input, out)
     local has_tests = input.config.old.test ~= nil
+    local left_to_tests = false
     for i, pair in ipairs(input.config.outputs) do
         local hashes = input.hashes[i] or {}
         local absent = {}
@@ -351,12 +379,14 @@ local function output_rows(input, out)
             out[#out + 1] = row("3", pair.old, "FAIL", "missing: " .. table.concat(absent, ", "))
         elseif pair.judge == "tests" then
             if has_tests then
+                left_to_tests = true
                 out[#out + 1] = row("4b", pair.old, "JUDGED BY TESTS", pair.reason)
             else
                 out[#out + 1] = row("4b", pair.old, "FAIL", "judged by tests, but the project has no old.test")
             end
         elseif hashes.old1 ~= hashes.old2 then
             if has_tests then
+                left_to_tests = true
                 out[#out + 1] = row("4", pair.old, "NOT REPEATABLE", "old-1 and old-2 differ; the tests decide")
             else
                 out[#out + 1] = row("4", pair.old, "FAIL", "old-1 and old-2 differ and the project has no old.test")
@@ -367,22 +397,34 @@ local function output_rows(input, out)
             out[#out + 1] = row("3", pair.old, "PASS", "same bytes as new/" .. pair.new)
         end
     end
+    return left_to_tests
 end
 
--- Check 5: the old tests and the buildl tests end the same way.
-local function test_rows(input, out)
+-- Check 5: the old tests and the buildl tests end the same way. When `left_to_tests`, an
+-- output depends on them, so both runs must also have passed.
+local function test_rows(input, out, left_to_tests)
     if input.config.old.test == nil then
         out[#out + 1] = row("5", "tests", "NO TESTS", "the project has no old.test")
         return
     end
     local old, new = input.status.old1_test, input.status.new_test
-    if old == nil or new == nil then
-        local name = old == nil and "old-1.test.status" or "new.test.status"
-        out[#out + 1] = row("5", "tests", "FAIL", name .. " is missing")
+    local problems = {}
+    for _, file in ipairs({ { "old-1.test.status", old }, { "new.test.status", new } }) do
+        if type(file[2]) ~= "number" then
+            problems[#problems + 1] = file[1] .. " " .. status_problem(file[2])
+        end
+    end
+    if #problems > 0 then
+        out[#out + 1] = row("5", "tests", "FAIL", table.concat(problems, "; "))
+        return
+    end
+    local ended = "old-1 ended in " .. old .. ", new in " .. new
+    if left_to_tests and (old ~= 0 or new ~= 0) then
+        out[#out + 1] = row("5", "tests", "FAIL", "outputs left to the tests had no passing test: " .. ended)
     elseif (old == 0) ~= (new == 0) then
-        out[#out + 1] = row("5", "tests", "FAIL", "old-1 ended in " .. old .. ", new in " .. new)
+        out[#out + 1] = row("5", "tests", "FAIL", ended)
     else
-        out[#out + 1] = row("5", "tests", "PASS", "both ended in status " .. old)
+        out[#out + 1] = row("5", "tests", "PASS", ended)
     end
 end
 
@@ -394,6 +436,9 @@ local function permission_rows(input, out)
         { "env.read", input.config.old.env },
     }
     for _, entry in ipairs(pairs_checked) do
+        if input.ceiling[entry[1]] == nil then
+            error("doctor output: the ceiling has no " .. entry[1] .. " line", 0)
+        end
         local extra = missing_from(entry[2], input.ceiling[entry[1]])
         if #extra == 0 then
             out[#out + 1] = row("6", entry[1], "PASS", "nothing beyond the old build")
@@ -428,13 +473,14 @@ end
 -- names), `graph` (the decoded `buildl graph`), `ceiling` (from `M.ceiling`), `hashes` (per
 -- `outputs` entry, `{ old1, old2, new }` with `nil` for a missing file) and `status` (exit
 -- codes `old1_build`, `old2_build`, `new_build`, `old1_test`, `new_test`; `nil` for a missing
--- status file). Verdicts: `PASS`, `FAIL`, `NOT REPEATABLE`, `JUDGED BY TESTS`, `NO TESTS`.
+-- status file, `false` for one that holds no number). Raises when `ceiling` lacks `proc.run`
+-- or `env.read`. Verdicts: `PASS`, `FAIL`, `NOT REPEATABLE`, `JUDGED BY TESTS`, `NO TESTS`.
 function M.rows(input)
     local out = {}
     recipe_rows(input, out)
     build_rows(input, out)
-    output_rows(input, out)
-    test_rows(input, out)
+    local left_to_tests = output_rows(input, out)
+    test_rows(input, out, left_to_tests)
     permission_rows(input, out)
     return out
 end
@@ -460,14 +506,18 @@ function M.render(rows)
     return table.concat(lines, "\n")
 end
 
--- Returns `p` as a plain path: `.` and `..` resolved, no trailing slash.
-local function plain(p)
-    return airsstack.path.normalize(p)
+-- Raises when the work folder `W` is the project folder `P` or lies below it. Compares the
+-- paths as text, so it is only as good as the paths given: `prepare` passes it real paths.
+function M.check_outside(P, W)
+    local project, work = plain(P), plain(W)
+    if work == project or work:sub(1, #project + 1) == project .. "/" then
+        error("the work folder must be outside the project: " .. W .. " is in " .. P, 0)
+    end
 end
 
 -- Raises unless `P` (the project) and `W` (the work folder) are absolute, `W` is not `P` and
--- not below it, and `w_entries` (the names in `W`, `nil` when `W` does not exist) is empty or
--- `nil`.
+-- not below it (as text), and `w_entries` (the names in `W`, `nil` when `W` does not exist) is
+-- empty or `nil`.
 function M.check_paths(P, W, w_entries)
     if not airsstack.path.is_absolute(P) then
         error("the project folder must be absolute: " .. P, 0)
@@ -475,10 +525,7 @@ function M.check_paths(P, W, w_entries)
     if not airsstack.path.is_absolute(W) then
         error("the work folder must be absolute: " .. W, 0)
     end
-    local project, work = plain(P), plain(W)
-    if work == project or work:sub(1, #project + 1) == project .. "/" then
-        error("the work folder must be outside the project: " .. W .. " is in " .. P, 0)
-    end
+    M.check_outside(P, W)
     if w_entries ~= nil and #w_entries > 0 then
         error("work folder " .. W .. " is not empty", 0)
     end

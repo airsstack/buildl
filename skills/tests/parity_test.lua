@@ -1,4 +1,5 @@
--- Tests of parity_lib. Run from this folder: airsl test --allow-read . .
+-- Tests of parity_lib and parity. They run from the staged folder `cargo make skills` builds
+-- (this folder's files plus the scripts under skills/*/scripts/), as `airsl test --allow-read . .`.
 local parity = require("parity_lib")
 local entry = require("parity")
 
@@ -368,6 +369,117 @@ return {
         got = parity.left_out(decoded)
         assert(got["build"] and got["dist"], "skip entries are left out, written plainly")
         assert(not got["src"], "other paths are copied")
+    end,
+
+    an_output_path_outside_the_copy_is_refused = function()
+        for _, bad in ipairs({ "../new/out/out.txt", "/etc/passwd", "a/../../x", ".." }) do
+            local decoded = example()
+            decoded.outputs[1].old = bad
+            assert_refused(decoded, "outputs[1].old")
+            decoded = example()
+            decoded.outputs[1].new = bad
+            assert_refused(decoded, "outputs[1].new")
+        end
+        local decoded = example()
+        decoded.outputs[1].old = "./dist/../app"
+        assert(parity.config(decoded) == decoded, "a path that stays inside is accepted")
+    end,
+
+    an_empty_outputs_list_is_refused = function()
+        local decoded = example()
+        decoded.outputs = {}
+        assert_refused(decoded, "outputs")
+    end,
+
+    a_recipe_with_target_and_dropped_is_refused = function()
+        local decoded = example()
+        decoded.recipes.all = { target = "//:app", dropped = "also dropped" }
+        assert_refused(decoded, "recipes.all")
+    end,
+
+    a_judge_other_than_tests_is_refused = function()
+        local decoded = example()
+        decoded.outputs[1].judge = "eyes"
+        decoded.outputs[1].reason = "looks the same"
+        assert_refused(decoded, "outputs[1].judge")
+    end,
+
+    a_ceiling_without_proc_run_is_an_error = function()
+        local input = agreeing()
+        input.ceiling["proc.run"] = nil
+        local ok, err = pcall(parity.rows, input)
+        assert(not ok, "expected an error")
+        assert(tostring(err):find("proc.run", 1, true), tostring(err))
+    end,
+
+    a_ceiling_without_env_read_is_an_error = function()
+        local input = agreeing()
+        input.ceiling["env.read"] = nil
+        local ok, err = pcall(parity.rows, input)
+        assert(not ok, "expected an error")
+        assert(tostring(err):find("env.read", 1, true), tostring(err))
+    end,
+
+    a_stale_mapping_is_still_checked = function()
+        local input = agreeing()
+        input.config.recipes.gone = { target = "//:gone" }
+        assert_row(parity.rows(input), "1", "FAIL", "gone")
+        input = agreeing()
+        input.config.recipes.gone = { target = "//:app" }
+        assert_row(parity.rows(input), "1", "PASS", "gone")
+    end,
+
+    a_missing_test_status_fails = function()
+        local input = agreeing()
+        input.status.new_test = nil
+        assert_row(parity.rows(input), "5", "FAIL", "new.test.status is missing")
+        input = agreeing()
+        input.status.old1_test = nil
+        assert_row(parity.rows(input), "5", "FAIL", "old-1.test.status is missing")
+    end,
+
+    a_status_file_without_a_number_is_named = function()
+        local input = agreeing()
+        input.status.new_build = false
+        assert_row(parity.rows(input), "2", "FAIL", "new.build.status holds no exit code")
+        input = agreeing()
+        input.status.old1_test = false
+        assert_row(parity.rows(input), "5", "FAIL", "old-1.test.status holds no exit code")
+    end,
+
+    check_5_names_both_codes = function()
+        local input = agreeing()
+        input.status.old1_test = 2
+        input.status.new_test = 1
+        local row = assert_row(parity.rows(input), "5", "PASS")
+        assert(row.detail:find("2", 1, true) and row.detail:find("1", 1, true), row.detail)
+    end,
+
+    outputs_left_to_tests_need_passing_tests = function()
+        local input = agreeing()
+        input.hashes[1].old2 = "cc"
+        input.status.old1_test = 1
+        input.status.new_test = 1
+        assert_row(parity.rows(input), "5", "FAIL", "left to the tests")
+
+        input = agreeing()
+        input.config.outputs[1].judge = "tests"
+        input.config.outputs[1].reason = "object code differs by path"
+        input.status.new_test = 1
+        assert_row(parity.rows(input), "5", "FAIL", "left to the tests")
+
+        input = agreeing()
+        input.config.outputs[1].judge = "tests"
+        input.config.outputs[1].reason = "object code differs by path"
+        input.status.old1_test = 1
+        assert_row(parity.rows(input), "5", "FAIL", "left to the tests")
+    end,
+
+    a_work_folder_inside_the_real_project_is_refused = function()
+        local ok, err = pcall(parity.check_outside, "/private/tmp/x", "/private/tmp/x/w")
+        assert(not ok, "expected an error")
+        assert(tostring(err):find("outside the project", 1, true), tostring(err))
+        assert(pcall(parity.check_outside, "/private/tmp/x", "/private/tmp/xw"))
     end,
 
     render_ends_with_the_verdict = function()

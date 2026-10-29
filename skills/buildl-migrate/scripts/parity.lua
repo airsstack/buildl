@@ -21,17 +21,32 @@ end
 
 -- Copies the project into `W/old-1`, `W/old-2` and `W/new`, leaving out what `parity.json`
 -- and `lib.left_out` name, and returns the three folders. Writes only below `W`.
+--
+-- The text of `P` and `W` cannot show a symlink, so once `W` exists the real paths of both are
+-- compared. The project is listed first, so nothing of `W` is ever read as part of it, and a
+-- `W` this call created is removed again when it turns out to be inside `P`.
 function M.prepare(P, W)
     lib.check_paths(P, W, nil)
     local config = read_config(P)
     lib.check_paths(P, W, fs.exists(W) and fs.list(W) or nil)
+
+    local entries = fs.walk(P)
+    local created = not fs.exists(W)
+    fs.mkdir(W)
+    local outside, err = pcall(lib.check_outside, fs.canonicalize(P), fs.canonicalize(W))
+    if not outside then
+        if created then
+            fs.remove_dir(W)
+        end
+        error(err, 0)
+    end
 
     local left = lib.left_out(config)
     local copies = { path.join(W, "old-1"), path.join(W, "old-2"), path.join(W, "new") }
     for _, copy in ipairs(copies) do
         fs.mkdir(copy)
     end
-    for _, rel in ipairs(fs.walk(P)) do
+    for _, rel in ipairs(entries) do
         if not lib.is_left_out(rel, left) then
             local from = path.join(P, rel)
             for _, copy in ipairs(copies) do
@@ -50,7 +65,8 @@ end
 
 -- The files `lib.recipes` reads for `config.tool`, as `{ [path relative to P] = text }`.
 -- For `make` that is each of make's own file names present; `lib.recipes` takes the first in
--- make's order. Raises when the old build's file is not there.
+-- make's order. For `shell` it is every `*.sh` outside the left-out paths, none being possible.
+-- For the other tools it raises when the old build's file is not there.
 local function old_build_files(P, config)
     local files = {}
     local names = {
@@ -78,13 +94,14 @@ local function old_build_files(P, config)
     return files
 end
 
--- The exit code a status file holds, or nil when the file is missing or holds no number.
+-- The exit code a status file holds; nil when the file is missing, false when it holds no
+-- number.
 local function read_status(W, name)
     local file = path.join(W, name)
     if not fs.is_file(file) then
         return nil
     end
-    return tonumber((fs.read(file):gsub("%s+", "")))
+    return tonumber((fs.read(file):gsub("%s+", ""))) or false
 end
 
 -- The SHA-256 of `file`, or nil when it is not a file.
