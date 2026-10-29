@@ -2,7 +2,7 @@
 status: done
 created: 2026-10-29
 depends-on: [01]
-built-on: 81e53aaf66d1
+built-on: 0f089d53e3f1
 ---
 
 # Parity Check Implementation Plan

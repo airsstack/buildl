@@ -1,8 +1,9 @@
 ---
-status: approved
+status: done
 created: 2026-10-29
 depends-on: [02, 04]
-built-on: 81e53aaf66d1
+built-on: 0f089d53e3f1
+disproves: b1bddfec359f
 ---
 
 # Install Script and Plugin Implementation Plan
@@ -27,6 +28,7 @@ Code's validator (spec §6.1, §6.5).
 ```
 .claude-plugin/marketplace.json  — [create] the marketplace and its one plugin entry
 skills/install.sh                — [create] the installer
+skills/tests/marketplace.lua     — [create] checks the marketplace's skill paths (spec §6.6)
 Makefile.toml                    — [modify] `skills` gains the installer checks; new `skills-claude`
 .github/workflows/ci.yml         — [modify] the `skills` job installs shellcheck
 ```
@@ -41,7 +43,7 @@ Makefile.toml                    — [modify] `skills` gains the installer check
 | `cargo install --locked airsl-cli` installs `airsl-cli` 0.1.4 | spec §1 P23 |
 | the tarball `https://github.com/airsstack/buildl/archive/<branch>.tar.gz` answers 302 and needs `curl -L` | spec §1 P24 |
 | the options, steps and messages of the installer | spec §5.3, §5.4 |
-| a component path that does not exist fails validation with `Path not found` | code.claude.com plugins/manifest-reference.md:407 |
+| `claude plugin validate --strict .` does not check a marketplace entry's `skills` paths: a missing one passes | run in plan 05 Task 1, Claude Code 2.1.312 (spec §6.6); disproves the earlier row citing manifest-reference.md:407, which covers a plugin's own manifest |
 
 ## Order of work
 
@@ -58,8 +60,8 @@ Makefile.toml                    — [modify] `skills` gains the installer check
 
 **Proof:**
 - `cargo make skills-claude` prints `✔ Validation passed` and exits 0
-- by hand, once: a `skills` entry naming `./skills/missing` makes it fail with `Path not found`;
-  revert
+- by hand, once: a `skills` entry naming `./skills/missing` still passes it (the validator checks the
+  manifest only, spec §6.6); revert. The paths are checked by Task 3's `marketplace.lua`
 
 **Done when:** that holds, and `cargo make dod` and `cargo deny check` are green. Commit
 `feat(repo): offer the skills as a Claude Code plugin`.
@@ -75,10 +77,13 @@ Makefile.toml                    — [modify] `skills` gains the installer check
 - a `run` helper prints each command before running it, and under `--dry-run` only prints it;
 - `buildl` and `airsl` each skipped when on `PATH`, else installed with the `cargo install` lines of
   spec §5.4; `cargo` is looked for only then, and missing exits 1 with the rustup line;
-- `--claude`: `claude` missing exits 1 with its line; then the two `claude plugin` commands;
-- `--dir P`: when the script's own folder is named `skills` and holds `buildl/SKILL.md`, it is the
-  source; else `curl -fsSL` the tarball of `R` into a temporary folder and `tar -xzf` it there; for
-  each `skills/*/` holding `SKILL.md`, `P/<name>` is removed and replaced by a copy; the temporary
+- `--claude`: `claude` missing exits 1 with its line, checked before any `cargo install`; then the two
+  `claude plugin` commands; an empty `--dir` value is a usage error;
+- `--dir P`: when the script's own folder is named `skills` and its parent holds
+  `.claude-plugin/marketplace.json` (a clone), it is the source, and a missing buildl is installed
+  with `cargo install --locked --path <clone>/crates/buildl-cli`; else `curl -fsSL` the tarball of `R` into a temporary folder and `tar -xzf` it there; a source
+  that is the same folder as `P` is refused, exit 1, with nothing removed; for `buildl` and
+  `buildl-migrate` only, `P/<name>` is removed and replaced by a copy; the temporary
   folder is removed on exit;
 - a closing report naming what was installed and where.
 
@@ -90,6 +95,9 @@ Makefile.toml                    — [modify] `skills` gains the installer check
   `buildl` and `buildl-migrate`, and leaves `T` empty
 - by hand, once: `sh skills/install.sh --dir "$T"` fills `T/buildl` and `T/buildl-migrate` with copies
   holding `SKILL.md`, and a second run gives the same tree; `skills/tests` is not copied
+- by hand, once: a copy of `install.sh` placed in a scratch `skills/` folder holding `buildl/` and a
+  user skill, with no `.claude-plugin/` beside it, is not taken for a clone; and `--dir` naming the
+  clone's own `skills/` folder is refused, exit 1, with every folder there left in place
 - by hand, once, after the branch is pushed (spec §8): `sh skills/install.sh --claude --ref
   <branch>` installs, `claude plugin list` shows `buildl@buildl` with both skills, a second run
   ends without error, and `claude plugin uninstall buildl@buildl` with `claude plugin marketplace
@@ -103,16 +111,23 @@ Makefile.toml                    — [modify] `skills` gains the installer check
 **Files:**
 - Modify `Makefile.toml` — the `skills` task: `shellcheck` joins the tools whose absence stops it;
   after its snippet step, `shellcheck skills/install.sh`, then `sh skills/install.sh --dry-run --dir
-  "$T2"` with a fresh temporary `T2`, which must exit 0 and leave `T2` empty
-- Modify `.github/workflows/ci.yml` — the `skills` job gains a step `sudo apt-get install -y
+  "$T2"` with a fresh temporary `T2`, which must exit 0, print the copy commands for `buildl` and `buildl-migrate`, and leave `T2` empty; and, before the
+  tests, `airsl run --allow-read . skills/tests/marketplace.lua`
+- Create `skills/tests/marketplace.lua` — reads `.claude-plugin/marketplace.json` with the `json`
+  module and raises, naming the path, when a listed skill folder holds no `SKILL.md` or a
+  `skills/*/` folder holding one is not listed (spec §6.6)
+- Modify `.github/workflows/ci.yml` — the `skills` job gains a step `sudo apt-get update` then `sudo apt-get install -y
   shellcheck` before `cargo make skills`
 
-**Change:** CI catches a shell defect or a broken dry run of the installer (spec §6.5).
+**Change:** CI catches a shell defect or a broken dry run of the installer (spec §6.5), and a
+marketplace skill path that is wrong or missing (spec §6.6).
 
 **Proof:**
 - `cargo make skills` passes
 - by hand, once: an unquoted variable put in `install.sh` makes `cargo make skills` fail at the
   `shellcheck` step; revert
+- by hand, once: `./skills/missing` added to the marketplace's `skills`, and separately a
+  `skills/buildl` dropped from it, each make `marketplace.lua` fail naming the path; revert
 
 **Done when:** that holds, and `cargo make dod` and `cargo deny check` are green. Commit
 `build(repo): check the installer in cargo make skills`.
@@ -132,3 +147,33 @@ Makefile.toml                    — [modify] `skills` gains the installer check
 
 `cargo make skills` and `cargo make skills-claude` pass; the installer's dry runs and the by-hand
 `--dir` run behave as Task 2 states.
+
+## Review findings
+
+One reviewer pass over Tasks 1–3, one fix round (`cargo make skills` after it: `Build Done in 3.46 seconds`, exit 0).
+
+- correctness — clone detection by "folder named `skills` holding `buildl/SKILL.md`" took an agent's own skills folder for a clone, removed the user's skill there, then failed (reproduced in scratch) — skills/install.sh; spec §5.4 step 5b amended — fixed: a clone needs `../.claude-plugin/marketplace.json`, only `buildl` and `buildl-migrate` are copied, source = `P` is refused with nothing removed (proved: `--dir <worktree>/skills` exit 1, all four entries kept; the repro folder is not taken for a clone)
+- correctness — the clone path copied the branch's skills but installed `main`'s buildl, against §5.4's "same source" bullet — install.sh; spec amended — fixed: a clone installs with `cargo install --locked --path <clone>/crates/buildl-cli`
+- robustness — `--dir ""` accepted; `claude` checked after a slow `cargo install`; EXIT-only trap; `curl`/`tar` unchecked; printed commands lost quoting — install.sh — fixed
+- robustness — `skills` as a string, and a manifest with no `plugins`, gave misleading errors — skills/tests/marketplace.lua — fixed
+- docs — the `skills` task comment omitted shellcheck — Makefile.toml — fixed
+- coverage — the dry-run step would stay green if clone detection broke; usage exit 2 unchecked — Makefile.toml — fixed: the step greps the two `cp -R` lines and checks exit 2
+- ci — no `apt-get update` before installing shellcheck — ci.yml; spec §6.1 amended — fixed
+
+## Probe results
+
+- `cargo make skills-claude`: `✔ Validation passed`, exit 0
+- `./skills/missing` added to the marketplace's `skills`: `claude plugin validate --strict .` still printed `✔ Validation passed`, exit 0, JSON `"contents": []` — **against the plan** (it expected `Path not found`); spec §6.6 and `skills/tests/marketplace.lua` added
+- `marketplace.lua` with `./skills/missing` listed: `runtime error: .claude-plugin/marketplace.json: ./skills/missing holds no SKILL.md`, exit 1; with `./skills/buildl` dropped: `skills/buildl holds a SKILL.md but is not listed`, exit 1
+- `install.sh` line 131 unquoted: `cargo make skills` failed at shellcheck, `SC2086 (info): Double quote to prevent globbing and word splitting.`, exit 105
+- `sh skills/install.sh` (no option), `--claude --dir /tmp/x`, `--dir ''`: exit 2 with usage; `--dry-run --dir T`: exit 0, two `cp -R` lines, T empty; real `--dir T` twice: `diff -r` clean, only `buildl` and `buildl-migrate`
+- after `git push -u origin worktree-ai-skills-buildl`: `sh skills/install.sh --claude --ref worktree-ai-skills-buildl` printed `✔ Successfully added marketplace: buildl` and `✔ Successfully installed plugin: buildl@buildl (scope: user)`; `claude plugin details buildl@buildl` showed `Skills (2)  buildl, buildl-migrate`; a second run printed `Marketplace 'buildl' already on disk` and `Plugin "buildl@buildl" is already installed`, exit 0; `claude plugin uninstall buildl@buildl` and `claude plugin marketplace remove buildl` succeeded, and neither is listed afterwards
+- the cmux `claude` shim needs the user's full `PATH`: run with only system folders it printed `Error: claude not found in PATH`
+
+## Deviations
+
+- 2026-10-29 — Task 1's negative proof disproven (validator does not check skill paths); `marketplace.lua` added to Task 3, spec §6.6 and §8 amended, `disproves` recorded.
+- 2026-10-29 — spec §5.4 amended after review: clone marker, only the two skills copied, source = `P` refused, clone installs buildl from the clone, `claude` checked first, empty `--dir` a usage error; §6.1 adds `apt-get update`. Task 2 and Task 3 text amended to match.
+- 2026-10-29 — Task 1 and Task 3 were written by the orchestrator inline (a JSON file copied from the spec, a task block, a short Lua check); Task 2 and the fix round by coders.
+- 2026-10-29 — the branch was pushed (user's consent) for the by-hand `--claude` run.
+- 2026-10-29 — gates ran once for the batch (`cargo make skills` 0, `dod` 0, `deny` ok); the fix round touched shell, Lua, Makefile and CI only and re-ran `cargo make skills`.

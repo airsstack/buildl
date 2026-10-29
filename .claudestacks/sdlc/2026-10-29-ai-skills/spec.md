@@ -455,24 +455,32 @@ Exactly one of `--claude` and `--dir` is required.
 ### 5.4 Steps
 
 ```text
- 1. arguments    not exactly one of --claude / --dir ──► usage on stderr, exit 2
+ 1. arguments    not exactly one of --claude / --dir, or an empty P ──► usage on stderr, exit 2
+                 --claude and claude missing ──► "install Claude Code first", exit 1
+                 (checked here, before any slow cargo install)
  2. cargo        needed only when buildl or airsl is missing;
                  then missing ──► "install Rust from https://rustup.rs", exit 1
  3. buildl       on PATH ──► skipped
-                 missing ──► cargo install --locked --git https://github.com/airsstack/buildl
+                 missing, --dir from a clone ──► cargo install --locked --path <clone>/crates/buildl-cli
+                 missing, otherwise ──► cargo install --locked --git https://github.com/airsstack/buildl
                                --branch R buildl-cli
  4. airsl        on PATH ──► skipped
                  missing ──► cargo install --locked airsl-cli          (P23)
- 5a. --claude    claude missing ──► "install Claude Code first", exit 1
-                 claude plugin marketplace add airsstack/buildl@R --sparse .claude-plugin skills
+ 5a. --claude    claude plugin marketplace add airsstack/buildl@R --sparse .claude-plugin skills
                  claude plugin install buildl@buildl                      (P10)
- 5b. --dir P     the script's own folder is named skills and holds buildl/SKILL.md
-                               ──► copy from that folder                   (a clone)
+ 5b. --dir P     a clone: the script's own folder is named skills and its parent holds
+                 .claude-plugin/marketplace.json ──► copy from that folder
                  otherwise ──► curl -fsSL https://github.com/airsstack/buildl/archive/R.tar.gz
                                (-L follows the redirect, P24), unpack it in a temporary folder
-                 for each skills/*/ holding a SKILL.md: replace P/<name> with it
+                 the source folder and P are the same folder ──► refused, exit 1, nothing removed
+                 for each of buildl and buildl-migrate: replace P/<name> with the source's copy
  6. report       what was installed, and where
 ```
+
+A folder named `skills` holding `buildl/SKILL.md` is not proof of a clone: an agent's skills folder
+where buildl was installed before looks the same, and taking it as the source removed the user's own
+skill there before the copy failed (plan 05 review, reproduced in a scratch folder). Only the two
+named skills are copied, so another agent's skills next to the script are never taken.
 
 - POSIX `sh`, no `sudo`; each command is printed before it runs.
 - A command already on `PATH` is not replaced: the script does not upgrade a buildl the user
@@ -480,8 +488,8 @@ Exactly one of `--claude` and `--dir` is required.
 - `--dir` replaces only `P/<name>` for each skill, leaving the user's other skills alone, so a
   second run gives the same result.
 - `--scope` is not offered; `claude plugin install` defaults to `user` (P10).
-- buildl is installed from git at `R`, before and after the publish alike, so the binary and the
-  skills always come from the same branch.
+- buildl is installed from git at `R`, before and after the publish alike, or from the clone the
+  skills are copied from, so the binary and the skills always come from the same source.
 
 ## 6. Checks
 
@@ -489,7 +497,7 @@ Exactly one of `--claude` and `--dir` is required.
 
 | Task | Runs | Where |
 |---|---|---|
-| `cargo make skills` | 6.2 – 6.5 | a new CI job, `skills`, on `ubuntu-latest` (P25) |
+| `cargo make skills` | 6.2 – 6.6 | a new CI job, `skills`, on `ubuntu-latest` (P25) |
 | `cargo make skills-claude` | `claude plugin validate --strict .` | the developer's machine only: not in CI, not in `dod` |
 
 Neither is a step of `dod`: like `examples`, they need tools beside the Rust toolchain (`airsl`,
@@ -497,7 +505,7 @@ Python, `shellcheck`, `claude`).
 
 The `skills` CI job follows the `examples` job's steps (ci.yml:70-109: checkout, Rust toolchain,
 cargo cache, cargo-make), and adds: `actions/setup-python` with 3.12 and the pinned `skills-ref`
-install (P6); `cargo install --locked airsl-cli` (P23); `sudo apt-get install -y shellcheck`. The
+install (P6); `cargo install --locked airsl-cli` (P23); `sudo apt-get update` then `sudo apt-get install -y shellcheck`. The
 task itself builds the `buildl` binary with `cargo build -p buildl-cli` and uses it from the target
 directory, as the `examples` task does (Makefile.toml:370-372).
 
@@ -559,6 +567,15 @@ The fixtures hold already-built work folders, so the tests run no build and need
 
 `shellcheck skills/install.sh`, and `sh skills/install.sh --dry-run --dir <temp>` exiting 0.
 
+### 6.6 Marketplace
+
+`claude plugin validate --strict .` checks the marketplace manifest only: a `skills` entry naming a
+folder that does not exist still passes (Claude Code 2.1.312, plan 05: `./skills/missing` added,
+`✔ Validation passed`, exit 0, `"contents": []`). So `skills/tests/marketplace.lua`, run by
+`cargo make skills` as `airsl run --allow-read . skills/tests/marketplace.lua`, reads
+`.claude-plugin/marketplace.json` with the `json` module and fails, naming the path, when a listed
+skill folder holds no `SKILL.md` or a `skills/*/` folder holding one is not listed.
+
 ## 7. Documentation
 
 | File | Change |
@@ -576,7 +593,7 @@ No chapter is renumbered: the `ch11-*` file names are cited across the repositor
 | Risk | Carried by |
 |---|---|
 | `skills-ref` calls itself a demonstration (P5); its rules could part from the spec's | the pin (P6): a rule change reaches CI only when the pin moves |
-| marketplace mistakes are caught only where `cargo make skills-claude` is run | the task, run before a commit that touches `.claude-plugin/` or `skills/` |
+| marketplace manifest mistakes are caught only where `cargo make skills-claude` is run, and that validator does not check the listed skill paths | the task, run before a commit that touches `.claude-plugin/` or `skills/`; the paths are checked in CI by 6.6 |
 | the status files in step 2 are written by commands the agent runs, so an agent could write them by hand | `SKILL.md` fixes the commands; the hashes in check 3 are computed by the script from the copies |
 | `old.programs`, `old.env` and `old.network` are the agent's reading of the old build, so check 6 is only as right as that reading | `SKILL.md` has the agent list them recipe by recipe, and the user sees them in the parity table |
 | `doctor`'s text is not a documented machine format, so a change to it breaks check 6 | the parity tests' fixture holds `doctor` output; `compare` fails, naming the line it could not read, rather than pass |
