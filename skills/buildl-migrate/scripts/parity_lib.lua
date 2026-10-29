@@ -226,4 +226,217 @@ function M.config(decoded)
     return decoded
 end
 
+-- Returns the ceiling of a `buildl doctor` text as `{ [key] = { values… } }`. The ceiling is
+-- the run of indented lines after the line `ceiling`, one `  <key>  <values joined by ", ">`
+-- per key, with `-` for none. Lines outside the run are ignored. Raises when there is no
+-- `ceiling` line, or when a line in the run has another form.
+function M.ceiling(doctor_text)
+    local ceiling
+    local reading = false
+    each_line(doctor_text, function(line)
+        if not reading then
+            if ceiling == nil and line:match("^ceiling%s*$") then
+                ceiling = {}
+                reading = true
+            end
+        elseif line:match("^%s") then
+            local key, values = line:match("^%s+([%a_][%w_.]*)%s+(%S.-)%s*$")
+            if key == nil then
+                error("doctor output: cannot read the ceiling line: " .. line, 0)
+            end
+            local list = {}
+            if values ~= "-" then
+                for value in (values .. ", "):gmatch("(.-), ") do
+                    list[#list + 1] = value
+                end
+            end
+            ceiling[key] = list
+        else
+            reading = false
+        end
+    end)
+    if ceiling == nil then
+        error("doctor output has no `ceiling` line: " .. doctor_text, 0)
+    end
+    return ceiling
+end
+
+-- Returns true when `list` holds `item`.
+local function holds(list, item)
+    for _, entry in ipairs(list or {}) do
+        if entry == item then
+            return true
+        end
+    end
+    return false
+end
+
+-- Returns the items of `used` that `allowed` lacks.
+local function missing_from(allowed, used)
+    local lacking = {}
+    for _, item in ipairs(used or {}) do
+        if not holds(allowed, item) then
+            lacking[#lacking + 1] = item
+        end
+    end
+    return lacking
+end
+
+local function row(check, subject, verdict, detail)
+    return { check = check, subject = subject, verdict = verdict, detail = detail }
+end
+
+-- Check 1: every old recipe is mapped to a target the graph holds, or dropped with a reason.
+-- A mapping for a recipe the old build no longer lists is checked too.
+local function recipe_rows(input, out)
+    local names, seen = {}, {}
+    for _, name in ipairs(input.recipes) do
+        names[#names + 1] = name
+        seen[name] = true
+    end
+    for name in pairs(input.config.recipes) do
+        if not seen[name] then
+            names[#names + 1] = name
+        end
+    end
+    table.sort(names)
+    for _, name in ipairs(names) do
+        local entry = input.config.recipes[name]
+        if entry == nil then
+            out[#out + 1] = row("1", name, "FAIL", "neither mapped to a target nor dropped")
+        elseif entry.dropped ~= nil then
+            out[#out + 1] = row("1", name, "PASS", "dropped: " .. entry.dropped)
+        elseif input.graph.targets[entry.target] == nil then
+            out[#out + 1] = row("1", name, "FAIL", "target " .. entry.target .. " is not in the graph")
+        else
+            out[#out + 1] = row("1", name, "PASS", "target " .. entry.target)
+        end
+    end
+end
+
+-- Check 2: the old build ran twice and buildl built, each ending in status 0.
+local function build_rows(input, out)
+    local problems = {}
+    local files = {
+        { "old-1.build.status", input.status.old1_build },
+        { "old-2.build.status", input.status.old2_build },
+        { "new.build.status", input.status.new_build },
+    }
+    for _, file in ipairs(files) do
+        if file[2] == nil then
+            problems[#problems + 1] = file[1] .. " is missing"
+        elseif file[2] ~= 0 then
+            problems[#problems + 1] = file[1] .. " is " .. tostring(file[2])
+        end
+    end
+    if #problems == 0 then
+        out[#out + 1] = row("2", "builds", "PASS", "both builds ended in status 0")
+    else
+        out[#out + 1] = row("2", "builds", "FAIL", table.concat(problems, "; "))
+    end
+end
+
+-- Checks 3, 4 and 4b: one row for each output pair.
+local function output_rows(input, out)
+    local has_tests = input.config.old.test ~= nil
+    for i, pair in ipairs(input.config.outputs) do
+        local hashes = input.hashes[i] or {}
+        local absent = {}
+        for _, where in ipairs({ { "old1", "old-1/" .. pair.old }, { "old2", "old-2/" .. pair.old }, { "new", "new/" .. pair.new } }) do
+            if hashes[where[1]] == nil then
+                absent[#absent + 1] = where[2]
+            end
+        end
+        if #absent > 0 then
+            out[#out + 1] = row("3", pair.old, "FAIL", "missing: " .. table.concat(absent, ", "))
+        elseif pair.judge == "tests" then
+            if has_tests then
+                out[#out + 1] = row("4b", pair.old, "JUDGED BY TESTS", pair.reason)
+            else
+                out[#out + 1] = row("4b", pair.old, "FAIL", "judged by tests, but the project has no old.test")
+            end
+        elseif hashes.old1 ~= hashes.old2 then
+            if has_tests then
+                out[#out + 1] = row("4", pair.old, "NOT REPEATABLE", "old-1 and old-2 differ; the tests decide")
+            else
+                out[#out + 1] = row("4", pair.old, "FAIL", "old-1 and old-2 differ and the project has no old.test")
+            end
+        elseif hashes.new ~= hashes.old1 then
+            out[#out + 1] = row("3", pair.old, "FAIL", "new/" .. pair.new .. " differs from old-1/" .. pair.old)
+        else
+            out[#out + 1] = row("3", pair.old, "PASS", "same bytes as new/" .. pair.new)
+        end
+    end
+end
+
+-- Check 5: the old tests and the buildl tests end the same way.
+local function test_rows(input, out)
+    if input.config.old.test == nil then
+        out[#out + 1] = row("5", "tests", "NO TESTS", "the project has no old.test")
+        return
+    end
+    local old, new = input.status.old1_test, input.status.new_test
+    if old == nil or new == nil then
+        local name = old == nil and "old-1.test.status" or "new.test.status"
+        out[#out + 1] = row("5", "tests", "FAIL", name .. " is missing")
+    elseif (old == 0) ~= (new == 0) then
+        out[#out + 1] = row("5", "tests", "FAIL", "old-1 ended in " .. old .. ", new in " .. new)
+    else
+        out[#out + 1] = row("5", "tests", "PASS", "both ended in status " .. old)
+    end
+end
+
+-- Check 6: the ceiling grants no program or variable the old build lacked, and no target
+-- reaches the network unless the old build did.
+local function permission_rows(input, out)
+    local pairs_checked = {
+        { "proc.run", input.config.old.programs },
+        { "env.read", input.config.old.env },
+    }
+    for _, entry in ipairs(pairs_checked) do
+        local extra = missing_from(entry[2], input.ceiling[entry[1]])
+        if #extra == 0 then
+            out[#out + 1] = row("6", entry[1], "PASS", "nothing beyond the old build")
+        else
+            out[#out + 1] = row("6", entry[1], "FAIL", "beyond the old build: " .. table.concat(extra, ", "))
+        end
+    end
+    if input.config.old.network then
+        out[#out + 1] = row("6", "network", "PASS", "the old build uses the network")
+        return
+    end
+    local ids = {}
+    for id in pairs(input.graph.targets) do
+        ids[#ids + 1] = id
+    end
+    table.sort(ids)
+    local reached = false
+    for _, id in ipairs(ids) do
+        local network = input.graph.targets[id].network
+        if network ~= "Sealed" then
+            reached = true
+            out[#out + 1] = row("6", id, "FAIL", "network is " .. tostring(network) .. ", the old build uses none")
+        end
+    end
+    if not reached then
+        out[#out + 1] = row("6", "network", "PASS", "every target is sealed")
+    end
+end
+
+-- Returns the parity rows, each `{ check, subject, verdict, detail }`, for checks 1 to 6 and
+-- 4b. `input` holds: `config` (a validated parity.json), `recipes` (the old build's recipe
+-- names), `graph` (the decoded `buildl graph`), `ceiling` (from `M.ceiling`), `hashes` (per
+-- `outputs` entry, `{ old1, old2, new }` with `nil` for a missing file) and `status` (exit
+-- codes `old1_build`, `old2_build`, `new_build`, `old1_test`, `new_test`; `nil` for a missing
+-- status file). Verdicts: `PASS`, `FAIL`, `NOT REPEATABLE`, `JUDGED BY TESTS`, `NO TESTS`.
+function M.rows(input)
+    local out = {}
+    recipe_rows(input, out)
+    build_rows(input, out)
+    output_rows(input, out)
+    test_rows(input, out)
+    permission_rows(input, out)
+    return out
+end
+
 return M
