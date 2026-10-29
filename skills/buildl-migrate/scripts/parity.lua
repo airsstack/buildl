@@ -1,5 +1,7 @@
--- The parity check's entry. Run as a script: `parity.lua prepare P W`. `P` is the project
--- folder and `W` a work folder; both are absolute paths. All judging is in `parity_lib`.
+-- The parity check's entry. Run as a script: `parity.lua prepare P W` copies the project into
+-- `W`; `parity.lua compare P W` prints the parity table and fails when a row is `FAIL`. `P` is
+-- the project folder and `W` a work folder; `prepare` needs both absolute. All judging is in
+-- `parity_lib`; this file does the reading, hashing and copying.
 --
 -- Loaded with `require`, it returns its functions and runs nothing.
 local lib = require("parity_lib")
@@ -46,9 +48,100 @@ function M.prepare(P, W)
     return copies
 end
 
+-- The files `lib.recipes` reads for `config.tool`, as `{ [path relative to P] = text }`.
+-- For `make` that is each of make's own file names present; `lib.recipes` takes the first in
+-- make's order. Raises when the old build's file is not there.
+local function old_build_files(P, config)
+    local files = {}
+    local names = {
+        make = { "GNUmakefile", "makefile", "Makefile" },
+        just = { "justfile" },
+        npm = { "package.json" },
+    }
+    if config.tool == "shell" then
+        local left = lib.left_out(config)
+        for _, rel in ipairs(fs.walk(P)) do
+            if rel:match("%.sh$") and not lib.is_left_out(rel, left) and fs.is_file(path.join(P, rel)) then
+                files[rel] = fs.read(path.join(P, rel))
+            end
+        end
+        return files
+    end
+    for _, name in ipairs(names[config.tool]) do
+        if fs.is_file(path.join(P, name)) then
+            files[name] = fs.read(path.join(P, name))
+        end
+    end
+    if next(files) == nil then
+        error("no " .. table.concat(names[config.tool], ", ") .. " in the project folder " .. P, 0)
+    end
+    return files
+end
+
+-- The exit code a status file holds, or nil when the file is missing or holds no number.
+local function read_status(W, name)
+    local file = path.join(W, name)
+    if not fs.is_file(file) then
+        return nil
+    end
+    return tonumber((fs.read(file):gsub("%s+", "")))
+end
+
+-- The SHA-256 of `file`, or nil when it is not a file.
+local function hash_of(file)
+    if fs.is_file(file) then
+        return airsstack.hash.hash_file(file)
+    end
+    return nil
+end
+
+-- Judges the old build against the buildl build from the files `prepare` and step 2 left in
+-- `W`. Reads `P` and `W`; writes nothing and runs nothing. Returns
+-- `{ table = <rendered text>, passed = <no FAIL row>, rows = <the rows> }`.
+function M.compare(P, W)
+    local config = read_config(P)
+    local hashes = {}
+    for i, pair in ipairs(config.outputs) do
+        hashes[i] = {
+            old1 = hash_of(path.join(W, "old-1", pair.old)),
+            old2 = hash_of(path.join(W, "old-2", pair.old)),
+            new = hash_of(path.join(W, "new", pair.new)),
+        }
+    end
+    local rows = lib.rows({
+        config = config,
+        recipes = lib.recipes(config.tool, old_build_files(P, config)),
+        graph = airsstack.json.decode(fs.read(path.join(W, "new.graph.json"))),
+        ceiling = lib.ceiling(fs.read(path.join(W, "new.doctor.txt"))),
+        hashes = hashes,
+        status = {
+            old1_build = read_status(W, "old-1.build.status"),
+            old2_build = read_status(W, "old-2.build.status"),
+            new_build = read_status(W, "new.build.status"),
+            old1_test = read_status(W, "old-1.test.status"),
+            new_test = read_status(W, "new.test.status"),
+        },
+    })
+    local passed = true
+    for _, r in ipairs(rows) do
+        if r.verdict == "FAIL" then
+            passed = false
+        end
+    end
+    return { table = lib.render(rows), passed = passed, rows = rows }
+end
+
 local USAGE = "usage: parity.lua prepare P W | compare P W"
 
 local COMMANDS = {
+    compare = function(P, W)
+        local result = M.compare(P, W)
+        stdio.write(result.table .. "\n")
+        if not result.passed then
+            error("parity check failed", 0)
+        end
+    end,
+
     prepare = function(P, W)
         for _, copy in ipairs(M.prepare(P, W)) do
             stdio.write(copy .. "\n")

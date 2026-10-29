@@ -1,7 +1,10 @@
 -- Tests of parity_lib. Run from this folder: airsl test --allow-read . .
 local parity = require("parity_lib")
+local entry = require("parity")
 
 local RECIPES = "fixtures/recipes/"
+local MATCH = "fixtures/compare/match/"
+local MISMATCH = "fixtures/compare/mismatch/"
 
 local function read(rel)
     return airsstack.fs.read(RECIPES .. rel)
@@ -365,6 +368,42 @@ return {
         got = parity.left_out(decoded)
         assert(got["build"] and got["dist"], "skip entries are left out, written plainly")
         assert(not got["src"], "other paths are copied")
+    end,
+
+    render_ends_with_the_verdict = function()
+        local input = agreeing()
+        input.hashes[1].new = "bb"
+        local text = parity.render(parity.rows(input))
+        assert(text:match("[^\n]+$") == "parity: FAIL (1 rows)", text)
+        assert(text:find("FAIL", 1, true) and text:find("app", 1, true), text)
+    end,
+
+    render_reads_pass_when_nothing_fails = function()
+        local text = parity.render(parity.rows(agreeing()))
+        assert(text:match("[^\n]+$") == "parity: PASS", text)
+        local lines = 0
+        for _ in text:gmatch("[^\n]+") do
+            lines = lines + 1
+        end
+        assert(lines == #parity.rows(agreeing()) + 1, "one line per row, then the verdict")
+    end,
+
+    compare_passes_on_the_match_fixture = function()
+        local got = entry.compare(MATCH .. "P", MATCH .. "W")
+        assert(got.passed, got.table)
+        assert(got.table:match("[^\n]+$") == "parity: PASS", got.table)
+    end,
+
+    compare_fails_on_the_mismatch_fixture = function()
+        local got = entry.compare(MISMATCH .. "P", MISMATCH .. "W")
+        assert(not got.passed, got.table)
+        local found = false
+        for line in got.table:gmatch("[^\n]+") do
+            if line:find("FAIL", 1, true) and line:find("out.txt", 1, true) and line:match("^%s*3%s") then
+                found = true
+            end
+        end
+        assert(found, "no check 3 FAIL row naming out.txt:\n" .. got.table)
     end,
 
     a_path_under_a_left_out_folder_is_left_out = function()

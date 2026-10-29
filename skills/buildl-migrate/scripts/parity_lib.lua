@@ -439,6 +439,27 @@ function M.rows(input)
     return out
 end
 
+-- Returns the parity table as text: one line per row (check, verdict, subject, detail, the
+-- first two padded into columns), then a last line `parity: PASS`, or `parity: FAIL (<n> rows)`
+-- when n rows are `FAIL`. No line ending follows the last line.
+function M.render(rows)
+    local check_width, verdict_width, failed = 0, 0, 0
+    for _, r in ipairs(rows) do
+        check_width = math.max(check_width, #r.check)
+        verdict_width = math.max(verdict_width, #r.verdict)
+        if r.verdict == "FAIL" then
+            failed = failed + 1
+        end
+    end
+    local format = "%-" .. check_width .. "s  %-" .. verdict_width .. "s  %s  %s"
+    local lines = {}
+    for _, r in ipairs(rows) do
+        lines[#lines + 1] = string.format(format, r.check, r.verdict, r.subject, r.detail)
+    end
+    lines[#lines + 1] = failed == 0 and "parity: PASS" or string.format("parity: FAIL (%d rows)", failed)
+    return table.concat(lines, "\n")
+end
+
 -- Returns `p` as a plain path: `.` and `..` resolved, no trailing slash.
 local function plain(p)
     return airsstack.path.normalize(p)
