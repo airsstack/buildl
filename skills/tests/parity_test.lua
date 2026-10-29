@@ -322,4 +322,58 @@ return {
         input.graph.targets["//:app"].network = "Declared"
         assert_row(parity.rows(input), "6", "FAIL", "//:app")
     end,
+
+    a_relative_project_is_refused = function()
+        local ok, err = pcall(parity.check_paths, "p", "/w", nil)
+        assert(not ok, "expected an error")
+        assert(tostring(err):find("project folder must be absolute: p", 1, true), tostring(err))
+    end,
+
+    a_relative_work_folder_is_refused = function()
+        local ok, err = pcall(parity.check_paths, "/p", "w", nil)
+        assert(not ok, "expected an error")
+        assert(tostring(err):find("work folder must be absolute: w", 1, true), tostring(err))
+    end,
+
+    a_work_folder_inside_the_project_is_refused = function()
+        local ok, err = pcall(parity.check_paths, "/p", "/p/w", nil)
+        assert(not ok, "expected an error")
+        assert(tostring(err):find("outside the project", 1, true), tostring(err))
+        assert(not pcall(parity.check_paths, "/p", "/p", nil), "the project itself is no work folder")
+        assert(not pcall(parity.check_paths, "/p/", "/p/../p/w", nil), "a path is judged normalized")
+        assert(pcall(parity.check_paths, "/p", "/pw", nil), "a sibling whose name starts with p is outside")
+    end,
+
+    a_non_empty_work_folder_is_refused = function()
+        local ok, err = pcall(parity.check_paths, "/p", "/w", { "x" })
+        assert(not ok, "expected an error")
+        assert(tostring(err):find("work folder /w is not empty", 1, true), tostring(err))
+    end,
+
+    an_absent_or_empty_work_folder_is_accepted = function()
+        assert(pcall(parity.check_paths, "/p", "/w", nil))
+        assert(pcall(parity.check_paths, "/p", "/w", {}))
+    end,
+
+    outputs_and_state_are_left_out = function()
+        local got = parity.left_out(example())
+        for _, path in ipairs({ ".git", ".buildl", "out", "parity.json", "app", "out/app" }) do
+            assert(got[path], "not left out: " .. path)
+        end
+        local decoded = example()
+        decoded.skip = { "build", "./dist" }
+        got = parity.left_out(decoded)
+        assert(got["build"] and got["dist"], "skip entries are left out, written plainly")
+        assert(not got["src"], "other paths are copied")
+    end,
+
+    a_path_under_a_left_out_folder_is_left_out = function()
+        local left = parity.left_out(example())
+        assert(parity.is_left_out("out", left))
+        assert(parity.is_left_out("out/app", left))
+        assert(parity.is_left_out(".git/objects/ab/cd", left))
+        assert(parity.is_left_out("app", left))
+        assert(not parity.is_left_out("outside/app", left), "a longer name is not below out")
+        assert(not parity.is_left_out("src/app", left), "only the project's own app path is left out")
+    end,
 }

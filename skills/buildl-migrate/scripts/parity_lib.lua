@@ -439,4 +439,58 @@ function M.rows(input)
     return out
 end
 
+-- Returns `p` as a plain path: `.` and `..` resolved, no trailing slash.
+local function plain(p)
+    return airsstack.path.normalize(p)
+end
+
+-- Raises unless `P` (the project) and `W` (the work folder) are absolute, `W` is not `P` and
+-- not below it, and `w_entries` (the names in `W`, `nil` when `W` does not exist) is empty or
+-- `nil`.
+function M.check_paths(P, W, w_entries)
+    if not airsstack.path.is_absolute(P) then
+        error("the project folder must be absolute: " .. P, 0)
+    end
+    if not airsstack.path.is_absolute(W) then
+        error("the work folder must be absolute: " .. W, 0)
+    end
+    local project, work = plain(P), plain(W)
+    if work == project or work:sub(1, #project + 1) == project .. "/" then
+        error("the work folder must be outside the project: " .. W .. " is in " .. P, 0)
+    end
+    if w_entries ~= nil and #w_entries > 0 then
+        error("work folder " .. W .. " is not empty", 0)
+    end
+end
+
+-- Returns the set `{ [path] = true }` of the paths `prepare` does not copy: `.git`, `.buildl`,
+-- `out`, `parity.json`, every `skip` entry and the `old` and `new` path of every output.
+function M.left_out(config)
+    local left = { [".git"] = true, [".buildl"] = true, out = true, ["parity.json"] = true }
+    for _, path in ipairs(config.skip or {}) do
+        left[plain(path)] = true
+    end
+    for _, pair in ipairs(config.outputs) do
+        left[plain(pair.old)] = true
+        left[plain(pair.new)] = true
+    end
+    return left
+end
+
+-- Returns true when `rel`, a path relative to the project, is a left-out path or lies below one.
+function M.is_left_out(rel, left)
+    local path = plain(rel)
+    while path ~= "." and path ~= "" do
+        if left[path] then
+            return true
+        end
+        local parent = path:match("^(.*)/[^/]+$")
+        if parent == nil then
+            return false
+        end
+        path = parent
+    end
+    return false
+end
+
 return M
