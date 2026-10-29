@@ -2,7 +2,7 @@
 status: approved
 created: 2026-10-29
 depends-on: [02, 04]
-built-on: 45bb359e2387
+built-on: c87ddf1ee4ad
 ---
 
 # Install Script and Plugin Implementation Plan

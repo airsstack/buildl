@@ -1,8 +1,8 @@
 ---
-status: approved
+status: done
 created: 2026-10-29
 depends-on: [01]
-built-on: 1703d7070b45
+built-on: c87ddf1ee4ad
 ---
 
 # Parity Check Implementation Plan
@@ -259,3 +259,32 @@ Commit `feat(repo): add parity.lua compare`.
 ## Proof
 
 `cargo make skills` passes with every test above, and the by-hand `prepare` run in Task 4 holds.
+
+## Review findings
+
+- correctness (blocking) — an `outputs` `old`/`new` path could climb out of the copy (`../new/out/out.txt` made the mismatch fixture pass) — parity_lib.lua `check_outputs`. Fixed: a path normalizing to absolute or `..` is refused, naming `outputs[i].old|new`. Spec §4.5 amended. Verified: `cargo make skills` → `59 passed, 0 failed`, test `an_output_path_outside_the_copy_is_refused`.
+- record (blocking) — the `examples/python` result had no record, and plan 04 item 5 waits on it. Fixed: written in Probe results below, in spec §4.5 and §8, and in plan 04 steps 2 and 5.
+- correctness — a ceiling without `proc.run` or `env.read` passed check 6 — parity_lib.lua `permission_rows`. Fixed: raises. Tests `a_ceiling_without_proc_run_is_an_error`, `a_ceiling_without_env_read_is_an_error`.
+- correctness — check 5's PASS detail named one code — parity_lib.lua `test_rows`. Fixed: `old-1 ended in X, new in Y`. Test `check_5_names_both_codes`.
+- correctness — "W outside P" compared text only (`/tmp` vs `/private/tmp` on macOS), and P was walked after W was made — parity.lua `prepare`. Fixed: P is walked first, W created, both canonicalized and checked by `check_outside` before any copy; a refused W that prepare made is removed. Test `a_work_folder_inside_the_real_project_is_refused`; by hand, P as `/tmp/…` and W as `/private/tmp/…/P/w` → `must be outside the project`, no copies, no `w` left.
+- spec gap (decided) — `outputs: []` let parity pass with nothing compared. Now refused at read time; spec §4.5 amended. Test `an_empty_outputs_list_is_refused`.
+- spec gap (decided) — with both test runs failing, an output left to the tests passed. Check 5 now needs both runs at 0 whenever an output reads NOT REPEATABLE or JUDGED BY TESTS; spec §4.6 amended. Test `outputs_left_to_tests_need_passing_tests`.
+- test strength — target+dropped refusal, judge other than `tests`, the stale-mapping row, check 5 on a missing test status were unguarded. Tests added: `a_recipe_with_target_and_dropped_is_refused`, `a_judge_other_than_tests_is_refused`, `a_stale_mapping_is_still_checked`, `a_missing_test_status_fails`.
+- wording — a status file holding no number read "is missing"; now "holds no exit code" (test `a_status_file_without_a_number_is_named`); `old_build_files` comment and parity_test.lua header corrected.
+- parsing (nits, moved to plan 04) — `$(OBJS): x.h` is listed as a recipe, and a `define … endef` line with a column-0 colon reads as a rule: plan 04's `references/make.md` names both as forms check 1 sees.
+
+## Probe results
+
+- `arg` in a required module — `...` is empty in a script and a required module; the global `arg` is visible in both, `arg[0]` the started script (`./parity_test.lua` under `airsl test`). parity.lua dispatches only when `path.basename(arg[0]) == "parity.lua"`; no third file needed. Settles the plan's most risky step.
+- real shapes — `buildl graph` prints JSON by default (`--json ... (the default)`, `buildl graph --help`); `targets` keyed `//:name`, each with `role` (`Build`/`Test`) and `network`; the non-sealed value is `Declared` (crates/buildl-core/src/types/declaration.rs:50-52) — the plan's "not `Sealed`" holds. `doctor`'s ceiling block reads `  proc.run  python3` / `  env.read  -` / `  fs.write  .buildl, out`, ended by `wants`.
+- prepare by hand — over a scratch P holding `.git`, `out/`, `build/` (in `skip`), an output `app`, `.hidden/k`, empty `src/empty/`, executable `src/run.sh`, `in.txt`, `parity.json`: exit 0; old-1/old-2/new each hold `.hidden/k`, `in.txt`, `src/empty`, `src/run.sh` (`-rwxr-xr-x`) and none of the left-out paths; a second run → `work folder … is not empty`, exit 1. Re-run over `fixtures/compare/match/P`: exit 0, copies without `parity.json`; second run refused.
+- compare by hand — over `mismatch`: `3  FAIL  out.txt  new/out/out.txt differs from old-1/out.txt`, `parity: FAIL (1 rows)`, exit 1; over `match`: `parity: PASS`, exit 0.
+- fixtures — `match/W` made by running spec §4.4 for real (`make out.txt`/`make test` in old-1, `make out.txt` in old-2, `buildl build`/`test`/`graph`/`doctor` in new); `.buildl` left out; `new.doctor.txt`'s `workspace` line set to `/work/new` (compare does not read it). `mismatch` changes `hello` → `hellp` in `W/new/out/out.txt`.
+- **against the plan** — `examples/python`: old-1 = old-2 (`python3 -m zipapp` stamps entries with the copy time, equal within 2 s), buildl's `app.pyz` differs (entries read 1980-01-01, `SOURCE_DATE_EPOCH` pinned; old read 2026-10-29 21:21:56) → check 3 FAIL on a correct migration. Remedy: mark a time-stamped archive `"judge": "tests"` with its reason (needs `old.test`). Spec §4.5, §8 and plan 04 amended. The commands inside `build.sh`/`test.sh` were run directly, since this session refuses `sh build.sh`.
+
+## Deviations
+
+- 2026-10-29 — `is_left_out`, `check_outside` and `render`'s pass-case test are extra to the plan's named list, each with its own test.
+- 2026-10-29 — `compare` raises (prints no table) when the old build's file (make/just/npm), `W/new.graph.json` or `W/new.doctor.txt` is missing.
+- 2026-10-29 — spec §4.5/§4.6/§6.4/§8 amended (paths inside the copy, empty `outputs` refused, check 5 with outputs left to the tests, time-stamped archives may be judged by tests); plans re-stamped `built-on: c87ddf1ee4ad`; plan 04 steps 2 and 5 carry the archive case.
+- 2026-10-29 — the `examples/python` result is recorded here, not in the Task 5 commit message as the plan asked: the commit had already landed.

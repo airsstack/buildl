@@ -2,7 +2,7 @@
 status: approved
 created: 2026-10-29
 depends-on: [02, 03]
-built-on: 45bb359e2387
+built-on: c87ddf1ee4ad
 ---
 
 # `buildl-migrate` Skill Implementation Plan
@@ -55,7 +55,8 @@ skills/buildl-migrate/references/npm.md   — [create] npm scripts → buildl
 2. The steps: read the old build; write `build.lua` and `buildl.toml` under the `buildl` skill's rules;
    list `old.programs`, `old.env` and `old.network` recipe by recipe; list in `skip` the
    intermediate files an earlier run left in `P` (`*.o`, `build/`, `dist/`); write `parity.json`.
-   `"judge": "tests"` is used only for the C/C++ case of spec §4.7.
+   `"judge": "tests"` is used only for the C/C++ case of spec §4.7 and for an archive that stamps
+   its entries with file times (spec §4.5), each with its reason.
 3. The parity check: the three steps of spec §4.4 as fixed commands, with `<skill dir>` for the
    script's folder, `P` and `W` absolute and `W` outside `P`, and step 2's seven commands exactly as
    spec §4.4 lists them (status files, `buildl graph > W/new.graph.json`, `buildl doctor >
@@ -66,8 +67,11 @@ skills/buildl-migrate/references/npm.md   — [create] npm scripts → buildl
    in `parity.json` to make it pass.
 5. The two stop rules of spec §4.7, with the question the agent asks in each; the C/C++ offer says,
    before the user answers, that a project with no test command cannot pass parity this way.
-   Plan 03 Task 5's `examples/python` run decides whether this part also says how to treat
-   time-stamped archives.
+   It also says how to treat a time-stamped archive (a zip, jar or tar): plan 03 Task 5's run over
+   `examples/python` gave old-1 = old-2 and buildl's `app.pyz` different (buildl pins
+   `SOURCE_DATE_EPOCH`, so its zip entries read 1980-01-01), a check 3 FAIL on a correct
+   migration. The agent marks such an output `"judge": "tests"` with that reason, which needs
+   `old.test`, and check 5 then needs both test runs to pass.
 6. A closing list pointing at each `references/` file.
 
 **Proof:**

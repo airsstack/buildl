@@ -2,7 +2,7 @@
 status: done
 created: 2026-10-29
 depends-on: [01]
-built-on: 45bb359e2387
+built-on: c87ddf1ee4ad
 ---
 
 # `buildl` Skill Implementation Plan

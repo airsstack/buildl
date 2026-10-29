@@ -332,7 +332,10 @@ Written by the agent in `P`:
 ```
 
 An `outputs` entry may carry `"judge": "tests"` with a non-empty `"reason"`; its row is then judged
-by check 5 instead of check 3 (4.6). Only the C/C++ case of 4.7 uses it.
+by check 5 instead of check 3 (4.6). Two cases use it: the C/C++ case of 4.7, and an archive that
+stamps its entries with file times (a zip, jar or tar). buildl pins `SOURCE_DATE_EPOCH`, so such
+an archive differs from the old build's even when the migration is right (plan 03 Task 5: over
+`examples/python`, old-1 and old-2 agreed on `app.pyz` and buildl's, stamped 1980-01-01, differed).
 
 | Field | Meaning |
 |---|---|
@@ -345,8 +348,9 @@ by check 5 instead of check 3 (4.6). Only the C/C++ case of 4.7 uses it.
 | `skip` | further paths to leave out of the copies |
 
 Every field but `old.test` and `skip` is required. A `parity.json` missing one, holding an unknown
-`tool`, holding a `dropped` with an empty reason, or an `outputs` entry with `judge` and no
-`reason`, is refused when it is read: both commands fail with a message naming the field, so
+`tool`, holding a `dropped` with an empty reason, an empty `outputs` list, an `outputs` path that is
+absolute or climbs out of the copy (`..`), or an `outputs` entry with `judge` and no `reason`, is
+refused when it is read: both commands fail with a message naming the field, so
 `prepare` copies nothing and `compare` prints no table.
 
 ### 4.6 What `compare` checks
@@ -358,7 +362,7 @@ Every field but `old.test` and `skip` is required. A `parity.json` missing one, 
 | 3 | Same outputs | SHA-256 of `old-1/<old>`, `old-2/<old>` and `new/<new>` per `outputs` pair | old-1 and old-2 agree and buildl's differs, or a file is missing |
 | 4 | Old build not repeatable | old-1 and old-2 differ for a file | when there is no `old.test`: nothing could judge the file. Otherwise never: the row reads `NOT REPEATABLE`, and check 5 judges that file |
 | 4b | Judged by tests | an `outputs` entry with `"judge": "tests"` | when there is no `old.test`, as in check 4. Otherwise never: the row reads `JUDGED BY TESTS` with the entry's reason, and check 5 judges that file |
-| 5 | Same test outcome | `old-1.test.status` against `new.test.status`; with no `old.test`, the row reads `NO TESTS` | one passed and the other failed |
+| 5 | Same test outcome | `old-1.test.status` against `new.test.status`; with no `old.test`, the row reads `NO TESTS` | one passed and the other failed; or an output is left to the tests (check 4 or 4b) and either run failed |
 | 6 | No wider permissions | the ceiling, read from `new.doctor.txt` (P30), and each target's `network` in `new.graph.json` (P16), against `old.programs`, `old.env` and `old.network` | the ceiling's `proc.run` or `env.read` holds something the old build does not use, or a target's `network` is not `Sealed` while `old.network` is false |
 
 Check 6 reads the ceiling from `doctor`'s output, and not from `buildl.toml`, because airsl has no
@@ -531,7 +535,7 @@ sibling one (P27), tests read their fixtures as `fixtures/…`, and the tests ke
 | a ceiling line in `new.doctor.txt` holding a program `old.programs` lacks; one holding a variable `old.env` lacks; a target whose `network` is not `Sealed` with `old.network` false | check 6 fails |
 | a `doctor` text with no ceiling block, or an unreadable line inside it | `compare` fails, naming the line, rather than pass |
 | a missing status file; an old build status other than 0; a `buildl build` status other than 0 | check 2 fails |
-| one test run passing and the other failing | check 5 fails |
+| one test run passing and the other failing; an output left to the tests with a failing run | check 5 fails |
 | `compare` run as a script over a fixture with a FAIL row | it exits non-zero |
 | `prepare` given a relative `W`, a `W` inside `P`, or a non-empty `W` | it refuses before copying |
 | `compare` over a fixture work folder with prepared copies, outputs and status files | a true match passes every row |
@@ -539,7 +543,7 @@ sibling one (P27), tests read their fixtures as `fixtures/…`, and the tests ke
 | old-1 and old-2 differing | check 4 reads `NOT REPEATABLE`, and check 5 decides |
 | an output marked `"judge": "tests"` with a reason | check 4b reads `JUDGED BY TESTS` |
 | a recipe missing from `recipes` | check 1 fails |
-| a `dropped` with an empty reason; `judge` with no `reason` | refused when `parity.json` is read |
+| a `dropped` with an empty reason; `judge` with no `reason`; an empty `outputs`; an `outputs` path that is absolute or starts with `..` | refused when `parity.json` is read |
 | an output `NOT REPEATABLE` or `JUDGED BY TESTS` with no `old.test` | check 4 or 4b fails |
 | a malformed `parity.json` | the message names the field |
 
@@ -570,8 +574,8 @@ No chapter is renumbered: the `ch11-*` file names are cited across the repositor
 | the status files in step 2 are written by commands the agent runs, so an agent could write them by hand | `SKILL.md` fixes the commands; the hashes in check 3 are computed by the script from the copies |
 | `old.programs`, `old.env` and `old.network` are the agent's reading of the old build, so check 6 is only as right as that reading | `SKILL.md` has the agent list them recipe by recipe, and the user sees them in the parity table |
 | `doctor`'s text is not a documented machine format, so a change to it breaks check 6 | the parity tests' fixture holds `doctor` output; `compare` fails, naming the line it could not read, rather than pass |
-| `"judge": "tests"` widens parity beyond outputs the old build does not reproduce: an agent could mark any output that fails check 3 | the check cannot tell an honest mark from a dishonest one; `SKILL.md` limits it to the C/C++ case of 4.7, and the table shows every judged output with its reason, for the user to read |
-| byte equality may break on a correct migration: toolchains that embed paths make old-1 ≠ old-2 (`NOT REPEATABLE`, judged by tests), and archives that embed file times (a zip, as `examples/python` builds) can make old-1 = old-2 while buildl's differs (check 3 FAIL) | not settled by any probe here; `execute` runs the parity flow once over a copy of `examples/python` before plan 03's checks are final, and the outcome decides whether the skill tells the agent how to treat time-stamped archives |
+| `"judge": "tests"` widens parity beyond outputs the old build does not reproduce: an agent could mark any output that fails check 3 | the check cannot tell an honest mark from a dishonest one; `SKILL.md` limits it to the C/C++ case of 4.7 and time-stamped archives (4.5), check 5 then needs both test runs to pass, and the table shows every judged output with its reason, for the user to read |
+| byte equality may break on a correct migration: toolchains that embed paths make old-1 ≠ old-2 (`NOT REPEATABLE`, judged by tests), and archives that embed file times (a zip, as `examples/python` builds) can make old-1 = old-2 while buildl's differs (check 3 FAIL) | settled by plan 03 Task 5's run over `examples/python`: old-1 = old-2, buildl's `app.pyz` differs (zip times pinned to 1980 by `SOURCE_DATE_EPOCH`), check 3 FAIL; the skill tells the agent to mark such an archive `"judge": "tests"` (4.5) |
 | the `--claude` install was never run end to end: P9 validates the manifest only, and a second run against an existing marketplace and plugin is unproven | plan 05 runs it once by hand on the pushed branch and records the result; CI does not run it (§9) |
 | how well agents follow the skills is not measured | out of scope (§9) |
 | `install.sh` builds buildl from git with `cargo install`, which takes minutes on a machine with nothing cached, for `--claude` and `--dir` alike | stated in the book page |
