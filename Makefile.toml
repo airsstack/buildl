@@ -443,6 +443,14 @@ for dir in "${W}"/*/; do
 done
 '''
 
+[tasks.skills-claude]
+category = "Skills"
+description = "Check .claude-plugin/marketplace.json and the skills it lists with Claude Code's validator"
+# Run by hand before a commit that touches .claude-plugin/ or skills/. It is in
+# neither CI nor `dod`: it needs the claude command.
+command = "claude"
+args = ["plugin", "validate", "--strict", "."]
+
 # ---------------------------------------------------------------------------
 # Book
 # ---------------------------------------------------------------------------

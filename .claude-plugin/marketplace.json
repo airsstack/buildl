@@ -1,0 +1,13 @@
+{
+  "name": "buildl",
+  "owner": { "name": "airsstack" },
+  "description": "Skills for buildl: write and debug build files, and migrate builds to buildl.",
+  "plugins": [
+    {
+      "name": "buildl",
+      "source": "./",
+      "description": "The buildl and buildl-migrate skills.",
+      "skills": ["./skills/buildl", "./skills/buildl-migrate"]
+    }
+  ]
+}
