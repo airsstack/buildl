@@ -177,3 +177,4 @@ One reviewer pass over Tasks 1–3, one fix round (`cargo make skills` after it:
 - 2026-10-29 — Task 1 and Task 3 were written by the orchestrator inline (a JSON file copied from the spec, a task block, a short Lua check); Task 2 and the fix round by coders.
 - 2026-10-29 — the branch was pushed (user's consent) for the by-hand `--claude` run.
 - 2026-10-29 — gates ran once for the batch (`cargo make skills` 0, `dod` 0, `deny` ok); the fix round touched shell, Lua, Makefile and CI only and re-ran `cargo make skills`.
+- 2026-10-29 — PR #21's first `skills` CI run failed: Ubuntu's shellcheck 0.9.0 reports SC2015 (`A && B || C is not if-then-else`) at `install.sh:36`, which the local 0.11.0 does not; the `--dir` check is now an `if`. Proved: `shellcheck skills/install.sh` exit 0; `--dir`, `--dir ''` and `--claude --dir /tmp/x` exit 2 with usage; `cargo make skills` exit 0.

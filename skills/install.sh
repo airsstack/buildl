@@ -33,7 +33,9 @@ while [ $# -gt 0 ]; do
             mode="claude"
             ;;
         --dir)
-            [ -z "${mode}" ] && [ $# -ge 2 ] && [ -n "$2" ] || usage
+            if [ -n "${mode}" ] || [ $# -lt 2 ] || [ -z "$2" ]; then
+                usage
+            fi
             mode="dir"
             dir="$2"
             shift
