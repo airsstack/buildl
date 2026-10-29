@@ -582,6 +582,7 @@ skill folder holds no `SKILL.md` or a `skills/*/` folder holding one is not list
 |---|---|
 | `book/src/ch01-04-with-an-ai-agent.md` | new page: installing with `install.sh` (§5.2), what each skill does, the agent's loop and the rule that a refusal is answered by asking (§3.3), migrating with the parity check (§4.4), and using the skills from another agent with `--dir`; diagrams in Mermaid |
 | `book/src/SUMMARY.md` | the page under Getting Started, after *What Did It Do?* |
+| `book/src/ch01-00-getting-started.md` | its list of the section's pages gains the new page |
 | `book/src/ch01-01-installation.md` | one line under *Check that it worked*, pointing at the new page |
 | `README.md` | an *AI agents* row in the *Learn more* table, and the install command |
 | `CLAUDE.md` | *Documents and their roles* names `skills/` and `.claude-plugin/`; *Status* gains one sentence on the skills |

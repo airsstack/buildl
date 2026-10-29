@@ -1,8 +1,8 @@
 ---
-status: executing
+status: done
 created: 2026-10-29
 depends-on: [05]
-built-on: 0f089d53e3f1
+built-on: 66bd139caa00
 ---
 
 # AI Skills Documentation Implementation Plan
@@ -23,6 +23,7 @@ No chapter is renumbered. Diagrams in the book are Mermaid, as the book's conven
 ```
 book/src/ch01-04-with-an-ai-agent.md  — [create] the page
 book/src/SUMMARY.md                   — [modify] list the page
+book/src/ch01-00-getting-started.md   — [modify] its list of the section's pages gains the page
 book/src/appendix-05-references.md    — [modify] add the Agent Skills specification
 book/src/ch01-01-installation.md      — [modify] one line pointing at the page
 README.md                             — [modify] a Learn more row and the install command
@@ -49,6 +50,8 @@ CLAUDE.md                             — [modify] Documents and their roles; St
 - Create `book/src/ch01-04-with-an-ai-agent.md`
 - Modify `book/src/SUMMARY.md` — `- [With an AI Agent](ch01-04-with-an-ai-agent.md)` after *What Did
   It Do?*, at the same depth
+- Modify `book/src/ch01-00-getting-started.md` — its count and list of the section's pages gain the
+  new page
 - Modify `book/src/ch01-01-installation.md` — one sentence after *Check that it worked*'s console
   block, linking the page for working with an AI agent
 - Modify `book/src/appendix-05-references.md` — an entry for the Agent Skills specification,
@@ -103,3 +106,24 @@ table's verdicts mean, and that the old build is never touched; the C/C++ case.
 ## Proof
 
 `cargo make book-build` succeeds, and the three greps find their links.
+
+## Review findings
+
+One reviewer pass over Tasks 1–2, one fix round (`cargo make book-build` after it: `Build Done in 1.23 seconds`, no warnings; the four greps find `SUMMARY.md:9`, `ch01-01-installation.md:61`, `ch01-00-getting-started.md:11`, `README.md:70`).
+
+- docs — `ch01-00-getting-started.md` still said "three sections" and listed three pages — book; spec §7 and the plan's Files amended — fixed
+- docs — "from a clone it builds the buildl in that clone" held only for `--dir` — ch01-04 — fixed
+- docs — the refusal list read as if `[approver]` and `strategy = "bare"` changes were allowed after a yes; the skill forbids them outright — ch01-04 — fixed: two "never", two "on your yes"
+- docs — `--branch main` shown for any `--ref`; `--ref` ignored by a clone `--dir` unstated; "copied" for `--claude`; reference cited by number; error sample claimed verbatim; run row omitted the old tests, `graph` and `doctor`; FAIL row too broad; README omitted the skip of programs already on PATH; CLAUDE.md Status sentence's subject — ch01-04, README.md, CLAUDE.md — fixed
+- coverage — nothing checks the page's commands against `install.sh` — ch01-04 — declined: the plan's Risks already carries it
+
+## Probe results
+
+- `cargo make book-build`: `Build Done in 1.02 seconds`, html backend and mermaid preprocessor ran
+- README's `curl -fsSLO https://raw.githubusercontent.com/airsstack/buildl/main/skills/install.sh` / `sh install.sh --claude` equal the page's lines 29–30, as spec §5.2
+- gates once for the batch: `cargo make dod` exit 0, `cargo deny check` `advisories ok, bans ok, licenses ok, sources ok`
+
+## Deviations
+
+- 2026-10-29 — `book/src/ch01-00-getting-started.md` added to the plan's Files and spec §7 after review.
+- 2026-10-29 — Tasks 1 and 2 ran in parallel (disjoint files).
