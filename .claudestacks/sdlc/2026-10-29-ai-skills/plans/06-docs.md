@@ -2,7 +2,7 @@
 status: approved
 created: 2026-10-29
 depends-on: [05]
-built-on: c87ddf1ee4ad
+built-on: 81e53aaf66d1
 ---
 
 # AI Skills Documentation Implementation Plan

@@ -271,9 +271,11 @@ lies outside `P`. `S` is the installed skill's folder: SKILL.md writes the scrip
                (the read grant on W is what lets it look: a write grant does not read, P28)
              • copies P to W/old-1, W/old-2 and W/new
              • leaves out .git, .buildl, out, parity.json, parity.json's "skip" list, and every
-               path in "outputs"; intermediate files an earlier run left in P (*.o, build/,
-               dist/) are left out only when the agent lists them in "skip", which SKILL.md
-               tells it to do
+               path in "outputs"; intermediate files an earlier run left in P (build/, dist/,
+               each main.o) are left out only when the agent lists them in "skip", which SKILL.md
+               tells it to do; a "skip" entry is a path relative to P, never a pattern ("*.o"
+               matches nothing), and a folder's entry covers everything below it
+               (parity_lib.is_left_out)
              • reads P and W, writes only W, runs nothing
 
  2 RUN       the agent runs these commands, fixed in SKILL.md, from its own shell:
@@ -295,9 +297,10 @@ folder (P27).
 
 Step 2's `buildl build` and `buildl test` in `W/new` run under the project's approver. With
 `manifest`, the default, they run. With `interactive`, `W/new` is a new location, so it is not
-approved, and the agent's shell has no terminal (P38); with `deny`, every build is refused. In
-either case the agent does not change `[approver]` (3.3 D): it asks the user to run step 2's
-`W/new` commands in their own terminal, then carries on with step 3.
+approved, and the agent's shell has no terminal (P38): the agent asks the user to run step 2's
+`W/new` commands in their own terminal, then carries on with step 3. With `deny`, every build is
+refused, in the user's terminal too (book/src/ch04-03-approvers.md:23), so the check cannot run:
+the agent says so and stops. In neither case does it change `[approver]` (3.3 D).
 
 The builds run in the agent's shell, not in the script, because airsl's `proc.run` cannot start a
 program in another folder (P19). `prepare` takes `W` as an argument rather than creating a temp
@@ -381,8 +384,11 @@ common form; that each old test recipe has a buildl test target is check 1's.
 `.o` and links them (`%.o: %.c`), the agent writes no per-`.o` targets: buildl v1 does not support
 them, because a compiler reads headers nobody declared (P18). It offers one target compiling the
 whole program in one command, with every source and every header declared as an input —
-`run = { "cc", …, "-o", "$out", "$in" }` — so no header is undeclared, and says what it costs: any
-edit rebuilds the whole program. Such a binary differs from the per-file build's byte for byte
+`run = { "cc", …, "-o", "$out", sources }`, the sources named in `run` rather than as `$in`, since
+`$in` holds the headers too and a compiler given a header with `-o` refuses (plan 04: clang,
+"cannot specify -o when generating multiple output files") — so no header is undeclared, and says
+what it costs: any edit rebuilds the whole program. `sources` paths are relative to the build file,
+so a bare `sources` in `run` is right in the root `build.lua`. Such a binary differs from the per-file build's byte for byte
 (P33), so on acceptance the agent marks that output `"judge": "tests"` with the reason, the parity
 table shows it as `JUDGED BY TESTS`, and the test outcome decides it (4.6 check 4b). A project with
 no test command can therefore not pass parity this way (check 4b), and the offer says so before the

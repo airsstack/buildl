@@ -1,8 +1,9 @@
 ---
-status: approved
+status: done
 created: 2026-10-29
 depends-on: [02, 03]
-built-on: c87ddf1ee4ad
+built-on: 81e53aaf66d1
+disproves: c87ddf1ee4ad
 ---
 
 # `buildl-migrate` Skill Implementation Plan
@@ -54,15 +55,17 @@ skills/buildl-migrate/references/npm.md   — [create] npm scripts → buildl
 1. What the skill does and what it never does (edit or delete the old build, `parity.json`, `W`).
 2. The steps: read the old build; write `build.lua` and `buildl.toml` under the `buildl` skill's rules;
    list `old.programs`, `old.env` and `old.network` recipe by recipe; list in `skip` the
-   intermediate files an earlier run left in `P` (`*.o`, `build/`, `dist/`); write `parity.json`.
+   intermediate files an earlier run left in `P` (`build/`, `dist/`, each `.o` by its path: a
+   `skip` entry is a path, never a pattern); write `parity.json`.
    `"judge": "tests"` is used only for the C/C++ case of spec §4.7 and for an archive that stamps
    its entries with file times (spec §4.5), each with its reason.
 3. The parity check: the three steps of spec §4.4 as fixed commands, with `<skill dir>` for the
    script's folder, `P` and `W` absolute and `W` outside `P`, and step 2's seven commands exactly as
    spec §4.4 lists them (status files, `buildl graph > W/new.graph.json`, `buildl doctor >
-   W/new.doctor.txt`). Under the `interactive` or `deny` approver, `buildl build` in `W/new` is
-   refused (spec §4.4, P38): the agent asks the user to run the `W/new` commands in their own
-   terminal, and never changes `[approver]`.
+   W/new.doctor.txt`). Under the `interactive` approver, `buildl build` in `W/new` is refused
+   (spec §4.4, P38): the agent asks the user to run the `W/new` commands in their own terminal.
+   Under `deny` nothing runs anywhere, so the agent says the check cannot run and stops. It never
+   changes `[approver]`.
 4. Reading the table: each verdict and what the agent does — a FAIL is fixed in the new build, never
    in `parity.json` to make it pass.
 5. The two stop rules of spec §4.7, with the question the agent asks in each; the C/C++ offer says,
@@ -97,7 +100,7 @@ skills/buildl-migrate/references/npm.md   — [create] npm scripts → buildl
 phony or non-build recipe → the stop rule of spec §4.7. `make.md` holds the per-file C/C++ case and
 the whole-program target. Each states which recipe forms `compare` reads for that tool, as
 `parity_lib.recipes` implements them, and that other forms are not seen by check 1. Every `lua`
-example is a complete build file.
+example is a complete build file, or is fenced `lua no-check` with the reason beside it.
 
 **Proof:**
 - `cargo make skills` passes with every `lua` block in the four files checked
@@ -117,3 +120,31 @@ example is a complete build file.
 
 `cargo make skills` passes with both skills in place, and the by-hand walk of Task 1 ends in
 `parity: PASS`.
+
+## Review findings
+
+One reviewer pass over Tasks 1–2, one fix round (`cargo make skills` exit 0 after it; output tail
+`[cargo-make] INFO - Build Done`).
+
+- correctness — npm example skipped `dist/`, the folder its old build writes into, so check 2 would FAIL; and skipping `node_modules` needs `old.build` to install first — npm.md — fixed
+- correctness — `skip: ["*.o"]` skips nothing: `parity_lib.is_left_out` matches exact paths and folders — SKILL.md, make.md; spec §4.4 and Task 1 item 2 amended — fixed
+- correctness — "`prepare` stops" on a missing old build file; it is `compare` that raises — just.md, npm.md — fixed
+- correctness — `deny` treated like `interactive`; under `deny` the user's terminal is refused too — SKILL.md §C; spec §4.4 and Task 1 item 3 amended — fixed
+- correctness — just `export` mapped to the `env` program, which the old build never runs, failing check 6 — just.md; now `sh -c`, as shell.md — fixed
+- docs — repo path for the `buildl` skill; check 2/3 edge verdicts; `compare` errors with no table; root-only bare `sources` in `run`; no-test warning timing; `Justfile` case; C examples differ; `$(VAR)` targets; dropping `%.o`; unreachable book path; `export` in shell.md vs just.md; archive pointer in §E — SKILL.md, references — fixed
+- coverage — prose claims are not checked, only `lua` blocks — all files — declined: by design of spec §6.2
+
+## Probe results
+
+- by-hand walk of SKILL.md §C over a copy of `skills/tests/fixtures/compare/match/P` into a fresh absolute `W` (scratchpad): prepare printed the three copies, exit 0; step 2 statuses all `0` (`1 built`, `tests: 1 passed`); compare printed 8 PASS rows and `parity: PASS`, exit 0 — as the plan expects
+- the spec §4.7 command `run = { "cc", …, "-o", "$out", "$in" }` with headers among the inputs: clang refuses, "cannot specify -o when generating multiple output files" — **against the spec**; the sources are now named in `run`, built and tested in a sandbox (`buildl build`, `buildl test` succeed)
+- `sources` vs `run` paths: root `build.lua` with `run = {"cat","r.txt"}` built; `sub/build.lua` with `run = {"cat","s.txt"}` failed "cat: s.txt: No such file or directory"; `{"cat","$in"}` and `{"cat","sub/s.txt"}` built — `sources` are relative to the build file, `run` literals to the workspace root
+- target names may not hold `/`: `buildl check` refuses `"dist/app.js"` — npm.md uses `app.js` with output `out/app.js`
+
+## Deviations
+
+- 2026-10-29 — spec §4.7 amended: the whole-program target names its sources in `run`, not `$in` (probe above); `disproves` recorded, spec re-fingerprinted, every plan re-stamped.
+- 2026-10-29 — spec §4.4 amended: a `skip` entry is a path, never a pattern; under `deny` the check cannot run and the agent stops. Task 1 items 2 and 3 amended to match.
+- 2026-10-29 — Task 2's "every `lua` example is a complete build file" now allows `lua no-check` with the reason beside it.
+- 2026-10-29 — the archive guidance of Task 1 item 5 sits in §B (the steps, where `judge` is written), with a pointer from §E.
+- 2026-10-29 — the gates ran once for the batch (`cargo make skills`, `dod` 114 s, `deny` ok); the fix round touched Markdown only and re-ran `cargo make skills`.
