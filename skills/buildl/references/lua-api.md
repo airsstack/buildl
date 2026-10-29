@@ -1,8 +1,8 @@
 # Build file API
 
 A build file reaches buildl through one table, the global `buildl`. Start each file with
-`local b = buildl`. The table holds eleven functions. Every function refuses a key it does not
-know: a misspelt key fails the build file (exit 5) with the line that called it.
+`local b = buildl`. The table holds eleven functions. Every options table refuses a key it does
+not know: a misspelt key fails the build file (exit 5) with the line that called it.
 
 | Function | Declares |
 |---|---|
@@ -154,7 +154,8 @@ b.target("app", { inputs = { "go.mod", go_files }, run = { "go", "build", "-o", 
 
 ## `discovered(label)` and `decode_all(text)`
 
-`discovered` returns the output of the discovery target as a string, or `nil` in the first pass.
+`discovered` returns the output of the discovery target's last successful run as a string, or
+`nil` when it has never run.
 `decode_all` returns a list of the JSON values in `text`, one after another. Empty text gives an
 empty list. Its errors are plain Lua errors that `pcall` can catch.
 

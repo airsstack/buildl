@@ -32,8 +32,9 @@ A command never holds a real path. It uses placeholders: `$in`, `$out`, `$deps`,
  buildl check ---- exit 5 --> fix the file at the line the error names, check again
         | 0       (check reads declarations only: it does not apply the ceiling)
         v
- buildl plan       what would rebuild, and why
-        |
+ buildl plan ----- exit 4 --> buildl doctor, then explain and ask the user (D)
+        |          exit 5 --> fix the file, check again
+        | 0        (what would rebuild, and why)
         v
  buildl build ---- exit 1 --> buildl log <target>, then fix the code being built
         | 0        exit 4 --> buildl doctor, then explain and ask the user (D)
@@ -73,8 +74,8 @@ Exit 4 has three causes. Tell them apart by the error line and `buildl doctor`:
 | Cause | How it shows | What to tell the user |
 |---|---|---|
 | the ceiling | `doctor` lists a want as `REFUSED` in its `ceiling` column. The error names the program, variable or directory and the ceiling key | the quoted line, the key and value that would allow it, and the question below |
-| a plugin | the error names a plugin in brackets, `(plugin <name>@<version>)`, and says the want is outside that plugin | the quoted line. Say whether the plugin's own manifest or the workspace's `[plugins.<name>]` cap stops it. Ask about the cap. The manifest is the plugin author's: offer no edit to it |
-| the approver | the ceiling and the plugins allow every want, and the error is the approver's, such as `no terminal to ask on`, or `[approver]` is `deny` | the approver refused. With `interactive`, the user runs the build once in their own terminal to approve it. With `deny`, the choice of approver is theirs |
+| a plugin | the error names a plugin in brackets, `(plugin <name>@<version>)`, and says the want is outside that plugin. `doctor` shows the want as `allowed` in its `ceiling` column and lists the refusal under `plugin violations` | the quoted line. Say whether the plugin's own manifest or the workspace's `[plugins.<name>]` cap stops it. Ask about the cap. The manifest is the plugin author's: offer no edit to it |
+| the approver | the ceiling and the plugins allow every want, and the error is the approver's, such as `no terminal to ask on`, or `[approver]` is `deny`. With `deny`, `doctor` shows `no` in the `approved` column of every want | the approver refused. With `interactive`, the user runs the build once in their own terminal to approve it. With `deny`, the choice of approver is theirs |
 
 For the ceiling or a cap, quote buildl's line and ask. On a yes, make exactly that change and nothing
 more. Without a yes, change nothing. The question looks like this:
@@ -92,8 +93,8 @@ To allow it, buildl.toml's [ceiling] proc.run needs "sh". Should I add it?
 | a misspelt option key, `input` for `inputs` | exit 5, `unknown field 'input'`, with the line |
 | `$input` for `$in` | not a placeholder: the command gets the text `$input` unchanged |
 | a variable used but not listed in `env` | the command does not see it |
-| a program used but not in `proc.run` | `check` passes. `build` exits 4 |
-| an `inputs` file that does not exist | `check` passes. `build` exits 5, `input <file> does not exist` |
+| a program used but not in `proc.run` | `check` passes. `plan` and `build` exit 4 |
+| an `inputs` file that does not exist | `check` passes. `plan` and `build` exit 5, `input <file> does not exist` |
 | `print` in `build.lua` | `print` is removed. `error("text", 0)` shows a value |
 
 A mistake shown on purpose is fenced `lua no-check`, because it is not a good build file:

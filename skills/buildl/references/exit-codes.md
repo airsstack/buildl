@@ -9,7 +9,7 @@ over 3, and 3 over 1.
 | 1 | ActionFailure | the code being built | no, fix the code |
 | 2 | Usage | the command line | no, fix the command |
 | 3 | Infrastructure | the builder or the machine | yes |
-| 4 | Refused | the build wants more than the workspace allows, or than was approved | no, ask the user |
+| 4 | Refused | the build wants more than the workspace allows, or than was approved | no, widen the ceiling or approve (the user's call) |
 | 5 | Definition | a build file or `buildl.toml` | no, fix the file |
 | 6 | CorruptState | a file buildl keeps its state in | no |
 | 7 | Internal | buildl itself: a bug | no, report it |
@@ -69,9 +69,16 @@ The build wants something it may not have. Three causes:
 | a plugin | `error: build.lua: //:bye (plugin gobin@0.1.0): environment variable HOME is outside plugin gobin@0.1.0 (env.read allows: nothing)` |
 | the approver | `error: no terminal to ask on; run the build in a terminal once to approve, or set [approver] default = "manifest"`, or `error: the workspace's approver is deny` |
 
-Run `buildl doctor`: a refused want shows as `REFUSED` in the `ceiling` column. Then tell the user
-and ask. Never widen the ceiling, a plugin cap or the approver without the user's yes to that exact
-change.
+`plan` gives the same refusals as `build`, before anything runs. Run `buildl doctor`; it differs by cause:
+
+| Cause | What `doctor` shows |
+|---|---|
+| the ceiling | the want is `REFUSED` in the `ceiling` column |
+| a plugin | the want is `allowed` in the `ceiling` column, and the refusal is listed under `plugin violations` |
+| the approver | the want is `allowed` in the `ceiling` column and `no` in the `approved` column with `deny`. With `interactive` and no terminal, read the error |
+
+Then tell the user and ask. Never widen the ceiling, a plugin cap or an `extension.toml`, or change the approver, without the
+user's yes to that exact change.
 
 ## 5, Definition
 

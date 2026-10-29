@@ -94,7 +94,7 @@ env.read = ["HOME"]
 
 | Step | What happens |
 |---|---|
-| any command before a fetch | refused with exit 5: ``error: plugin gobin is not fetched: buildl.lock does not pin <url> at v0.1.0; run `buildl plugins fetch` `` |
+| any command that reads build files, before a fetch | refused with exit 5: ``error: plugin gobin is not fetched: buildl.lock does not pin <url> at v0.1.0; run `buildl plugins fetch` `` |
 | `buildl plugins fetch` | pins each git plugin in `buildl.lock` and stores its files in `.buildl`. Prints `fetched gobin <commit>`, or `unchanged gobin <commit>`. A failed fetch is exit 3: report it, do not retry |
 | every later command | checks the stored files against `buildl.lock`, not the network. A changed file is exit 6 |
 | a moved tag | the fetch is refused. Moving a plugin on is a new `rev` in `buildl.toml`, then a fetch |
