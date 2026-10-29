@@ -57,4 +57,5 @@ $ buildl --version
 buildl 0.1.0
 ```
 
-`buildl --help` lists every command. The rest of this book goes through them one at a time.
+`buildl --help` lists every command. The rest of this book goes through them one at a time. To have
+an AI agent write and migrate build files for you, see [With an AI Agent](ch01-04-with-an-ai-agent.md).
