@@ -6,6 +6,7 @@
     - [Installation](ch01-01-installation.md)
     - [Hello, buildl](ch01-02-hello-buildl.md)
     - [What Did It Do?](ch01-03-what-did-it-do.md)
+    - [With an AI Agent](ch01-04-with-an-ai-agent.md)
 
 - [A First Project](ch02-00-first-project.md)
 

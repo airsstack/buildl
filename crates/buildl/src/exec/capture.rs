@@ -3,7 +3,8 @@
 //! Its own file because waiting for a process is where a build can hang: a pipe that fills
 //! while nobody reads it stops the process for good, and a pipe something else still holds
 //! never reaches its end. Each of the two outputs is read on a thread of its own, and the
-//! thread that started the process is the only one that touches it.
+//! thread that started the process is the only one that touches it. Starting it is here too,
+//! because a program just written can be busy for a moment, and starting it again is the fix.
 //!
 //! Responsibilities: `capture` and `Capture`.
 //!
@@ -58,6 +59,17 @@ const FIRST_PAUSE: Duration = Duration::from_micros(100);
 /// whatever holds its output closes it or writes to it.
 const DRAIN: Duration = Duration::from_secs(1);
 
+/// The first pause before starting a program again that the system said was busy. Each pause
+/// after it is twice as long.
+const BUSY_FIRST_PAUSE: Duration = Duration::from_millis(1);
+
+/// The most time, in all the pauses together, a busy program is waited for.
+///
+/// A program is busy while any process holds it open for writing. A file just written and run
+/// is held by the writer, and by every process another thread starts in the meantime, until
+/// that process runs a program of its own. That is a matter of milliseconds.
+const BUSY_BUDGET: Duration = Duration::from_secs(1);
+
 /// Spawns `command` with an empty standard input and both outputs piped, and waits for it at
 /// most `timeout`.
 ///
@@ -79,11 +91,12 @@ pub(crate) fn capture(
     timeout: Duration,
     live: Option<LiveSink<'_>>,
 ) -> io::Result<Capture> {
-    let mut child = command
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut child = spawn(
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )?;
     let waited = waited(&mut child, timeout, live);
     if waited.is_err() {
         // The error says what went wrong; whether these two succeed changes nothing.
@@ -91,6 +104,36 @@ pub(crate) fn capture(
         let _ = child.wait();
     }
     waited
+}
+
+/// Starts `command`, again after a pause each time the system says its program is busy, for
+/// [`BUSY_BUDGET`] in all.
+///
+/// Linux refuses to run a file some process holds open for writing. A file this process has just
+/// written is held that way by a process another thread starts at the same moment, which
+/// inherits the open file until it runs its own program. Any other failure, and the last busy
+/// one, is returned as it came.
+fn spawn(command: &mut Command) -> io::Result<Child> {
+    spawn_pausing(command, thread::sleep)
+}
+
+/// As [`spawn`], with `pause_for` waiting out each pause, so a test can let go of the file it
+/// holds at the moment the program was found busy.
+fn spawn_pausing(command: &mut Command, mut pause_for: impl FnMut(Duration)) -> io::Result<Child> {
+    let mut pause = BUSY_FIRST_PAUSE;
+    let mut slept = Duration::ZERO;
+    loop {
+        match command.spawn() {
+            Err(error)
+                if error.kind() == io::ErrorKind::ExecutableFileBusy && slept < BUSY_BUDGET =>
+            {
+                pause_for(pause);
+                slept = slept.saturating_add(pause);
+                pause = pause.saturating_mul(2);
+            }
+            other => return other,
+        }
+    }
 }
 
 /// Reads both outputs of `child` and waits for it, at most `timeout`.
@@ -208,6 +251,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::io;
     use std::process::Command;
     use std::sync::Mutex;
     use std::thread;
@@ -215,7 +259,7 @@ mod tests {
 
     use buildl_core::Channel;
 
-    use super::{Capture, capture};
+    use super::{BUSY_BUDGET, Capture, capture};
 
     /// Longer than any command of these tests runs when nothing is wrong.
     const PATIENT: Duration = Duration::from_secs(60);
@@ -288,6 +332,59 @@ mod tests {
         assert_eq!(ended.stdout, b"hi\n");
         // Returned once the outputs had their time to drain, not when their holder let go.
         assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_program_still_open_for_writing_is_started_once_it_is_closed() {
+        use std::fs::{self, File};
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Stdio;
+
+        use super::spawn_pausing;
+
+        let dir = tempfile::tempdir().unwrap();
+        let script = dir.path().join("greet");
+        let mut file = File::create(&script).unwrap();
+        file.write_all(b"#!/bin/sh\necho hi\n").unwrap();
+        fs::set_permissions(&script, fs::Permissions::from_mode(0o755)).unwrap();
+        // While this handle is open the kernel refuses to run the file. It is let go at the
+        // first pause, as a copy's is by the child that inherited it once that child runs.
+        let mut open = Some(file);
+        let mut pauses = 0_u32;
+
+        let child = spawn_pausing(
+            Command::new(&script).env_clear().stdout(Stdio::piped()),
+            |pause| {
+                pauses += 1;
+                drop(open.take());
+                thread::sleep(pause);
+            },
+        )
+        .unwrap();
+        let ended = child.wait_with_output().unwrap();
+
+        // At least one start was refused as busy, and a later one ran the program.
+        assert!(pauses >= 1);
+        assert!(ended.status.success());
+        assert_eq!(ended.stdout, b"hi\n");
+    }
+
+    #[test]
+    fn a_program_that_is_not_there_is_not_waited_for() {
+        let started = Instant::now();
+
+        let error = capture(
+            Command::new("/nonexistent/buildl-capture-test").env_clear(),
+            PATIENT,
+            None,
+        )
+        .unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        // Far under the time a busy program is retried for.
+        assert!(started.elapsed() < BUSY_BUDGET / 4);
     }
 
     #[test]

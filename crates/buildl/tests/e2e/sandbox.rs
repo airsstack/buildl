@@ -77,8 +77,11 @@ fn outputs_are_byte_identical_under_both_tiers() {
     let bare = chain(Isolation::Bare);
     let sandbox = chain(Isolation::Sandbox);
 
-    bare.build();
-    sandbox.build();
+    // A build that failed would leave a file missing, and the comparison would report only
+    // that it differs.
+    for outcomes in [bare.build(), sandbox.build()] {
+        assert_eq!(ended(&outcomes, &OutcomeClass::Built), CHAIN_LABELS);
+    }
 
     assert_eq!(bare.snapshot().first_difference(&sandbox.snapshot()), None);
 }

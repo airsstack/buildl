@@ -71,3 +71,8 @@ The works the design and architecture of `buildl` draw on, each listed once.
 26. Microsoft. _Pragmatic Rust Guidelines_. <https://microsoft.github.io/rust-guidelines/>
 27. The Cargo team. _The Cargo Book — Publishing on crates.io_.
     <https://doc.rust-lang.org/cargo/reference/publishing.html>
+
+## Agent skills
+
+28. Agent Skills authors. _Agent Skills specification_ (the `SKILL.md` format the `buildl` and
+    `buildl-migrate` skills follow). agentskills.io. <https://agentskills.io/specification>

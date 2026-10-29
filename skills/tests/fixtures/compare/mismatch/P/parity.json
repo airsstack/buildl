@@ -1,0 +1,16 @@
+{
+  "tool": "make",
+  "old": {
+    "build": ["make", "out.txt"],
+    "test": ["make", "test"],
+    "programs": ["cp", "grep"],
+    "env": [],
+    "network": false
+  },
+  "recipes": {
+    "out.txt": { "target": "//:out.txt" },
+    "test": { "target": "//:unit" }
+  },
+  "outputs": [ { "old": "out.txt", "new": "out/out.txt" } ],
+  "skip": []
+}

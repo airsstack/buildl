@@ -9,8 +9,8 @@ milestone: buildl/09
 ## Problem
 
 The four crates — `buildl-core`, `buildl-lua`, `buildl`, `buildl-cli` — are to be published to
-crates.io in the order of architecture-building-blocks §9, once the examples, the book and the
-READMEs are ready.
+crates.io in the order the book sets (`book/src/ch11-03-four-crates.md`, Publishing), once the
+examples, the book, the READMEs and the AI skills are ready.
 
 ## Affected systems
 

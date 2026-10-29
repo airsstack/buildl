@@ -1,0 +1,14 @@
+workspace  /work/new
+approver   manifest
+execution  workers 0 (one per core), timeout 10m, strategy sandbox
+remote: none
+ceiling
+  proc.run  cp, grep
+  env.read  -
+  fs.read   .
+  fs.write  .buildl, out
+wants            ceiling  approved
+  run cp         allowed  yes
+  run grep       allowed  yes
+  write .buildl  allowed  yes
+  write out      allowed  yes

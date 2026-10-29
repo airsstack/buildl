@@ -49,6 +49,14 @@ cargo make install                                                            # 
 
 Then `buildl build`, `buildl test` and `buildl plan` in that example.
 
+To have an AI agent write and migrate build files, install buildl, airsl (a program already on your
+`PATH` is skipped) and the `buildl` and `buildl-migrate` skills in one go; `--dir P` copies the skills into `P` for another agent instead:
+
+```sh
+curl -fsSLO https://raw.githubusercontent.com/airsstack/buildl/main/skills/install.sh
+sh install.sh --claude
+```
+
 ## Learn more
 
 **[The buildl Book](https://airsstack.github.io/buildl/)** is the full guide.
@@ -59,6 +67,7 @@ Then `buildl build`, `buildl test` and `buildl plan` in that example.
 | Concepts | [Permission](https://airsstack.github.io/buildl/ch04-00-asking-permission.html) · [Caching](https://airsstack.github.io/buildl/ch05-00-caching.html) · [Sandbox](https://airsstack.github.io/buildl/ch06-00-sandbox.html) |
 | Features | [Plugins](https://airsstack.github.io/buildl/ch08-00-plugins.html) · [Remote cache and execution](https://airsstack.github.io/buildl/ch09-00-remote.html) · [Watch mode](https://airsstack.github.io/buildl/ch10-00-watch.html) |
 | Reference | [Command line](https://airsstack.github.io/buildl/appendix-01-cli.html) · [Exit codes](https://airsstack.github.io/buildl/appendix-04-exit-codes.html) · [Under the hood](https://airsstack.github.io/buildl/ch11-00-under-the-hood.html) |
+| AI agents | [With an AI agent](https://airsstack.github.io/buildl/ch01-04-with-an-ai-agent.html) |
 | Examples | [`examples/`](examples/): working workspaces for Go, Rust and Python |
 
 ## Crates

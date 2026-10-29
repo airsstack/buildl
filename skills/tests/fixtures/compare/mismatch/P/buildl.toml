@@ -1,0 +1,11 @@
+[workspace]
+name   = "compare-match"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["cp", "grep"]
+env.read = []
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
