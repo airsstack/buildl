@@ -36,7 +36,7 @@ Every fact the design rests on, proven in this task. External documents were dow
 | P13 | `buildl check` validates declarations only: a missing input file and a program outside the ceiling both pass it | probe with `inputs = { "missing.c" }` and `run = { "cc", … }` under `proc.run = ["python3"]`: `ok: 1 declaration in 1 build file`, exit 0 |
 | P14 | `buildl build` refuses a program outside the ceiling with exit 4, naming the program and the ceiling | probe: `error: build.lua: //:x.txt: program sh is outside the ceiling (proc.run allows: python3)`, exit 4 |
 | P15 | `buildl doctor` lists each want against the ceiling | probe: `run sh         REFUSED  -` |
-| P16 | `buildl plan --json` gives each target's `verdict` and the build's `wanted.programs`, `wanted.env`, `wanted.network`, `wanted.write` | run on a copy of `examples/python`: `"verdict":"Clean"`, `"wanted":{"env":[],"network":[],"programs":["python3"],"write":[".buildl","out"]}` |
+| P16 | `buildl graph` prints, by default, canonical JSON (the bytes of `.buildl/graph.json`) listing every declared target, tests included, each with its `role` (`Build` or `Test`) and its `network` (`Sealed` when it reaches no network); `buildl plan` with no target leaves tests out | book/src/appendix-01-cli.md:70; run on a copy of `examples/python`: `graph` lists `//:app.pyz` (`"role":"Build"`, `"network":"Sealed"`) and `//:unit` (`"role":"Test"`, `"network":"Sealed"`), while `plan --json`'s `targets` hold only `//:app.pyz`; `buildl plan --help`: "with none, plan and build take every target but tests" |
 | P17 | Exit codes 0–7 are Success, ActionFailure, Usage, Infrastructure, Refused, Definition, CorruptState, Internal | book/src/appendix-04-exit-codes.md:8-15 |
 | P18 | buildl v1 does not support one target per `.o` file; one action over a full glob of a toolchain's sources is sound | book/src/ch11-09-what-it-promises.md:22-24, :31-33 |
 | P19 | airsl's modules are `json`, `regex`, `path`, `fs`, `glob`, `env`, `proc`, `time`, `hash`, `stdio`, `hook`, `ext`; there is no TOML module; `proc.run` takes only `{program, arg, …}`, with no working-directory option | airsl book/src/appendix-02-modules.md:7-147, :95 |
@@ -53,6 +53,11 @@ Every fact the design rests on, proven in this task. External documents were dow
 | P30 | `buildl doctor` prints the ceiling as one line per key, values joined by `, `, `-` when empty | the P15 probe: `ceiling` / `  proc.run  python3` / `  env.read  -` / `  fs.read   .` / `  fs.write  .buildl, out` |
 | P31 | Exit 4 also comes from the approver: `interactive` refuses when stdin or stderr is not a terminal, with `error: no terminal to ask on; run the build in a terminal once to approve, or set [approver] default = "manifest"`; `deny` refuses every build | book/src/ch04-03-approvers.md:35-48, :70-77 |
 | P32 | `build.lua` has eleven functions; `$input` is not a placeholder; `print` is removed from build files; an action's environment holds exactly the declared variables that have a value | book/src/appendix-03-lua-api.md:5, :75-77, :236; ch11-09-what-it-promises.md:52 |
+| P34 | Exit 4 covers three refusals: `Refused` (the ceiling), `PluginRefused` (a plugin's own manifest, or the workspace's `[plugins.<name>]` cap) and `NotApproved` (the approver); a plugin refusal names the plugin in brackets, as `//:bye (plugin gobin@0.1.0): … is outside plugin gobin@0.1.0 (env.read allows: nothing)`, while the ceiling would allow the want | book/src/ch11-04-errors.md:182; ch08-03-how-buildl-decides.md:50-56, :66-75 |
+| P35 | Exit 3 covers an infrastructure failure, a missing program, a missing blob and a failed plugin fetch | book/src/ch11-04-errors.md:181 |
+| P36 | A program a dependency built is no want: it needs no `proc.run` entry | book/src/ch08-03-how-buildl-decides.md:32; ch11-01-declare-then-execute.md:306-307 |
+| P37 | `$input` and other near-placeholders pass through to the command unchanged | crates/buildl-core/src/placement/expand.rs:273-279 (a test asserting `"$input"` is kept) |
+| P38 | `interactive` keeps a yes per workspace location, so a copy of the workspace elsewhere is not approved; with no terminal it refuses | book/src/ch04-03-approvers.md:65-77 |
 | P33 | A C program compiled one file at a time and linked is not byte-identical to the same program compiled in one command | probe (Apple clang 15.0.0, two `.c` files and a header): `cc -c` each then `cc -o` → `d86b95b9…`; `cc -o app main.c util.c` → `cabbc3d7…` |
 
 ## 2. Layout
@@ -87,7 +92,8 @@ skills/
 
 - Each skill folder is self-contained: an installed copy carries everything it references (P3, P11
   rule out links and symlinks out of the folder).
-- `skills/tests/` never ships: the marketplace loads only the folders it lists (P7), and
+- `skills/tests/` is never loaded or installed as a skill: the marketplace loads only the folders it
+  lists (P7), though the plugin's sparse checkout of `skills` carries the folder's files along, and
   `install.sh --dir` copies only folders holding a `SKILL.md` (§5.4).
 - `.claude/` is untouched: it is the repository's own settings (P26).
 - No `assets/` folder: every language has the same shape in buildl, one target over all its
@@ -123,8 +129,9 @@ Only fields the spec defines (P1). `allowed-tools` is left out (P2).
 **A. How buildl works.** `build.lua` only declares targets; buildl runs them. Nothing is allowed by
 default: a target's command sees only the environment variables it declares in `env`
 (P32); every program it runs must be in `buildl.toml`'s `[ceiling]` `proc.run`, except a program a
-dependency built; what it reads and writes must lie within `fs.read` and `fs.write` (P29). Then the
-approver, `[approver]`, agrees to what the build wants. Commands hold no real paths: `$in`, `$out`,
+dependency built (P36); what it reads and writes must lie within `fs.read` and `fs.write` (P29). A
+plugin's targets are held to the plugin's own manifest and the workspace's `[plugins.<name>]` cap as
+well. Then the approver, `[approver]`, agrees to what the build wants. Commands hold no real paths: `$in`, `$out`,
 `$deps`, `$opt:name`.
 
 **B. The working loop.**
@@ -136,7 +143,8 @@ approver, `[approver]`, agrees to what the build wants. Commands hold no real pa
  buildl check ─── exit 5 ──► fix the file at the line the error names, check again
         │ 0        (check validates declarations only: it does not apply the ceiling — P13)
         ▼
- buildl plan      what would rebuild, and why (--json for a structured read)
+ buildl plan      what would rebuild, and why; --json gives, per target, its verdict, the reason and
+                  the key's components, plus what the build wants (`wanted`); tests only when named
         │
         ▼
  buildl build ─── exit 1 ──► buildl log <target> ──► fix the code being built
@@ -152,8 +160,8 @@ approver, `[approver]`, agrees to what the build wants. Commands hold no real pa
 | 0 | Success | is done |
 | 1 | ActionFailure | runs `buildl log <target>` and fixes the code being built |
 | 2 | Usage | fixes the command line it typed |
-| 3 | Infrastructure | retries once; if it fails again, reports to the user |
-| 4 | Refused | runs `buildl doctor` and tells the user which of two refusals it is (3.3 D), and asks |
+| 3 | Infrastructure | reads the error: a missing program or a failed plugin fetch (P35) is reported to the user, since a retry cannot help; any other, it retries once and then reports |
+| 4 | Refused | runs `buildl doctor` and tells the user which of three refusals it is (3.3 D), and asks |
 | 5 | Definition | fixes `build.lua` or `buildl.toml` at the line the error names, and runs `check` again |
 | 6 | CorruptState | stops and reports; does not delete `.buildl` without asking |
 | 7 | Internal | stops and reports a buildl bug |
@@ -162,19 +170,21 @@ approver, `[approver]`, agrees to what the build wants. Commands hold no real pa
 
 | Never | Why |
 |---|---|
-| add to `[ceiling]` to get past exit 4 | what builds may touch is the user's decision |
+| add to `[ceiling]`, to a `[plugins.<name>]` cap, or to a plugin's `extension.toml`, without the user's yes to that exact change | what builds may touch is the user's decision |
 | change `[approver]` to get past a refusal | approval is the user's |
 | set `strategy = "bare"` to get past a sandbox failure | it drops the sandbox; the fix is a missing declared input |
 | delete an old build, `out` or `.buildl` without asking | it cannot be undone |
 
-Exit 4 has two causes, and `doctor` tells them apart:
+Exit 4 has three causes (P34), told apart by the error line and `doctor`:
 
 | Cause | How it shows | What the agent tells the user |
 |---|---|---|
-| the ceiling | `doctor` lists a want as `REFUSED` in its `ceiling` column (P15); the error names the key (P14) | the quoted line, the key and value that would allow it, and a question (below) |
-| the approver | every want is `allowed` against the ceiling; the error is the approver's, such as `no terminal to ask on` (P31), or `[approver]` is `deny` | that the approver refused; with `interactive`, the user runs the build once in their own terminal to approve it; with `deny`, the choice of approver is the user's |
+| the ceiling | `doctor` lists a want as `REFUSED` in its `ceiling` column (P15); the error names the ceiling key (P14) | the quoted line, the key and value that would allow it, and a question (below) |
+| a plugin | the error names a plugin in brackets, `(plugin <name>@<version>)`, and says the want is outside that plugin (P34) | the quoted line; whether the plugin's own manifest or the workspace's `[plugins.<name>]` cap stops it; and a question about that cap — the plugin's manifest is its author's, so the agent offers no edit to it |
+| the approver | every want is allowed by the ceiling and the plugins; the error is the approver's, such as `no terminal to ask on` (P31), or `[approver]` is `deny` | that the approver refused; with `interactive`, the user runs the build once in their own terminal to approve it; with `deny`, the choice of approver is the user's |
 
-For the ceiling, the agent quotes buildl's line (P14) and asks, in this form:
+For the ceiling or a cap, the agent quotes buildl's line (P14) and asks. On the user's yes it makes
+exactly that change and nothing more; without it, it changes nothing. The question has this form:
 
 ```text
 buildl refused the build:
@@ -187,7 +197,7 @@ To allow it, buildl.toml's [ceiling] proc.run needs "sh". Should I add it?
 | Mistake | What happens |
 |---|---|
 | a misspelt option key (`input` for `inputs`) | exit 5, `unknown field 'input'`, with the line (P12) |
-| `$input` for `$in` | not a placeholder (P32): the command gets the text unchanged |
+| `$input` for `$in` | not a placeholder (P32): the command gets the text unchanged (P37) |
 | an environment variable used but not in `env` | the command does not see it (P32) |
 | a program used but not in the ceiling | exit 4 at `build` (P14), not at `check` (P13) |
 | printing from `build.lua` | `print` is removed (P32); `error()` shows a value |
@@ -198,7 +208,7 @@ language, taken from `examples/`:
 | Language | `run`, and anything else the target needs |
 |---|---|
 | Go | `{ "go", "build", "-o", "$out", "." }`, with `env = { "HOME" }` (examples/go/build.lua) |
-| Rust | `{ "cargo", "install", "--path", ".", "--root", "$out", "--target-dir", "tt", "--no-track" }` (examples/rust/build.lua:10) |
+| Rust | `{ "cargo", "install", "--path", ".", "--root", "$out", "--target-dir", "tt", "--no-track" }`, with `env = { "HOME", "PATH" }`: without `PATH` the build stops with ``error: linker `cc` not found`` (examples/rust/build.lua:10-11; examples/rust/README.md:10-11) |
 | Python | `{ "python3", "-m", "zipapp", "app", "-o", "$out" }` (examples/python/build.lua) |
 
 ### 3.4 References
@@ -206,7 +216,7 @@ language, taken from `examples/`:
 | File | Holds |
 |---|---|
 | `lua-api.md` | the eleven functions (P32) and their option keys, labels, placeholders, `sources` patterns |
-| `buildl-toml.md` | `[workspace]`, `[ceiling]`, `[approver]`, `[execution]`, `[plugins]`, `[remote]` |
+| `buildl-toml.md` | `[workspace]`, `[ceiling]`, `[declaration]`, `[approver]`, `[execution]`, `[plugins.<name>]`, `[remote]` |
 | `exit-codes.md` | codes 0–7 with the error text each prints |
 | `plugins.md` | `buildl.use`, `extension.toml`, `buildl plugins fetch` |
 
@@ -260,7 +270,9 @@ lies outside `P`. `S` is the installed skill's folder: SKILL.md writes the scrip
                (the read grant on W is what lets it look: a write grant does not read, P28)
              • copies P to W/old-1, W/old-2 and W/new
              • leaves out .git, .buildl, out, parity.json, parity.json's "skip" list, and every
-               path in "outputs" — so no build starts from outputs an earlier run left in P
+               path in "outputs"; intermediate files an earlier run left in P (*.o, build/,
+               dist/) are left out only when the agent lists them in "skip", which SKILL.md
+               tells it to do
              • reads P and W, writes only W, runs nothing
 
  2 RUN       the agent runs these commands, fixed in SKILL.md, from its own shell:
@@ -269,7 +281,7 @@ lies outside `P`. `S` is the installed skill's folder: SKILL.md writes the scrip
                cd W/old-2 && <old.build> ; echo $? > W/old-2.build.status
                cd W/new   && buildl build ; echo $? > W/new.build.status
                cd W/new   && buildl test  ; echo $? > W/new.test.status
-               cd W/new   && buildl plan --json > W/new.plan.json
+               cd W/new   && buildl graph       > W/new.graph.json
                cd W/new   && buildl doctor      > W/new.doctor.txt
 
  3 COMPARE   airsl run --allow-read P --allow-read W S/scripts/parity.lua compare P W
@@ -279,6 +291,12 @@ lies outside `P`. `S` is the installed skill's folder: SKILL.md writes the scrip
 
 `parity.lua` loads `parity_lib.lua` with a sibling `require`, which needs no grant on the skill's
 folder (P27).
+
+Step 2's `buildl build` and `buildl test` in `W/new` run under the project's approver. With
+`manifest`, the default, they run. With `interactive`, `W/new` is a new location, so it is not
+approved, and the agent's shell has no terminal (P38); with `deny`, every build is refused. In
+either case the agent does not change `[approver]` (3.3 D): it asks the user to run step 2's
+`W/new` commands in their own terminal, then carries on with step 3.
 
 The builds run in the agent's shell, not in the script, because airsl's `proc.run` cannot start a
 program in another folder (P19). `prepare` takes `W` as an argument rather than creating a temp
@@ -325,24 +343,28 @@ by check 5 instead of check 3 (4.6). Only the C/C++ case of 4.7 uses it.
 | `outputs` | pairs of files to compare, old path ↔ buildl path, relative to the copy |
 | `skip` | further paths to leave out of the copies |
 
-Every field but `old.test` and `skip` is required. A `parity.json` missing one, or holding an
-unknown `tool`, makes both commands fail with a message naming the field.
+Every field but `old.test` and `skip` is required. A `parity.json` missing one, holding an unknown
+`tool`, holding a `dropped` with an empty reason, or an `outputs` entry with `judge` and no
+`reason`, is refused when it is read: both commands fail with a message naming the field, so
+`prepare` copies nothing and `compare` prints no table.
 
 ### 4.6 What `compare` checks
 
 | # | Check | How | FAIL when |
 |---|---|---|---|
-| 1 | Every recipe accounted for, and every mapping real | reads recipe names from the old build itself: Makefile and justfile rules by `regex`, `package.json` `scripts` keys by `json`, and for shell every `*.sh` file in `P` outside the left-out paths — never from the agent's own list; then looks up each mapped `target` in `new.plan.json`'s `targets` | a recipe is neither mapped nor `dropped` with a non-empty reason, or a mapped target does not exist |
-| 2 | The builds ran | the `*.build.status` files | a status file is missing, or the old build failed: there is nothing to compare against |
+| 1 | Every recipe accounted for, and every mapping real | reads recipe names from the old build itself — never from the agent's own list — then looks up each mapped `target` in `new.graph.json`'s `targets`, which hold tests too (P16). Per tool: `make` reads the first of `GNUmakefile`, `makefile`, `Makefile` (make's own order), and its recipes are its rule targets, pattern rules (`%.o`) included, special targets (`.PHONY` and others starting with `.`) and variable assignments not; `just` reads `justfile`, and its recipes are its recipe headers, not its `set`, `alias`, `export` or `:=` lines; `npm` reads `package.json`'s `scripts` keys; `shell` takes every `*.sh` file in `P` outside the left-out paths, keyed in `recipes` by its path relative to `P` | a recipe is neither mapped nor `dropped`, or a mapped target does not exist |
+| 2 | The builds ran | the `*.build.status` files | a status file is missing; the old build failed, leaving nothing to compare against; or `buildl build` failed |
 | 3 | Same outputs | SHA-256 of `old-1/<old>`, `old-2/<old>` and `new/<new>` per `outputs` pair | old-1 and old-2 agree and buildl's differs, or a file is missing |
-| 4 | Old build not repeatable | old-1 and old-2 differ for a file | never: the row reads `NOT REPEATABLE`, and check 5 judges that file |
-| 4b | Judged by tests | an `outputs` entry with `"judge": "tests"` | never on its own: the row reads `JUDGED BY TESTS` with the entry's reason, and check 5 judges that file; an entry with `judge` and no reason fails |
+| 4 | Old build not repeatable | old-1 and old-2 differ for a file | when there is no `old.test`: nothing could judge the file. Otherwise never: the row reads `NOT REPEATABLE`, and check 5 judges that file |
+| 4b | Judged by tests | an `outputs` entry with `"judge": "tests"` | when there is no `old.test`, as in check 4. Otherwise never: the row reads `JUDGED BY TESTS` with the entry's reason, and check 5 judges that file |
 | 5 | Same test outcome | `old-1.test.status` against `new.test.status`; with no `old.test`, the row reads `NO TESTS` | one passed and the other failed |
-| 6 | No wider permissions | the ceiling, read from `new.doctor.txt` (P30), and `new.plan.json`'s `wanted.network` (P16), against `old.programs`, `old.env` and `old.network` | the ceiling's `proc.run` or `env.read` holds something the old build does not use, or a target wants the network while `old.network` is false |
+| 6 | No wider permissions | the ceiling, read from `new.doctor.txt` (P30), and each target's `network` in `new.graph.json` (P16), against `old.programs`, `old.env` and `old.network` | the ceiling's `proc.run` or `env.read` holds something the old build does not use, or a target's `network` is not `Sealed` while `old.network` is false |
 
 Check 6 reads the ceiling from `doctor`'s output, and not from `buildl.toml`, because airsl has no
 TOML reader (P19). The workspace ceiling has no network key (P29), so network use is judged from
-what the targets want.
+each declared target's `network` in the graph, tests included. `fs.read` and `fs.write` are not
+compared: they name folders of the workspace (P29), which the old build, run in that workspace,
+already reached.
 
 Check 5 compares the outcome of the whole test run: whether the old tests and the buildl tests each
 passed. It does not count individual tests, since make, just, shell and npm report them in no
@@ -357,8 +379,9 @@ whole program in one command, with every source and every header declared as an 
 `run = { "cc", …, "-o", "$out", "$in" }` — so no header is undeclared, and says what it costs: any
 edit rebuilds the whole program. Such a binary differs from the per-file build's byte for byte
 (P33), so on acceptance the agent marks that output `"judge": "tests"` with the reason, the parity
-table shows it as `JUDGED BY TESTS`, and the test outcome decides it (4.6 check 4b). If the user
-declines, it stops with nothing changed.
+table shows it as `JUDGED BY TESTS`, and the test outcome decides it (4.6 check 4b). A project with
+no test command can therefore not pass parity this way (check 4b), and the offer says so before the
+user answers. If the user declines, it stops with nothing changed.
 
 **A recipe that is not a build step.** A recipe that deploys, tags, pushes or otherwise acts outside
 building files (`deploy`, `release`) is not dropped silently and not forced into a target. The agent
@@ -422,7 +445,8 @@ Exactly one of `--claude` and `--dir` is required.
 
 ```text
  1. arguments    not exactly one of --claude / --dir ──► usage on stderr, exit 2
- 2. cargo        missing ──► "install Rust from https://rustup.rs", exit 1
+ 2. cargo        needed only when buildl or airsl is missing;
+                 then missing ──► "install Rust from https://rustup.rs", exit 1
  3. buildl       on PATH ──► skipped
                  missing ──► cargo install --locked --git https://github.com/airsstack/buildl
                                --branch R buildl-cli
@@ -468,10 +492,11 @@ directory, as the `examples` task does (Makefile.toml:370-372).
 
 ### 6.2 Snippets
 
-Every fenced block whose info string is exactly `lua` in `skills/**/*.md` is a build file and is
+Every fenced block whose info string is exactly `lua` in `skills/**/*.md`, outside the test inputs
+in `skills/tests/fixtures/`, is a build file and is
 checked. A block fenced `lua no-check` is skipped — a plugin's own module code, a build file that
-needs a plugin installed, or an example of a mistake shown on purpose — and the text beside it says
-why.
+needs a plugin installed or a child build file (`buildl.subdir`), or an example of a mistake shown
+on purpose — and the text beside it says why.
 
 ```text
  airsl run --allow-read skills --allow-write W skills/tests/snippets.lua W
@@ -494,21 +519,27 @@ from the pinned commit (P5, P6).
 
 Under `confined`, a test in `skills/tests/` cannot `require` the library in
 `skills/buildl-migrate/scripts/` (P27). The task therefore stages them together: it copies
-`skills/tests/` and `skills/buildl-migrate/scripts/*.lua` into one temporary folder `T`, then runs
-`airsl test --allow-read T T`, so every `require` is a sibling one (P27) and the tests keep the
-default policy. `parity_test.lua` (P22) holds:
+the contents of `skills/tests/` and `skills/buildl-migrate/scripts/*.lua` into the root of one
+temporary folder `T`, then runs `cd T && airsl test --allow-read . .`, so every `require` is a
+sibling one (P27), tests read their fixtures as `fixtures/…`, and the tests keep the default policy. `parity_test.lua` (P22) holds:
 
 | Test | Proves |
 |---|---|
 | recipe listing, per tool, over `fixtures/{make,just,shell,npm}` | check 1 reads every recipe and nothing else (`X := y` is not a recipe); a shell script left out of `recipes` is found |
-| a `recipes` entry naming a target absent from `new.plan.json` | check 1 fails |
-| a ceiling line in `new.doctor.txt` holding a program `old.programs` lacks; a network want with `old.network` false | check 6 fails |
+| a `recipes` entry naming a target absent from `new.graph.json`; one naming a test target present there | check 1 fails; passes |
+| a ceiling line in `new.doctor.txt` holding a program `old.programs` lacks; one holding a variable `old.env` lacks; a target whose `network` is not `Sealed` with `old.network` false | check 6 fails |
+| a `doctor` text with no ceiling block, or an unreadable line inside it | `compare` fails, naming the line, rather than pass |
+| a missing status file; an old build status other than 0; a `buildl build` status other than 0 | check 2 fails |
+| one test run passing and the other failing | check 5 fails |
+| `compare` run as a script over a fixture with a FAIL row | it exits non-zero |
 | `prepare` given a relative `W`, a `W` inside `P`, or a non-empty `W` | it refuses before copying |
 | `compare` over a fixture work folder with prepared copies, outputs and status files | a true match passes every row |
 | the same fixture with one output byte changed | check 3 fails, naming the file |
 | old-1 and old-2 differing | check 4 reads `NOT REPEATABLE`, and check 5 decides |
-| an output marked `"judge": "tests"`, with and without a reason | check 4b reads `JUDGED BY TESTS`; without a reason it fails |
-| a recipe missing from `recipes`, a `dropped` with an empty reason | check 1 fails |
+| an output marked `"judge": "tests"` with a reason | check 4b reads `JUDGED BY TESTS` |
+| a recipe missing from `recipes` | check 1 fails |
+| a `dropped` with an empty reason; `judge` with no `reason` | refused when `parity.json` is read |
+| an output `NOT REPEATABLE` or `JUDGED BY TESTS` with no `old.test` | check 4 or 4b fails |
 | a malformed `parity.json` | the message names the field |
 
 The fixtures hold already-built work folders, so the tests run no build and need no toolchain.
@@ -538,8 +569,11 @@ No chapter is renumbered: the `ch11-*` file names are cited across the repositor
 | the status files in step 2 are written by commands the agent runs, so an agent could write them by hand | `SKILL.md` fixes the commands; the hashes in check 3 are computed by the script from the copies |
 | `old.programs`, `old.env` and `old.network` are the agent's reading of the old build, so check 6 is only as right as that reading | `SKILL.md` has the agent list them recipe by recipe, and the user sees them in the parity table |
 | `doctor`'s text is not a documented machine format, so a change to it breaks check 6 | the parity tests' fixture holds `doctor` output; `compare` fails, naming the line it could not read, rather than pass |
+| `"judge": "tests"` widens parity beyond outputs the old build does not reproduce: an agent could mark any output that fails check 3 | the check cannot tell an honest mark from a dishonest one; `SKILL.md` limits it to the C/C++ case of 4.7, and the table shows every judged output with its reason, for the user to read |
+| byte equality may break on a correct migration: toolchains that embed paths make old-1 ≠ old-2 (`NOT REPEATABLE`, judged by tests), and archives that embed file times (a zip, as `examples/python` builds) can make old-1 = old-2 while buildl's differs (check 3 FAIL) | not settled by any probe here; `execute` runs the parity flow once over a copy of `examples/python` before plan 03's checks are final, and the outcome decides whether the skill tells the agent how to treat time-stamped archives |
+| the `--claude` install was never run end to end: P9 validates the manifest only, and a second run against an existing marketplace and plugin is unproven | plan 05 runs it once by hand on the pushed branch and records the result; CI does not run it (§9) |
 | how well agents follow the skills is not measured | out of scope (§9) |
-| `install.sh --claude` before the publish builds buildl from source, which takes minutes | stated in the book page |
+| `install.sh` builds buildl from git with `cargo install`, which takes minutes on a machine with nothing cached, for `--claude` and `--dir` alike | stated in the book page |
 
 ## 9. Non-goals
 
