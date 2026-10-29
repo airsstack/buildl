@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-29
 built-on: 1703d7070b45
 ---
@@ -175,3 +175,27 @@ branch's pull request.
 
 `cargo make skills` passes on the branch, fails on each probe in Task 3, and the `skills` CI job is
 green on the pull request.
+
+## Review findings
+
+- correctness — two Markdown files could map to one workspace folder (`probe/b-c.md`, `probe-b/c.md` → `probe-b-c.md-1`), the second silently replacing the first — skills/tests/snippets.lua. Fixed: an existing folder raises. Verified: `airsl run --allow-read skills --allow-read W3 --allow-write W3 skills/tests/snippets.lua W3` over a probe tree holding both files → `skills/probe-b/c.md: block 1 maps to W3/probe-b-c.md-1, which another file already took`, exit 1.
+- reversion guard — dropping the `tests/fixtures/` exclusion would pass unnoticed — Makefile.toml `skills`. Fixed: a `tests-fixtures-*` folder in W fails the task. Verified: `cargo make skills` green on HEAD (`Build Done in 1.61 seconds`).
+- test strength — `err:find("3")` matched any 3 — skills/tests/snippets_test.lua. Fixed: matches `line 3:`. Verified: `airsl test --allow-read . snippets_test.lua` → `5 passed, 0 failed`.
+- correctness — two scripts of one name copied flat into T would replace each other — Makefile.toml `skills`. Fixed: a name already staged fails the task. Verified with the green `cargo make skills` above.
+- correctness (nit, declined) — `~~~` fences not recognised; a stray backtick fence inside one fails loudly with "code fence is never closed". No skill uses `~~~`.
+- spec §6.3 vs plan (nit, declined) — a skill folder without `SKILL.md` is skipped; the plan's loop was approved as written.
+
+## Probe results
+
+- `airsl test` resolves `fixtures/…` against the working directory — `cd probe1 && airsl test --allow-read . .` with `fs.read("fixtures/a.txt")` → `ok rel`, `3 passed, 0 failed`.
+- sibling `require` needs no extra grant; `arg[1]` holds the first argument — `airsl run --allow-read . entry.lua first` → `arg1=first	lib	entry.lua`.
+- `fs.exists` on W needs a read grant on W (`--allow-write` grants no reading) — without it, `fs.exists denied: …/buildl-SKILL.md-1 is outside the granted read roots`; the task and the script's usage line now pass `--allow-read "${W}"`.
+- Task 2 probe — a `skills/` copy with `probe/sample.md` wrote `W/probe-sample.md-1` and `-2`; the copy under `tests/fixtures/snippets/` wrote none; `buildl check` in the first → `ok: 1 declaration in 1 build file`, exit 0.
+- Task 3 probes — a `skills/probe/SKILL.md` with `input = { "a" }` → `error: build.lua: unknown field "input"` and `skills: buildl check failed for probe-SKILL.md-1`, exit 1; `name: probe-x` → `Directory name 'probe' must match skill name 'probe-x'`, exit 1.
+- Task 4 — `yaml.safe_load(ci.yml)` lists jobs `dod, examples, skills, deny, book, msrv, reapi-codegen, remote-execution, examples-remote`. The job's green run on the pull request is still to come.
+
+## Deviations
+
+- 2026-10-29 — `snippets.lua` takes `--allow-read W` beside `--allow-write W` (plan text: write grant only), for the collision check.
+- 2026-10-29 — `skills-ref` installed locally with `uv tool install` at the pinned commit (CI uses `pip install`, as planned).
+- 2026-10-29 — tasks 1–4 done inline by the orchestrator (small Lua and config), one reviewer spawn; review fixes committed as `fix(repo): refuse snippet folder and staged file collisions in cargo make skills`.
