@@ -56,7 +56,7 @@ no variable (P34). External documents were downloaded raw on 2026-10-30 and are 
 | P24 | `$ORIGIN` in an argument is passed through unchanged | probe: argument `-Wl,-rpath,$ORIGIN` printed back as `-Wl,-rpath,$ORIGIN`; crates/buildl-core/src/placement/expand.rs:268-282 (a placeholder is exactly `$in`, `$out`, `$deps`, or `$opt:<name>`) |
 | P25 | A target cannot be declared twice | probe: two rules naming `util.o` → `//:util.o is declared more than once`, exit 5 |
 | P26 | `cc --version` prints the real compiler's version and folder, and `/usr/bin/cc` is one launcher file with 78 links | `cc --version` → `Apple clang version 15.0.0 (clang-1500.3.9.4)` … `InstalledDir: /Library/Developer/CommandLineTools/usr/bin`; `ls -la /usr/bin/cc` → `-rwxr-xr-x 78 root wheel 118880` |
-| P27 | `verify` finds no mismatch for a static library, a wrapped Makefile and a shared library | probes: `2 verified, 0 mismatched` (static `ar rcs` + make), `2 verified, 0 mismatched` (dylib + binary) |
+| P27 | `verify` finds no mismatch for a shared library and the binary using it. A static library made by plain `ar rcs` does not hold on macOS (P60) | probe: `2 verified, 0 mismatched` (dylib + binary) |
 | P28 | No discovery from discovery: the second pass must declare the same discovery targets, unchanged | book/src/ch07-00-discovery-targets.md:207 |
 | P29 | An error in a plugin names the plugin's file and line | book/src/ch08-01-writing-a-plugin.md:143-144 |
 | P30 | A program a dependency built is not a want: it needs no `proc.run` entry | book/src/ch08-03-how-buildl-decides.md:31-32 |
@@ -100,6 +100,20 @@ no variable (P34). External documents were downloaded raw on 2026-10-30 and are 
 | P57 | Without `-g`, an object compiled in two folders has the same bytes; the `.S` file of P44 assembles with an empty environment and links; `..` is printed unresolved | `cmp` → `same object bytes`; `assembled with empty env`, printed `7`; `obj: src/dd.c src/../include/blob.h` |
 | P58 | `ubuntu-latest` is Ubuntu 24.04 (x64) with GNU C++ 12.4–14.2, Clang 16–18 and Git; `macos-latest` is macOS 26 arm64 with Clang/LLVM 21, the Xcode Command Line Tools and Git | runner-images README.md:25, :32; Ubuntu2404-Readme.md:18, :22, :80; macos-26-arm64-Readme.md:17, :56, :84 |
 
+### 1.4 Found while building the plugin
+
+Probed on 2026-10-30, after the plugin was built, on the same macOS host and Debian image as §1.2
+and §1.3, with the `buildl` binary built from commit `3fad016`. The scratch workspace uses the plugin
+as a `path` plugin: `c.library`, `c.binary` and `c.test` at the root; `c.platform`,
+`c.shared_name`, `c.soname`, `c.rpath`, `c.shared_library` and `c.binary` in `cpp/`.
+
+| # | Fact | Evidence |
+|---|---|---|
+| P60 | macOS `ar rcs` writes the time it ran into the archive, so two runs over the same object differ; `ZERO_AR_DATE=1` makes them equal; `SOURCE_DATE_EPOCH` does not. Plain `ar rcs` as the archive step gives a `verify` mismatch | `ar rcs a2.a f.o`, then `ar rcs a3.a f.o` a second later, `f.o` unchanged → `cmp` reports they differ (at a timestamp digit, which varies by run); `ZERO_AR_DATE=1 ar rcs` twice, two seconds apart → equal; `SOURCE_DATE_EPOCH=0 ar rcs` twice → differ; workspace with `run = { "ar", "rcs", "$out", "$deps" }` → `9 verified, 1 mismatched` (`MISMATCH //:util: output util differs: bytes`) |
+| P61 | `sh -c 'ZERO_AR_DATE=1 exec ar rcs "$0" "$@"' $out $deps` with `env = { "PATH" }` archives reproducibly on macOS and under GNU `ar`; `ar` run inside `sh` needs no `proc.run` entry of its own | macOS workspace → `10 verified, 0 mismatched, 0 failed, 0 skipped, 0 not cached, 0 not sampled`, then with `proc.run = ["cc", "c++", "sh"]` in the ceiling, the cap and the manifest → `out/util` written, `10 verified, 0 mismatched`; Debian, `GNU ar (GNU Binutils for Debian) 2.40`, the command under `env -i PATH=/usr/bin:/bin` twice, two seconds apart → `equal` |
+| P62 | An error the plugin raises at the level of the build file's call is reported with the build file's line; the plugin's frames stay in the traceback; loading fails with exit 5 | build file line 3 `c.binary("app", { srcs = { "src/main.c" }, bogus = true })`, `buildl check` → `build.lua:3: c.binary(app): the option bogus is not known`, traceback `plugins/c/api.lua:24: in upvalue 'relocate'` … `build.lua:3: in main chunk`, `exit 5` |
+| P63 | The plugin builds, tests and verifies end to end with the real binary, and a header edit rebuilds only the objects that read it | `build` → `6 built` (discovery), `10 built`; `out/hello` → `hello 42`; `out/cpp/app` → `cpp 42`; `test` → `tests: 1 passed`; a comment appended to `include/u.h` (read by three sources) → discovery `3 built, 3 cached`, build `3 built, 7 cached`; `c.platform`'s discovery printed `arm64-apple-darwin25.3.0` |
+
 ## 2. Core: `dir` for git plugins
 
 ### 2.1 The key
@@ -125,7 +139,7 @@ it is relative to".
 | `PluginSource::Git` (P5) | `dir: Directory` |
 | `LockEntry` (P7) | `dir: Directory`, always written, `""` for the root; a lock without it is refused like any other malformed lock |
 | lock matching (P8) | `git`, `rev` and `dir` must all equal; a changed `dir` reads as "not pinned", and `buildl plugins fetch` re-fetches |
-| `bring_in` (P6) | after `.git` is removed, when `dir` is not the root: walking `dir` one segment at a time from the staging folder, each step must be a folder and not a link, read with `symlink_metadata`, so no link in any parent folder is followed; otherwise `PluginNotFetched` with "`<rev>` fetched as `<commit>`, which has no folder `<dir>`". The digest is taken over `<staging>/<dir>`, which is renamed into the store; the rest of the staging folder is removed |
+| `bring_in` (P6) | after `.git` is removed, when `dir` is not the root: walking `dir` one segment at a time from the staging folder, each step must be a folder and not a link, read with `symlink_metadata`, so no link in any parent folder is followed; otherwise `PluginNotFetched` with "`<rev>` fetched as `<commit>`, which has no folder `<dir>`". The digest is taken over `<staging>/<dir>`, which is renamed into the store; the rest of the staging folder is removed, best effort: the plugin is stored by then, and the fetch's prune removes a staging folder left behind (crates/buildl/src/plugins/fetch.rs:207-211, :280-282) |
 | `check`, the Lua loader, `require` | unchanged: the stored folder is the plugin (P9) |
 | `watch_layout` (crates/buildl/src/local_ports.rs:161) | unchanged: it watches only `path` plugins |
 
@@ -163,33 +177,43 @@ Two plugins taken from one repository at one commit are two names, so two store 
 ```text
 plugins/c/
 ├── extension.toml   name "c", version "0.1.0", entry "main.lua", api 1
-├── main.lua         the public table: binary, library, shared_library, test, the helpers;
-│                    passes its `buildl` table to graph.lua
+├── main.lua         returns require("api").new(buildl)
+├── api.lua          new(buildl): the public table — binary, library, shared_library, test and
+│                    the helpers; checks a call's options, then passes them to graph.lua
 ├── graph.lua        declares the targets of one call through the `buildl` table it is given
 ├── options.lua      checks and fills a call's options; pure
 ├── depfile.lua      reads -MM output; pure
-├── flags.lua        includes, defines, shared_name, soname, rpath; pure
+├── flags.lua        includes, defines, shared_name, soname, rpath, the platform of a triple; pure
 ├── README.md        the buildl.toml tables, the API, §5.4–§5.5, the fixed program list
-└── tests/           depfile_test.lua, flags_test.lua, options_test.lua, graph_test.lua (airsl test)
+└── tests/           depfile_test.lua, flags_test.lua, options_test.lua, graph_test.lua,
+                     api_test.lua, fake_buildl.lua (airsl test)
 ```
 
-`graph.lua` takes the `buildl` table as an argument, so `graph_test.lua` hands it a fake that records
-every declaration and serves canned discovery results; the other modules use no `buildl` at all.
+`graph.lua` and `api.lua` take the `buildl` table as an argument, so their tests hand them a fake
+(`fake_buildl.lua`) that records every declaration and serves canned discovery results; the other
+modules use no `buildl` at all.
 
 ```toml
 [capabilities]
-proc.run = ["cc", "c++", "gcc", "g++", "clang", "clang++", "ar", "sh"]
+proc.run = ["cc", "c++", "gcc", "g++", "clang", "clang++", "sh"]
 env.read = ["PATH"]
 ```
 
-- **Programs.** The manifest lists every program the plugin may run, since a program outside it is
-  refused even when the ceiling allows it (P17); the workspace's cap and ceiling narrow it. A
-  versioned or other tool (`gcc-13`, `clang-18`, `llvm-ar`) is not on the list; the README says so,
-  and that a workspace needing one keeps a copy of the plugin as a `path` plugin with its own
-  manifest. `sh` runs a test binary that needs shared libraries beside it (§5.3).
+- **Programs.** The manifest lists every program the plugin's targets run, since a program outside
+  it is refused even when the ceiling allows it (P17); the workspace's cap and ceiling narrow it. A
+  versioned or other compiler (`gcc-13`, `clang-18`) is not on the list; the README says so, and
+  that a workspace needing one keeps a copy of the plugin as a `path` plugin with its own manifest.
+  `sh` runs the archive step (§5.3) and a test binary that needs shared libraries beside it. `ar`
+  runs inside the archive step's `sh`, found through `PATH`, so it needs no entry (P61); another
+  archiver means editing `graph.lua` in such a copy.
 - **Environment.** Every step that links (`c.binary`, `c.shared_library`, a test's binary) declares
-  `env = { "PATH" }`: gcc's linker driver finds `ld` only through `PATH` (P52). Compiles, discovery
-  and `ar` declare nothing (P52, P54). `PATH`'s value is then part of each link's key.
+  `env = { "PATH" }`: gcc's linker driver finds `ld` only through `PATH` (P52). The archive step
+  declares it too, for `sh` to find `ar` (P61). Compiles and discovery declare nothing (P52).
+  `PATH`'s value is then part of each link's and each archive's key.
+- **`sh` widens the ceiling.** A workspace allows `sh` only when it has a `c.library` or a `c.test`
+  with `deps`; once `sh` is allowed, a target can run any program through `sh -c` (P61 shows `ar`
+  running that way with no entry of its own), so the ceiling's program list limits less. The README
+  says so.
 - **Network.** None.
 - **Tags** are `plugin-c-vX.Y.Z` (P4).
 
@@ -197,7 +221,7 @@ A user's `buildl.toml`:
 
 ```toml
 [ceiling]
-proc.run = ["cc", "ar"]
+proc.run = ["cc"]
 env.read = ["PATH"]
 fs.read  = ["."]
 fs.write = ["out", ".buildl"]
@@ -206,7 +230,7 @@ fs.write = ["out", ".buildl"]
 github   = "airsstack/buildl"
 rev      = "plugin-c-v0.1.0"
 dir      = "plugins/c"
-proc.run = ["cc", "ar"]
+proc.run = ["cc"]
 env.read = ["PATH"]
 ```
 
@@ -275,7 +299,7 @@ build still takes them from the cache (P22).
 | Function | Last step | Notes |
 |---|---|---|
 | `c.binary(name, o)` | `linker <ldflags> -o $out $deps <ldlibs>`, `env { "PATH" }` | |
-| `c.library(name, o)` | `ar rcs $out $deps` | §5.1 lists what it refuses |
+| `c.library(name, o)` | `sh -c 'ZERO_AR_DATE=1 exec ar rcs "$0" "$@"' $out $deps`, `env { "PATH" }` | `ZERO_AR_DATE` keeps macOS `ar` from writing the time into the archive; GNU `ar` gives the same bytes with or without it (P54, P60, P61). §5.1 lists what it refuses |
 | `c.shared_library(name, o)` | `linker <ldflags> -shared -o $out $deps <ldlibs>`, `env { "PATH" }` | `-shared` is the one flag the plugin adds (P46); `-fPIC`, the soname and the file name are the engineer's |
 | `c.test(name, o)` | a binary `:<name>.bin`, then `buildl.test(name)` | no `deps`: `run { "$deps" }` over `:<name>.bin`; with `deps`: `deps { ":<name>.bin", deps… }` and `run { "sh", "-c", 'exec "$0"', "$deps" }` |
 
@@ -324,7 +348,7 @@ they want it.
 |---|---|
 | `c.includes(dirs)` | `{ "-I<folder>/<dir>", … }`, each folder relative to the build file; at the root, `-I<dir>` |
 | `c.defines(map)` | sorted by key: `-D<key>` for `true`, nothing for `false`, `-D<key>=<value>` for a string or a number |
-| `c.platform(options?)` | `"linux"` or `"macos"`, or `nil` before discovery has run. The first call in a build file declares the discovery target `:c.platform`, `run { cc, "-dumpmachine" }` with `cc` from `options.cc` or `"cc"`, `stdout = true`; later calls return the same value without declaring again (P25, P14), and a later call naming another `cc` is an error. A triple holding `apple-darwin` is `"macos"`, one holding `linux` is `"linux"` (P45, P53), anything else is an error naming it |
+| `c.platform(options?)` | `"linux"` or `"macos"`, or `nil` before discovery has run. The first call in a build file declares the discovery target `:c.platform`, `run { cc, "-dumpmachine" }` with `cc` from `options.cc` or `"cc"`, `stdout = true`; later calls return the same value without declaring again (P25, P14), and a later call whose `cc` (default `"cc"`) differs from the first call's is an error, so `c.platform()` after `c.platform({ cc = "clang" })` is one. A triple holding `apple-darwin` is `"macos"`, one holding `linux` is `"linux"` (P45, P53), anything else is an error naming it |
 | `c.shared_name(name, platform)` | `lib<name>.so` or `lib<name>.dylib`; `nil` when `platform` is `nil` |
 | `c.soname(file, platform)` | linux `{ "-Wl,-soname,<file>" }`; macos `{ "-install_name", "@rpath/<file>" }` (P48, P49, P55); `{}` when `platform` is `nil` |
 | `c.rpath(platform)` | linux `{ "-Wl,-rpath,$ORIGIN" }` (P24, P49, P55); macos `{ "-Wl,-rpath,@loader_path" }` (P50); `{}` when `platform` is `nil` |
@@ -338,16 +362,33 @@ second pass only.
 
 ## 7. Errors
 
-The plugin raises a Lua error with a message naming the function and the target name; buildl
-reports it with the plugin's file and line (P29) and the build file fails to load.
+The plugin raises a Lua error whose message starts with the function it came from:
+`c.<kind>(<name>): …` for `c.binary`, `c.library`, `c.shared_library` and `c.test`, and
+`c.includes: …`, `c.defines: …`, `c.platform: …`, `c.shared_name: …`, `c.soname: …` or
+`c.rpath: …` for the helpers. A path in a discovery result that climbs above the root is reported
+by the call that read it, `c.<kind>(<name>): …`. It raises the error at the level
+of the build file's call, so buildl reports it with the build file's line — the line the user has
+to fix — and keeps the plugin's frames in the traceback; the build file fails to load, exit 5
+(P62). An error raised inside the plugin with no such level would carry the plugin's file and line
+(P29); the plugin never tail-calls a function that can raise, since a tail call drops the frame
+that level counts on.
 
 | Case | Message holds |
 |---|---|
-| `srcs` missing or empty; an option of the wrong type; an option not in §5.1 or refused by §5.1 | the option |
-| a source extension other than `.c`, `.cc`, `.cpp`, `.cxx` | the source |
+| `srcs` missing or empty; an option of the wrong type; an option not in §5.1 or refused by §5.1; options that are not a table; a kind that is not one of the four | the option, or the kind |
+| a source extension other than `.c`, `.cc`, `.cpp`, `.cxx` (case counts: `.C` is refused) | the source |
 | an absolute prerequisite, one climbing above the root, one outside `headers` with no `header_deps` (§5.4) | the path |
 | a discovery result with no `obj` rule | the source |
-| a platform triple that is neither; a `platform` argument that is neither; a second `c.platform` call naming another `cc` | the value |
+| a platform triple that is neither; a `platform` argument that is neither; a later `c.platform` call whose `cc` differs; an unknown `c.platform` option or a `cc` that is not a string | the value |
+| `c.includes` given something that is not a list of strings | the value |
+| `c.defines` given a key that is not a string, or a value that is not a boolean, string or number | the key |
+
+When several options are wrong at once, the message names one the same way on every run: an
+unknown option first (the first by name), then an option `c.library` refuses (in the order
+`ldflags`, `ldlibs`, `linker`, `deps`), then an option of the wrong type (the first by name)
+(plugins/c/options.lua:98, :102-104, :109-121; probe: `c.library("l", { …, deps = { ":x" },
+ldflags = { "-x" } })` → `the option ldflags is refused`; `c.binary("b", { …, cc = 1, zzz = true })`
+→ `the option zzz is not known`).
 
 A compiler outside the plugin's manifest, the cap or the ceiling is refused by buildl, exit 4
 (P17). A discovery target that differs between the passes is refused by buildl, exit 5 (P28).
@@ -407,7 +448,7 @@ including it, and for `examples/cpp` that the test passes with the shared librar
 
 | File | Change |
 |---|---|
-| `book/src/ch08-04-the-c-plugin.md` (new), `book/src/SUMMARY.md` | the plugin: `buildl.toml`, the API and helpers, the two passes (§5.5), the one-build-file rule, the version probe and its `plan` cost, the fixed program list |
+| `book/src/ch08-04-the-c-plugin.md` (new), `book/src/SUMMARY.md` | the plugin: `buildl.toml`, the API and helpers, the two passes (§5.5), the one-build-file rule, the version probe and its `plan` cost, the fixed program list, `sh` for `c.library` and what allowing it costs (§4) |
 | `book/src/ch07-00-discovery-targets.md`, *The depfile gap* | per-file C and C++ is written with discovery targets; the C plugin does it; no depfile is read by the executor |
 | `book/src/ch11-09-what-it-promises.md`, *No per-file C and C++ in this version* | replaced: per-file C and C++ through the plugin, its limits (one build file per project, Linux and macOS, gcc and clang) and the launcher fingerprint |
 | `book/src/ch01-04-with-an-ai-agent.md` (lines 161-183) | the migration of a per-file C/C++ build goes to the plugin |
@@ -426,11 +467,12 @@ including it, and for `examples/cpp` that the test passes with the shared librar
 |---|---|---|
 | unit | `crates/buildl/src/manifest/toml_manifest.rs` tests | `dir` read with `git` and `github`; refused beside `path`; `..` and a leading `/` refused |
 | unit | `crates/buildl/src/plugins/lock.rs` tests | `dir` is written for every row, `""` at the root, and reads back; a row without it is refused; canonical bytes |
-| unit | `crates/buildl/src/plugins/check.rs`, `fetch.rs` tests | a row whose `dir` differs does not match |
-| unit | `crates/buildl-lua/src/module.rs` tests | `folder()` gives `""` at the root and the folder below it, from a build file and from a plugin |
-| e2e | `crates/buildl/tests/e2e/fetch.rs` | a subfolder plugin is stored without the rest of the repository and digested alone; a missing folder, a folder that is a link and a folder under a linked parent are refused; a changed `dir` re-fetches |
-| e2e | `crates/buildl/tests/e2e/plugins.rs` | a plugin fetched from a subfolder loads and `require`s its siblings |
-| plugin | `plugins/c/tests/` via `airsl test`, in a new `cargo make plugins` task run by the CI job that has `airsl` | `depfile_test`: escapes, continuations, several rules, normalisation, a climb above the root; `flags_test`: every helper, `nil` platforms; `options_test`: every refusal of §7; `graph_test` with a fake `buildl`: first and second pass declarations, names, `env { "PATH" }` on links, `version_probe = true` adding `:<name>.version.c` to each C compile's dependencies and `:<name>.version.cpp` to each C++ compile's, `header_deps`, the test runner forms |
+| unit | `crates/buildl/src/plugins/check.rs`, `fetch.rs` tests | a row whose `dir` differs does not match, and the message names the folder; `plugin_folder`'s walk: the root, a nested folder, a missing segment, a file where a folder is expected, a link in a parent and at the end, an unreadable parent |
+| unit | `crates/buildl-lua/src/module.rs` tests | `folder()` gives `""` at the root (`folder_is_empty_at_the_root`, module.rs:523) |
+| flows | `crates/buildl-lua/tests/flows/plugins.rs` | `folder()` names a subdirectory build file's folder, from the build file and from a plugin (`folder_names_a_subdirectory_build_file`, :582; `a_plugin_reads_the_calling_build_file_s_folder`, :592) |
+| e2e | `crates/buildl/tests/e2e/fetch.rs` | a subfolder plugin is stored without the rest of the repository and digested alone; a missing folder, a folder that is a link and a folder under a linked parent are refused; a changed `dir` re-fetches and stores the new folder's bytes |
+| cli | `crates/buildl-cli/tests/cli/exit_codes.rs` | a plugin fetched from a subfolder loads, `require`s its siblings and builds offline with no `git` on `PATH` (`a_plugin_fetched_from_a_subfolder_builds_offline`, :1290) |
+| plugin | `plugins/c/tests/` via `airsl test`, in a new `cargo make plugins` task run by the CI job that has `airsl` | `depfile_test`: escapes, continuations, several rules, normalisation, a climb above the root, CRLF, a rule with no prerequisites; `flags_test`: every helper, `nil` platforms, refused keys and values; `options_test`: every refusal of §7, the sorted naming; `graph_test` with the fake `buildl`: first and second pass declarations, names, `env { "PATH" }` on links and the archive step, the archive command of §5.3, `version_probe = true` adding `:<name>.version.c` to each C compile's dependencies and `:<name>.version.cpp` to each C++ compile's, `header_deps`, the test runner forms; `api_test`: the public table, each function's last step, the helpers, `c.platform`'s one declaration and its `cc` rule, and that an error carries the calling file's line (P62) |
 | end to end | `examples/c`, `examples/cpp` through `check.sh` | §8 |
 
 ## 11. Risks
@@ -441,6 +483,8 @@ including it, and for `examples/cpp` that the test passes with the shared librar
 | A compiler update is not seen while the probe is off | the README and ch08-04 say so and name `version_probe = true` (P26) |
 | `PATH` in each link's key makes links cache per machine `PATH` | the link is one action per binary or library; objects, the bulk of the work, carry no `PATH` (P52) |
 | A test given its shared libraries in the wrong place fails | it fails loudly with the loader's message (P18) |
+| Allowing `sh` lets any target run any program through `sh -c` (P61) | `sh` is needed only for `c.library` and a `c.test` with `deps`; the README's setup starts from `proc.run = ["cc"]` and says what allowing `sh` costs (§4) |
+| An archive tool other than `ar` that stamps the time is not covered | `c.library` runs `ar` only; another archiver means a `path` copy of the plugin (§4) |
 | The Linux probes ran on aarch64; CI runs x64 | the examples job on `ubuntu-latest` runs both examples there (§8) |
 | The examples need `git` for `prepare.sh` and the fetch | both runner images carry Git (P58), and a fetch with no `git` fails with exit 3 (P36) |
 
