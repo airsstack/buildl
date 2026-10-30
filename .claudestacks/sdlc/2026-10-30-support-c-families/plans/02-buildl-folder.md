@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-30
 built-on: edb4e55efd6a
 ---
@@ -78,3 +78,21 @@ skills/buildl/references/lua-api.md              — [modify] `folder()` row and
 ## Proof
 
 `cargo make dod`, `cargo deny check`, `cargo make book-build`, `cargo make skills` green after Task 2.
+
+## Review findings
+
+- spec — `folder(1)` ignores the extra argument although spec §3 says it takes none — crates/buildl-lua/src/module.rs:204 — declined: every primitive takes its arguments as `Value` and ignores extras, so refusing them in `folder` alone would be inconsistent
+- spec — spec §10 places the below-root and plugin `folder()` tests in module.rs; this plan put them in tests/flows/plugins.rs — same coverage, location only; recorded under Deviations
+- no finding on the docs (appendix-03, skills lua-api.md)
+
+## Probe results
+
+- structural: `primitives_table` at crates/buildl-lua/src/module.rs:129; `Results::directory()` at crates/buildl-lua/src/results.rs:39 — `grep -n` found both
+- behavioural: the named tests were the probes — `folder_is_empty_at_the_root` failed first with "attempt to call a nil value (field 'folder')", then passed with `folder_names_a_subdirectory_build_file` and `a_plugin_reads_the_calling_build_file_s_folder`
+- the appendix's "buildl holds" line was re-run with `buildl check` on the sample build file using the built binary and pasted unedited (it now lists `folder`)
+- gates: `cargo make dod` exit 0 (both batches), `cargo deny check` ok, `cargo make skills` exit 0, `cargo make book-build` green
+
+## Deviations
+
+- 2026-10-30 — plan: `folder_names_a_subdirectory_build_file` asserts the staged name `lib` (a staged target holds a bare name, not a label); the declaration is `//lib:lib` in the `lib` directory as the plan says
+- 2026-10-30 — spec §10 (test placement): the below-root and plugin tests live in tests/flows/plugins.rs as this plan says, not in module.rs as spec §10's table lists; coverage is the same. Not a disproof of a behavioural claim; no marker written

@@ -1,8 +1,9 @@
 ---
-status: executing
+status: done
 created: 2026-10-30
 depends-on: [02]
 built-on: edb4e55efd6a
+disproves: edb4e55efd6a
 ---
 
 # The `c` Plugin Implementation Plan
@@ -128,7 +129,7 @@ Commit `feat(repo): add the c plugin's option checks`.
 ### Task 4 — `graph.lua`
 
 **Files:**
-- Create `plugins/c/graph.lua` — `declare(buildl, kind, name, options)` declares, through the given table, the targets of spec §5.2 for one checked call: per source a discovery target named `<name>.<path with / as .>.deps` running `{ compiler, flags…, "-MM", "-MT", "obj", <folder>/<src> }` with `inputs { src, headers… }`, `deps { header_deps… }`, `stdout = true`; when every source has a result (`buildl.discovered`), an object target per source placed by spec §5.4 (parse, keep `obj`, normalise, the four rows, the `-isystem` hint), then the last step of spec §5.3 (`env = { "PATH" }` on links; `ar rcs $out $deps` for `library`; the binary and the `buildl.test` with the two run forms for `test`); with `version_probe`, one probe per language the call compiles — `<name>.version.c` running `{ cc, "--version" }`, `<name>.version.cpp` running `{ cxx, "--version" }` — `always = true`, `stdout = true`, a dependency of each compile of that language (the name carries the language because a target name cannot hold `+`, spec P59)
+- Create `plugins/c/graph.lua` — `declare(buildl, kind, name, options)` declares, through the given table, the targets of spec §5.2 for one checked call: per source a discovery target named `<name>.<path with / as .>.deps` running `{ compiler, flags…, "-MM", "-MT", "obj", <folder>/<src> }` with `inputs { src, headers… }`, `deps { header_deps… }`, `stdout = true`; when every source has a result (`buildl.discovered`), an object target per source placed by spec §5.4 (parse, keep `obj`, normalise, the four rows, the `-isystem` hint), then the last step of spec §5.3 (`env = { "PATH" }` on links; `{ "sh", "-c", 'ZERO_AR_DATE=1 exec ar rcs "$0" "$@"', "$out", "$deps" }` with `env = { "PATH" }` for `library` (amended 2026-10-30: macOS `ar` stamps the run time, see Deviations); the binary and the `buildl.test` with the two run forms for `test`); with `version_probe`, one probe per language the call compiles — `<name>.version.c` running `{ cc, "--version" }`, `<name>.version.cpp` running `{ cxx, "--version" }` — `always = true`, `stdout = true`, a dependency of each compile of that language (the name carries the language because a target name cannot hold `+`, spec P59)
 - Create `plugins/c/tests/fake_buildl.lua` — `new(folder, results)`: a fake `buildl` with `target`, `test`, `discover`, `discovered`, `folder` that records each declaration and returns canned discovery text
 - Create `plugins/c/tests/graph_test.lua`
 
@@ -147,7 +148,7 @@ Commit `feat(repo): add the c plugin's option checks`.
 - `names_keep_the_extension` — `src/main.c` and `src/main.cc` give `app.src.main.c.o` and `app.src.main.cc.o`
 - `binary_links_objects_then_deps_with_path` — `deps { objects…, ":lib" }`, run `{ linker, ldflags…, "-o", "$out", "$deps", ldlibs… }`, `env { "PATH" }`, `outputs { output }`
 - `shared_library_adds_only_shared` — the run holds `-shared` and no other flag the call did not give
-- `library_archives_without_env` — run `{ "ar", "rcs", "$out", "$deps" }`, no `env`
+- `library_archives_with_zeroed_dates` — run `{ "sh", "-c", 'ZERO_AR_DATE=1 exec ar rcs "$0" "$@"', "$out", "$deps" }`, `env = { "PATH" }` (amended 2026-10-30)
 - `test_without_deps_runs_the_binary` — `buildl.test` with `deps { ":<name>.bin" }`, run `{ "$deps" }`
 - `test_with_deps_runs_only_the_binary` — `deps { ":<name>.bin", ":lib" }`, run `{ "sh", "-c", 'exec "$0"', "$deps" }`
 - `version_probe_is_off_by_default` — no `.version.` target
@@ -159,7 +160,7 @@ Commit `feat(repo): add the c plugin's target graph`.
 ### Task 5 — The entry, the manifest and the README
 
 **Files:**
-- Create `plugins/c/extension.toml` — spec §4: `proc.run = ["cc", "c++", "gcc", "g++", "clang", "clang++", "ar", "sh"]`, `env.read = ["PATH"]`
+- Create `plugins/c/extension.toml` — spec §4 (amended 2026-10-30: no `ar`, which runs through `sh`): `proc.run = ["cc", "c++", "gcc", "g++", "clang", "clang++", "sh"]`, `env.read = ["PATH"]`
 - Create `plugins/c/api.lua` — `new(buildl)` returns a table: `binary`, `library`, `shared_library`, `test` (each `options.check`, then `graph.declare(buildl, …)`); `includes(dirs)` passing `buildl.folder()`; `defines`, `shared_name`, `soname`, `rpath` from `flags`; `depfile = { parse = … }`; `platform(options?)` declaring `:c.platform` (`{ cc, "-dumpmachine" }`, `stdout = true`) on its first call in that instance, returning `flags.platform_of` of the discovered text or `nil`, and raising when a later call names another `cc`
 - Create `plugins/c/main.lua` — returns `require("api").new(buildl)`
 - Create `plugins/c/README.md` — the user's `buildl.toml` of spec §4, the API and helpers, §5.4 and §5.5, the version probe and its `plan` cost, the fixed program list and the `path`-plugin copy for other tools
@@ -187,3 +188,43 @@ Commit `feat(repo): add the c plugin's entry and manifest`.
 
 `cargo make plugins` and `cargo make dod` green after Task 5; the CI `skills` job runs `cargo make
 plugins`.
+
+## Review findings
+
+Batch 1 (Tasks 1–2):
+- spec §7 — errors used `error(msg, 0)` and did not name the public function — depfile.lua, flags.lua — fixed: messages start `c.<function>:` / `c.<kind>(<name>):`, raised at the caller's level; verified `cargo make plugins` → `30 passed, 0 failed`
+- docs — the `\ ` split comment disagreed with the code; `normalise` did not document the `"."` result — depfile.lua — fixed
+- test-coverage — CRLF, a rule with no prerequisites, a line with no colon, a leading `/`, the `"."` result untested — depfile_test.lua — fixed (+5 tests)
+- strong-types — `defines` sorted mixed keys with Lua's raw compare error; a list-style call produced `-D1=NDEBUG` — flags.lua — fixed: a non-string key is refused naming `c.defines` (+2 tests)
+- modularity — `[tasks.plugins]` sat under the Skills banner — Makefile.toml — fixed: own `# Plugins` banner
+
+Batch 2 (Task 3):
+- test-coverage — a bad `kind` and non-table options untested — options_test.lua — fixed (+2 tests)
+- determinism — the type check looped `pairs(TYPES)`, so which wrong option is named could vary — options.lua — fixed: sorted `NAMES`, test `the_first_wrong_type_by_name_is_named`
+
+Batch 3 (Task 4):
+- docs — `join`'s comment named `parts` — graph.lua — fixed
+- diagnostics — at the root the header error said "outside the build file's folder" about a header inside it — graph.lua — fixed: "is not among headers; list it in headers, or reach it through header_deps (one build file per project)"
+- test-fidelity — the fake accepts names and values the real buildl refuses — fake_buildl.lua — declined: graph.lua produces none of them, and the real-binary probe (Probe results) ran the plugin end to end
+
+Batch 4 (Task 5):
+- README — the `llvm-ar` advice was wrong (the archiver is fixed inside the `sh` script) — fixed: another archiver means editing graph.lua
+- security — the setup example put `sh` in every ceiling — fixed: starts from `["cc"]`; `sh` only for `c.library` and a `c.test` with `deps`, with the warning that `sh` can run any program
+- manifest — `ar` stayed in `proc.run` though nothing runs it as its program — fixed: dropped
+- README accuracy — `cxxflags` paths, flags reaching the discovery, the header-error wording, the `c.platform` `cc` rule, the probe programs, the GNU `ar` claim — fixed
+- spec §7 — `c.includes` raised a bare `ipairs` error — api.lua — fixed (+1 test); `cargo make plugins` → `73 passed, 0 failed (5 files)`
+- spec §7 — errors are reported at the build file's call, not the plugin's file and line as §7 says — kept; recorded under Deviations for the design skill
+
+## Probe results
+
+- AGAINST THE SPEC (P27, "a static library verifies with no mismatch"): `buildl verify` on a scratch workspace using the plugin as a path plugin → `9 verified, 1 mismatched` (`MISMATCH //:util: output util differs: bytes`). Cause, probed on macOS (Darwin 25.3.0): `ar rcs` twice on the same unchanged object, a second apart → `a2.a a3.a differ: char 34, line 2`; with `ZERO_AR_DATE=1` → equal; with `SOURCE_DATE_EPOCH=0` → differ. After the archive step became `sh -c 'ZERO_AR_DATE=1 exec ar rcs "$0" "$@"' $out $deps` → `10 verified, 0 mismatched, 0 failed, 0 skipped, 0 not cached, 0 not sampled`
+- the plugin with the real binary (c.library, c.binary, c.test at the root; c.platform, c.shared_name, c.soname, c.rpath, c.shared_library, c.binary in `cpp/`): `buildl check` ok; `build` → `6 built` (discovery) then `10 built`; `out/hello` → `hello 42`; `out/cpp/app` → `cpp 42` (the dylib loaded through `@loader_path`); `test` → `tests: 1 passed`; a comment appended to `include/u.h` → discovery `3 built, 3 cached`, build `3 built, 7 cached` (the three objects that read it; the links cached); the `c.platform` discovery printed `arm64-apple-darwin25.3.0`. Re-run after the Task 5 fixes: same results
+- the reviewer's README probe: the README's `buildl.toml` and shared-library example → `hello 42`; a bad option → `build.lua:3: c.binary(app): the option bogus is not known`, exit 5
+- each task's named tests were written first and seen failing (module not found, then assertion failures); `cargo make dod` exit 0 and `cargo deny check` ok at each batch
+
+## Deviations
+
+- 2026-10-30 — DEFECT OF THE SPEC (P27, §4, §5.3): macOS `ar` stamps the run time into an archive, so `ar rcs $out $deps` is not reproducible there. `c.library` runs `{ "sh", "-c", 'ZERO_AR_DATE=1 exec ar rcs "$0" "$@"', "$out", "$deps" }` with `env = { "PATH" }`; the manifest's `proc.run` drops `ar`; a workspace with a library allows `sh`. Task 4's text, its test name and Task 5's manifest line amended in this plan. `disproves: edb4e55efd6a` written; the design skill corrects spec P27, §4 (the user's `proc.run`, "`ar` declares nothing") and §5.3. The user chose to finish plans 01 and 03 before the spec is corrected.
+- 2026-10-30 — spec §7 (error location): §7 says buildl reports a plugin error with the plugin's file and line; the plugin re-raises each error at the build file's call, so the message carries `build.lua:<line>:` (the plugin's frames stay in the traceback). Kept as more useful; for the design skill to amend §7 with P27.
+- 2026-10-30 — spec §6/§7 additions with no basis in the spec text: `c.defines` refuses a non-string key and a value that is not a boolean, string or number; `c.includes` refuses a non-list; `c.platform` refuses an unknown option or a non-string `cc`; a depfile path climbing above the root is named `c.depfile.normalise`. For the design skill to list in §7.
+- 2026-10-30 — plan: `graph.declare` takes the table `options.check` returned, so `api.lua` checks first; `graph_test.lua` holds 6 tests beyond the 16 named and `api_test.lua` 13 beyond the 5 named.

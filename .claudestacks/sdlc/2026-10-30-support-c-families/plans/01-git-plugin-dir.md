@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-30
 built-on: edb4e55efd6a
 ---
@@ -152,3 +152,39 @@ cannot exercise a subfolder fetch, while the CLI test runs fetch and load togeth
 
 `cargo make dod`, `cargo deny check`, `cargo make book-build` and `cargo make skills` green on the
 branch after Task 4.
+
+## Review findings
+
+Task 1:
+- doc-comment — `Directory`'s docs still said "workspace root" after its summary was widened to any holder — crates/buildl-core/src/types/directory.rs:23, :33, :61, :67, :75 — fixed: "the root"; `RUSTDOCFLAGS="-D warnings" cargo doc -p buildl-core --no-deps` → generated, no warning
+
+Task 2:
+- diagnostics — the not-pinned message named only url and rev when only `dir` differed — crates/buildl/src/plugins/check.rs:85 — fixed: "… at {rev} in the folder {dir}"; `a_row_whose_dir_differs_is_not_pinned` asserts `folder plugins/b`, seen failing (`buildl.lock does not pin https://example.com/acme/go.git at v1.0.0; run …`), then `cargo test -p buildl --lib plugins::` → `41 passed; 0 failed`
+- test-coverage — nothing guarded `bring_in` recording `dir` rather than the root — fetch.rs — closed by Task 3's `a_changed_dir_refetches` (the row reads `a`, then `b`)
+- modularity — the git/rev/dir match is written in fetch.rs and check.rs — declined: lock.rs's module doc puts matching an entry with the callers, not the lock
+- strong-types — `bring_in` takes 8 arguments under `#[expect(clippy::too_many_arguments)]` with a reason — declined: allowed by the strict-quality rule (expect with a reason)
+- docs — the docs name three `dir` refusals; `Directory` refuses more — declined: matches spec §2.1
+
+Task 3:
+- correctness — a failed removal of the rest of the checkout after the store rename failed the fetch with the folder already stored — fetch.rs — fixed: best effort (`prune` removes leftovers)
+- test-coverage — `plugin_folder` had no colocated unit test — fixed: root, nested, missing segment, file for a folder, link in a parent and at the end, unreadable parent
+- correctness — any I/O error in the walk read as "has no folder" — fixed: only NotFound and NotADirectory do; others are adapter errors (the unreadable-parent test failed before, passes after)
+- test-strength — `a_changed_dir_refetches` used identical folders — fixed: each folder's `lib/go.lua` differs; the test asserts folder b was stored and the digest changed
+- docs — `plugin_repository_in`'s doc; `dir` appended at the end of buildl.toml in the CLI helper — fixed (`workspace_using_in` writes `dir` inside the table); `PluginNotFetched`'s doc names a revision with no folder at `dir` — fixed
+- test-coverage — no test catches a reversion of the best-effort cleanup — declined: the removal fails only on a permission error a git checkout cannot produce, and `prune` hides a leftover either way
+- gates after the fix round: `cargo make dod` exit 0, `cargo deny check` ok, `cargo make skills` exit 0, `cargo make book-build` green
+
+Task 4: no finding beyond the order note (the docs describe Task 3's fetch, so Task 3 was committed first).
+
+## Probe results
+
+- structural: `PluginSource::Git` sites at interpret.rs:197, check.rs:75/:183/:268, fetch.rs:96, toml_manifest.rs:424/:431/:445, tests/e2e/fetch.rs:91 and the "a path plugin has no rev" refusal at interpret.rs:153 — `grep -n` found each as the plan states
+- behavioural: each task's named tests were the probes — Task 1's six tests failed first (`dir` ignored, refusals missing); Task 2's failed to compile (no field `dir`); Task 3's five refusal and store tests failed before the walk; all pass now
+- `a_plugin_fetched_from_a_subfolder_builds_offline` builds with `PATH` holding only a `cp` link (no git) after the repository is removed
+
+## Deviations
+
+- 2026-10-30 — plan, Task 3: the segment walk runs before the digest, since the whole-checkout digest refused a committed link at the top level (`PluginTree`) before the walk could name it
+- 2026-10-30 — plan, Task 3: the loads-and-requires-siblings check lives in `exit_codes.rs` (`plugin_repository` writes a sibling `copy.lua` that `main.lua` requires), as this plan's file list says; spec §10 names `tests/e2e/plugins.rs`. Location only
+- 2026-10-30 — plan, Task 1: `an_unknown_plugin_key_names_its_line` updated, since the expected key list now holds `dir`
+- 2026-10-30 — plan 01 resumed after plan 03 recorded `spec disproven by plan 03` (spec P27, macOS `ar`), on the user's word; nothing in this plan rests on P27
