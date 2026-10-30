@@ -168,8 +168,8 @@ each an always-run target, and every object of that language depends on its prob
 compiler rebuilds the objects.
 
 The cost is in `buildl plan`: an always-run target leaves every compile that depends on it listed as
-conditional until the probe's output is known. A build still takes those objects from the cache when
-the probe's output is the same.
+conditional, even right after a full build, because `plan` never runs the probe. A build still takes
+those objects from the cache when the probe's output is the same.
 
 ## The programs it may run
 

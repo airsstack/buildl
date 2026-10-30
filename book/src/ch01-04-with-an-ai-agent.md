@@ -161,29 +161,28 @@ nothing runs anywhere, so the parity check cannot run and the agent says so.
 ### C and C++, compiled one file at a time
 
 Many C projects compile each `.c` file to its own `.o` file and link them (`%.o: %.c` in a
-Makefile). `buildl` does not build that way: a compiler reads header files nobody declared, so the
-sandbox could not know to copy them ([What buildl Can and Cannot Promise](ch11-09-what-it-promises.md)
-says more). The agent does not try. It stops and offers one target that compiles the whole program
-in a single command, with every source and header declared as an input:
+Makefile). The agent moves that to [the `c` plugin](ch08-04-the-c-plugin.md), which compiles each
+source to its own object, so a change to one source or header rebuilds only the objects that read
+it. It adds a `[plugins.c]` table to `buildl.toml`, runs `buildl plugins fetch`, and declares the
+program with one call:
 
 ```lua
-local b = buildl
+local c = buildl.use("c")
 
-local sources = b.sources("src/*.c")
-local headers = b.sources("src/*.h")
-
-b.target("app", {
-  inputs = { sources, headers },
-  run = { "cc", "-o", "$out", sources },
+c.binary("app", {
+  srcs    = { "src/main.c", "src/util.c" },
+  headers = { "src/util.h" },
 })
 ```
 
-Before you answer, the agent tells you two things:
+The plugin's programs, and the `PATH` it reads, must be allowed by the ceiling and by the
+`[plugins.c]` table. If they are not,
+the agent asks you first, as it does for any refusal.
 
-- any edit rebuilds the whole program
-- the binary differs from the per-file build's, byte for byte, so the check marks that output
-  *judged by tests*: the old tests and the `buildl` tests decide it. A project with no test command
-  cannot pass parity this way
-
-If you decline, nothing changes. If you accept, the per-file recipe is recorded as dropped in
-`parity.json`, with the reason.
+In `parity.json`, the old per-file recipes map to the plugin's object targets, and the old link to
+the call's own target, `app`. When the old build compiles with `-g`, the compiler records the folder
+it ran in, and `buildl` compiles in another one. The binary then differs from the old build's, byte
+for byte, so the check marks that output *judged by tests*: the old tests and the `buildl` tests
+decide it. A project with no test command cannot pass parity this way. Without `-g` an object does
+not record the folder it was compiled in, so an object from `buildl` can match the old build's when
+the compiler, the flags and the source match, and the output is compared as any other.

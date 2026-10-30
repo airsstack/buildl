@@ -21,8 +21,5 @@ the first publish of the four crates to crates.io.
 
 ## Non-goals
 
-- Fine-grained per-file C/C++ compilation: out of scope for v1 (scope decision of
-  2026-09-13; `book/src/ch11-09-what-it-promises.md`, "No per-file C and C++ in this
-  version").
 - Depfile parsing: dynamic input discovery is the discovery target
   (`book/src/ch07-00-discovery-targets.md`), not a side channel in the executor.
