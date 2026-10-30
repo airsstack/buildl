@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-10-30
 depends-on: [01, 03]
 built-on: f917a9ac0d2d
@@ -25,7 +25,7 @@ join the existing `cargo make examples` loop and CI job unchanged.
 ```
 examples/check.sh              — [modify] export BUILDL_REPO; run prepare.sh when present, before the shared steps
 examples/README.md             — [modify] a line on prepare.sh; rows for c and cpp
-examples/c/buildl.toml         — [create] ceiling cc, ar, sh; env.read PATH; [plugins.c] github/rev/dir and cap
+examples/c/buildl.toml         — [create] ceiling cc, sh (amended 2026-10-30: `ar` runs inside `sh`, spec §4, P61); env.read PATH; [plugins.c] github/rev/dir and cap
 examples/c/build.lua           — [create] c.library, c.binary, c.test, a config.h target, the .S discovery and object
 examples/c/include/util.h, include/banner.h, include/blob.h, lib/util.c, src/main.c, src/blob.S, test/util_test.c — [create] sources
 examples/c/prepare.sh          — [create] local plugin repository, tag, rewrite, fetch
@@ -76,7 +76,7 @@ Commit `feat(repo): let an example prepare its copy`.
 **Files:** the `examples/c/` files listed above.
 
 **Change:** a C workspace that uses every C-side function and helper of the plugin:
-- `buildl.toml`: the user tables of spec §4 with `proc.run = ["cc", "ar", "sh"]` in the ceiling and the cap, `env.read = ["PATH"]`
+- `buildl.toml`: the user tables of spec §4 with `proc.run = ["cc", "sh"]` (amended 2026-10-30: `ar` runs inside c.library's `sh` and needs no entry, spec §4, P61) in the ceiling and the cap, `env.read = ["PATH"]`
 - sources: `include/util.h` (read by `lib/util.c`, `src/main.c`, `test/util_test.c`); `include/banner.h`, read **only** by `src/main.c`; `include/blob.h`, read only by `src/blob.S`, holding the value and a symbol macro adding `_` under `__APPLE__` (Mach-O C symbols carry a leading underscore, ELF ones do not)
 - `build.lua`: `:config.h` written by `sh` (`#define GREETING …`); `c.library("util", …)` from `lib/util.c`; the build file's own discovery target over `src/blob.S` (`cc -Iinclude -MM -MT obj src/blob.S`, `stdout = true`), its result read with `c.depfile.parse` into an object target `blob.o`; `c.binary("hello", …)` from `src/main.c` with `deps = { ":util", ":blob.o" }`, `header_deps = { ":config.h" }`, `headers` the three `include/` headers, `cflags` from `c.includes({ "include" })` plus `-Iout` and `c.defines(…)`; `c.test("util_test", …)` with `deps = { ":util" }`
 - `prepare.sh`: make a temporary folder with `mktemp -d` and remove it on exit; in it `git init` a repository, copy `$BUILDL_REPO/plugins/c` to `plugins/c`, commit and tag `plugin-c-v0.1.0` with a command-line identity; replace the copy's `github = "airsstack/buildl"` line with `git = "file://<repo>"`, failing if that line is not found; run `"$BUILDL" plugins fetch` (the store keeps its own copy, so the repository may go afterwards)

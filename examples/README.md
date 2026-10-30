@@ -3,7 +3,8 @@
 Each directory here is a buildl workspace of its own: a `buildl.toml`, its build files, its
 sources, a `README.md` saying what it shows, and an `assert.sh` holding its own checks. Copy one
 anywhere and run `buildl build` in it; it needs the `buildl` binary and its language's
-toolchain, nothing else.
+toolchain. The `c` and `cpp` examples also need `git`: their `prepare.sh` fetches the `c` plugin
+when the example is checked, from a temporary git repository.
 
 | Example | Shows | Needs |
 |---|---|---|
@@ -25,6 +26,7 @@ BUILDL=/path/to/buildl sh examples/check.sh examples/go
 fails:
 
 ```text
+0 sh prepare.sh              only when the example has one
 1 buildl check
 2 buildl build, then buildl test
 3 buildl plan --json         every target's verdict is Clean
@@ -34,6 +36,11 @@ fails:
 
 It reads `plan --json` with `python3`, so it needs Python 3 besides the example's own
 toolchain. `buildl` is `$BUILDL` when set, else the first `buildl` on `PATH`.
+
+An example that holds a `prepare.sh` has it run as step 0, inside the copy. `BUILDL_REPO` is set to
+the repository root while `prepare.sh` runs, so the script can reach files of this checkout. The
+`c` and `cpp` examples use it to put this checkout's `c` plugin in a temporary git repository and
+run `buildl plugins fetch` against it.
 
 From the repository root, `cargo make examples` builds `buildl` and checks every example but
 `remote`, which needs its server. CI runs it on Linux and macOS, and runs `remote` in a job of
