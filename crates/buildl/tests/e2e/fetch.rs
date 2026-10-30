@@ -390,9 +390,10 @@ fn the_lock_is_canonical_json() {
         text.find("\"go\"").unwrap() < text.find("\"zed\"").unwrap(),
         "{text}"
     );
-    let keys = ["\"commit\"", "\"git\"", "\"rev\"", "\"sha256\""];
+    let keys = ["\"commit\"", "\"dir\"", "\"git\"", "\"rev\"", "\"sha256\""];
     let at: Vec<usize> = keys.iter().map(|key| text.find(key).unwrap()).collect();
     assert!(at.windows(2).all(|pair| pair[0] < pair[1]), "{text}");
+    assert!(text.contains(r#""dir":"""#), "{text}");
     assert!(!text.contains(' ') && !text.contains('\n'), "{text}");
 }
 

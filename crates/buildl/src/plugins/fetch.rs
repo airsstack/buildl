@@ -19,7 +19,7 @@ use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
-    CommitId, Diagnostic, Error, GitUrl, PluginName, PluginSource, PortName, Result, Rev,
+    CommitId, Diagnostic, Directory, Error, GitUrl, PluginName, PluginSource, PortName, Result, Rev,
 };
 
 use super::git::Git;
@@ -93,13 +93,13 @@ pub fn fetch(
     let mut new = Lock::default();
     let mut plugins = Vec::new();
     for (plugin, source) in sources {
-        let PluginSource::Git { url, rev, .. } = source else {
+        let PluginSource::Git { url, rev, dir } = source else {
             continue;
         };
         let pinned = old
             .get(plugin)
-            .filter(|entry| entry.git == *url && entry.rev == *rev);
-        let (entry, status) = pin(plugin, url, rev, pinned, state, search)?;
+            .filter(|entry| entry.git == *url && entry.rev == *rev && entry.dir == *dir);
+        let (entry, status) = pin(plugin, url, rev, dir, pinned, state, search)?;
         plugins.push(FetchedPlugin {
             plugin: plugin.clone(),
             commit: entry.commit.clone(),
@@ -114,12 +114,13 @@ pub fn fetch(
     Ok(Fetched { plugins })
 }
 
-/// The entry that pins `plugin` at `rev` of `url`, with its files in the store. `pinned` is the
-/// lock's entry for that source, if it has one.
+/// The entry that pins `plugin` at `rev` of `url`, folder `dir`, with its files in the store.
+/// `pinned` is the lock's entry for that source, if it has one.
 fn pin(
     plugin: &PluginName,
     url: &GitUrl,
     rev: &Rev,
+    dir: &Directory,
     pinned: Option<&LockEntry>,
     state: &StateLayout,
     search: &SearchPath,
@@ -131,7 +132,7 @@ fn pin(
     }
     let git = Git::locate(plugin, search)?;
     let staging = state.plugins().join(format!("{STAGING}{plugin}"));
-    let fetched = bring_in(&git, plugin, url, rev, pinned, &staging, state);
+    let fetched = bring_in(&git, plugin, url, rev, dir, pinned, &staging, state);
     if fetched.is_err() {
         // A directory that stays is removed by the next fetch, so failing to remove it now adds
         // nothing to the error that is being returned.
@@ -141,12 +142,18 @@ fn pin(
 }
 
 /// Fetches `rev` of `url` into `staging`, and moves the files to their place in the store once
-/// they are what `pinned`, if there is one, pins.
+/// they are what `pinned`, if there is one, pins. The entry returned records `dir` as the
+/// plugin's folder.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is a distinct part of one fetch; grouping them would only rename them"
+)]
 fn bring_in(
     git: &Git,
     plugin: &PluginName,
     url: &GitUrl,
     rev: &Rev,
+    dir: &Directory,
     pinned: Option<&LockEntry>,
     staging: &Path,
     state: &StateLayout,
@@ -195,6 +202,7 @@ fn bring_in(
     fs::rename(staging, &directory).map_err(|error| unwritten("storing", &directory, &error))?;
     Ok(LockEntry {
         commit,
+        dir: dir.clone(),
         git: url.clone(),
         rev: rev.clone(),
         sha256,
@@ -285,13 +293,15 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::BTreeMap;
     use std::fs;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
-    use buildl_core::{CommitId, Digest, Directory, GitUrl, PluginName, Rev};
+    use buildl_core::{CommitId, Digest, Directory, Error, GitUrl, PluginName, PluginSource, Rev};
 
-    use super::{FetchStatus, FetchedPlugin, prune, stored};
-    use crate::plugins::{LockEntry, tree_digest};
+    use super::{FetchStatus, FetchedPlugin, fetch, prune, stored};
+    use crate::plugins::{Lock, LockEntry, tree_digest};
+    use crate::search_path::SearchPath;
     use crate::state::StateLayout;
 
     const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
@@ -356,6 +366,7 @@ mod tests {
         let directory = state.plugins().join("go").join(COMMIT);
         let entry = |sha256| LockEntry {
             commit: CommitId::parse(COMMIT).unwrap(),
+            dir: Directory::root(),
             git: GitUrl::parse("https://example.com/acme/go.git").unwrap(),
             rev: Rev::parse("v1").unwrap(),
             sha256,
@@ -376,5 +387,51 @@ mod tests {
 
         std::os::unix::fs::symlink("/etc/hosts", directory.join("link")).unwrap();
         assert!(!stored(&go(), &state, &entry(Digest::of(b"x"))).unwrap());
+    }
+
+    #[test]
+    fn a_row_whose_dir_differs_is_not_reused() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = state(dir.path());
+        let store = state.plugins().join("go").join(COMMIT);
+        fs::create_dir_all(&store).unwrap();
+        fs::write(store.join("a.lua"), b"a\n").unwrap();
+        let url = GitUrl::parse("https://example.com/acme/go.git").unwrap();
+        let rev = Rev::parse("v1").unwrap();
+        let mut lock = Lock::default();
+        lock.insert(
+            go(),
+            LockEntry {
+                commit: CommitId::parse(COMMIT).unwrap(),
+                dir: Directory::parse("plugins/a").unwrap(),
+                git: url.clone(),
+                rev: rev.clone(),
+                sha256: tree_digest(&go(), &store).unwrap(),
+            },
+        );
+        lock.write(dir.path(), state.dir()).unwrap();
+        let sources = |named: &str| {
+            BTreeMap::from([(
+                go(),
+                PluginSource::Git {
+                    url: url.clone(),
+                    rev: rev.clone(),
+                    dir: Directory::parse(named).unwrap(),
+                },
+            )])
+        };
+        let no_git = SearchPath::new([PathBuf::from("/no/such/directory")]);
+
+        let same = fetch(dir.path(), &state, &sources("plugins/a"), &no_git).unwrap();
+        assert_eq!(
+            same.iter().map(|one| one.status).collect::<Vec<_>>(),
+            [FetchStatus::Unchanged]
+        );
+
+        let error = fetch(dir.path(), &state, &sources("plugins/b"), &no_git).unwrap_err();
+        assert!(
+            matches!(error, Error::PluginFetch { .. }),
+            "a row for another dir is fetched again, got {error:?}"
+        );
     }
 }

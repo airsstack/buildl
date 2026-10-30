@@ -14,7 +14,9 @@ use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 
 use buildl_core::json::canonical;
-use buildl_core::{CommitId, Diagnostic, Digest, Error, GitUrl, PluginName, PortName, Result, Rev};
+use buildl_core::{
+    CommitId, Diagnostic, Digest, Directory, Error, GitUrl, PluginName, PortName, Result, Rev,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::state::{Access, write_whole};
@@ -28,6 +30,9 @@ const FILE: &str = "buildl.lock";
 pub struct LockEntry {
     /// The full commit `rev` resolved to.
     pub commit: CommitId,
+    /// The folder of the repository that holds the plugin; the root, written `""`, when the
+    /// plugin is the whole repository.
+    pub dir: Directory,
     /// The repository, as a URL.
     pub git: GitUrl,
     /// The revision `buildl.toml` named, as it wrote it.
@@ -115,7 +120,7 @@ mod tests {
     use std::fs;
 
     use buildl_core::json::canonical;
-    use buildl_core::{CommitId, Digest, Error, GitUrl, PluginName, PortName, Rev};
+    use buildl_core::{CommitId, Digest, Directory, Error, GitUrl, PluginName, PortName, Rev};
 
     use super::{Lock, LockEntry};
 
@@ -124,6 +129,7 @@ mod tests {
     fn entry(rev: &str) -> LockEntry {
         LockEntry {
             commit: CommitId::parse(COMMIT).unwrap(),
+            dir: Directory::root(),
             git: GitUrl::github("acme/buildl-go").unwrap(),
             rev: Rev::parse(rev).unwrap(),
             sha256: Digest::of(b"tree"),
@@ -158,6 +164,51 @@ mod tests {
         assert_eq!(read, lock);
         assert_eq!(read.get(&name("go")), Some(&entry("v1.2.0")));
         assert_eq!(read.get(&name("none")), None);
+    }
+
+    #[test]
+    fn a_root_row_writes_an_empty_dir() {
+        let mut lock = Lock::default();
+        lock.insert(name("go"), entry("v1.2.0"));
+
+        let text = String::from_utf8(canonical::to_vec(&lock).unwrap()).unwrap();
+
+        assert!(text.contains(r#""dir":"""#), "{text}");
+    }
+
+    #[test]
+    fn a_row_with_dir_round_trips() {
+        let dir = tempfile::tempdir().unwrap();
+        let staging = dir.path().join(".buildl");
+        let row = LockEntry {
+            dir: Directory::parse("plugins/c").unwrap(),
+            ..entry("v1.2.0")
+        };
+        let mut lock = Lock::default();
+        lock.insert(name("c"), row.clone());
+
+        lock.write(dir.path(), &staging).unwrap();
+
+        let text = fs::read_to_string(dir.path().join("buildl.lock")).unwrap();
+        assert!(text.contains(r#""dir":"plugins/c""#), "{text}");
+        let read = Lock::read(dir.path()).unwrap();
+        assert_eq!(read.get(&name("c")), Some(&row));
+    }
+
+    #[test]
+    fn a_row_without_dir_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("buildl.lock");
+        let mut lock = Lock::default();
+        lock.insert(name("go"), entry("v1.2.0"));
+        let good = String::from_utf8(canonical::to_vec(&lock).unwrap()).unwrap();
+        let without = good.replace(r#""dir":"","#, "");
+        assert_ne!(without, good);
+        fs::write(&file, without.as_bytes()).unwrap();
+
+        let error = Lock::read(dir.path()).unwrap_err();
+
+        assert!(matches!(error, Error::CorruptState { .. }), "{error:?}");
     }
 
     #[test]

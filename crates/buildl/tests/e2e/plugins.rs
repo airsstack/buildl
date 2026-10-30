@@ -8,7 +8,9 @@ use std::fs;
 use std::os::unix::fs::symlink;
 use std::path::PathBuf;
 
-use buildl::buildl_core::{CommitId, Error, GitUrl, Label, OutcomeClass, PluginName, Rev};
+use buildl::buildl_core::{
+    CommitId, Directory, Error, GitUrl, Label, OutcomeClass, PluginName, Rev,
+};
 use buildl::plugins::{Lock, LockEntry, tree_digest};
 
 use crate::common::{CHAIN_LABELS, Fixture, ended};
@@ -46,6 +48,7 @@ fn fetched(fixture: &Fixture, rev: &str) -> PathBuf {
         go(),
         LockEntry {
             commit: CommitId::parse(COMMIT).unwrap(),
+            dir: Directory::root(),
             git: GitUrl::parse(URL).unwrap(),
             rev: Rev::parse(rev).unwrap(),
             sha256: tree_digest(&go(), &store).unwrap(),
