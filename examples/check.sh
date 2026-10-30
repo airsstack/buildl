@@ -3,8 +3,10 @@
 #
 # Runs the checks every example shares, then the example's own assert.sh, on a
 # fresh copy of the example in a temporary directory, so the checkout stays clean.
-# The buildl binary is $BUILDL when set, else the first `buildl` on PATH. Each step
-# prints its name; the first that fails stops the check with its output.
+# The buildl binary is $BUILDL when set, else the first `buildl` on PATH. When the
+# example holds a prepare.sh, it runs first, inside the copy, with $BUILDL_REPO set to
+# this repository's root. Each step prints its name; the first that fails stops the
+# check with its output.
 
 set -eu
 
@@ -21,6 +23,9 @@ case "${BUILDL}" in
     */*) BUILDL="$(cd "$(dirname "${BUILDL}")" && pwd)/$(basename "${BUILDL}")" ;;
 esac
 export BUILDL
+# The repository root, for a prepare.sh that needs something from this checkout.
+BUILDL_REPO="$(cd "$(dirname "$0")/.." && pwd)"
+export BUILDL_REPO
 
 work="$(mktemp -d)"
 trap 'rm -rf "${work}"' EXIT
@@ -65,6 +70,9 @@ none_mismatched() {
     printf '%s\n' "${report}" | grep -q " 0 mismatched"
 }
 
+if [ -f prepare.sh ]; then
+    step "prepare.sh" sh prepare.sh
+fi
 step "check" "${BUILDL}" check
 step "build" "${BUILDL}" build
 step "test" "${BUILDL}" test

@@ -1,0 +1,23 @@
+[workspace]
+name   = "c"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+# cc compiles and links; sh writes config.h, runs the archive step of c.library (ar runs
+# inside it, found through PATH) and runs the binary of c.test with deps.
+[ceiling]
+proc.run = ["cc", "sh"]
+env.read = ["PATH"]
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
+
+# The plugin, fetched from a subfolder of a git repository by `buildl plugins fetch`.
+# Its targets may want at most what this table allows, what its own extension.toml
+# allows, and what the ceiling allows.
+[plugins.c]
+github   = "airsstack/buildl"
+rev      = "plugin-c-v0.1.0"
+dir      = "plugins/c"
+proc.run = ["cc", "sh"]
+env.read = ["PATH"]

@@ -2,7 +2,7 @@
 
 A build file reaches `buildl` through one table, bound to two names: the global `buildl`, and
 `airsstack.buildl` beside the other `airsstack` modules (`json`, `path`, `regex`, `hash` and
-`glob`). The book's examples start with `local b = buildl`. The table holds eleven functions:
+`glob`). The book's examples start with `local b = buildl`. The table holds twelve functions:
 
 | Function | Returns | Declares |
 |---|---|---|
@@ -14,6 +14,7 @@ A build file reaches `buildl` through one table, bound to two names: the global 
 | [`option(name, options)`](#optionname-options) | nothing | a build setting |
 | [`subdir(path)`](#subdirpath) | nothing | another directory with a build file |
 | [`sources(pattern)`](#sourcespattern) | a list of file names | |
+| [`folder()`](#folder) | a string | |
 | [`discovered(label)`](#discoveredlabel) | a string, or `nil` | |
 | [`decode_all(text)`](#decode_alltext) | a list of values | |
 | [`use(name)`](#usename) | the plugin's module | |
@@ -30,7 +31,7 @@ error("buildl holds: " .. table.concat(names, " "), 0)
 
 ```console
 $ buildl check
-error: build.lua: runtime error: lua error in build.lua: runtime error: buildl holds: alias decode_all discover discovered option rule sources subdir target test use
+error: build.lua: runtime error: lua error in build.lua: runtime error: buildl holds: alias decode_all discover discovered folder option rule sources subdir target test use
 stack traceback:
 	[C]: in ?
 	[C]: in function 'error'
@@ -193,6 +194,17 @@ against `[declaration] walk_entries`.
 
 ```lua
 local go_files = b.sources("**/*.go")
+```
+
+## `folder()`
+
+Returns the folder of the build file that is being read, as a string relative to the workspace root:
+`""` in the root build file, `"lib"` in `lib/build.lua`, `"lib/net"` in `lib/net/build.lua`. It takes
+no arguments. Inside a plugin it is the folder of the build file that called the plugin, not the
+plugin's own.
+
+```lua
+local dir = b.folder()
 ```
 
 ## `discovered(label)`

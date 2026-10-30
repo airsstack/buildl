@@ -18,8 +18,12 @@ use crate::common::{root_file, workspace};
 /// Writes the plugin `name` at version 1.0.0 under `<root>/plugins/<name>`: its manifest, an entry
 /// file `main.lua` holding `main`, and `files`, each relative to the plugin directory.
 fn plugin(root: &Path, name: &str, main: &str, files: &[(&str, &str)]) {
-    let dir = root.join("plugins").join(name);
-    fs::create_dir_all(&dir).unwrap();
+    plugin_in(&root.join("plugins").join(name), name, main, files);
+}
+
+/// Writes the plugin `name` into the directory `dir`, as `plugin` does under `plugins/`.
+fn plugin_in(dir: &Path, name: &str, main: &str, files: &[(&str, &str)]) {
+    fs::create_dir_all(dir).unwrap();
     fs::write(
         dir.join("extension.toml"),
         format!(
@@ -373,6 +377,60 @@ fn plugin_lua_error_names_the_plugin_file_and_line() {
     );
 }
 
+/// A plugin kept where a fetched one is: `.buildl/plugins/p/<40 hex>`, a folder path too long for
+/// Lua to show a chunk name whole.
+fn store_plugin(main: &str, files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let (dir, root) = workspace("buildl.use('p')");
+    let folder = root
+        .join(".buildl/plugins/p")
+        .join("0123456789abcdef0123456789abcdef01234567");
+    plugin_in(&folder, "p", main, files);
+    (dir, root, folder)
+}
+
+/// Evaluates the root build file with `p` at `folder`.
+fn staged_from(root: &Path, folder: &Path) -> (EvaluationFailure, Diagnostic) {
+    let plugins = BTreeMap::from([(PluginName::parse("p").unwrap(), folder.to_path_buf())]);
+    let source = LuaSource::new(root, DeclarationLimits::default(), [], plugins);
+    match source.evaluate(&root_file(), &Discovered::empty()) {
+        Err(Error::Evaluation {
+            failure,
+            diagnostic,
+            ..
+        }) => (failure, diagnostic),
+        other => panic!("expected an evaluation failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_lua_error_in_a_plugin_with_a_long_folder_path_names_the_plugin_file_and_line() {
+    let (_dir, root, folder) = store_plugin(
+        "return require('api')",
+        &[("api.lua", "local x = 1\n\nerror('boom')")],
+    );
+    let (failure, diagnostic) = staged_from(&root, &folder);
+    assert_eq!(failure, EvaluationFailure::Runtime);
+    assert!(
+        diagnostic.as_str().contains("api.lua:3: boom"),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn a_refused_call_in_a_plugin_with_a_long_folder_path_names_the_plugin_file_and_line() {
+    let (_dir, root, folder) = store_plugin(
+        "return require('lib.api')",
+        &[("lib/api.lua", "local x = 1\nbuildl.alias(7, 'x')")],
+    );
+    let (_, diagnostic) = staged_from(&root, &folder);
+    assert!(
+        diagnostic
+            .as_str()
+            .contains("lib/api.lua:2: buildl.alias: "),
+        "{diagnostic}"
+    );
+}
+
 #[test]
 fn a_plugin_module_error_names_the_module_file_and_line() {
     let (failure, diagnostic) = refused_with(
@@ -563,6 +621,47 @@ fn sources_in_a_plugin_walks_the_calling_file_s_directory() {
     };
     let inputs: Vec<&str> = target.inputs.iter().map(Written::as_written).collect();
     assert_eq!(inputs, ["a.c", "b.c"]);
+    assert_eq!(origins(&staged), ["p@1.0.0"]);
+}
+
+/// The build file `lib/build.lua` of a workspace holding `text`, and the workspace root.
+fn lib_build_file(text: &str) -> (tempfile::TempDir, PathBuf, BuildFile) {
+    let (dir, root) = workspace("");
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::write(root.join("lib/build.lua"), text).unwrap();
+    let lib = BuildFile::new(Provenance::new(
+        PathBuf::from("lib/build.lua"),
+        Directory::parse("lib").unwrap(),
+    ));
+    (dir, root, lib)
+}
+
+#[test]
+fn folder_names_a_subdirectory_build_file() {
+    let (_dir, root, lib) = lib_build_file("buildl.target(buildl.folder(), { run = { 'x' } })");
+    let staged = evaluate_file(&root, &[], &lib).unwrap();
+    let StagedItem::Target(target) = &staged.declarations[0].item else {
+        panic!("the build file declares a target");
+    };
+    assert_eq!(target.name, Written::new("lib"));
+}
+
+#[test]
+fn a_plugin_reads_the_calling_build_file_s_folder() {
+    let (_dir, root, lib) = lib_build_file("buildl.use('p').declare()");
+    plugin(
+        &root,
+        "p",
+        "return { declare = function()\n\
+         buildl.target(buildl.folder(), { run = { 'x' } })\n\
+         end }",
+        &[],
+    );
+    let staged = evaluate_file(&root, &["p"], &lib).unwrap();
+    let StagedItem::Target(target) = &staged.declarations[0].item else {
+        panic!("the plugin declares a target");
+    };
+    assert_eq!(target.name, Written::new("lib"));
     assert_eq!(origins(&staged), ["p@1.0.0"]);
 }
 

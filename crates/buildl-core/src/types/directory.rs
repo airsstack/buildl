@@ -1,4 +1,4 @@
-//! A workspace-relative directory path, validated at construction.
+//! A relative directory path, validated at construction.
 //!
 //! Its own file because a label's directory half has its own grammar, independent of the name
 //! half it is paired with. Parsing it once here means the label never re-checks it.
@@ -17,9 +17,10 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, NameKind, Result};
 use crate::types::grammar;
 
-/// A workspace-relative directory path, such as `lib` or `lib/text`.
+/// A relative directory path, such as `lib` or `lib/text`; what it is relative to, the workspace
+/// or a repository, is for the holder to say.
 ///
-/// The empty string is the workspace root. Valid paths are at most 1024 bytes, hold no leading
+/// The empty string is the root. Valid paths are at most 1024 bytes, hold no leading
 /// or trailing `/`, and consist of `/`-separated non-empty segments of ASCII letters, digits,
 /// `.`, `-` and `_`, none of which is `.` or `..`. The character set deliberately excludes
 /// whitespace and `:`: the first would be a quoting hazard in the executor's argument
@@ -29,7 +30,7 @@ use crate::types::grammar;
 pub struct Directory(String);
 
 impl Directory {
-    /// The workspace root.
+    /// The root.
     #[must_use]
     pub const fn root() -> Self {
         Self(String::new())
@@ -57,13 +58,13 @@ impl Directory {
         }
     }
 
-    /// The path as a string slice; empty for the workspace root.
+    /// The path as a string slice; empty for the root.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
-    /// Whether this is the workspace root.
+    /// Whether this is the root.
     #[must_use]
     pub const fn is_root(&self) -> bool {
         self.0.is_empty()
@@ -71,7 +72,7 @@ impl Directory {
 
     /// Whether `other` is this directory or lies below it.
     ///
-    /// The workspace root contains every directory. A shared prefix is not containment: `lib`
+    /// The root contains every directory. A shared prefix is not containment: `lib`
     /// does not contain `lib2`.
     #[must_use]
     pub fn contains(&self, other: &Self) -> bool {

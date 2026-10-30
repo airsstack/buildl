@@ -227,6 +227,8 @@ pub(crate) struct PluginTable {
     pub(crate) github: Option<Spanned<String>>,
     /// The tag or full commit of the repository the plugin is pinned to.
     pub(crate) rev: Option<Spanned<String>>,
+    /// The folder of the repository that holds the plugin, relative to the repository root.
+    pub(crate) dir: Option<Spanned<String>>,
     /// `proc`: the programs the plugin's targets may run.
     #[serde(default, deserialize_with = "table")]
     pub(crate) proc: ProcTable,

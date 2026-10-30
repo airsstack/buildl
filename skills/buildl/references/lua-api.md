@@ -1,7 +1,7 @@
 # Build file API
 
 A build file reaches buildl through one table, the global `buildl`. Start each file with
-`local b = buildl`. The table holds eleven functions. Every options table refuses a key it does
+`local b = buildl`. The table holds twelve functions. Every options table refuses a key it does
 not know: a misspelt key fails the build file (exit 5) with the line that called it.
 
 | Function | Declares |
@@ -14,6 +14,7 @@ not know: a misspelt key fails the build file (exit 5) with the line that called
 | `option(name, options)` | a build setting |
 | `subdir(path)` | another directory with a build file |
 | `sources(pattern)` | returns a sorted list of file names |
+| `folder()` | returns the build file's folder as a string |
 | `discovered(label)` | returns a discovery target's output, or `nil` |
 | `decode_all(text)` | returns a list of the JSON values in `text` |
 | `use(name)` | returns a plugin's module |
@@ -150,6 +151,18 @@ searched.
 local b = buildl
 local go_files = b.sources("**/*.go")
 b.target("app", { inputs = { "go.mod", go_files }, run = { "go", "build", "-o", "$out", "." }, env = { "HOME" } })
+```
+
+## `folder()`
+
+Returns the folder of the build file being read, relative to the workspace root: `""` in the root
+build file, `"lib"` in `lib/build.lua`. Takes no arguments. Inside a plugin it is the folder of the
+build file that called the plugin.
+
+```lua
+local b = buildl
+local dir = b.folder()
+b.target("where.txt", { run = { "echo", "built in '" .. dir .. "'" }, stdout = true })
 ```
 
 ## `discovered(label)` and `decode_all(text)`

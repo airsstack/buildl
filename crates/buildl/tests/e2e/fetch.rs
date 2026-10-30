@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use buildl::buildl_core::json::canonical;
-use buildl::buildl_core::{Error, GitUrl, PluginName, PluginSource, Result, Rev};
+use buildl::buildl_core::{Directory, Error, GitUrl, PluginName, PluginSource, Result, Rev};
 use buildl::plugins::{FetchStatus, Fetched, Lock, check, fetch, tree_digest};
 use buildl::search_path::SearchPath;
 
@@ -40,6 +40,36 @@ impl Source {
         source.commit("extension.toml", "[extension]\nname = \"go\"\n");
         source.git(&["tag", "v1.0.0"]);
         source
+    }
+
+    /// A repository whose first commit holds a complete plugin in each of the folders `dirs`,
+    /// each with a `lib/go.lua` that names its folder, and `outside.txt` at the root, tagged
+    /// `v1.0.0`.
+    fn in_folders(dirs: &[&str]) -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let path = fs::canonicalize(dir.path()).unwrap();
+        let source = Self { _dir: dir, path };
+        source.git(&["init", "-q", "-b", "main"]);
+        for folder in dirs {
+            let at = source.path.join(folder);
+            fs::create_dir_all(at.join("lib")).unwrap();
+            fs::write(at.join("lib/go.lua"), format!("return \"{folder}\"\n")).unwrap();
+            fs::write(at.join("extension.toml"), "[extension]\nname = \"go\"\n").unwrap();
+        }
+        fs::write(source.path.join("outside.txt"), "not the plugin\n").unwrap();
+        source.git(&["add", "."]);
+        source.git(&["commit", "-q", "-m", "plugin"]);
+        source.git(&["tag", "v1.0.0"]);
+        source
+    }
+
+    /// Commits a symbolic link `name` to `target`, tags the commit `v1.1.0` and returns it.
+    fn commit_link(&self, name: &str, target: &Path) -> String {
+        symlink(target, self.path.join(name)).unwrap();
+        self.git(&["add", name]);
+        self.git(&["commit", "-q", "-m", "link"]);
+        self.git(&["tag", "v1.1.0"]);
+        self.head()
     }
 
     /// Runs `git args` in the repository and returns what it printed to standard output.
@@ -86,11 +116,22 @@ impl Source {
 
 /// The sources of a workspace that names `plugin` as `source` at `rev`.
 fn named(plugin: &str, source: &Source, rev: &str) -> BTreeMap<PluginName, PluginSource> {
+    named_in(plugin, source, rev, "")
+}
+
+/// The sources of a workspace that names `plugin` as the folder `dir` of `source` at `rev`.
+fn named_in(
+    plugin: &str,
+    source: &Source,
+    rev: &str,
+    dir: &str,
+) -> BTreeMap<PluginName, PluginSource> {
     BTreeMap::from([(
         self::plugin(plugin),
         PluginSource::Git {
             url: GitUrl::parse(source.url()).unwrap(),
             rev: Rev::parse(rev).unwrap(),
+            dir: Directory::parse(dir).unwrap(),
         },
     )])
 }
@@ -389,9 +430,10 @@ fn the_lock_is_canonical_json() {
         text.find("\"go\"").unwrap() < text.find("\"zed\"").unwrap(),
         "{text}"
     );
-    let keys = ["\"commit\"", "\"git\"", "\"rev\"", "\"sha256\""];
+    let keys = ["\"commit\"", "\"dir\"", "\"git\"", "\"rev\"", "\"sha256\""];
     let at: Vec<usize> = keys.iter().map(|key| text.find(key).unwrap()).collect();
     assert!(at.windows(2).all(|pair| pair[0] < pair[1]), "{text}");
+    assert!(text.contains(r#""dir":"""#), "{text}");
     assert!(!text.contains(' ') && !text.contains('\n'), "{text}");
 }
 
@@ -489,4 +531,148 @@ fn a_plugin_with_the_longest_name_is_fetched() {
 
     assert_eq!(fetched.iter().count(), 1);
     assert_eq!(names(&fixture.state().plugins()), [name]);
+}
+
+#[test]
+fn a_subfolder_plugin_is_stored_without_the_rest_of_the_repository() {
+    let source = Source::in_folders(&["plugins/go"]);
+    let commit = source.head();
+    let fixture = workspace(&source, "v1.0.0");
+
+    let fetched = run(&fixture, &named_in("go", &source, "v1.0.0", "plugins/go")).unwrap();
+
+    assert_eq!(
+        reported(&fetched),
+        [("go".to_owned(), commit.clone(), FetchStatus::Fetched)]
+    );
+    let store = fixture.state().plugins().join("go").join(&commit);
+    assert_eq!(names(&store), ["extension.toml", "lib"]);
+    assert_eq!(names(&store.join("lib")), ["go.lua"]);
+    assert_eq!(names(&fixture.state().plugins()), ["go"]);
+    assert_eq!(
+        names(&fixture.state().plugins().join("go")),
+        [commit.as_str()]
+    );
+}
+
+#[test]
+fn a_subfolder_plugin_is_digested_alone() {
+    let source = Source::in_folders(&["plugins/go"]);
+    let commit = source.head();
+    let fixture = workspace(&source, "v1.0.0");
+
+    run(&fixture, &named_in("go", &source, "v1.0.0", "plugins/go")).unwrap();
+
+    let store = fixture.state().plugins().join("go").join(&commit);
+    let lock = Lock::read(fixture.root()).unwrap();
+    let entry = lock.get(&plugin("go")).unwrap();
+    assert_eq!(entry.dir.as_str(), "plugins/go");
+    assert_eq!(entry.sha256, tree_digest(&plugin("go"), &store).unwrap());
+}
+
+#[test]
+fn a_missing_folder_is_refused_naming_it() {
+    let source = Source::in_folders(&["plugins/go"]);
+    let commit = source.head();
+    let fixture = workspace(&source, "v1.0.0");
+
+    let error = run(&fixture, &named_in("go", &source, "v1.0.0", "nope")).unwrap_err();
+
+    let Error::PluginNotFetched { plugin, reason } = error else {
+        unreachable!("a missing folder is not fetched, got {error:?}");
+    };
+    assert_eq!(plugin.to_string(), "go");
+    assert!(reason.contains("v1.0.0"), "{reason}");
+    assert!(reason.contains(&commit), "{reason}");
+    assert!(reason.contains("has no folder nope"), "{reason}");
+    assert!(!lock_file(&fixture).exists());
+    assert!(
+        names(&fixture.state().plugins()).is_empty(),
+        "nothing is left in the store"
+    );
+}
+
+#[test]
+fn a_folder_that_is_a_link_is_refused() {
+    let source = Source::in_folders(&["real"]);
+    source.commit_link("alias", Path::new("real"));
+    let fixture = workspace(&source, "v1.1.0");
+
+    let error = run(&fixture, &named_in("go", &source, "v1.1.0", "alias")).unwrap_err();
+
+    let Error::PluginNotFetched { plugin, reason } = error else {
+        unreachable!("a link is not a folder, got {error:?}");
+    };
+    assert_eq!(plugin.to_string(), "go");
+    assert!(reason.contains("has no folder alias"), "{reason}");
+    assert!(!lock_file(&fixture).exists());
+    assert!(
+        names(&fixture.state().plugins()).is_empty(),
+        "nothing is left in the store"
+    );
+}
+
+#[test]
+fn a_folder_under_a_linked_parent_is_refused() {
+    let outside = tempfile::tempdir().unwrap();
+    let elsewhere = fs::canonicalize(outside.path()).unwrap();
+    fs::create_dir(elsewhere.join("c")).unwrap();
+    fs::write(
+        elsewhere.join("c/extension.toml"),
+        "[extension]\nname = \"go\"\n",
+    )
+    .unwrap();
+    let source = Source::new();
+    source.commit_link("plugins", &elsewhere);
+    let fixture = workspace(&source, "v1.1.0");
+
+    let error = run(&fixture, &named_in("go", &source, "v1.1.0", "plugins/c")).unwrap_err();
+
+    let Error::PluginNotFetched { reason, .. } = error else {
+        unreachable!("a folder behind a link is not fetched, got {error:?}");
+    };
+    assert!(reason.contains("has no folder plugins/c"), "{reason}");
+    assert_eq!(
+        names(&elsewhere.join("c")),
+        ["extension.toml"],
+        "nothing outside the staging folder is moved"
+    );
+    assert!(!lock_file(&fixture).exists());
+    assert!(
+        names(&fixture.state().plugins()).is_empty(),
+        "nothing is left in the store"
+    );
+}
+
+#[test]
+fn a_changed_dir_refetches() {
+    let source = Source::in_folders(&["a", "b"]);
+    let commit = source.head();
+    let fixture = workspace(&source, "v1.0.0");
+    run(&fixture, &named_in("go", &source, "v1.0.0", "a")).unwrap();
+    let first = Lock::read(fixture.root()).unwrap();
+    assert_eq!(first.get(&plugin("go")).unwrap().dir.as_str(), "a");
+    let first_sha256 = first.get(&plugin("go")).unwrap().sha256;
+
+    let fetched = run(&fixture, &named_in("go", &source, "v1.0.0", "b")).unwrap();
+
+    assert_eq!(
+        reported(&fetched),
+        [("go".to_owned(), commit.clone(), FetchStatus::Fetched)]
+    );
+    let lock = Lock::read(fixture.root()).unwrap();
+    let entry = lock.get(&plugin("go")).unwrap();
+    assert_eq!(entry.dir.as_str(), "b", "the row holds the new folder");
+    let store = fixture.state().plugins().join("go").join(&commit);
+    assert_eq!(names(&store), ["extension.toml", "lib"]);
+    assert_eq!(
+        fs::read_to_string(store.join("lib/go.lua")).unwrap(),
+        "return \"b\"\n",
+        "the files stored are those of the new folder"
+    );
+    assert_eq!(entry.sha256, tree_digest(&plugin("go"), &store).unwrap());
+    assert_ne!(
+        entry.sha256, first_sha256,
+        "the digest is of the new folder"
+    );
 }

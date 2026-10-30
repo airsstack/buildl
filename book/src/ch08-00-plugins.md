@@ -17,3 +17,5 @@ This chapter covers:
   `buildl plugins fetch`, and `buildl.lock`
 - **[How buildl Decides](ch08-03-how-buildl-decides.md)**: what a plugin's targets may want, and
   how `plan`, `doctor`, the approver and `graph` tell you which plugin wanted it
+- **[The C and C++ Plugin](ch08-04-the-c-plugin.md)**: the `c` plugin kept in this repository,
+  compiling one object per source with each object declaring the headers it read

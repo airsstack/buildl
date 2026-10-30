@@ -169,10 +169,10 @@ mindmap
       Settings fold into the key
       Phony escape hatch — always true
       Dynamic inputs — discovery targets
+      Per-file C and C++ — the C plugin over discovery targets
       Remote cache, then remote execution
       Parallel loading of build files
     Deferred by decision
-      Fine-grained C — per-file object graphs
       Configurations — one target one platform
       Demand-driven loading
       OS sandbox and containers — tiers 3 and 4
@@ -180,6 +180,6 @@ mindmap
 
 Everything the theory calls load-bearing exists in `buildl` as a concrete mechanism. The one
 correctness question the grid predicted, dependencies found while an action runs, is answered by
-[discovery targets](ch07-00-discovery-targets.md), with fine-grained C left out behind them. And
-each deferred item has a named way in, which is what makes leaving it out a choice that can be
-undone.
+[discovery targets](ch07-00-discovery-targets.md), which also carry per-file C and C++ through
+[the `c` plugin](ch08-04-the-c-plugin.md). And each deferred item has a named way in, which is what
+makes leaving it out a choice that can be undone.

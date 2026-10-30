@@ -381,6 +381,38 @@ done
 '''
 
 # ---------------------------------------------------------------------------
+# Plugins
+# ---------------------------------------------------------------------------
+
+[tasks.plugins]
+category = "Plugins"
+description = "Run the Lua tests of the plugins under plugins/"
+# Not a step of `dod`: it needs airsl, which a Rust gate should not require.
+script_runner = "@shell"
+script = '''
+set -e
+
+if ! command -v airsl >/dev/null 2>&1; then
+    echo "plugins: airsl is not on PATH; install it with: cargo install --locked airsl-cli" >&2
+    exit 1
+fi
+
+T="$(mktemp -d)"
+trap 'rm -rf "${T}"' EXIT
+
+# The tests require the modules they test as siblings, so both go in one folder.
+for file in plugins/c/*.lua plugins/c/tests/*.lua; do
+    [ -f "${file}" ] || continue
+    if [ -e "${T}/$(basename "${file}")" ]; then
+        echo "plugins: ${file} has the name of another staged file" >&2
+        exit 1
+    fi
+    cp "${file}" "${T}/"
+done
+(cd "${T}" && airsl test --allow-read . .)
+'''
+
+# ---------------------------------------------------------------------------
 # Skills
 # ---------------------------------------------------------------------------
 

@@ -152,6 +152,6 @@ this group: the usual answer is to drop it, because `buildl clean` removes the o
 
 ## C and C++
 
-If a recipe compiles each `.c` or `.cc` to its own `.o` and links them, the per-file stop rule
-applies. See `make.md`, "C and C++ compiled one file at a time": one whole-program target, its
-output judged by the tests.
+If a recipe compiles each `.c` or `.cc` to its own `.o` and links them, move it to the `c` plugin.
+See `make.md`, "C and C++ compiled one file at a time": one call for the program, and its output
+judged by the tests only when `-g` makes the bytes differ.

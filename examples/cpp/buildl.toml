@@ -1,0 +1,18 @@
+[workspace]
+name   = "cpp"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["cc", "c++", "sh"]
+env.read = ["PATH"]
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
+
+[plugins.c]
+github   = "airsstack/buildl"
+rev      = "plugin-c-v0.1.0"
+dir      = "plugins/c"
+proc.run = ["cc", "c++", "sh"]
+env.read = ["PATH"]

@@ -152,6 +152,9 @@ jobs:
       - name: cargo make skills
         run: cargo make skills
 
+      - name: cargo make plugins
+        run: cargo make plugins
+
   deny:
     name: Supply chain
     runs-on: ubuntu-latest

@@ -17,31 +17,43 @@ A build tool is only as useful as your knowledge of where its promises stop. Her
   [explicitness ledger](ch11-05-determinism-rules.md#the-explicitness-ledger), and a difference
   between two builds that is not traceable to it is a bug in `buildl`, not in your build.
 
-## No per-file C and C++ in this version
+## Per-file C and C++ goes through the plugin
 
-`buildl` does not support compiling C or C++ one file at a time, with one target per `.o` file.
-The reason is the *depfile gap*: a compiler reads headers nobody declared, Ninja and Make learn
-about them from a *depfile* the compiler writes, and `buildl` reads no depfiles.
+`buildl` compiles C and C++ one file at a time, with one target per object, through the `c`
+plugin. [The C and C++ Plugin](ch08-04-the-c-plugin.md) shows how. The reason it needs discovery targets
+is the *depfile gap*: a compiler reads headers nobody declared, Ninja and Make learn about them from
+a *depfile* the compiler writes, and `buildl` reads no depfiles.
 [Discovery Targets](ch07-00-discovery-targets.md#the-depfile-gap) draws the missing edge, and what
 each strategy does with it: under `bare` an edited header is silently ignored, and under `sandbox`
 the first compile fails because the header is not there.
 
-Two findings settled this, and neither is a gap in general:
+The plugin closes the gap with a [discovery target](ch07-00-discovery-targets.md) per source. It is
+an ordinary action, keyed, cached, sandboxed and approved, that runs the compiler with `-MM` and
+whose output the next pass over the build files reads. Each object is then declared with the source
+and the headers it read as inputs. The executor still reads no depfile, and none of this
+changes what the sandbox or the ledger promise.
 
-1. **It is one build pattern in one stack.** Every other toolchain tracks its own dependencies
-   inside itself, which is why `go build`, `cargo build` and their like are each wrapped as one
-   action over a full glob of their sources. That shape is sound, and needs no depfile.
-2. **`buildl` already has an answer to finding inputs at build time.** A
-   [discovery target](ch07-00-discovery-targets.md) is an ordinary action, keyed, cached,
-   sandboxed and approved, whose output the next pass over the build files reads. A depfile is the
-   executor reading a file a compiler happened to drop; a discovery target is a node in the graph
-   with a key, a grant and a line in `plan`, held to the same ledger as everything else.
+Its limits:
 
-What is really left is narrower than "depfiles": finding an input *in the middle of one action*,
-which a discovery target does not cover, because its output feeds the next declaration pass and
-not the action running now. If that case is ever needed, it will extend what a discovery target
-can do, rather than add a side channel to the executor. Ninja's depfile format would then be one
-way to feed it, not the design. No branch of this decision changes what a build file can write.
+- **One build file per project.** A header outside the build file's folder cannot be declared as an
+  input, so a source may include only headers inside the build file's folder and listed in
+  `headers`, or ones another target generates and the call names in `header_deps`. Anything else is
+  an error naming the header.
+- **Linux and macOS, with `gcc` and `clang`.** Windows and MSVC are out, and so is
+  cross-compiling. The programs the plugin may run are a fixed list, and a versioned name such as
+  `gcc-13` is not on it.
+- **A compiler update behind a launcher goes unseen.** A target's key records the program file, and
+  on macOS `/usr/bin/cc` is one launcher file that stays the same when the compiler behind it
+  changes. Unless a call sets `version_probe = true`, a new compiler does not rebuild the objects.
+  With it, a probe runs `--version` and every object depends on its output. `plan` always lists
+  those compiles as conditional, even right after a full build, because it never runs the probe; a
+  build still takes them from the cache when the probe prints the same.
+
+What is really left of the gap is narrower than "depfiles": finding an input *in the middle of one
+action*, which a discovery target does not cover, because its output feeds the next declaration
+pass and not the action running now. If that case is ever needed, it will extend what a discovery
+target can do, rather than add a side channel to the executor. Ninja's depfile format would then be
+one way to feed it, not the design.
 
 ## What each isolation tier does not guarantee
 

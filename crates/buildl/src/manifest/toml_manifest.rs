@@ -424,6 +424,7 @@ strategy = "bare"
                     PluginSource::Git {
                         url: GitUrl::parse("https://example.com/acme/go.git").unwrap(),
                         rev: Rev::parse("v1.2.0").unwrap(),
+                        dir: Directory::root(),
                     }
                 ),
                 (
@@ -431,6 +432,7 @@ strategy = "bare"
                     PluginSource::Git {
                         url: GitUrl::parse("file:///srv/rust").unwrap(),
                         rev: Rev::parse(commit).unwrap(),
+                        dir: Directory::root(),
                     }
                 ),
             ])
@@ -445,6 +447,7 @@ strategy = "bare"
             Some(&PluginSource::Git {
                 url: GitUrl::parse("https://github.com/acme/buildl-go").unwrap(),
                 rev: Rev::parse("v1").unwrap(),
+                dir: Directory::root(),
             })
         );
     }
@@ -485,6 +488,71 @@ strategy = "bare"
         assert_eq!(
             refusal("[plugins.go]\npath = \"p\"\nrev = \"v1\"\n"),
             "manifest: buildl.toml:3:7: plugins.go.rev: a path plugin has no rev"
+        );
+    }
+
+    #[test]
+    fn a_git_plugin_with_dir_is_read() {
+        let found = sources(
+            "[plugins.c]\ngit = \"https://example.com/acme/c.git\"\nrev = \"v1\"\ndir = \"plugins/c\"\n",
+        );
+        assert_eq!(
+            found.get(&plugin("c")),
+            Some(&PluginSource::Git {
+                url: GitUrl::parse("https://example.com/acme/c.git").unwrap(),
+                rev: Rev::parse("v1").unwrap(),
+                dir: dir("plugins/c"),
+            })
+        );
+    }
+
+    #[test]
+    fn a_github_plugin_with_dir_is_read() {
+        let found =
+            sources("[plugins.c]\ngithub = \"acme/c\"\nrev = \"v1\"\ndir = \"plugins/c\"\n");
+        assert_eq!(
+            found.get(&plugin("c")),
+            Some(&PluginSource::Git {
+                url: GitUrl::parse("https://github.com/acme/c").unwrap(),
+                rev: Rev::parse("v1").unwrap(),
+                dir: dir("plugins/c"),
+            })
+        );
+    }
+
+    #[test]
+    fn a_git_plugin_without_dir_is_at_the_root() {
+        let found = sources("[plugins.c]\ngithub = \"acme/c\"\nrev = \"v1\"\n");
+        assert!(matches!(
+            found.get(&plugin("c")),
+            Some(PluginSource::Git { dir, .. }) if dir.is_root()
+        ));
+    }
+
+    #[test]
+    fn dir_with_path_is_refused() {
+        assert_eq!(
+            refusal("[plugins.go]\npath = \"p\"\ndir = \"a\"\n"),
+            "manifest: buildl.toml:3:7: plugins.go.dir: a path plugin has no dir"
+        );
+    }
+
+    #[test]
+    fn a_dir_that_climbs_is_refused() {
+        let shown = refusal("[plugins.c]\ngithub = \"acme/c\"\nrev = \"v1\"\ndir = \"a/../b\"\n");
+        assert!(
+            shown.starts_with("manifest: buildl.toml:4:7: plugins.c.dir: "),
+            "{shown}"
+        );
+    }
+
+    #[test]
+    fn a_dir_with_a_leading_slash_is_refused() {
+        let shown =
+            refusal("[plugins.c]\ngithub = \"acme/c\"\nrev = \"v1\"\ndir = \"/plugins/c\"\n");
+        assert!(
+            shown.starts_with("manifest: buildl.toml:4:7: plugins.c.dir: "),
+            "{shown}"
         );
     }
 
@@ -539,7 +607,7 @@ strategy = "bare"
     fn an_unknown_plugin_key_names_its_line() {
         assert_eq!(
             refusal("[plugins.go]\ngit = \"https://x/y\"\nrev = \"v1\"\nbranch = \"main\"\n"),
-            "manifest: buildl.toml:4:1: unknown field `branch`, expected one of `path`, `git`, `github`, `rev`, `proc`, `env`, `network`"
+            "manifest: buildl.toml:4:1: unknown field `branch`, expected one of `path`, `git`, `github`, `rev`, `dir`, `proc`, `env`, `network`"
         );
     }
 

@@ -72,15 +72,22 @@ pub fn check(
                 }
                 at
             }
-            PluginSource::Git { url, rev } => {
+            PluginSource::Git { url, rev, dir } => {
                 let entry = lock
                     .get(plugin)
-                    .filter(|entry| entry.git == *url && entry.rev == *rev)
+                    .filter(|entry| {
+                        entry.git == *url && entry.rev == *rev && entry.dir == *dir
+                    })
                     .ok_or_else(|| {
+                        let folder = if dir.is_root() {
+                            String::new()
+                        } else {
+                            format!(" in the folder {}", dir.as_str())
+                        };
                         not_fetched(
                             plugin,
                             format!(
-                                "buildl.lock does not pin {url} at {rev}; run `buildl plugins fetch`"
+                                "buildl.lock does not pin {url} at {rev}{folder}; run `buildl plugins fetch`"
                             ),
                         )
                     })?;
@@ -183,6 +190,7 @@ mod tests {
             PluginSource::Git {
                 url: GitUrl::parse(URL).unwrap(),
                 rev: Rev::parse(rev).unwrap(),
+                dir: Directory::root(),
             },
         )])
     }
@@ -197,6 +205,7 @@ mod tests {
             go(),
             LockEntry {
                 commit: CommitId::parse(COMMIT).unwrap(),
+                dir: Directory::root(),
                 git: GitUrl::parse(URL).unwrap(),
                 rev: Rev::parse("v1.0.0").unwrap(),
                 sha256: tree_digest(&go(), &directory).unwrap(),
@@ -268,6 +277,7 @@ mod tests {
             PluginSource::Git {
                 url: GitUrl::parse("https://example.com/other/go.git").unwrap(),
                 rev: Rev::parse("v1.0.0").unwrap(),
+                dir: Directory::root(),
             },
         )]);
 
@@ -282,6 +292,37 @@ mod tests {
             };
             assert!(reason.contains("buildl plugins fetch"), "{reason}");
         }
+    }
+
+    #[test]
+    fn a_row_whose_dir_differs_is_not_pinned() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut lock = stored(dir.path());
+        let entry = lock.get(&go()).unwrap().clone();
+        lock.insert(
+            go(),
+            LockEntry {
+                dir: Directory::parse("plugins/a").unwrap(),
+                ..entry
+            },
+        );
+        let sources = BTreeMap::from([(
+            go(),
+            PluginSource::Git {
+                url: GitUrl::parse(URL).unwrap(),
+                rev: Rev::parse("v1.0.0").unwrap(),
+                dir: Directory::parse("plugins/b").unwrap(),
+            },
+        )]);
+
+        let error = check(dir.path(), &state(dir.path()), &sources, &lock).unwrap_err();
+
+        let Error::PluginNotFetched { reason, .. } = &error else {
+            unreachable!("an unpinned plugin is not fetched, got {error:?}");
+        };
+        assert!(reason.contains("does not pin"), "{reason}");
+        assert!(reason.contains("folder plugins/b"), "{reason}");
+        assert!(reason.contains("buildl plugins fetch"), "{reason}");
     }
 
     #[test]

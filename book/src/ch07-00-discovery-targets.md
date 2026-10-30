@@ -258,15 +258,23 @@ flowchart TD
     T -->|"Tier 1 — Bare"| STALE["SILENT STALENESS<br/>compile reads util.h from workspace<br/>key never sees it — wrong cache hits forever"]
     T -->|"Tier 2 — Input sandbox"| LOUD["LOUD FAILURE<br/>util.h absent from exec dir<br/>first compile fails: file not found"]
     STALE --> BAD["Worst outcome —<br/>a shared remote cache<br/>would amplify it"]
-    LOUD --> OK["Correct but unusable —<br/>fine-grained C is effectively<br/>unsupported without depfiles"]
+    LOUD --> OK["Correct but unusable —<br/>a target declaring only<br/>the .c file cannot work"]
 ```
 
 The sandbox turns the wrong answer into a loud one, which is its job, but that only proves the
-pattern cannot be written, not that it works. So `buildl` leaves compiling C or C++ one file per
-target out of its first version, and reads no depfiles.
+pattern cannot be written, not that it works. `buildl` reads no depfiles, so it closes the gap
+another way: a discovery target runs the compiler with `-MM` before the compile, one per source,
+and prints the project headers that source reads. The second pass reads that output and declares
+each object with the source and those headers as its inputs. The headers are declared once for the
+call, and discovery gives each object only those it read: edit `util.h` and only the objects that
+read it rebuild.
+
+The `c` plugin writes this for you, one object per source. [The C and C++
+Plugin](ch08-04-the-c-plugin.md) shows it.
 
 The gap is narrower than it looks. Go, Cargo, Bun and the rest track their own sources, so a target
-that hands a whole toolchain all of its sources, as every example in this book does, has no hole.
+that hands a whole toolchain all of its sources, as the Go, Rust and Python examples do, has no
+hole.
 And where a build does need a tool to tell it what exists, the discovery target is the answer: not
 a file a compiler happened to drop, but a target with its own key, its own approval and its own
 line in the plan, like everything else `buildl` runs.
