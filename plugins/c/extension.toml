@@ -1,0 +1,10 @@
+[extension]
+name    = "c"
+version = "0.1.0"
+entry   = "main.lua"
+api     = 1
+
+# The most the plugin's targets may want; the workspace can narrow it further.
+[capabilities]
+proc.run = ["cc", "c++", "gcc", "g++", "clang", "clang++", "sh"]
+env.read = ["PATH"]
