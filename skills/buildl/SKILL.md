@@ -149,7 +149,45 @@ The ceiling lists every program the targets run, every variable they read, and a
 | Rust | `{ "cargo", "install", "--path", ".", "--root", "$out", "--target-dir", "tt", "--no-track" }` with `env = { "HOME", "PATH" }`. Without `PATH` the build stops with ``error: linker `cc` not found`` |
 | Python | `{ "python3", "-m", "zipapp", "app", "-o", "$out" }` |
 
-Every language has one target over all its sources. Do not make one target per `.o` file.
+Go, Rust and Python have one target over all their sources. Do not make one target per file.
+
+C and C++ are the exception: the `c` plugin compiles each source to its own object, so a change to
+one source or header rebuilds only the objects that read it. Do not write the `.o` targets by hand:
+a compiler reads headers the build file does not declare, and the plugin finds them for you. Name the
+plugin in `buildl.toml` and run `buildl plugins fetch` once:
+
+```toml
+[ceiling]
+proc.run = ["cc"]
+env.read = ["PATH"]
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]
+
+[plugins.c]
+github   = "airsstack/buildl"
+rev      = "plugin-c-v0.1.0"
+dir      = "plugins/c"
+proc.run = ["cc"]
+env.read = ["PATH"]
+```
+
+Then one call declares the program:
+
+```lua no-check
+-- needs the c plugin fetched: buildl.use("c") fails without it
+local c = buildl.use("c")
+
+c.binary("app", {
+  srcs    = { "src/main.c", "src/util.c" },
+  headers = { "src/util.h" },
+})
+```
+
+A C++ source needs `c++` in both `proc.run` lists. `c.library`, and a `c.test` with `deps`, run
+through `sh`: add `sh` to both lists only then. All of the plugin's functions and options are in its
+README (`plugins/c/README.md` in the buildl repository), and in the book chapter "The C and C++
+Plugin". Keep a C or C++ project in one build file: a header outside the build
+file's folder cannot be declared.
 
 ## References
 

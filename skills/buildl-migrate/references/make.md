@@ -177,56 +177,81 @@ b.subdir("lib")
 
 ## C and C++ compiled one file at a time
 
-When the Makefile compiles each `.c` or `.cc` to its own `.o` and links them (`%.o: %.c`), write
-no per-`.o` targets. buildl v1 does not support them: a compiler reads headers nobody declared,
-so a per-file target could not be keyed on them.
+When the Makefile compiles each `.c` or `.cc` to its own `.o` and links them (`%.o: %.c`), move it
+to the `c` plugin. It compiles each source to its own object and finds the headers each one reads,
+so a change to one source or header rebuilds only the objects that read it. Write no per-`.o`
+targets by hand.
 
-Offer one target that compiles the whole program in one command, with every source and every
-header declared as an input. Say what it costs before the user answers:
+| In the Makefile | In buildl |
+|---|---|
+| the `SRCS` or `OBJS` list | `srcs`, the `.c`, `.cc`, `.cpp` or `.cxx` files; the `.o` names go |
+| the header list, or `-MMD` and `-include *.d` | `headers`, the headers of the project; the plugin finds which source reads which |
+| `CFLAGS`, `CPPFLAGS` | `cflags` (and `cxxflags` for C++ sources), with `c.includes` for `-I` folders and `c.defines` for `-D` |
+| `LDFLAGS` | `ldflags` |
+| `LDLIBS`, `-lm` | `ldlibs` |
+| `%.o: %.c` | one object target of the call, `<name>.<source path, with / as .>.o` |
+| `$(BIN): $(OBJS)` | the call's own target, `<name>` |
+| `ar rcs lib.a $(OBJS)` | `c.library`; needs `sh` |
+| a `-shared` link | `c.shared_library` |
+| a test binary run by `make test` | `c.test` |
 
-- any edit rebuilds the whole program
-- the binary differs byte for byte from the per-file build's, so its parity output is judged by
-  the tests, and a project with no test command cannot pass parity this way
+Add the `[plugins.c]` table to `buildl.toml` as the `buildl` skill shows, and run
+`buildl plugins fetch`. The ceiling and the table both allow `PATH`, the compiler the old build
+runs (`cc`, `c++`, `gcc`, `g++`, `clang` or `clang++`; a `CC = gcc` or GNU make's built-in
+`CXX = g++` means `gcc` or `g++`, not `cc`) and `sh` for `c.library` or a `c.test` with `deps`. Set
+the call's `cc` (and `cxx` for C++ sources) to that compiler, so the ceiling holds nothing the old
+build did not run, which check 6 refuses. `make` runs through `sh`, so `sh` is in `old.programs`
+anyway.
 
-If the user declines, stop with nothing changed.
+```lua no-check
+-- needs the c plugin fetched: buildl.use("c") fails without it
+local c = buildl.use("c")
 
-```lua
-local b = buildl
-
-local sources = b.sources("src/*.c")
-local headers = b.sources("src/*.h")
-
-b.target("app", {
-  inputs = { sources, headers },
-  run = { "cc", "-o", "$out", sources },
+c.binary("app", {
+  srcs    = { "src/main.c", "src/util.c" },
+  headers = { "src/util.h" },
+  cflags  = c.includes({ "src" }),
 })
 
-b.test("self_test", {
-  deps = { ":app" },
-  run = { "$deps", "--self-test" },
+c.test("self_test", {
+  srcs    = { "src/self_test.c", "src/util.c" },
+  headers = { "src/util.h" },
+  cflags  = c.includes({ "src" }),
 })
 ```
 
-The sources are named in `run`, not passed as `$in`: `$in` would hand the headers to the
-compiler too, and a compiler given a header and `-o` refuses. The headers are still inputs, so
-they are in the sandbox and in the action's key.
+The sources and headers are named from the folder of the build file; paths inside `cflags` start
+at the workspace root. Keep all of the project's C and C++ in one build file: a header outside the
+build file's folder cannot be declared. A header from a folder outside the workspace is refused
+unless that folder comes in through `-isystem` in `cflags`.
 
-This block is for the build file in the project's root folder. `sources` names start at the
-folder of the build file, but a path in `run` starts at the workspace root. In a build file in a
-folder, such as `src/build.lua`, put the folder in front of each name in `run` (`"src/" .. f`).
+Say what happens to the output before the user answers, because the parity table depends on it:
 
-On acceptance, mark the output in `parity.json`. `old.test` is required, and check 5 then needs
-both test runs to pass:
+- with `-g` in `CFLAGS`, the compiler records the folder it ran in, and buildl compiles in another
+  one, so the binary differs from the old build's byte for byte. Mark it judged by the tests.
+  `old.test` is required, and check 5 then needs both test runs to pass. A project with no test
+  command cannot pass parity this way
+- without `-g` the bytes match, and the output is compared as any other
+
+If the Makefile uses `-g`, mark the output in `parity.json`:
 
 ```json
 "outputs": [
-  { "old": "app", "new": "out/app", "judge": "tests", "reason": "whole-program build differs from the per-file link byte for byte" }
+  { "old": "app", "new": "out/app", "judge": "tests", "reason": "-g records the compile folder, which differs in buildl" }
 ]
 ```
 
-Check 1 lists the `%.o: %.c` recipe, and `$(OBJS)` or `$(BIN)` lines if the Makefile has them.
-Map the recipe that builds the program to the new target. Drop the per-file ones:
-`"dropped": "per-file objects: one whole-program target replaces them"`.
+Without `-g`, give the same pair with no `judge`:
+
+```json
+"outputs": [
+  { "old": "app", "new": "out/app" }
+]
+```
+
+Check 1 lists the `%.o: %.c` recipe, and `$(OBJS)` or `$(BIN)` lines if the Makefile has them. Map
+the recipe that builds the program to the call's target (`//:app`) and the `%.o` recipe to one of
+its objects (`//:app.src.main.c.o`).
 
 List the `.o` files an earlier run left in `skip`, one path each (`"src/a.o"`, `"src/b.o"`), or
 the folder that holds them. `skip` takes paths, never a pattern: `*.o` skips nothing.

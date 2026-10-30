@@ -139,5 +139,7 @@ so check 1 adds up.
 ## C and C++
 
 If a script compiles each `.c` or `.cc` to its own `.o` and links them (a `node-gyp` build, or a
-`make` call), the per-file stop rule applies. See `make.md`, "C and C++ compiled one file at a
-time": one whole-program target, its output judged by the tests.
+`make` call), move it to the `c` plugin. See `make.md`, "C and C++ compiled one file at a time":
+one call for the program, and its output judged by the tests only when `-g` makes the bytes differ.
+A `node-gyp` build reads Node's headers from a folder outside the workspace; the plugin refuses
+such a header unless it comes in through an `-isystem` folder in `cflags`.

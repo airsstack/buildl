@@ -102,7 +102,7 @@ An `outputs` entry may carry `"judge": "tests"` and a `"reason"`. Its row is the
 tests, not by comparing bytes. Use it in two cases only, each with its reason, and each needs
 `old.test`:
 
-- the C and C++ case in E
+- a C or C++ output whose bytes differ from the old build's, as with `-g` (see E)
 - an archive that stamps its entries with file times (a zip, jar or tar). buildl pins
   `SOURCE_DATE_EPOCH`, so its zip entries read 1980-01-01 and the archive differs from the old
   build's even when the migration is right. Without `"judge": "tests"` check 3 fails a correct
@@ -192,63 +192,65 @@ legitimate fix in `parity.json` is a mistake in what you wrote about the old bui
 Check 5 compares only whether the old test run and the buildl test run each passed. It does not count
 single tests. Whether each old test recipe has a buildl test target is check 1.
 
-## E. Two cases that stop and ask
+## E. C and C++, and a case that stops and asks
 
-An archive that stamps file times is a third case with its own answer: see `"judge": "tests"` in B.
+An archive that stamps file times has its own answer: see `"judge": "tests"` in B.
 
 ### C and C++ compiled one file at a time
 
-The old build compiles each `.c` or `.cc` to its own `.o` and links them (`%.o: %.c`). buildl v1 has
-no per-`.o` targets, because a compiler reads headers nobody declared. Do not write them. Stop and
-offer the user one target that compiles the whole program in one command, with every source and
-every header declared as an input:
+The old build compiles each `.c` or `.cc` to its own `.o` and links them (`%.o: %.c`). Move it to
+the `c` plugin, which compiles each source to its own object and finds the headers each one reads,
+so a change to one source or header rebuilds only the objects that read it. Do not write per-`.o`
+targets by hand, and do not offer one target for the whole program.
 
-```lua
-local b = buildl
+1. Add the plugin to `buildl.toml` and run `buildl plugins fetch`. The `buildl` skill shows the
+   `[plugins.c]` table. Put the compiler the old build runs in `proc.run` and `PATH` in `env.read`,
+   in the ceiling and in the table, and set the call's `cc` (and `cxx` for C++ sources) to it. The
+   plugin allows `cc`, `c++`, `gcc`, `g++`, `clang` and `clang++`; a ceiling program the old build
+   did not run fails check 6. Add `sh` only for `c.library` or a `c.test` with `deps`.
+2. Declare the program with one call, `c.binary`, `c.library`, `c.shared_library` or `c.test`. Give
+   `srcs` and `headers` as the old build lists them, and the old build's `-I`, `-D` and warning
+   flags in `cflags` or `cxxflags`, and its `-l` flags in `ldlibs`. The call's own target, `app`,
+   is the old link.
+3. Keep all of a project's C and C++ in one build file, in the project's root folder where it can.
+   A header outside the build file's folder cannot be declared.
+4. In `parity.json`, map the old link recipe (`app`) to the call's target, `//:app`, and the old
+   `%.o` recipe to one object target of the call. An object is named `<name>.<source path, with /
+   as .>.o`, so `//:app.src.main.c.o` for `src/main.c`. `make` runs through `sh`: list `sh` in
+   `old.programs`, as `make.md` says.
 
-local sources = b.sources("src/*.c")
-local headers = b.sources("src/*.h")
+```lua no-check
+-- needs the c plugin fetched: buildl.use("c") fails without it
+local c = buildl.use("c")
 
-b.target("app", {
-  inputs = { sources, headers },
-  run = { "cc", "-o", "$out", sources },
+c.binary("app", {
+  srcs    = { "src/main.c", "src/util.c" },
+  headers = { "src/util.h" },
+  cflags  = c.includes({ "src" }),
 })
 ```
 
-Name the sources in `run`, not `$in`: `$in` hands the headers to the compiler too, and a compiler
-given a header and `-o` refuses. The headers stay inputs, so the sandbox holds them and the key
-covers them.
+The plugin's functions, options and limits are in `plugins/c/README.md` in the buildl repository and
+in the book chapter "The C and C++ Plugin".
 
-This block is for the build file in the project's root folder. `sources` names start at the folder
-of the build file, but a path in `run` starts at the workspace root. In a build file in a folder,
-such as `src/build.lua`, put the folder in front of each name in `run`:
+Say this to the user before the result, because the check may differ from what they expect:
 
-```lua no-check
--- in src/build.lua: run paths start at the workspace root
-local named = {}
-for _, f in ipairs(sources) do
-  named[#named + 1] = "src/" .. f
-end
-```
-
-Tell the user these two things before they answer:
-
-- any edit rebuilds the whole program
-- the binary differs from the per-file build's byte for byte, so its output is marked
-  `"judge": "tests"` and the tests decide it. A project with no test command cannot pass parity
+- with `-g` in the old build's flags, the compiler records the folder it ran in, and buildl compiles
+  in another one, so the binary differs from the old build's byte for byte. Mark that output
+  `"judge": "tests"`, and the tests decide it. A project with no test command cannot pass parity
   this way
+- without `-g` the bytes match, and the output is compared as any other. Leave `"judge"` out
 
-Check 1 lists the old `%.o: %.c` recipe. If the user accepts, map the recipes that build the
-program (`app`) to this target, and drop the per-file one: `"dropped": "per-file objects: one
-whole-program target replaces them"`.
-
-If the user accepts, mark that output in `parity.json`:
+If the old build uses `-g`, mark the output:
 
 ```json
-{ "old": "app", "new": "out/app", "judge": "tests", "reason": "whole-program build differs from the per-file link byte for byte" }
+{ "old": "app", "new": "out/app", "judge": "tests", "reason": "-g records the compile folder, which differs in buildl" }
 ```
 
-If the user declines, stop with nothing changed.
+Do not mark an output `"judge": "tests"` that matches the old build's bytes. Do not use it to hide a
+difference from any other cause.
+
+If the plugin cannot be fetched, or the ceiling cannot allow the compiler, stop and tell the user.
 
 ### A recipe that is not a build step
 
