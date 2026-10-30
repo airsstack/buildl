@@ -296,9 +296,26 @@ pub(crate) fn guarded<T>(
 /// names the build file's chunk with a leading `@`, so the mark tells the two apart.
 const PLUGIN_CHUNK_MARK: char = '=';
 
+/// The most bytes of a chunk name Lua shows whole (`LUA_IDSIZE` less the terminating NUL). Past
+/// it, Lua keeps the start of a `=` name and cuts the end, which is where the file name is.
+const CHUNK_NAME_SHOWN: usize = 59;
+
+/// What stands for the cut-off start of a long chunk name.
+const ELLIPSIS: &str = "...";
+
 /// The name the plugin file `chunk`, as the workspace names it, is compiled under.
+///
+/// A `chunk` longer than Lua shows is cut at its start instead, keeping the end with the file
+/// name, as Lua does for the build file's own long names: `...ns/p/0123.../lib/api.lua`.
 pub(crate) fn plugin_chunk_name(chunk: &str) -> String {
-    format!("{PLUGIN_CHUNK_MARK}{chunk}")
+    if chunk.len() <= CHUNK_NAME_SHOWN {
+        return format!("{PLUGIN_CHUNK_MARK}{chunk}");
+    }
+    let mut from = chunk.len() - (CHUNK_NAME_SHOWN - ELLIPSIS.len());
+    while !chunk.is_char_boundary(from) {
+        from += 1;
+    }
+    format!("{PLUGIN_CHUNK_MARK}{ELLIPSIS}{}", &chunk[from..])
 }
 
 /// Where the nearest Lua frame on the stack is: the line that made the call, even when it went
@@ -354,11 +371,42 @@ mod tests {
     use airsl::mlua::{Lua, Table, Value};
     use buildl_core::{PluginName, PluginRef, PluginVersion};
 
-    use super::{BuildlModule, LANGUAGE_REGISTRY_KEY, primitives_table, record_language};
+    use super::{
+        BuildlModule, CHUNK_NAME_SHOWN, LANGUAGE_REGISTRY_KEY, plugin_chunk_name, primitives_table,
+        record_language,
+    };
     use crate::limits::DeclarationLimits;
     use crate::results::Results;
     use crate::sources::Sources;
     use crate::staging::Staging;
+
+    #[test]
+    fn a_chunk_name_that_fits_is_marked_and_left_whole() {
+        let chunk = "x".repeat(CHUNK_NAME_SHOWN);
+        assert_eq!(plugin_chunk_name(&chunk), format!("={chunk}"));
+        assert_eq!(
+            plugin_chunk_name("plugins/p/main.lua"),
+            "=plugins/p/main.lua"
+        );
+    }
+
+    #[test]
+    fn a_chunk_name_that_is_too_long_keeps_its_end() {
+        let chunk = format!(".buildl/plugins/c/{}/lib/api.lua", "ab".repeat(20));
+        let name = plugin_chunk_name(&chunk);
+        assert_eq!(name.len(), 1 + CHUNK_NAME_SHOWN);
+        assert!(name.starts_with("=..."), "{name}");
+        assert!(name.ends_with("/lib/api.lua"), "{name}");
+        assert!(chunk.ends_with(&name[4..]), "{name}");
+    }
+
+    #[test]
+    fn a_cut_chunk_name_does_not_split_a_character() {
+        let chunk = format!("{}/é.lua", "é".repeat(40));
+        let name = plugin_chunk_name(&chunk);
+        assert!(name.len() <= 1 + CHUNK_NAME_SHOWN, "{name}");
+        assert!(name.ends_with("/é.lua"), "{name}");
+    }
 
     /// Evaluates `source` with only the `buildl` module installed, staging into `staging`.
     fn evaluate(source: &str, staging: &Arc<Mutex<Staging>>) -> airsl::Result<String> {

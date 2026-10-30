@@ -18,8 +18,12 @@ use crate::common::{root_file, workspace};
 /// Writes the plugin `name` at version 1.0.0 under `<root>/plugins/<name>`: its manifest, an entry
 /// file `main.lua` holding `main`, and `files`, each relative to the plugin directory.
 fn plugin(root: &Path, name: &str, main: &str, files: &[(&str, &str)]) {
-    let dir = root.join("plugins").join(name);
-    fs::create_dir_all(&dir).unwrap();
+    plugin_in(&root.join("plugins").join(name), name, main, files);
+}
+
+/// Writes the plugin `name` into the directory `dir`, as `plugin` does under `plugins/`.
+fn plugin_in(dir: &Path, name: &str, main: &str, files: &[(&str, &str)]) {
+    fs::create_dir_all(dir).unwrap();
     fs::write(
         dir.join("extension.toml"),
         format!(
@@ -369,6 +373,60 @@ fn plugin_lua_error_names_the_plugin_file_and_line() {
     assert_eq!(failure, EvaluationFailure::Runtime);
     assert!(
         diagnostic.as_str().contains("plugins/p/main.lua:3: boom"),
+        "{diagnostic}"
+    );
+}
+
+/// A plugin kept where a fetched one is: `.buildl/plugins/p/<40 hex>`, a folder path too long for
+/// Lua to show a chunk name whole.
+fn store_plugin(main: &str, files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf, PathBuf) {
+    let (dir, root) = workspace("buildl.use('p')");
+    let folder = root
+        .join(".buildl/plugins/p")
+        .join("0123456789abcdef0123456789abcdef01234567");
+    plugin_in(&folder, "p", main, files);
+    (dir, root, folder)
+}
+
+/// Evaluates the root build file with `p` at `folder`.
+fn staged_from(root: &Path, folder: &Path) -> (EvaluationFailure, Diagnostic) {
+    let plugins = BTreeMap::from([(PluginName::parse("p").unwrap(), folder.to_path_buf())]);
+    let source = LuaSource::new(root, DeclarationLimits::default(), [], plugins);
+    match source.evaluate(&root_file(), &Discovered::empty()) {
+        Err(Error::Evaluation {
+            failure,
+            diagnostic,
+            ..
+        }) => (failure, diagnostic),
+        other => panic!("expected an evaluation failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_lua_error_in_a_plugin_with_a_long_folder_path_names_the_plugin_file_and_line() {
+    let (_dir, root, folder) = store_plugin(
+        "return require('api')",
+        &[("api.lua", "local x = 1\n\nerror('boom')")],
+    );
+    let (failure, diagnostic) = staged_from(&root, &folder);
+    assert_eq!(failure, EvaluationFailure::Runtime);
+    assert!(
+        diagnostic.as_str().contains("api.lua:3: boom"),
+        "{diagnostic}"
+    );
+}
+
+#[test]
+fn a_refused_call_in_a_plugin_with_a_long_folder_path_names_the_plugin_file_and_line() {
+    let (_dir, root, folder) = store_plugin(
+        "return require('lib.api')",
+        &[("lib/api.lua", "local x = 1\nbuildl.alias(7, 'x')")],
+    );
+    let (_, diagnostic) = staged_from(&root, &folder);
+    assert!(
+        diagnostic
+            .as_str()
+            .contains("lib/api.lua:2: buildl.alias: "),
         "{diagnostic}"
     );
 }
