@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-30
 depends-on: [01, 03]
 built-on: f917a9ac0d2d
@@ -126,3 +126,31 @@ check` are green. Commit `docs(repo): list the C and C++ examples`.
 ## Proof
 
 `cargo make examples` green locally and in both CI matrix jobs; `cargo make dod` green.
+
+## Review findings
+
+Task 1:
+- check.sh — no finding: `BUILDL_REPO` is computed from `$0` before any `cd`; `prepare.sh` runs after `rm -rf out .buildl`, before `check`, through `step`
+- docs — examples/README.md said every example needs only its toolchain, and "before step 1" pointed at a list without the prepare step — fixed: `c` and `cpp` need `git`; step 0 listed
+
+Tasks 2–4:
+- portability — examples/cpp/prepare.sh did not turn off commit or tag signing, so a machine whose git config signs could prompt or fail; the two `prepare.sh` had drifted (BUILDL_REPO check, tag form, github-line match, gpgsign) — fixed: one script, byte-identical in both examples, `-c commit.gpgsign=false -c tag.gpgsign=false`, exact-line match failing loudly
+- proof strength — examples/cpp/assert.sh proved the count (`1 built, 5 cached`) but not which target rebuilt — fixed: `plan` must name `//:hello.src.main.cc.o` as the only target to run, then the summary
+- accuracy — examples/c/README.md's diagram joined edges wrongly and missed `util.h → main.c`; it left out that the discovery targets rerun and the `c.test` use of `sh`; examples/cpp/README.md's `c.platform` value and "every one has the headers"; the README rows' wording and the cpp row's compilers (`c.platform` runs `cc`) — fixed
+- portability (Linux, read against spec P52–P57) — `blob.S`'s ELF symbol and `.note.GNU-stack`, `libgreet.so` with `-soname` and `$ORIGIN`, `uname -s` branches: no defect; the `.note.GNU-stack` line is first assembled on Linux in CI
+- plan — Task 2 still listed `ar` in `proc.run` — fixed: amended (Deviations)
+
+## Probe results
+
+- the named proofs were the probes: `BUILDL=target/debug/buildl sh examples/check.sh examples/c` → `c: ok`; same for `examples/cpp` → `cpp: ok` (macOS arm64, Apple clang), each running `prepare.sh` (local git repository, tag `plugin-c-v0.1.0`, `file://` fetch), `check`, `build`, `test`, every target clean, `verify` 0 mismatched, `assert.sh`; re-run after the fix round → `c: ok`, `cpp: ok`
+- `cargo make examples` → `c: ok`, `cpp: ok`, `go-discovery: ok`, `go: ok`, `plugins: ok`, `polyglot: ok`, `python: ok`, `rust: ok`, exit 0
+- `shellcheck` clean on both `prepare.sh` and both `assert.sh`; `cargo make dod` last green with no Rust changed since; `git grep` grep of Task 4 finds both rows
+- examples/cpp header edit, measured: discovery `3 built, 1 cached`, then the build `1 built, 5 cached`; examples/c: `plan` names `//:hello.src.main.c.o` alone, `1 to run`
+- the `file://` fetch that `prepare.sh` drives is the one the CLI tests use (crates/buildl-cli/tests/cli/exit_codes.rs:1139-1141)
+
+## Deviations
+
+- 2026-10-30 — plan, Task 2: `examples/c`'s ceiling and cap are `proc.run = ["cc", "sh"]`, not `["cc", "ar", "sh"]`: the spec was corrected after plan 03 (spec §4, P61: `c.library` runs `ar` inside `sh`, which needs no entry). Task 2's text amended
+- 2026-10-30 — plan, Task 2: assert.sh checks the rebuilt object through `plan` (the build summary names no target), then the build's `1 built, N cached`; Task 3 does the same
+- 2026-10-30 — plan, Task 2: the library output is `libutil.a`; `blob.S` carries a `.note.GNU-stack` section under `__ELF__ && __linux__` to keep the Linux linker from warning about an executable stack
+- 2026-10-30 — plan, Risks: Linux is still proven only in CI, as the plan says; the branch is not pushed, so the `ubuntu-latest` examples job has not run yet

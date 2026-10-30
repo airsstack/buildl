@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-30
 depends-on: [03, 04]
 built-on: f917a9ac0d2d
@@ -102,3 +102,34 @@ skills/buildl-migrate/references/shell.md   — [modify] *C and C++* (:156-159)
 ## Proof
 
 `cargo make book-build`, `cargo make skills` and `cargo make dod` green after Task 3.
+
+## Review findings
+
+Task 1 (ch08-04):
+- accuracy — the output under "with `version_probe = true`" was the second build's (`1 built, 8 cached`), read as the first; the first prints `2 built, 7 cached` — fixed: both runs shown, matching the captures
+- accuracy — the opening said every output came from the examples; the first program and the no-`sh` case came from a small two-source project, the error and probe outputs from edited copies — fixed
+- diagrams — `app.version.c` drawn outside the first pass; the sequence diagram's "-MM once each" and "three last steps" — fixed
+- accuracy — the `<name>` target row for `c.test` and the archive step; the "anything else" header row; "Every step that links … and each archive's"; the error table missing three §7 cases; "buildl builds on Unix only" as the reason for Linux and macOS — fixed
+- outputs — the platform-in-cxxflags block was cut without saying so — fixed: whole real output
+- correctness (found in the evidence, outside the chapter) — a plugin fetched from git lost its file name in Lua tracebacks (`.buildl/plugins/c/ce310d…3/:24: in upvalue 'relocate'`): Lua keeps only the start of a `=` chunk name, 59 bytes, and the store path alone fills them — fixed in crates/buildl-lua/src/module.rs: a longer name keeps its end (`...<tail>`); the new long-store-path flow test failed first with `.buildl/plugins/p/0123…4567/:3: boom`, then passed; `cargo make dod` exit 0, `cargo deny check` ok; commit `111eb1d`
+
+Task 2 (book pages, roadmap, CLAUDE.md):
+- accuracy — ch07-00 said an undeclared header becomes an input (under the sandbox every header is declared through `headers`); ch11-09 said "needs a plugin" (it needs discovery targets), read "does not cover … Linux and macOS", put the header rule on the source's folder (it is the build file's folder and `headers`), and said `plan` lists probe-dependent compiles conditional "until the probe has run" (always, spec P21) — fixed; the same probe wording in plugins/c/README.md — fixed
+- accuracy — the `[plugins.c]` cap left out of "allowed by the ceiling"; "Without -g the bytes match" narrowed to what P51 and P57 prove; "project headers"; "as every example in this book does"; macOS-only launcher; plain-words nits — fixed
+
+Task 3 (skills):
+- correctness — the migrate skill put `cc` in the ceiling, failing its own check 6 for a Makefile that runs `gcc` — fixed: name the compiler the old build runs and set the call's `cc`/`cxx`
+- completeness — a node-gyp header outside the workspace needs `-isystem` — fixed in make.md and npm.md
+- cross-reference — the skills named the chapter before it existed — closed by Task 1 (same title)
+
+## Probe results
+
+- every command output in ch08-04 is from a run of target/debug/buildl on macOS (Apple clang): examples/c and examples/cpp copied and prepared through their `prepare.sh`; a small two-source project; edited copies for the error and version-probe outputs; the reviewer checked each console block against those captures
+- a header left out of `headers` fails at the `-MM` discovery under the sandbox (the compiler cannot find it), before the plugin's own check; the chapter shows that failure and lists the plugin's message in its rules table
+- `cargo make book-build` green after each round; `cargo make skills` green after Task 3 and its fix round; the plan's grep over book/src, CLAUDE.md and the roadmaps finds only text describing the plugin
+
+## Deviations
+
+- 2026-10-30 — plan, Task 1: the first program and the case without `sh` come from a small two-source project rather than examples/c, since the chapter starts from `proc.run = ["cc"]` (spec §4) and examples/c needs `sh`; the version-probe and error outputs come from edited copies of the examples
+- 2026-10-30 — plan, Task 2: the dangling link to ch08-04 was written before Task 1 and committed after it, in plan order; `mdbook` does not fail on it
+- 2026-10-30 — outside the plan: the traceback chunk-name fix in crates/buildl-lua (Review findings, Task 1) was closed in this run rather than carried forward
