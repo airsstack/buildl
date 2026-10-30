@@ -93,7 +93,7 @@ pub fn fetch(
     let mut new = Lock::default();
     let mut plugins = Vec::new();
     for (plugin, source) in sources {
-        let PluginSource::Git { url, rev } = source else {
+        let PluginSource::Git { url, rev, .. } = source else {
             continue;
         };
         let pinned = old

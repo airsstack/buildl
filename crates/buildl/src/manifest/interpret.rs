@@ -80,8 +80,8 @@ pub(crate) fn workspace(text: &str, raw: &Raw) -> Result<Workspace> {
     })
 }
 
-/// Where each plugin comes from: exactly one of `path`, `git` and `github`, and a `rev` with
-/// the last two.
+/// Where each plugin comes from: exactly one of `path`, `git` and `github`, a `rev` with the
+/// last two, and with them an optional `dir`, the repository folder that holds the plugin.
 ///
 /// A path plugin's directory may not be `workspace`'s output or state directory, hold either, or
 /// lie inside either: buildl writes there.
@@ -153,6 +153,14 @@ fn source(
                     &"a path plugin has no rev",
                 ));
             }
+            if let Some(dir) = &plugin.dir {
+                return Err(refused(
+                    text,
+                    &field("dir"),
+                    dir,
+                    &"a path plugin has no dir",
+                ));
+            }
             plugin_directory(path.get_ref(), workspace)
                 .map(PluginSource::Path)
                 .map_err(|reason| refused(text, &field("path"), path, &reason))
@@ -176,7 +184,8 @@ fn source(
     }
 }
 
-/// The git source at `url` and the `rev` `plugin` pins it to.
+/// The git source at `url`, the `rev` `plugin` pins it to and the `dir` it sits in, the
+/// repository root when `plugin` names none.
 fn pinned(
     text: &str,
     name: &Spanned<String>,
@@ -194,7 +203,14 @@ fn pinned(
     })?;
     let rev = Rev::parse(rev.get_ref())
         .map_err(|reason| refused(text, &format!("{table}.rev"), rev, &reason))?;
-    Ok(PluginSource::Git { url, rev })
+    let dir = plugin.dir.as_ref().map_or_else(
+        || Ok(Directory::root()),
+        |dir| {
+            Directory::parse(dir.get_ref())
+                .map_err(|reason| refused(text, &format!("{table}.dir"), dir, &reason))
+        },
+    )?;
+    Ok(PluginSource::Git { url, rev, dir })
 }
 
 /// Why a path plugin's directory is refused.

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use buildl::buildl_core::json::canonical;
-use buildl::buildl_core::{Error, GitUrl, PluginName, PluginSource, Result, Rev};
+use buildl::buildl_core::{Directory, Error, GitUrl, PluginName, PluginSource, Result, Rev};
 use buildl::plugins::{FetchStatus, Fetched, Lock, check, fetch, tree_digest};
 use buildl::search_path::SearchPath;
 
@@ -91,6 +91,7 @@ fn named(plugin: &str, source: &Source, rev: &str) -> BTreeMap<PluginName, Plugi
         PluginSource::Git {
             url: GitUrl::parse(source.url()).unwrap(),
             rev: Rev::parse(rev).unwrap(),
+            dir: Directory::root(),
         },
     )])
 }

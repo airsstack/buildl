@@ -306,12 +306,15 @@ impl FromStr for Rev {
 pub enum PluginSource {
     /// A directory of the workspace.
     Path(Directory),
-    /// A revision of a git repository.
+    /// A folder of a revision of a git repository.
     Git {
         /// The repository.
         url: GitUrl,
         /// The tag or commit the plugin is pinned to.
         rev: Rev,
+        /// The folder of the repository that holds the plugin; the repository root when the
+        /// manifest names none.
+        dir: Directory,
     },
 }
 

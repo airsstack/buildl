@@ -72,7 +72,7 @@ pub fn check(
                 }
                 at
             }
-            PluginSource::Git { url, rev } => {
+            PluginSource::Git { url, rev, .. } => {
                 let entry = lock
                     .get(plugin)
                     .filter(|entry| entry.git == *url && entry.rev == *rev)
@@ -183,6 +183,7 @@ mod tests {
             PluginSource::Git {
                 url: GitUrl::parse(URL).unwrap(),
                 rev: Rev::parse(rev).unwrap(),
+                dir: Directory::root(),
             },
         )])
     }
@@ -268,6 +269,7 @@ mod tests {
             PluginSource::Git {
                 url: GitUrl::parse("https://example.com/other/go.git").unwrap(),
                 rev: Rev::parse("v1.0.0").unwrap(),
+                dir: Directory::root(),
             },
         )]);
 
