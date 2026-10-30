@@ -36,6 +36,7 @@
     - [Writing a Plugin](ch08-01-writing-a-plugin.md)
     - [Plugins from Git](ch08-02-plugins-from-git.md)
     - [How buildl Decides](ch08-03-how-buildl-decides.md)
+    - [The C and C++ Plugin](ch08-04-the-c-plugin.md)
 
 - [Remote Cache and Execution](ch09-00-remote.md)
 
