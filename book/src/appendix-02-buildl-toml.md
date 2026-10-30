@@ -101,9 +101,10 @@ left out allows nothing.
 | `git` | string | none | the URL of a git repository holding the plugin; needs `rev` | 225 |
 | `github` | string | none | a GitHub repository written `owner/repo`, the same as `git = "https://github.com/owner/repo"`; needs `rev` | 227 |
 | `rev` | string | none | the tag or full commit the repository is pinned to | 229 |
-| `proc` | table | empty | holds `run`, the programs the plugin's targets may run | 232 |
-| `env` | table | empty | holds `read`, the environment variables the plugin's targets may read | 235 |
-| `network` | boolean | `false` | whether the plugin's targets may reach the network | 237 |
+| `dir` | string | the repository root | the folder of the repository that holds the plugin, relative to its root, with no `..`, no leading `/` and no empty part; only that folder is stored and digested; takes `git` or `github`, not `path` | 231 |
+| `proc` | table | empty | holds `run`, the programs the plugin's targets may run | 234 |
+| `env` | table | empty | holds `read`, the environment variables the plugin's targets may read | 237 |
+| `network` | boolean | `false` | whether the plugin's targets may reach the network | 239 |
 | `proc.run` | list of strings | `[]` | as in `[ceiling]` | 123 |
 | `env.read` | list of strings | `[]` | as in `[ceiling]` | 132 |
 
@@ -135,7 +136,7 @@ The remote cache this workspace shares results with, which may also run actions.
 
 ## Every table at once
 
-This `buildl.toml` writes every table, and every key but the three that fetch a plugin from git.
+This `buildl.toml` writes every table, and every key but the four that fetch a plugin from git.
 Beside it are a `build.lua` declaring one target and an empty folder `plugins/local`. It passes
 `buildl check`:
 
@@ -190,7 +191,8 @@ $ buildl check
 ok: 1 declaration in 1 build file
 ```
 
-A plugin from git is written with `git` or `github`, and `rev`:
+A plugin from git is written with `git` or `github`, and `rev`, and with `dir` when the plugin is
+one folder of the repository:
 
 ```toml
 [plugins.fromgit]
@@ -200,6 +202,7 @@ rev = "v1.0.0"
 [plugins.fromgithub]
 github = "example/fromgithub"
 rev = "v1.0.0"
+dir = "plugins/fromgithub"
 ```
 
 Every command that reads the workspace, `check` included, refuses such a plugin until

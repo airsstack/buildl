@@ -99,6 +99,11 @@ env.read = ["HOME"]
 | every later command | checks the stored files against `buildl.lock`, not the network. A changed file is exit 6 |
 | a moved tag | the fetch is refused. Moving a plugin on is a new `rev` in `buildl.toml`, then a fetch |
 
+When the plugin is one folder of the repository, not its root, add `dir = "plugins/gobin"`: a path
+relative to the repository root, with no `..`, no leading `/` and no empty part, and not beside
+`path`. Only that folder is stored and digested, and `buildl.lock` records it as `dir` (`""` for the
+root). Changing `dir` makes the next fetch download the plugin again.
+
 Commit `buildl.lock` with the workspace.
 
 ## Refusals that name a plugin

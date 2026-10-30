@@ -21,6 +21,13 @@ env.read = ["HOME"]
 | `git` | any URL `git` can clone: `https://`, `ssh://`, or `file://` as here |
 | `github` | instead of `git`: `owner/repo`, short for the GitHub URL |
 | `rev` | a tag or a full commit |
+| `dir` | optional: the folder of the repository that holds the plugin, such as `plugins/gobin`; left out, the plugin is the repository root |
+
+`dir` is for a repository that holds more than one plugin, or a plugin beside other files. It is
+written relative to the repository root, with `/` between folders, and takes no `..`, no leading
+`/` and no empty part. Only that folder is stored and digested: the plugin's `extension.toml` sits
+directly in it, and the rest of the repository plays no part. A plugin that comes from a `path` has
+no `dir`.
 
 The cap, `proc.run` and `env.read`, works as it does for a plugin kept in the workspace. For this
 page the repository is a bare one made on the same machine, holding the `gobin` plugin from
@@ -58,14 +65,15 @@ The fetch writes `buildl.lock` in the workspace root:
 
 ```console
 $ cat buildl.lock
-{"gobin":{"commit":"c6a408f28f821a67d8393db4018f2178bb813f6c","git":"file:///tmp/buildl-book/p05/git/gobin.git","rev":"v0.1.0","sha256":"e49c02079e363a98f1fb3001eaff256db2a59c48c02d5205e5e18bf0990166f4"}}
+{"gobin":{"commit":"c6a408f28f821a67d8393db4018f2178bb813f6c","dir":"","git":"file:///tmp/buildl-book/p05/git/gobin.git","rev":"v0.1.0","sha256":"e49c02079e363a98f1fb3001eaff256db2a59c48c02d5205e5e18bf0990166f4"}}
 ```
 
 | Field | Records |
 |---|---|
 | `git`, `rev` | what `buildl.toml` asked for when it was fetched |
+| `dir` | the folder `buildl.toml` named, or `""` for the repository root |
 | `commit` | the commit `rev` named then |
-| `sha256` | the digest of the plugin's files |
+| `sha256` | the digest of the plugin's files: those of `dir`, when it is set |
 
 Commit it with the workspace. Someone who clones the repository then fetches the very commit and
 files you did, or is refused.

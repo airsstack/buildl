@@ -115,6 +115,7 @@ exactly one of `path`, `git` and `github`. What the plugin may have starts empty
 | `git` | string | none | the URL of a git repository holding the plugin. Needs `rev` |
 | `github` | string | none | `owner/repo`, the same as `git = "https://github.com/owner/repo"`. Needs `rev` |
 | `rev` | string | none | the tag or full commit the repository is pinned to |
+| `dir` | string | the repository root | the folder of the repository that holds the plugin, relative to its root: no `..`, no leading `/`, no empty part. Only that folder is stored and digested. Takes `git` or `github`, not `path` |
 | `proc.run` | list of strings | `[]` | the programs the plugin's targets may run. `proc.run`, `env.read` and `network` here are the workspace's cap |
 | `env.read` | list of strings | `[]` | the environment variables the plugin's targets may read |
 | `network` | boolean | `false` | whether the plugin's targets may reach the network |
