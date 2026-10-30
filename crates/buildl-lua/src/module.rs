@@ -9,7 +9,8 @@
 //! Responsibilities: [`BuildlModule`]; building a primitives table whose declarations carry a
 //! given origin; the snapshot of the language globals taken at install; turning a primitive call
 //! into a staged record or a sticky refusal that names the line, in the build file or a plugin
-//! file, that made the call; answering `buildl.discovered` from the evaluation's results.
+//! file, that made the call; answering `buildl.discovered` from the evaluation's results and
+//! `buildl.folder` from the build file's directory.
 //!
 //! Non-responsibilities: the argument shapes, which `primitives` owns, the walk behind
 //! `buildl.sources`, which `sources` owns, the stream reader behind `buildl.decode_all`, which
@@ -125,7 +126,8 @@ const NOT_LANGUAGE: [&str; 4] = ["buildl", "airsstack", "_G", "require"];
 /// Every table built for one evaluation shares its `staging`, `sources` and `results`, so the
 /// declarations of a build file and of the plugins it uses land in one numbered buffer under one
 /// byte budget, `sources` walks the build file's directory whichever table asks, and
-/// `buildl.discovered` reads the same results, relative to the same directory.
+/// `buildl.discovered` reads the same results, relative to the same directory. For the same reason
+/// `buildl.folder()` gives the build file's directory, `""` at the workspace root, in a plugin too.
 pub(crate) fn primitives_table(
     lua: &Lua,
     staging: &Arc<Mutex<Staging>>,
@@ -197,8 +199,12 @@ pub(crate) fn primitives_table(
     })?;
     table.set("sources", found)?;
 
-    let staging_ref = Arc::clone(staging);
     let results = results.clone();
+    let directory = results.directory().as_str().to_owned();
+    let folder = lua.create_function(move |_, ()| Ok(directory.clone()))?;
+    table.set("folder", folder)?;
+
+    let staging_ref = Arc::clone(staging);
     let discovered = lua.create_function(move |lua, label: Value| {
         let label = guarded(lua, &staging_ref, "discovered", |_| {
             primitives::discovered(&label, results.directory())
@@ -510,6 +516,24 @@ mod tests {
                     order: DeclarationOrder::new(0),
                 }],
             }
+        );
+    }
+
+    #[test]
+    fn folder_is_empty_at_the_root() {
+        let (result, staged) = run(
+            "buildl.target('x' .. buildl.folder(), { run = { 'x' } })\n\
+             return 'ok'",
+            u64::MAX,
+        );
+        assert_eq!(result.unwrap(), "ok");
+        let staged = staged.unwrap();
+        assert!(
+            matches!(
+                &staged.declarations[0].item,
+                StagedItem::Target(target) if target.name == Written::new("x")
+            ),
+            "{staged:?}"
         );
     }
 

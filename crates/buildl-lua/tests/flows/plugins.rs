@@ -566,6 +566,47 @@ fn sources_in_a_plugin_walks_the_calling_file_s_directory() {
     assert_eq!(origins(&staged), ["p@1.0.0"]);
 }
 
+/// The build file `lib/build.lua` of a workspace holding `text`, and the workspace root.
+fn lib_build_file(text: &str) -> (tempfile::TempDir, PathBuf, BuildFile) {
+    let (dir, root) = workspace("");
+    fs::create_dir_all(root.join("lib")).unwrap();
+    fs::write(root.join("lib/build.lua"), text).unwrap();
+    let lib = BuildFile::new(Provenance::new(
+        PathBuf::from("lib/build.lua"),
+        Directory::parse("lib").unwrap(),
+    ));
+    (dir, root, lib)
+}
+
+#[test]
+fn folder_names_a_subdirectory_build_file() {
+    let (_dir, root, lib) = lib_build_file("buildl.target(buildl.folder(), { run = { 'x' } })");
+    let staged = evaluate_file(&root, &[], &lib).unwrap();
+    let StagedItem::Target(target) = &staged.declarations[0].item else {
+        panic!("the build file declares a target");
+    };
+    assert_eq!(target.name, Written::new("lib"));
+}
+
+#[test]
+fn a_plugin_reads_the_calling_build_file_s_folder() {
+    let (_dir, root, lib) = lib_build_file("buildl.use('p').declare()");
+    plugin(
+        &root,
+        "p",
+        "return { declare = function()\n\
+         buildl.target(buildl.folder(), { run = { 'x' } })\n\
+         end }",
+        &[],
+    );
+    let staged = evaluate_file(&root, &["p"], &lib).unwrap();
+    let StagedItem::Target(target) = &staged.declarations[0].item else {
+        panic!("the plugin declares a target");
+    };
+    assert_eq!(target.name, Written::new("lib"));
+    assert_eq!(origins(&staged), ["p@1.0.0"]);
+}
+
 #[test]
 fn a_plugin_can_call_decode_all() {
     let (_dir, root) = with_p(
