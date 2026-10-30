@@ -67,6 +67,7 @@ no variable (P34). External documents were downloaded raw on 2026-10-30 and are 
 | P35 | `buildl` lists the functions it holds in the error a misspelt one raises | book/src/appendix-03-lua-api.md:30-33 |
 | P36 | `plugins fetch` with no `git` on the search path fails, exit 3 | crates/buildl-cli/tests/cli/exit_codes.rs:1173 |
 | P37 | A git commit in a fresh repository is made with an identity passed on the command line in this codebase's own tests | crates/buildl/tests/e2e/fetch.rs:50; crates/buildl/src/plugins/git.rs:238 |
+| P59 | A target name holds only ASCII letters, digits, `.`, `-` and `_`, at most 256 bytes, and is neither `.` nor `..`; `+` is refused | crates/buildl-core/src/types/grammar.rs:19-21, :56-70; crates/buildl-core/src/types/target_name.rs:20-22; probe `buildl.target("app.version.c++", …)` → `buildl check`: `invalid target name: "app.version.c++" — may hold only ASCII letters, digits, '.', '-' and '_'`, exit 5; control `app.version.cpp` → `ok: 1 declaration in 1 build file`, exit 0 |
 
 ### 1.2 Compilers on macOS, and their documentation
 
@@ -242,13 +243,14 @@ For `c.binary("app", { srcs = { "src/main.c" }, headers = …, cflags = … })` 
 (`buildl.folder()` is `"cpp"`, so the source's root path is `cpp/src/main.c`):
 
 ```text
- :app.version.cc        only with version_probe = true; one per compiler the call uses
-                        run { cc, "--version" } · stdout · always
+ :app.version.c         only with version_probe = true; one per language the call compiles:
+                        :app.version.c runs { cc, "--version" }; :app.version.cpp, for any C++
+                        source (.cc, .cpp, .cxx), runs { cxx, "--version" } · stdout · always
  :app.src.main.c.deps   discover · inputs { "src/main.c", headers… } · deps { header_deps… }
                         run { cc, cflags…, "-MM", "-MT", "obj", "cpp/src/main.c" } · stdout
             │ second pass: c.depfile.parse, then §5.4
  :app.src.main.c.o      inputs { "src/main.c", the headers it read }
-                        deps { header_deps…, :app.version.cc if probed }
+                        deps { header_deps…, :app.version.c if probed }
                         run { cc, cflags…, "-c", "-o", "$out", "cpp/src/main.c" }
  :app                   deps { the objects, in srcs order, then deps… } · env { "PATH" }
                         run { linker, ldflags…, "-o", "$out", "$deps", ldlibs… }
@@ -261,7 +263,10 @@ one folder do not collide (P38 shows `-MM`'s own names would); a source whose pa
 buildl refuses fails with buildl's own error.
 
 The version probe exists because a target's key fingerprints the program file, and `/usr/bin/cc`
-is a launcher that stays the same when the compiler behind it changes (P26). It is off by default:
+is a launcher that stays the same when the compiler behind it changes (P26). Its name carries the
+language, `c` or `cpp`, never the program: a target name holds only ASCII letters, digits, `.`, `-`
+and `_` (P59), so `c++`, `g++` and `clang++` cannot appear in one. A C++ object depends on
+`<name>.version.cpp`, a C object on `<name>.version.c`. It is off by default:
 an always-run target leaves every compile depending on it `Conditional` in `plan` (P21), though a
 build still takes them from the cache (P22).
 
@@ -406,6 +411,7 @@ including it, and for `examples/cpp` that the test passes with the shared librar
 | `book/src/ch07-00-discovery-targets.md`, *The depfile gap* | per-file C and C++ is written with discovery targets; the C plugin does it; no depfile is read by the executor |
 | `book/src/ch11-09-what-it-promises.md`, *No per-file C and C++ in this version* | replaced: per-file C and C++ through the plugin, its limits (one build file per project, Linux and macOS, gcc and clang) and the launcher fingerprint |
 | `book/src/ch01-04-with-an-ai-agent.md` (lines 161-183) | the migration of a per-file C/C++ build goes to the plugin |
+| `book/src/ch11-08-where-buildl-sits.md` (lines 175, 183) | the mindmap's "Fine-grained C — per-file object graphs" leaves *Deferred by decision* for the covered branch, as the C plugin over discovery targets (kept in Mermaid); the sentence "with fine-grained C left out behind them" is rewritten to say discovery targets also carry per-file C and C++ |
 | `book/src/ch08-02-plugins-from-git.md`, `book/src/appendix-02-buildl-toml.md` | the `dir` key, and `dir` in the lock row |
 | `book/src/appendix-03-lua-api.md` | `folder()` in the function table, its section, and the list in the "buildl holds" error |
 | `.claudestacks/sdlc/roadmaps/buildl/roadmap.md` | the non-goal on per-file C/C++ removed; the depfile non-goal kept |
@@ -424,7 +430,7 @@ including it, and for `examples/cpp` that the test passes with the shared librar
 | unit | `crates/buildl-lua/src/module.rs` tests | `folder()` gives `""` at the root and the folder below it, from a build file and from a plugin |
 | e2e | `crates/buildl/tests/e2e/fetch.rs` | a subfolder plugin is stored without the rest of the repository and digested alone; a missing folder, a folder that is a link and a folder under a linked parent are refused; a changed `dir` re-fetches |
 | e2e | `crates/buildl/tests/e2e/plugins.rs` | a plugin fetched from a subfolder loads and `require`s its siblings |
-| plugin | `plugins/c/tests/` via `airsl test`, in a new `cargo make plugins` task run by the CI job that has `airsl` | `depfile_test`: escapes, continuations, several rules, normalisation, a climb above the root; `flags_test`: every helper, `nil` platforms; `options_test`: every refusal of §7; `graph_test` with a fake `buildl`: first and second pass declarations, names, `env { "PATH" }` on links, `version_probe = true` adding `:<name>.version.<cc>` as a dependency of each compile, `header_deps`, the test runner forms |
+| plugin | `plugins/c/tests/` via `airsl test`, in a new `cargo make plugins` task run by the CI job that has `airsl` | `depfile_test`: escapes, continuations, several rules, normalisation, a climb above the root; `flags_test`: every helper, `nil` platforms; `options_test`: every refusal of §7; `graph_test` with a fake `buildl`: first and second pass declarations, names, `env { "PATH" }` on links, `version_probe = true` adding `:<name>.version.c` to each C compile's dependencies and `:<name>.version.cpp` to each C++ compile's, `header_deps`, the test runner forms |
 | end to end | `examples/c`, `examples/cpp` through `check.sh` | §8 |
 
 ## 11. Risks
