@@ -1062,26 +1062,47 @@ fn doctor_exits_five_on_a_build_file_error() {
 ///
 /// The machine's own `git` builds it: a machine with none fails the test that asks.
 fn plugin_repository(name: &str) -> (tempfile::TempDir, String) {
+    plugin_repository_in(name, "")
+}
+
+/// Like [`plugin_repository`], with the plugin's files in the folder `folder` of the repository;
+/// the empty `folder` is the root. `outside.txt` is at the root of the repository, so it is not
+/// the plugin's unless `folder` is the root. The plugin's entry gets the command it runs from a
+/// module beside it.
+fn plugin_repository_in(name: &str, folder: &str) -> (tempfile::TempDir, String) {
     let dir = tempfile::tempdir().unwrap();
     let path = fs::canonicalize(dir.path()).unwrap();
+    let at = |file: &str| {
+        if folder.is_empty() {
+            file.to_owned()
+        } else {
+            format!("{folder}/{file}")
+        }
+    };
     write(
         &path,
-        "extension.toml",
+        &at("extension.toml"),
         &format!(
             "[extension]\nname = \"{name}\"\nversion = \"0.1.0\"\nentry = \"main.lua\"\napi = 1\n\n[capabilities]\nproc.run = [\"cp\"]\n"
         ),
     );
     write(
         &path,
-        "main.lua",
+        &at("copy.lua"),
+        "return { \"cp\", \"$in\", \"$out\" }\n",
+    );
+    write(
+        &path,
+        &at("main.lua"),
         concat!(
             "local module = {}\n",
             "function module.greet(name)\n",
-            "  buildl.target(name, { inputs = { \"hello.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+            "  buildl.target(name, { inputs = { \"hello.txt\" }, run = require(\"copy\") })\n",
             "end\n",
             "return module\n",
         ),
     );
+    write(&path, "outside.txt", "not the plugin\n");
     git_in(&path, &["init", "-q", "-b", "main"]);
     git_in(&path, &["add", "."]);
     git_in(&path, &["commit", "-q", "-m", "plugin"]);
@@ -1123,11 +1144,28 @@ fn repository_url(dir: &tempfile::TempDir) -> String {
 /// A workspace whose build file uses each of `plugins`, a plugin named as given and fetched
 /// from the repository given, at the tag `v1.0.0`.
 fn workspace_using(plugins: &[(&str, &tempfile::TempDir)]) -> (tempfile::TempDir, PathBuf) {
+    let plugins: Vec<(&str, &tempfile::TempDir, &str)> = plugins
+        .iter()
+        .map(|(name, repository)| (*name, *repository, ""))
+        .collect();
+    workspace_using_in(&plugins)
+}
+
+/// Like [`workspace_using`], each plugin with the folder of its repository that holds it, as
+/// the third of its parts; the empty folder is the root.
+fn workspace_using_in(
+    plugins: &[(&str, &tempfile::TempDir, &str)],
+) -> (tempfile::TempDir, PathBuf) {
     let tables: Vec<String> = plugins
         .iter()
-        .map(|(name, repository)| {
+        .map(|(name, repository, folder)| {
+            let dir = if folder.is_empty() {
+                String::new()
+            } else {
+                format!("dir = \"{folder}\"\n")
+            };
             format!(
-                "\n[plugins.{name}]\ngit = \"{}\"\nrev = \"v1.0.0\"\nproc.run = [\"cp\"]\n",
+                "\n[plugins.{name}]\ngit = \"{}\"\nrev = \"v1.0.0\"\n{dir}proc.run = [\"cp\"]\n",
                 repository_url(repository)
             )
         })
@@ -1135,7 +1173,7 @@ fn workspace_using(plugins: &[(&str, &tempfile::TempDir)]) -> (tempfile::TempDir
     let toml = manifest(&["cp"]) + &tables.concat();
     let lua: Vec<String> = plugins
         .iter()
-        .map(|(name, _)| format!("buildl.use(\"{name}\").greet(\"{name}-out\")\n"))
+        .map(|(name, _, _)| format!("buildl.use(\"{name}\").greet(\"{name}-out\")\n"))
         .collect();
     let lua = lua.concat();
     workspace(&[
@@ -1243,6 +1281,23 @@ fn build_after_fetch_succeeds_offline() {
 
     drop(repository);
     let built = run(&root, &["build"], &[]);
+
+    assert_eq!(code(&built), 0, "{}", stderr(&built));
+    assert_eq!(fs::read(root.join("out/hello-out")).unwrap(), b"hello\n");
+}
+
+#[test]
+fn a_plugin_fetched_from_a_subfolder_builds_offline() {
+    let (repository, _commit) = plugin_repository_in("hello", "plugins/hello");
+    let (_dir, root) = workspace_using_in(&[("hello", &repository, "plugins/hello")]);
+    let fetched = run(&root, &["plugins", "fetch"], &[]);
+    assert_eq!(code(&fetched), 0, "{}", stderr(&fetched));
+
+    drop(repository);
+    // A search path that holds `cp` and no `git`.
+    let tools = tempfile::tempdir().unwrap();
+    symlink("/bin/cp", tools.path().join("cp")).unwrap();
+    let built = run(&root, &["build"], &[("PATH", tools.path().as_os_str())]);
 
     assert_eq!(code(&built), 0, "{}", stderr(&built));
     assert_eq!(fs::read(root.join("out/hello-out")).unwrap(), b"hello\n");

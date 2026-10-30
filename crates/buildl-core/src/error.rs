@@ -524,7 +524,7 @@ pub enum Error {
     },
     /// A plugin `buildl.toml` names is not there to use: it is a directory that does not
     /// exist, a git plugin that `buildl.lock` does not pin as `buildl.toml` names it or whose
-    /// store is missing, or a git revision that holds no file.
+    /// store is missing, or a git revision that holds no file, or no folder at the plugin's `dir`.
     #[error("plugin {plugin} is not fetched: {reason}")]
     PluginNotFetched {
         /// The plugin.
