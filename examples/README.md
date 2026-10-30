@@ -13,6 +13,8 @@ when the example is checked, from a temporary git repository.
 | [`python`](python/) | the same for a Python zipapp tested with `unittest`, standard library only | Python 3 |
 | [`go-discovery`](go-discovery/) | a discovery target running `go list` with `stdout = true`, read back with `buildl.decode_all`: one test target per Go package, none written by hand | Go 1.22 |
 | [`polyglot`](polyglot/) | a Go service, a Rust CLI and a Python tool built from one generated schema; labels across directories; early cutoff after a comment edit; `buildl query 'rdeps(…)'` | Go 1.22, a Rust toolchain, Python 3 |
+| [`c`](c/) | C compiled one object per source through the `c` plugin, fetched by git from a subfolder: `c.library`, `c.binary`, `c.test`, a generated `config.h` through `header_deps`, `c.includes`, `c.defines`, and an assembly file built by the build file's own discovery target read with `c.depfile.parse`; a header edit recompiles only the object that reads it | a C compiler (gcc or clang), `git` |
+| [`cpp`](cpp/) | C++ through the same plugin: `c.shared_library` and a binary and a test using it; `c.platform`, `c.shared_name`, `c.soname`, `c.rpath`; the two declaration passes | a C compiler and a C++ compiler (gcc and g++, or clang and clang++), `git` |
 | [`plugins`](plugins/) | two Go programs declared through a plugin kept in the workspace, `buildl.use`; its manifest and the workspace's cap; `plan` and `doctor` naming the plugin | Go 1.22 |
 | [`remote`](remote/) | the Python starter run on a NativeLink server it starts with `docker compose`: `--remote-execute`, a fresh copy fetching the result, `--remote-upload`; left out of `cargo make examples`, run by its own CI job | Python 3, Docker; execution needs Linux x86_64 |
 
