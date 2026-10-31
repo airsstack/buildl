@@ -148,7 +148,7 @@ graph TD
         CLIP["[Container: Rust binary]<br/>buildl CLI process<br/>Load → Resolve → Plan → Execute → Record"]
         DEFS["[Data]<br/>Build definitions<br/>buildl.toml, buildl.lock, build.lua, plugins"]
         STATE["[Data store]<br/>.buildl/<br/>cas/, cache.json, cache.journal,<br/>log.jsonl, statcache.json,<br/>graph.json, lock, plugins/"]
-        OUT["[Data store]<br/>out/<br/>hard links into the cas"]
+        OUT["[Data store]<br/>out/<br/>hard links and copies from the cas"]
     end
     CHILD["[Container]<br/>Child processes<br/>one toolchain invocation per action"]
     CLIP -->|"reads"| DEFS
@@ -410,7 +410,7 @@ discovery targets (5) and remote execution (8) added no port of their own.
 | `Digester` | what stands at each input's path, and its content hash | the filesystem, with rayon, each file streamed in pieces | `buildl` | 1 |
 | `StatCache` | reusing a digest when size and modification time are unchanged | `.buildl/statcache.json`; keeps only files changed more than 2 s before the run began | `buildl` | 1 |
 | `ToolResolver` | the fingerprint of each program, in the key | a `PATH` lookup and a content hash | `buildl` | 1 |
-| `ContentStore` | the cas: storing a blob, asking for one, reading one back, clearing an output's path and placing a blob there | `LocalCas`: `.buildl/cas/ab/…`, read-only blobs, hard links or copies into `out/` | `buildl` | 1 |
+| `ContentStore` | the cas: storing a blob, asking for one, reading one back, clearing an output's path and placing a blob there | `LocalCas`: `.buildl/cas/ab/…`, read-only blobs, hard links or copies into `out/` (copies only, for a file that may be run) | `buildl` | 1 |
 | `ActionCache` | reading, listing, recording and forgetting cache rows, each durable on return | `.buildl/cache.json` and `.buildl/cache.journal` | `buildl` | 1 |
 | `EventLog` | one event per outcome | `.buildl/log.jsonl`, appended to | `buildl` | 1 |
 | `RunHistory` | the log's lines, oldest first, each an event or a damaged line | `.buildl/log.jsonl`, read only | `buildl` | 2 |

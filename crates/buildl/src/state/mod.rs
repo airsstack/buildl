@@ -35,4 +35,5 @@ pub use layout::StateLayout;
 pub use lock::{LockError, StateLock};
 pub use name::name_of;
 pub use scratch::{Owner, Scratch};
+pub(crate) use write::STAGED_PREFIX;
 pub use write::{Access, write_whole};

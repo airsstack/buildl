@@ -7,6 +7,13 @@ the slot Cargo treats as breaking, so a compatible change ships as a `z` bump.
 
 ## Unreleased
 
+### Fixed
+
+- **A program in `out/` that loads a shared library from its own folder.** On macOS such a program
+  could fail to find the library, because `out/` held a hard link to the program's copy in the
+  store and the system could resolve it under the store's name. Runnable outputs, programs and
+  shared libraries that carry the run bit, are now copied into `out/` instead of hard-linked.
+
 ## 0.1.0 — 2026-10-31
 
 First release. It publishes four crates — `buildl-core`, `buildl-lua`, `buildl` and `buildl-cli`

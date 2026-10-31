@@ -3,8 +3,9 @@
 //!
 //! Its own module because it is the one place that decides how content is laid out under the
 //! state directory and how it reaches the output directory: a read-only blob per digest, beside
-//! it an executable twin for content that was placed as a file that may be run, and a hard link
-//! from the output directory wherever a write through one is seen to be refused.
+//! it an executable twin for content that was placed as a file that may be run, a hard link from
+//! the output directory for a plain file wherever a write through one is seen to be refused, and
+//! a copy of the twin for a file that may be run.
 //!
 //! Responsibilities: [`LocalCas`], the [`ContentStore`](buildl_core::ContentStore) of a local
 //! workspace.
