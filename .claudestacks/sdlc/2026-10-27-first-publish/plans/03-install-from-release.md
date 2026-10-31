@@ -253,3 +253,16 @@ finding blocking. One fix round closed C1-C9:
   cases. The spec's other row and the plan agree, so no claim was disproven by a run.
 - 2026-10-31 (the plan's): `cargo make skills` now also covers Task 2's prebuilt routes and Task 1's
   version refusal (review finding C1); the plan named those checks as manual runs only.
+- 2026-10-31 (found by PR B's CI, fixed in this slice on the author's word): run 41166268707, job
+  `Examples (macos-latest)`, failed at `examples/cpp/assert.sh` running `./out/hello`: `dyld: Library
+  not loaded: @rpath/libgreet.dylib … Referenced from: …/.buildl/cas/d1/…x`. `out/hello` was a hard
+  link to its executable twin in the store (link count 2), and the c plugin links with
+  `-Wl,-rpath,@loader_path`, so when macOS resolved the program to the twin's name it searched the
+  store's folder. Intermittent: the same job passed on `main` and on PR #23, and no local ordering
+  (nine tried, plus six `examples/check.sh examples/cpp` runs) reproduced it. The author chose copies
+  for every runnable output on every OS: `LocalCas` now copies a `FileMode::Executable` file into
+  `out/` from the twin (`fs::copy`, staged in the store's staging folder, renamed into place; staged
+  beside the target only across file systems); plain files keep hard links. One review pass (2 🟡
+  blocking doc findings, 3 🟡, 5 🔵, 1 ❓ answered "the run bit stays the boundary"), one fix round;
+  `cargo make dod` green and `examples/check.sh` ok for `c` and `cpp`. The change is crate source
+  after `0.1.0`, so it ships in the next release; `CHANGELOG.md` records it under Unreleased.
