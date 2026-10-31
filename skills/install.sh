@@ -4,7 +4,11 @@
 #   sh install.sh --claude              install the skills as a Claude Code plugin
 #   sh install.sh --dir ~/.codex/skills copy the buildl and buildl-migrate skills into that folder
 #
-# Options: --ref R (git branch, default main), --dry-run (print, run nothing).
+# The buildl and airsl binaries come from each project's latest release through its install.sh;
+# from a clone, or with a --ref other than main, buildl is built with cargo instead.
+#
+# Options: --ref R (git branch of the skills and, when it is not main, of the buildl built from
+# it; default main), --dry-run (print, run nothing).
 set -eu
 
 repo="airsstack/buildl"
@@ -20,7 +24,8 @@ usage: sh install.sh (--claude | --dir PATH) [--ref BRANCH] [--dry-run]
 
   --claude     install the skills as a Claude Code plugin
   --dir PATH   copy the buildl and buildl-migrate skills into PATH
-  --ref BRANCH the git branch to install from (default: main)
+  --ref BRANCH the git branch of the skills and, when it is not main, of the buildl built
+               from it (default: main)
   --dry-run    print every command and run none
 EOF
     exit 2
@@ -112,30 +117,67 @@ if [ "${mode}" = "dir" ]; then
     fi
 fi
 
-if ! have buildl || ! have airsl; then
-    if ! have cargo; then
-        echo "install Rust from https://rustup.rs" >&2
-        exit 1
-    fi
-fi
-
+# How each binary is installed: skip (already on PATH), cargo (built from source) or pointer
+# (the install.sh of its latest release).
 if have buildl; then
-    echo "buildl is already on PATH, skipped"
-elif [ -n "${clone}" ]; then
-    run cargo install --locked --path "${clone}/crates/buildl-cli"
-    installed="${installed}  buildl (cargo install, from ${clone})
-"
+    buildl_route="skip"
+elif [ -n "${clone}" ] || [ "${ref}" != "main" ]; then
+    buildl_route="cargo"
 else
-    run cargo install --locked --git "https://github.com/${repo}" --branch "${ref}" buildl-cli
-    installed="${installed}  buildl (cargo install, branch ${ref})
-"
+    buildl_route="pointer"
+fi
+if have airsl; then
+    airsl_route="skip"
+else
+    airsl_route="pointer"
 fi
 
-if have airsl; then
+if [ "${buildl_route}" = "cargo" ] && ! have cargo; then
+    echo "install Rust from https://rustup.rs" >&2
+    exit 1
+fi
+if { [ "${buildl_route}" = "pointer" ] || [ "${airsl_route}" = "pointer" ]; } && ! have curl; then
+    echo "install curl: it is needed to fetch the buildl and airsl installers" >&2
+    exit 1
+fi
+
+# Fetch an installer and run it with sh. The download is held whole first, so a failed fetch runs
+# nothing.
+run_pointer() {
+    printf '+ curl -fsSL %s, then sh -c on the whole download\n' "$(quote "$1")"
+    if [ "${dry_run}" -eq 0 ]; then
+        script="$(curl -fsSL "$1")"
+        sh -c "${script}"
+    fi
+}
+
+case "${buildl_route}" in
+    skip)
+        echo "buildl is already on PATH, skipped"
+        ;;
+    cargo)
+        if [ -n "${clone}" ]; then
+            run cargo install --locked --path "${clone}/crates/buildl-cli"
+            installed="${installed}  buildl (cargo install, from ${clone})
+"
+        else
+            run cargo install --locked --git "https://github.com/${repo}" --branch "${ref}" buildl-cli
+            installed="${installed}  buildl (cargo install, branch ${ref})
+"
+        fi
+        ;;
+    pointer)
+        run_pointer "https://airsstack.github.io/buildl/install.sh"
+        installed="${installed}  buildl (prebuilt, latest release)
+"
+        ;;
+esac
+
+if [ "${airsl_route}" = "skip" ]; then
     echo "airsl is already on PATH, skipped"
 else
-    run cargo install --locked airsl-cli
-    installed="${installed}  airsl (cargo install)
+    run_pointer "https://airsstack.github.io/airsl/install.sh"
+    installed="${installed}  airsl (prebuilt, latest release)
 "
 fi
 
