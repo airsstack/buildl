@@ -3,10 +3,9 @@
 # fetches it. ../check.sh runs this in a fresh copy of the example, with BUILDL_REPO set
 # to the repository root and BUILDL naming the buildl binary.
 #
-# The published tag does not exist before the plugin is released, and the example should
-# run the plugin as this checkout has it. So the checkout's plugins/c goes into a
-# temporary git repository, tagged plugin-c-v0.1.0, and the copy's buildl.toml names
-# that repository instead of GitHub.
+# The tag is published, but CI runs the plugin as this checkout has it, not the published
+# tag. So the checkout's plugins/c goes into a temporary git repository, tagged
+# plugin-c-v0.1.0, and the copy's buildl.toml names that repository instead of GitHub.
 
 set -eu
 BUILDL="${BUILDL:-buildl}"
