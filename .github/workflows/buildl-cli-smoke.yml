@@ -161,7 +161,8 @@ jobs:
       - name: A second build is served from the cache
         working-directory: .github/smoke
         run: |
-          out=$("$BUILDL" build)
+          # buildl prints its summary on stderr.
+          out=$("$BUILDL" build 2>&1)
           echo "$out"
           if ! grep -qw '1 cached' <<<"$out"; then
             echo "::error::the second build did not report '1 cached'"
