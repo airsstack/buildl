@@ -43,14 +43,21 @@ one program any build may run.
 buildl runs on Linux and macOS.
 
 ```sh
+curl -LsSf https://airsstack.github.io/buildl/install.sh | sh                  # prebuilt, latest release
+cargo install --locked buildl-cli                                              # from crates.io
 cargo install --git https://github.com/airsstack/buildl buildl-cli --locked   # from GitHub
 cargo make install                                                            # from a checkout
 ```
 
+The first line installs a prebuilt `buildl` into `~/.local/bin`. The others build it with Cargo.
+
 Then `buildl build`, `buildl test` and `buildl plan` in that example.
 
 To have an AI agent write and migrate build files, install buildl, airsl (a program already on your
-`PATH` is skipped) and the `buildl` and `buildl-migrate` skills in one go; `--dir P` copies the skills into `P` for another agent instead:
+`PATH` is skipped) and the `buildl` and `buildl-migrate` skills in one go. `install.sh` installs the
+prebuilt `buildl` and `airsl`, so it needs no Rust unless you run it from a clone or with a `--ref`
+other than `main`; `--dir P` copies the skills into `P` for another
+agent instead:
 
 ```sh
 curl -fsSLO https://raw.githubusercontent.com/airsstack/buildl/main/skills/install.sh

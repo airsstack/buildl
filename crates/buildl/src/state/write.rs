@@ -17,7 +17,7 @@ use std::path::Path;
 use tempfile::{Builder, NamedTempFile};
 
 /// The start of the name of a file that is still being written.
-pub(super) const STAGED_PREFIX: &str = ".tmp-";
+pub(crate) const STAGED_PREFIX: &str = ".tmp-";
 
 /// What may be done with a file once it is written.
 ///
@@ -35,7 +35,7 @@ pub enum Access {
 
 impl Access {
     /// The mode a file with this access is made with.
-    const fn mode(self) -> u32 {
+    pub(crate) const fn mode(self) -> u32 {
         match self {
             Self::Rewritable => 0o644,
             Self::ReadOnly => 0o444,

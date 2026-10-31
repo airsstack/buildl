@@ -444,7 +444,8 @@ fi
 T="$(mktemp -d)"
 W="$(mktemp -d)"
 T2="$(mktemp -d)"
-trap 'rm -rf "${T}" "${W}" "${T2}"' EXIT
+T3="$(mktemp -d)"
+trap 'rm -rf "${T}" "${W}" "${T2}" "${T3}"' EXIT
 
 for skill in skills/*/; do
     [ -f "${skill}SKILL.md" ] || continue
@@ -482,7 +483,7 @@ for dir in "${W}"/*/; do
     fi
 done
 
-shellcheck skills/install.sh
+shellcheck skills/install.sh install/install.sh
 DRY="$(sh skills/install.sh --dry-run --dir "${T2}")"
 if [ -n "$(ls -A "${T2}")" ]; then
     echo "skills: install.sh --dry-run wrote into ${T2}" >&2
@@ -498,6 +499,59 @@ status=0
 sh skills/install.sh >/dev/null 2>&1 || status=$?
 if [ "${status}" -ne 2 ]; then
     echo "skills: install.sh with no option exited ${status}, not 2" >&2
+    exit 1
+fi
+
+# The prebuilt routes: a copy of install.sh outside a clone, on a PATH that holds no cargo, buildl
+# or airsl, only links to the tools the script uses. Nothing is downloaded: --dry-run only prints.
+mkdir "${T3}/with-curl" "${T3}/no-curl"
+for tool in sh curl tar cat sed rm dirname basename mkdir cp mktemp; do
+    found="$(command -v "${tool}" || true)"
+    case "${found}" in
+        /*)
+            ln -s "${found}" "${T3}/with-curl/${tool}"
+            if [ "${tool}" != "curl" ]; then
+                ln -s "${found}" "${T3}/no-curl/${tool}"
+            fi
+            ;;
+        *)
+            echo "skills: ${tool} is not on PATH as a program" >&2
+            exit 1
+            ;;
+    esac
+done
+cp skills/install.sh "${T3}/install.sh"
+
+status=0
+PATH="${T3}/with-curl" sh "${T3}/install.sh" --dry-run --dir "${T3}/dest" >"${T3}/dry.out" 2>&1 || status=$?
+if [ "${status}" -ne 0 ]; then
+    echo "skills: install.sh --dry-run without cargo, buildl or airsl exited ${status}, not 0" >&2
+    cat "${T3}/dry.out" >&2
+    exit 1
+fi
+for url in https://airsstack.github.io/buildl/install.sh https://airsstack.github.io/airsl/install.sh; do
+    if ! grep -F "curl -fsSL ${url}, then sh -c" "${T3}/dry.out" >/dev/null; then
+        echo "skills: install.sh --dry-run prints no fetch of ${url}" >&2
+        exit 1
+    fi
+done
+if grep -F "cargo install" "${T3}/dry.out" >/dev/null; then
+    echo "skills: install.sh --dry-run builds with cargo when the prebuilt route applies" >&2
+    exit 1
+fi
+
+status=0
+PATH="${T3}/no-curl" sh "${T3}/install.sh" --dry-run --dir "${T3}/dest" >/dev/null 2>&1 || status=$?
+if [ "${status}" -ne 1 ]; then
+    echo "skills: install.sh without curl exited ${status}, not 1" >&2
+    exit 1
+fi
+
+# install/install.sh refuses a version that is not a version before it fetches anything.
+status=0
+BUILDL_VERSION='1;2' sh install/install.sh >/dev/null 2>&1 || status=$?
+if [ "${status}" -ne 1 ]; then
+    echo "skills: install/install.sh with BUILDL_VERSION='1;2' exited ${status}, not 1" >&2
     exit 1
 fi
 '''

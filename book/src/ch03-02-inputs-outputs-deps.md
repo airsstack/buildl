@@ -98,8 +98,8 @@ command starts, the directory each output goes into exists and the output itself
 command creates it. Two targets may not claim the same path; buildl refuses that before anything
 runs.
 
-`out/` is buildl's to write. Each file in it is read-only, and is a link into buildl's store under
-`.buildl/` where linking is possible. Delete `out/` whenever you like: `buildl clean` does exactly
+`out/` is buildl's to write. Each file in it is read-only. A file that may be run is a copy; any
+other is a link into buildl's store under `.buildl/` where linking is possible. Delete `out/` whenever you like: `buildl clean` does exactly
 that, and the next build puts it back from the store without running anything:
 
 ```console

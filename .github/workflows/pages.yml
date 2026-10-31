@@ -1,6 +1,8 @@
 name: Pages
 
-# Publishes https://airsstack.github.io/buildl/: the book.
+# Publishes https://airsstack.github.io/buildl/: the book, and install.sh, the
+# pointer that installs the latest release (copied from install/ beside the
+# book, so it is served at /install.sh).
 #
 # Deployed from an Actions artifact rather than a branch, so the built site is
 # never committed and nothing but this workflow can change what is served. The
@@ -11,6 +13,7 @@ on:
     branches: [main]
     paths:
       - book/**
+      - install/**
       - .github/workflows/pages.yml
   workflow_dispatch:
 
@@ -42,6 +45,9 @@ jobs:
 
       - name: Build the book
         run: mdbook build book
+
+      - name: Add the install pointer
+        run: cp install/install.sh book/book/
 
       - uses: actions/upload-pages-artifact@v5
         with:

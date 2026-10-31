@@ -11,29 +11,30 @@
 //! the caller of [`Sweep`] does.
 
 use std::collections::BTreeSet;
-use std::fs;
+use std::fs::{self, Permissions};
 use std::io::{self, ErrorKind};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use buildl_core::{
     ContentStore, Diagnostic, Digest, Error, FileMode, OutputPath, PortName, Result, Sweep,
 };
+use tempfile::{Builder, TempPath};
 
 use crate::cas::blob::BlobPath;
 use crate::cas::placement::Placement;
-use crate::state::{Access, StateLayout, clear_path, write_whole};
+use crate::state::{Access, STAGED_PREFIX, StateLayout, clear_path, write_whole};
 
 /// Holds content under a workspace's state directory, and makes held content a file below the
 /// workspace root.
 ///
 /// Each digest has a blob, a read-only file holding the bytes, and may have an executable twin,
-/// a second read-only file with the same bytes that may be run. A file of the workspace that
-/// may be run is made from the twin, any other from the blob.
+/// a second read-only file with the same bytes that may be run.
 ///
-/// A file of the workspace is a hard link to the held file where a write through the link is
-/// seen to be refused, and a copy of it everywhere else, so that writing to an output never
-/// changes what the store holds.
+/// A file of the workspace that may be run is a copy of the twin. Any other is a hard link to
+/// the blob where a write through the link is seen to be refused, and a copy of it everywhere
+/// else, so that writing to an output never changes what the store holds.
 #[derive(Debug)]
 pub struct LocalCas {
     root: PathBuf,
@@ -67,6 +68,30 @@ fn twin_differs(twin: &Path, bytes: &[u8]) -> bool {
         Ok(held) => held != bytes,
         Err(error) => error.kind() != ErrorKind::NotFound,
     }
+}
+
+/// A new file in `dir`, made when it is missing, holding the bytes of `source` and no more
+/// access than `access` gives.
+///
+/// The file is copied with [`fs::copy`] onto a name that is free, which is what lets a file
+/// system that can share the bytes of a file do so. It is removed when the returned path is
+/// dropped.
+fn stage_copy(dir: &Path, source: &Path, access: Access) -> io::Result<TempPath> {
+    let mut builder = Builder::new();
+    builder.prefix(STAGED_PREFIX);
+    let reserved = match builder.tempfile_in(dir) {
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            fs::create_dir_all(dir)?;
+            builder.tempfile_in(dir)?
+        }
+        made => made?,
+    };
+    let staged = reserved.into_temp_path();
+    fs::remove_file(&staged)?;
+    fs::copy(source, &staged)?;
+    let mode = fs::metadata(&staged)?.permissions().mode() & access.mode();
+    fs::set_permissions(&staged, Permissions::from_mode(mode))?;
+    Ok(staged)
 }
 
 /// The sweep's failure doing `what` to `path`.
@@ -178,23 +203,67 @@ impl LocalCas {
         })
     }
 
-    /// Makes `target` a file of its own holding the bytes of `source`, replacing what is there.
-    fn copy(&self, source: &Path, target: &Path, access: Access) -> Result<()> {
-        let bytes = fs::read(source).map_err(|error| failed("reading", source, &error))?;
+    /// Makes `target` a file of its own holding the bytes of `source`, with `access`, replacing
+    /// what is there.
+    ///
+    /// `remake` is called once when `source` is found gone, and the copy is tried again after it.
+    fn copy(
+        &self,
+        source: &Path,
+        target: &Path,
+        access: Access,
+        remake: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        self.copy_with(source, target, access, remake, |from, to| {
+            fs::rename(from, to)
+        })
+    }
+
+    /// [`copy`](Self::copy), with the step that moves the staged file onto `target` handed in.
+    ///
+    /// The copy is staged in the store's staging folder, which the state lock empties of what an
+    /// interrupted run left, and renamed onto `target`, so `target` is whole or absent. A rename
+    /// the system refuses because the two folders are on different file systems is followed by a
+    /// copy staged beside `target`.
+    fn copy_with(
+        &self,
+        source: &Path,
+        target: &Path,
+        access: Access,
+        remake: impl FnOnce() -> Result<()>,
+        rename: impl Fn(&Path, &Path) -> io::Result<()>,
+    ) -> Result<()> {
+        let copying = |error: &io::Error| failed("copying", source, error);
+        let staged = match stage_copy(&self.staging, source, access) {
+            Err(error) if error.kind() == ErrorKind::NotFound && !is_file(source) => {
+                remake()?;
+                stage_copy(&self.staging, source, access).map_err(|error| copying(&error))?
+            }
+            staged => staged.map_err(|error| copying(&error))?,
+        };
         clear_path(target).map_err(|error| failed("clearing", target, &error))?;
         self.make_parent(target)?;
-        let beside = target.parent().unwrap_or(&self.root);
-        write_whole(beside, target, &bytes, access)
-            .map_err(|error| failed("writing", target, &error))
+        match rename(&staged, target) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::CrossesDevices => {
+                let beside = target.parent().unwrap_or(&self.root);
+                let staged = stage_copy(beside, source, access).map_err(|error| copying(&error))?;
+                rename(&staged, target).map_err(|error| failed("writing", target, &error))
+            }
+            Err(error) => Err(failed("writing", target, &error)),
+        }
     }
 
     /// [`place`](ContentStore::place), with the step that makes a hard link handed in.
     ///
-    /// Where the store links, a link that fails for want of a directory, or because something
-    /// is at the path, is tried once more after that is seen to; a link that fails for any
-    /// other reason, or a second time, is followed by a copy, whose failure is the one
-    /// reported. The link is never made beside the path and renamed onto it: renaming one name
-    /// of a file onto another name of the same file does nothing, and leaves both.
+    /// A file that may be run is always a copy of the executable twin: a program that looks for
+    /// its libraries beside itself must be found under the name it was placed at, and a hard
+    /// link can be found under the store's name instead. Any other file, where the store links,
+    /// is linked; a link that fails for want of a directory, or because something is at the
+    /// path, is tried once more after that is seen to, and a link that fails for any other
+    /// reason, or a second time, is followed by a copy, whose failure is the one reported. The
+    /// link is never made beside the path and renamed onto it: renaming one name of a file onto
+    /// another name of the same file does nothing, and leaves both.
     fn place_by(
         &self,
         digest: &Digest,
@@ -218,14 +287,11 @@ impl LocalCas {
             }
         };
         let source = paths.for_mode(mode);
-        if self.placement()? == Placement::Link {
+        if mode == FileMode::Plain && self.placement()? == Placement::Link {
             let again = match link(source, &target) {
                 Ok(()) => return Ok(()),
                 Err(error) if error.kind() == ErrorKind::NotFound => {
                     self.make_parent(&target)?;
-                    if mode == FileMode::Executable {
-                        self.ensure_twin(&paths, digest)?;
-                    }
                     true
                 }
                 Err(error) if error.kind() == ErrorKind::AlreadyExists => {
@@ -238,7 +304,10 @@ impl LocalCas {
                 return Ok(());
             }
         }
-        self.copy(source, &target, access)
+        self.copy(source, &target, access, || match mode {
+            FileMode::Executable => self.ensure_twin(&paths, digest),
+            FileMode::Plain => Ok(()),
+        })
     }
 }
 
@@ -296,9 +365,11 @@ impl ContentStore for LocalCas {
 
     /// Makes the content with that digest the file at `at`.
     ///
-    /// A file that may be run is made from the executable twin, which is made first when it is
-    /// missing; any other from the blob. The file is a hard link where the store links, and a
-    /// copy where it does not or where the link cannot be made.
+    /// A file that may be run is a copy of the executable twin, which is made first when it is
+    /// missing, on every system: it is never a hard link, so a program is found under its own
+    /// name in the output directory and not under the twin's. Any other file is made from the
+    /// blob, as a hard link where the store links, and as a copy where it does not or where the
+    /// link cannot be made.
     fn place(&self, digest: &Digest, mode: FileMode, at: &OutputPath) -> Result<()> {
         self.place_by(digest, mode, at, |source, target| {
             fs::hard_link(source, target)
@@ -362,7 +433,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::fs::{self, OpenOptions};
     use std::io::{self, ErrorKind};
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
@@ -377,7 +448,7 @@ mod tests {
     use super::LocalCas;
     use crate::cas::blob::BlobPath;
     use crate::cas::placement::Placement;
-    use crate::state::StateLayout;
+    use crate::state::{Access, StateLayout};
 
     /// The blob of the bytes `hello`, below the workspace root.
     const HELLO: &str =
@@ -864,11 +935,9 @@ mod tests {
     }
 
     #[test]
-    fn one_blob_placed_plain_and_executable_uses_two_inodes() {
+    fn one_blob_placed_plain_and_executable_shares_an_inode_only_for_the_plain_file() {
         let (_dir, root, cas) = store();
-        if !links(&root) {
-            return;
-        }
+        cas.placement.set(Placement::Link).unwrap();
         let digest = cas.put(b"hello").unwrap();
 
         cas.place(&digest, FileMode::Plain, &at("lib/text"))
@@ -882,10 +951,42 @@ mod tests {
         let twin = inode_of(&root.join(format!("{HELLO}.x")));
         assert_ne!(blob, twin);
         assert_eq!(inode_of(&root.join("out/lib/text")), blob);
-        assert_eq!(inode_of(&root.join("out/bin/tool")), twin);
-        assert_eq!(inode_of(&root.join("out/bin/other")), twin);
         assert_eq!(mode_of(&root.join("out/lib/text")), 0o444 & allowed(&root));
-        assert_eq!(mode_of(&root.join("out/bin/tool")), 0o555 & allowed(&root));
+        let (tool, other) = (root.join("out/bin/tool"), root.join("out/bin/other"));
+        assert_ne!(inode_of(&tool), inode_of(&other));
+        for copy in [&tool, &other] {
+            assert!(![blob, twin].contains(&inode_of(copy)));
+            assert_eq!(fs::metadata(copy).unwrap().nlink(), 1);
+            assert_eq!(
+                (mode_of(copy), fs::read(copy).unwrap()),
+                (0o555 & allowed(&root), b"hello".to_vec())
+            );
+        }
+        assert_eq!(
+            fs::metadata(root.join(format!("{HELLO}.x")))
+                .unwrap()
+                .nlink(),
+            1
+        );
+    }
+
+    #[test]
+    fn a_runnable_file_replaced_under_a_store_that_links_is_a_copy_again() {
+        let (_dir, root, cas) = store();
+        cas.placement.set(Placement::Link).unwrap();
+        let digest = cas.put(b"hello").unwrap();
+        let placed = root.join("out/bin/tool");
+        fs::create_dir_all(placed.parent().unwrap()).unwrap();
+        fs::write(&placed, b"an older output").unwrap();
+
+        cas.place(&digest, FileMode::Executable, &at("bin/tool"))
+            .unwrap();
+
+        assert_ne!(
+            inode_of(&placed),
+            inode_of(&root.join(format!("{HELLO}.x")))
+        );
+        assert_eq!(fs::read(&placed).unwrap(), b"hello");
     }
 
     #[test]
@@ -963,7 +1064,7 @@ mod tests {
         let (_dir, root, cas) = store();
         cas.placement.set(Placement::Link).unwrap();
         let digest = cas.put(b"hello").unwrap();
-        let placed = root.join("out/bin/tool");
+        let placed = root.join("out/text");
 
         // Whatever the link answers, and it answers differently on each system, the file is made.
         for kind in [
@@ -974,46 +1075,154 @@ mod tests {
         ] {
             let failing = |_: &Path, _: &Path| Err(io::Error::from(kind));
 
-            cas.place_by(&digest, FileMode::Executable, &at("bin/tool"), failing)
+            cas.place_by(&digest, FileMode::Plain, &at("text"), failing)
                 .unwrap();
 
             assert_eq!(
                 (mode_of(&placed), fs::read(&placed).unwrap()),
-                (0o555 & allowed(&root), b"hello".to_vec()),
+                (0o444 & allowed(&root), b"hello".to_vec()),
                 "{kind:?}"
             );
-            assert_ne!(
-                inode_of(&placed),
-                inode_of(&root.join(format!("{HELLO}.x"))),
-                "{kind:?}"
-            );
+            assert_ne!(inode_of(&placed), inode_of(&root.join(HELLO)), "{kind:?}");
         }
     }
 
     #[test]
-    fn a_twin_gone_when_the_link_is_made_is_made_again() {
+    fn a_runnable_file_is_never_linked() {
         let (_dir, root, cas) = store();
         cas.placement.set(Placement::Link).unwrap();
         let digest = cas.put(b"hello").unwrap();
         let attempts = Cell::new(0);
-        // The first attempt finds the twin gone, as it would be had something removed it since
-        // the store saw it; the second is the real link.
-        let link = |source: &Path, target: &Path| {
+        let linking = |_: &Path, _: &Path| {
             attempts.set(attempts.get() + 1);
-            if attempts.get() == 1 {
-                fs::remove_file(source)?;
-            }
-            fs::hard_link(source, target)
+            Ok(())
         };
 
-        cas.place_by(&digest, FileMode::Executable, &at("bin/tool"), link)
+        cas.place_by(&digest, FileMode::Executable, &at("bin/tool"), linking)
+            .unwrap();
+
+        assert_eq!(attempts.get(), 0);
+        assert_eq!(fs::read(root.join("out/bin/tool")).unwrap(), b"hello");
+    }
+
+    /// The rename of the system, in a form that takes paths of any lifetime.
+    fn move_file(from: &Path, to: &Path) -> io::Result<()> {
+        fs::rename(from, to)
+    }
+
+    /// A store holding `hello` whose twin is made, with the digest and the blob paths.
+    fn store_with_twin() -> (tempfile::TempDir, PathBuf, LocalCas, Digest, BlobPath) {
+        let (dir, root, cas) = store();
+        let digest = cas.put(b"hello").unwrap();
+        let paths = BlobPath::of(&cas.blobs, &digest);
+        cas.ensure_twin(&paths, &digest).unwrap();
+        (dir, root, cas, digest, paths)
+    }
+
+    #[test]
+    fn a_copy_is_staged_in_the_stores_staging_folder() {
+        let (_dir, root, cas, _digest, paths) = store_with_twin();
+        let twin = paths.for_mode(FileMode::Executable);
+        let target = root.join("out/bin/tool");
+        let staged_in = RefCell::new(Vec::new());
+        let rename = |from: &Path, to: &Path| {
+            staged_in
+                .borrow_mut()
+                .push(from.parent().unwrap().to_path_buf());
+            fs::rename(from, to)
+        };
+
+        cas.copy_with(twin, &target, Access::ReadOnlyRunnable, || Ok(()), rename)
+            .unwrap();
+
+        assert_eq!(staged_in.into_inner(), std::slice::from_ref(&cas.staging));
+        assert_eq!(fs::read(&target).unwrap(), b"hello");
+        assert_eq!(mode_of(&target), 0o555 & allowed(&root));
+        assert_eq!(fs::read_dir(&cas.staging).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root.join("out/bin")).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn a_copy_across_file_systems_is_staged_beside_the_target() {
+        let (_dir, root, cas, _digest, paths) = store_with_twin();
+        let twin = paths.for_mode(FileMode::Executable);
+        let target = root.join("out/bin/tool");
+        let attempts = Cell::new(0);
+        // The first rename, out of the store's staging folder, is refused as it is between two
+        // file systems; the second, from beside the target, is the real one.
+        let rename = |from: &Path, to: &Path| {
+            attempts.set(attempts.get() + 1);
+            if attempts.get() == 1 {
+                return Err(io::Error::from(ErrorKind::CrossesDevices));
+            }
+            fs::rename(from, to)
+        };
+
+        cas.copy_with(twin, &target, Access::ReadOnlyRunnable, || Ok(()), rename)
             .unwrap();
 
         assert_eq!(attempts.get(), 2);
-        assert_eq!(
-            inode_of(&root.join("out/bin/tool")),
-            inode_of(&root.join(format!("{HELLO}.x")))
-        );
-        assert_eq!(fs::read(root.join("out/bin/tool")).unwrap(), b"hello");
+        assert_eq!(fs::read(&target).unwrap(), b"hello");
+        assert_eq!(mode_of(&target), 0o555 & allowed(&root));
+        assert_eq!(fs::read_dir(&cas.staging).unwrap().count(), 0);
+        assert_eq!(fs::read_dir(root.join("out/bin")).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn a_twin_gone_when_the_copy_is_read_is_made_again() {
+        let (_dir, root, cas, digest, paths) = store_with_twin();
+        let twin = paths.for_mode(FileMode::Executable);
+        fs::remove_file(twin).unwrap();
+        let target = root.join("out/bin/tool");
+        let calls = Cell::new(0);
+        let remake = || {
+            calls.set(calls.get() + 1);
+            cas.ensure_twin(&paths, &digest)
+        };
+
+        cas.copy_with(twin, &target, Access::ReadOnlyRunnable, remake, move_file)
+            .unwrap();
+
+        assert_eq!(calls.get(), 1);
+        assert_eq!(fs::read(&target).unwrap(), b"hello");
+        assert_eq!(mode_of(&target), 0o555 & allowed(&root));
+    }
+
+    #[test]
+    fn a_source_that_stays_gone_is_reported() {
+        let (_dir, root, cas, _digest, paths) = store_with_twin();
+        let twin = paths.for_mode(FileMode::Executable);
+        fs::remove_file(twin).unwrap();
+        let target = root.join("out/bin/tool");
+
+        let error = cas
+            .copy_with(
+                twin,
+                &target,
+                Access::ReadOnlyRunnable,
+                || Ok(()),
+                move_file,
+            )
+            .unwrap_err();
+
+        assert!(error.to_string().contains("copying"), "{error}");
+        assert!(!target.exists());
+        assert_eq!(fs::read_dir(&cas.staging).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_copy_has_the_access_asked_for_whatever_the_source_allows() {
+        let (_dir, root, cas) = store();
+        let digest = cas.put(b"hello").unwrap();
+        let blob = BlobPath::of(&cas.blobs, &digest)
+            .for_mode(FileMode::Plain)
+            .to_path_buf();
+        damage(&blob, b"hello");
+        assert_eq!(mode_of(&blob) & 0o200, 0o200);
+
+        cas.copy(&blob, &root.join("out/text"), Access::ReadOnly, || Ok(()))
+            .unwrap();
+
+        assert_eq!(mode_of(&root.join("out/text")), 0o444 & allowed(&root));
     }
 }

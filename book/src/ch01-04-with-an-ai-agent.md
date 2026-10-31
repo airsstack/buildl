@@ -44,22 +44,27 @@ other skills there stay. Running it again gives the same result.
 |---|---|---|
 | `--claude` | install the skills as a Claude Code plugin, `buildl@buildl` | |
 | `--dir PATH` | copy the two skills into `PATH` | |
-| `--ref BRANCH` | the git branch to install from. `--dir` from a clone ignores it | `main` |
+| `--ref BRANCH` | the branch of the skills and, when it is not `main`, of the `buildl` built from it. `--dir` from a clone ignores it | `main` |
 | `--dry-run` | print every command and run none | off |
 
 Give exactly one of `--claude` and `--dir`. `--dry-run` shows what would happen before you let it.
 
-**It takes a while.** When `buildl` is missing, the script builds it with Cargo, and on a machine
-with nothing cached that takes several minutes, as [Installation](ch01-01-installation.md) says.
-It runs `cargo install --locked --git https://github.com/airsstack/buildl --branch BRANCH
-buildl-cli`, where `BRANCH` is `--ref` (`main` by default). With `--dir` from a clone it builds the
-`buildl` in that clone instead, so the program and the skills come from the same source. `airsl`
-comes from crates.io with `cargo install --locked airsl-cli`. If `buildl` and `airsl` are already
-installed, only the skills are installed and it finishes quickly.
+**It needs no Rust by default.** When `buildl` is missing, the script runs the same installer as
+[Installation](ch01-01-installation.md), `https://airsstack.github.io/buildl/install.sh`, which
+downloads the latest prebuilt release in seconds. `airsl` comes the same way, from
+`https://airsstack.github.io/airsl/install.sh`. If `buildl` and `airsl` are already installed, only
+the skills are installed and it finishes quickly.
 
-The script needs Rust (from <https://rustup.rs>) only when it has to build something. For
-`--claude` it also needs the `claude` command, and for `--dir` from GitHub it needs `curl` and
-`tar`. When one is missing it says so and stops.
+Cargo builds `buildl` in two cases, and then it takes several minutes on a machine with nothing
+cached. With `--dir` from a clone, the script builds the `buildl` in that clone, so the program and
+the skills come from the same source. With a `--ref` other than `main`, it runs
+`cargo install --locked --git https://github.com/airsstack/buildl --branch BRANCH buildl-cli`, so
+the `buildl` matches the skills on that branch.
+
+The script needs Rust (from <https://rustup.rs>) only for those two cases, and only when `buildl` is
+not already installed. It needs `curl` to fetch the installer of whichever of `buildl` and `airsl` is
+missing, the `claude` command for `--claude`, and `curl` and `tar` for `--dir` from GitHub. When one
+is missing it says so and stops.
 
 ## What the agent does with the `buildl` skill
 

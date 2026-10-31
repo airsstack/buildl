@@ -20,8 +20,7 @@ use std::time::UNIX_EPOCH;
 
 use buildl_core::Timestamp;
 
-use crate::state::write::STAGED_PREFIX;
-use crate::state::{Owner, Scratch, StateLayout, clear_path};
+use crate::state::{Owner, STAGED_PREFIX, Scratch, StateLayout, clear_path};
 
 /// Proof that this process alone uses a state directory. Dropping it frees the directory.
 ///

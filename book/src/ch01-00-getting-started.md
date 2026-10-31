@@ -3,7 +3,7 @@
 In this chapter you will install `buildl`, build a workspace with one target in it, and then ask
 `buildl` what it did. There are four sections:
 
-- [Installation](ch01-01-installation.md) builds the `buildl` binary and puts it on your `PATH`.
+- [Installation](ch01-01-installation.md) installs `buildl` and puts it on your `PATH`.
 - [Hello, buildl](ch01-02-hello-buildl.md) writes a `buildl.toml` and a `build.lua` from nothing,
   and builds them.
 - [What Did It Do?](ch01-03-what-did-it-do.md) asks `buildl` what would rebuild and why, what a

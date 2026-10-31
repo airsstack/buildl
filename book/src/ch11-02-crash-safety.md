@@ -106,8 +106,9 @@ Everything under `.buildl/` follows the rule above. Here is what it holds:
 A few details of the cas matter for safety:
 
 - **Blobs are read-only**, mode `0444`. A blob that was ever placed as an executable has a twin
-  beside it, `cdef….x`, holding the same bytes with mode `0555`, because a file's mode belongs to
-  the file itself and a hard link shares it.
+  beside it, `cdef….x`, holding the same bytes with mode `0555`. It is the source a runnable
+  output is copied from: the copy has the run bit, and the blob, which a plain output links to,
+  does not.
 - **A read checks its digest.** Content that no longer has the digest it is stored under is removed
   and reported as not held, so a damaged blob is never put back as an output.
 - **An output is a manifest.** It is described by an `OutputManifest`: either one file, with its
@@ -117,9 +118,13 @@ A few details of the cas matter for safety:
 - **Outputs are put back whole or not at all.** Placing an output starts by clearing its path, so
   nothing an earlier build left there survives. If a file cannot be placed, the path is cleared
   again and the target fails, so `out/` holds an output whole or not at all.
-- **`out/` holds hard links into the cas** where that protects the store, and copies everywhere
-  else. On a filesystem where a read-only file can still be written through, as root for example,
-  every placement is a copy.
+- **`out/` holds copies of every file that may be run**, programs and the shared libraries that
+  carry the run bit, on every system. A program that finds its libraries next to itself
+  (`@loader_path` on macOS) must be found under its name in `out/`, and a hard link to the twin
+  can be found under the twin's name in the cas instead, where those libraries are not. Any other
+  file is a hard link into the cas where that protects the store, and a copy everywhere else. On a
+  filesystem where a read-only file can still be written through, as root for example, every
+  placement is a copy.
 
 The action cache writes one line to `cache.journal` for each row, because rewriting the whole of
 `cache.json` for every target would grow with the square of the build. The journal is folded into

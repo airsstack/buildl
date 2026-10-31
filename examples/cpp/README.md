@@ -84,7 +84,8 @@ buildl test              # tests: 1 passed
 ./out/hello
 ```
 
-The tag `plugin-c-v0.1.0` is for a published plugin. From `examples/`, `sh check.sh cpp` runs the
-shared checks on a copy, after `prepare.sh` has made a git repository from this checkout's
-`plugins/c`, tagged it and pointed the copy's `buildl.toml` at it; then `assert.sh` checks the
-output, the library's file name, that editing `banner.h` builds one target, and the test.
+The tag `plugin-c-v0.1.0` is published, and fetching it is the normal route. From `examples/`,
+`sh check.sh cpp` runs the shared checks on a copy, as CI does, with this checkout's plugin instead:
+`prepare.sh` makes a git repository from this checkout's `plugins/c`, tags it and points the copy's
+`buildl.toml` at it; then `assert.sh` checks the output, the library's file name, that editing
+`banner.h` builds one target, and the test.

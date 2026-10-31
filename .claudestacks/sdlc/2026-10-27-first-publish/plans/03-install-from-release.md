@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-10-31
 depends-on: [02]
 built-on: a9f5951ee52c
@@ -204,3 +204,65 @@ the site root.
 - `cargo make dod`, `cargo make skills` and `cargo make book-build` green on PR B's head.
 - `curl -LsSf https://airsstack.github.io/buildl/install.sh | sh` installs `buildl 0.1.0`.
 - `grep` finds no install instruction that leads with git or claims buildl is unpublished.
+
+## Review findings
+
+One reviewer pass over Tasks 1-4 (2026-10-31); it re-ran `cargo make dod` (exit 0) and named no
+finding blocking. One fix round closed C1-C9:
+
+| # | Tier | Finding | Disposition |
+|---|---|---|---|
+| C1 | 🟡 | nothing guarded the prebuilt routes, the curl refusal or `BUILDL_VERSION` refusal | fixed: the `skills` task dry-runs a copy of `skills/install.sh` outside a clone on a `PATH` without cargo (both pointers printed, no `cargo install`), the same without curl (exit 1), and `BUILDL_VERSION='1;2' sh install/install.sh` (exit 1); all network-free |
+| C2 | 🔵 | the dry run printed `curl … \| sh`, which the code deliberately avoids | fixed: it prints `curl -fsSL URL, then sh -c on the whole download` |
+| C3 | 🔵 | `install/install.sh` usage named the deprecated `--no-modify-path` | fixed: `BUILDL_CLI_NO_MODIFY_PATH=1` |
+| C4 | 🔵 | ch01-01 said the installer checks the `.sha256` file | fixed: it checks a checksum built into the installer |
+| C5 | 🔵 | ch01-01's no-PATH-change example was easy to misapply with `curl \| sh` | fixed: `curl … \| BUILDL_CLI_NO_MODIFY_PATH=1 sh` |
+| C6 | 🔵 | the `rust-toolchain.toml` sentence sat under "From GitHub" | fixed: moved to "From a checkout" |
+| C7 | 🔵 | ch01-04's curl/Rust sentence was not exact | fixed to match the script |
+| C8 | 🔵 | README's agent paragraph omitted the clone and non-`main` `--ref` cases | fixed |
+| C9 | 🔵 | ragged wrap in `examples/c/README.md` | fixed |
+| S1 | 🔵 | spec section 6's ch01-04 row says Rust only "when installing from a clone" | recorded under Deviations |
+
+## Probe results
+
+- 2026-10-31: `https://airsstack.github.io/airsl/install.sh` returns HTTP 200; airsl's
+  `install/install.sh` is 78 lines; its `pages.yml:49` copies `install.sh` and `install.ps1` into
+  `book/book/` (buildl copies only `install.sh`: no Windows target).
+- Task 1: `shellcheck install/install.sh` clean; `BUILDL_VERSION='1;2'` exit 1 (`is not a
+  version`); `BUILDL_VERSION=9.9.9` exit 1 naming `9.9.9` and the releases page; latest and
+  `BUILDL_VERSION=v0.1.0`, each into a temp dir with `BUILDL_CLI_NO_MODIFY_PATH=1`, install a
+  `buildl` printing `buildl 0.1.0`.
+- Task 2: copy outside a clone, `PATH` of sh, curl, tar and core utilities: default ref prints both
+  pointers and no `cargo install`; the unchanged script exits 1 with `install Rust from
+  https://rustup.rs` (seen failing first); `--ref topic` with cargo prints `cargo install --locked
+  --git https://github.com/airsstack/buildl --branch topic buildl-cli`, without cargo exits 1; the
+  clone run prints `cargo install --locked --path <clone>/crates/buildl-cli`.
+- Task 3: `cargo make book-build` exit 0; `grep -rn "not on crates.io yet" README.md book/src`
+  finds nothing; `cargo install --git` only at README's GitHub line and ch01-01's "From GitHub";
+  the first install command in README and ch01-01 is the curl line.
+- Task 4: `sh examples/check.sh examples/c` and `examples/cpp` ok; the old wording grep finds
+  nothing.
+- Batch: `cargo make skills`, `cargo make dod`, `cargo deny check` each exit 0; after the fix round
+  `cargo make skills` and `cargo make book-build` exit 0.
+
+## Deviations
+
+- 2026-10-31 (the spec's, S1): spec section 6's ch01-04 row says Rust is needed "only when
+  installing from a clone"; the same table's `skills/install.sh` row and this plan's Task 2 also
+  build with cargo for a `--ref` other than `main`. Built as the plan says; the docs name both
+  cases. The spec's other row and the plan agree, so no claim was disproven by a run.
+- 2026-10-31 (the plan's): `cargo make skills` now also covers Task 2's prebuilt routes and Task 1's
+  version refusal (review finding C1); the plan named those checks as manual runs only.
+- 2026-10-31 (found by PR B's CI, fixed in this slice on the author's word): run 41166268707, job
+  `Examples (macos-latest)`, failed at `examples/cpp/assert.sh` running `./out/hello`: `dyld: Library
+  not loaded: @rpath/libgreet.dylib … Referenced from: …/.buildl/cas/d1/…x`. `out/hello` was a hard
+  link to its executable twin in the store (link count 2), and the c plugin links with
+  `-Wl,-rpath,@loader_path`, so when macOS resolved the program to the twin's name it searched the
+  store's folder. Intermittent: the same job passed on `main` and on PR #23, and no local ordering
+  (nine tried, plus six `examples/check.sh examples/cpp` runs) reproduced it. The author chose copies
+  for every runnable output on every OS: `LocalCas` now copies a `FileMode::Executable` file into
+  `out/` from the twin (`fs::copy`, staged in the store's staging folder, renamed into place; staged
+  beside the target only across file systems); plain files keep hard links. One review pass (2 🟡
+  blocking doc findings, 3 🟡, 5 🔵, 1 ❓ answered "the run bit stays the boundary"), one fix round;
+  `cargo make dod` green and `examples/check.sh` ok for `c` and `cpp`. The change is crate source
+  after `0.1.0`, so it ships in the next release; `CHANGELOG.md` records it under Unreleased.
