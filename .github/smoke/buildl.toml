@@ -1,0 +1,10 @@
+[workspace]
+name   = "smoke"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run = ["sh"]
+fs.read  = ["."]
+fs.write = ["out", ".buildl"]

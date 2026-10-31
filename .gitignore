@@ -30,3 +30,5 @@ book/book/
 # What building an example in place leaves behind
 examples/*/out/
 examples/*/.buildl/
+.github/smoke/out/
+.github/smoke/.buildl/
