@@ -177,7 +177,7 @@ $ curl -LsSf https://airsstack.github.io/buildl/install.sh | sh
 
 | File | Change |
 |---|---|
-| `CHANGELOG.md` (new) | Keep a Changelog. One entry, headed `## 0.1.0 — <release date>`, covering the four crates and the `c` plugin `0.1.0`. dist takes the GitHub release's title and notes from it: on the scratch copy, with the heading `## 0.1.0 — 2026-11-01`, `dist plan --tag buildl-cli-v0.1.0 --output-format=json` gave `announcement_title` `'0.1.0 — 2026-11-01'` and `announcement_changelog` holding the entry's body; with `## buildl-cli 0.1.0 — 2026-11-01` or `## buildl 0.1.0 — 2026-11-01` it gave `announcement_changelog` `None`. The heading therefore starts with the version. |
+| `CHANGELOG.md` (new) | Keep a Changelog. One entry, headed `## 0.1.0 — <release date>`, covering the four crates and the `c` plugin `0.1.0`. dist takes the GitHub release's title and its `## Release Notes` section from it (the rest of the body is dist's own, section 7): on the scratch copy, with the heading `## 0.1.0 — 2026-11-01`, `dist plan --tag buildl-cli-v0.1.0 --output-format=json` gave `announcement_title` `'0.1.0 — 2026-11-01'` and `announcement_changelog` holding the entry's body; with `## buildl-cli 0.1.0 — 2026-11-01` or `## buildl 0.1.0 — 2026-11-01` it gave `announcement_changelog` `None`. The heading therefore starts with the version. |
 | `Cargo.toml` (workspace) | `[profile.dist]` from `dist init`; `homepage = "https://airsstack.github.io/buildl/"` under `[workspace.package]` |
 | `crates/*/Cargo.toml` | `homepage.workspace = true` |
 | `Makefile.toml` | task `publish-dry-run`: `cargo publish --dry-run --workspace` (P1) |
@@ -223,7 +223,23 @@ of `buildl-cli` names a curl command that Pages does not serve yet; its second c
 `cargo install --locked buildl-cli`, works from step 5 on.
 
 No commit, tag, CHANGELOG entry or release note carries AI attribution (intent, Constraints).
-dist builds the release notes from the CHANGELOG entry alone (section 6).
+The release body is the `announcement_github_body` of dist's manifest: the workflow `dist generate`
+wrote for buildl on the scratch copy passes it as `ANNOUNCEMENT_BODY`
+(`buildl-cli-release.yml:281`), as airsl's does (`airsl-cli-release.yml:295`). On a scratch copy
+whose `dist-workspace.toml` set every section 3 key (`cargo-dist-version`, `ci`, `installers`, the
+six `targets`, `install-path`, `hosting`, `install-updater`, `tag-namespace`,
+`github-attestations`, `global-artifacts-jobs`, `pr-run-mode`), with a `## 0.1.0 — 2026-11-01`
+CHANGELOG entry and after `dist generate` (run by the spec reviewer, 2026-10-31; the manifest
+reports `pr_run_mode` `upload`), `dist host --steps=check --tag=buildl-cli-v0.1.0
+--output-format=json` exited 0 and gave a body whose headings are, in order, `## Release Notes` (holding the entry's `### Added` text),
+`## Install buildl-cli 0.1.0`, `## Download buildl-cli 0.1.0` (a table of the six archives with
+their checksums) and `## Verifying GitHub Artifact Attestations`. Only the first section is
+written by this repository; the other three are dist's. dist's attestation section contains the
+words "generated with" ("attestations generated with GitHub Artifact Attestations"), so a check
+for attribution in the body looks for `claude` and `co-authored-by` (case-insensitive), not for
+"generated with"; on that body, `grep -niE 'claude|co-authored-by'` finds nothing. The check runs
+twice on real text: on `CHANGELOG.md` when its entry is written, and on the published release's
+body once step 7 has created it.
 
 ## 8. Error handling
 
@@ -247,6 +263,7 @@ touches what was published, meaning anything packaged into the four crates.
 | `cargo make skills` | `install.sh` passes shellcheck and its dry-run and usage checks (P9) |
 | `cargo make book-build` | the rewritten pages build |
 | the release workflow's run on PR A | all six archives build, match their checksums, report `buildl 0.1.0`, and pass section 4's checks on their own platforms |
+| `grep -niE 'claude\|co-authored-by'` on `CHANGELOG.md` and on the published release's body | no AI attribution in the notes (section 7) |
 | steps 8 and 9 of section 7 | the published crates, the installer, the Pages pointer and the plugin tag work for a user |
 
 ## 10. Non-goals
