@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-31
 built-on: a9f5951ee52c
 ---
@@ -279,3 +279,5 @@ Batch C (Tasks 4-5), reviewer re-ran `cargo make dod`: exit 0. Blocking: `CHANGE
 - 2026-10-31, plan defect — Task 2's parse proof named `python3 -I -c` with a YAML parser or `actionlint`; neither exists on this machine. The check ran with `ruby -ryaml`, and the plan's proof line was amended.
 - 2026-10-31 — Task 5's `cargo make publish-dry-run` cannot pass in an uncommitted tree, since the task omits `--allow-dirty` by design. The proof ran as `cargo publish --dry-run --workspace --allow-dirty`; the task itself runs at a clean commit in plan 02 Task 2.
 - 2026-10-31, Task 2 defect found by PR A's first release run (run 41155079169) — all six archives built, and all six smoke jobs failed at "A second build is served from the cache": the log shows `1 cached`, then `the second build did not report '1 cached'`. buildl prints its summary on stderr, and the step captured only stdout (`out=$("$BUILDL" build)`). Fixed to `2>&1`; locally the fixed check against the debug binary printed `captured: [1 cached]` / `CHECK-PASS`. `--version` prints on stdout (`buildl 0.1.0`), so that step needed no change.
+
+Task 6 result: PR #23 second release run (after `a9f07a7`) passed `plan`, all six `build-local-artifacts`, `build-global-artifacts`, `Match archives to runners` and all six smoke jobs, with `host` and `announce` skipped; every CI job passed. `gh release list` printed nothing (0 releases). PR #23 merged 2026-10-31T01:40:48Z as `6a273ba`.

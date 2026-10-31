@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-10-31
 depends-on: [01]
 built-on: a9f5951ee52c
@@ -169,3 +169,49 @@ through a new chain (spec section 8 row 4). No commit.
 - `buildl-cli-v0.1.0` and `plugin-c-v0.1.0` point at R; the GitHub release holds six attested,
   smoke-tested archives, with the changelog entry as its Release Notes section.
 - Installed from crates.io and from the release installer, `buildl --version` prints `buildl 0.1.0`.
+
+## Probe results
+
+- 2026-10-31, Task 1: R = `6a273ba36da296f2a24bf5e75a6c4206bd859cfc` (PR #23's merge; `git rev-parse
+  origin/main` equals it). The changelog heading is already `0.1.0 — 2026-10-31`, so nothing changed.
+  `dist plan --tag buildl-cli-v0.1.0 --output-format=json` at R: `announcement_title` `0.1.0 —
+  2026-10-31`, `announcement_changelog` 3785 characters.
+- 2026-10-31, Task 2, at a clean checkout of R (the worktree detached at R; only plan files under
+  `.claudestacks/` modified, which no crate packages): `cargo make dod` exit 0; `cargo deny check`
+  exit 0 (`advisories ok, bans ok, licenses ok, sources ok`); `cargo make publish-dry-run` exit 0,
+  packaging `buildl-core`, `buildl-lua`, `buildl`, `buildl-cli` in that order, with four
+  `warning: aborting upload due to dry run`; `cargo info <name>` for all four names, run outside the
+  workspace, prints `error: could not find`.
+
+- 2026-10-31, Task 3: the author ran `cargo publish --workspace` in the worktree at R. Outside the
+  workspace, `cargo info <crate>@0.1.0` shows `version: 0.1.0` for `buildl-core`, `buildl-lua`,
+  `buildl` and `buildl-cli`, and each published `.crate` file's `.cargo_vcs_info.json` records
+  `"sha1":"6a273ba36da296f2a24bf5e75a6c4206bd859cfc"`.
+- 2026-10-31, Task 4: `git ls-remote --tags origin` lists `refs/tags/buildl-cli-v0.1.0` and
+  `refs/tags/plugin-c-v0.1.0`, both at R. `gh run list --workflow buildl-cli-release.yml` shows one
+  push run, `41163666044`, for `buildl-cli-v0.1.0` and none for `plugin-c-v0.1.0`.
+- 2026-10-31, Task 5: run `41163666044` concluded `success`: `plan`, six `build-local-artifacts`,
+  `build-global-artifacts`, the runner match, six smoke jobs, `host`, `announce`. The release
+  `buildl-cli-v0.1.0` is named `0.1.0 — 2026-10-31`, not a draft or prerelease; body headings
+  `## Release Notes` (holding `### Added`), `## Install buildl-cli 0.1.0`, `## Download buildl-cli
+  0.1.0`, `## Verifying GitHub Artifact Attestations`; zero lines match `claude|co-authored-by`.
+  Assets: the six `buildl-cli-<target>.tar.xz` with a `.sha256` each, `buildl-cli-installer.sh`,
+  `sha256.sum`, `source.tar.gz` (with `.sha256`) and `dist-manifest.json`. `gh attestation verify`
+  of `buildl-cli-aarch64-apple-darwin.tar.xz` with `--repo airsstack/buildl` exits 0; with `--format
+  json` it names `https://github.com/airsstack/buildl`, digest R, `refs/tags/buildl-cli-v0.1.0` and
+  `buildl-cli-release.yml@refs/tags/buildl-cli-v0.1.0` (without a terminal it prints nothing).
+- 2026-10-31, Task 6: `cargo install --locked buildl-cli --root <tmp1>` exit 0, `buildl 0.1.0`.
+  The release's `buildl-cli-installer.sh` with `BUILDL_CLI_INSTALL_DIR=<tmp2>` and
+  `BUILDL_CLI_NO_MODIFY_PATH=1` exit 0 (`everything's installed!`); `<tmp2>/buildl --version` prints
+  `buildl 0.1.0`. In a fresh copy of `examples/c` (`rev = "plugin-c-v0.1.0"`), `buildl plugins
+  fetch` prints `fetched c 6a273ba36da296f2a24bf5e75a6c4206bd859cfc` and writes `buildl.lock`;
+  `buildl build` exits 0 (`7 built, 1 cached`).
+
+## Deviations
+
+- 2026-10-31, Task 2 (the plan's): `cargo info <name>` run inside the workspace describes the local
+  workspace package instead of querying crates.io, so it printed package metadata (e.g. `repository:
+  https://github.com/airsstack/buildl`) rather than `could not find`. Run from a directory outside
+  the workspace, all four print `error: could not find \`<name>\` in registry
+  \`https://github.com/rust-lang/crates.io-index\``. The `names still free` check and Task 3's `on
+  crates.io` check run outside the workspace.
