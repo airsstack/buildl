@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-10-31
 built-on: a9f5951ee52c
 ---
@@ -105,7 +105,8 @@ Checks, each a named step:
 **Proof:** the workflow runs only inside the release workflow, so its proof is Task 6's PR run.
 Locally:
 - `smoke workflow parses` — `python3 -I -c` loading the file with a YAML parser succeeds, or
-  `actionlint` on the file reports nothing when it is installed
+  `actionlint` on the file reports nothing when it is installed; where neither is available,
+  `ruby -ryaml -e 'YAML.load_file(ARGV[0])'` on the file succeeds
 - `smoke runner table covers dist` — the six triples in the table are exactly the `targets` row
   of spec section 3 (Task 3 then writes the same six into `dist-workspace.toml`)
 
@@ -241,3 +242,39 @@ merges PR A.
 - `dist plan --tag buildl-cli-v0.1.0` announces `buildl-cli 0.1.0` with six archives and notes
   from `CHANGELOG.md`.
 - PR A's release run green on all six targets, with nothing published.
+
+## Review findings
+
+Batch A (Tasks 1-2), reviewer re-ran `cargo make dod`: exit 0. Blocking: none.
+- comment-accuracy — the smoke workflow said a musl binary passing in Alpine is static; Alpine ships musl's loader, so it shows only that no glibc is needed — `.github/workflows/buildl-cli-smoke.yml:38` — fixed, comment reworded
+- shell hygiene — `$(echo $missing)` joined lines by unquoted expansion — `buildl-cli-smoke.yml:65` — fixed with `jq '[…] | join(" ")'`; `jq -r '[.[] | select(.runner == null) | .target] | join(" ")'` on a 3-row sample printed `a b`
+- check precision — `grep -q '1 cached'` also matched `11 cached` — `buildl-cli-smoke.yml:166` — fixed, `grep -qw`
+- supply-chain hygiene — `alpine:3.20` is a movable tag past upstream support — `buildl-cli-smoke.yml:133` — declined: spec section 4 names the tag
+- amendment hygiene — Task 2's parse proof ran with `ruby -ryaml`, the plan named only python3 or actionlint — plan Task 2 — fixed, plan amended; `ruby -ryaml -e 'YAML.load_file(ARGV[0]); puts "ok"'` printed `ok`
+
+Batch B (Task 3), reviewer re-ran `cargo make dod` and `cargo deny check`: exit 0; `dist generate --check`: exit 0. Blocking: none.
+- doc-comment — `installers` and `targets` carried dist's generic comments, not reasons — `dist-workspace.toml:10,12` — fixed; `dist generate --check` printed nothing and exited 0 after the edit
+- doc-comment — "Only `buildl-cli-v*` tags" is looser than the glob, which also matches `buildl-cli-0.1.0` — `dist-workspace.toml:22` — fixed, reworded
+- workspace — `[profile.dist] lto = "thin"` repeats the release profile's value — `Cargo.toml:136` — declined: `dist init` output, named by this plan
+- spec citation — spec section 7 cites `buildl-cli-release.yml:281` from the scratch copy; the generated file has it at L295 — `spec.md` — declined here: editing the approved spec moves its fingerprint; left for `design`
+
+Batch C (Tasks 4-5), reviewer re-ran `cargo make dod`: exit 0. Blocking: `CHANGELOG.md:42-43`.
+- doc accuracy (🟡, blocking) — the changelog said `--no-remote-execute` turns the remote off; it turns off remote execution only and keeps the remote cache (book appendix-01, ch09-00) — `CHANGELOG.md:42-43` — fixed; `grep -c 'remote execution only' CHANGELOG.md` printed `1`, and `dist plan … --output-format=json` still gave title `0.1.0 — 2026-10-31` and a 3785-character changelog
+- doc accuracy — "`0.y.z` … middle number is breaking" is false for `0.0.z` — `CHANGELOG.md:5` — fixed, `0.1.z`
+- doc accuracy — "publishes … the `c` plugin"; the plugin is a git tag, not a registry publish — `CHANGELOG.md:12-13` — fixed, "tags the `c` plugin as `plugin-c-v0.1.0`"
+- doc accuracy — plugins fetched "into `buildl.lock`"; the lock pins, the store holds the files — `CHANGELOG.md:34` — fixed, "pinned in `buildl.lock`"
+- reversion guard — no gate would catch `homepage` or the README order being reverted — workspace — declined: one-time release metadata, checked by plan 02 Task 2's dry run at R
+
+## Probe results
+
+- smoke workspace runs toolchain-free — `sh scratchpad/smoke-proof.sh` (debug `buildl`, `env -i HOME="$HOME" PATH=/usr/bin:/bin`, from `.github/smoke`) — `1 built` exit 0; `tests: 1 passed` exit 0; `1 cached` exit 0; `verified //:upper` / `1 verified, 0 mismatched, 0 failed, 0 skipped, 0 not cached, 0 not sampled` exit 0; `out/upper` = `HELLO`
+- installed dist is the pinned version — `dist --version` — `cargo-dist 0.33.1`
+- YAML parser available — `python3 -c "import yaml"` — `ModuleNotFoundError: No module named 'yaml'`; `which actionlint` — not found; `ruby -ryaml -e 'puts YAML::VERSION'` — `3.1.0` (against the plan: neither named tool exists here)
+- dist plan for the tag — `dist plan --tag buildl-cli-v0.1.0` — `announcing v0.1.0` / `buildl-cli 0.1.0`, `source.tar.gz`, `buildl-cli-installer.sh`, `sha256.sum`, six `buildl-cli-<target>.tar.xz` each with `[bin] buildl` and a `.sha256`
+- `dist init` output — `dist init --yes --ci github --installer shell --hosting github` — wrote `.github/workflows/release.yml`, `install-path = "CARGO_HOME"` and five targets including `x86_64-pc-windows-msvc` and no musl; set to spec section 3, `dist generate` rerun, `release.yml` deleted
+- the publish dry run needs a clean tree — `cargo make publish-dry-run` in the uncommitted tree — exit 101, "3 files in the working directory contain changes that were not yet committed"; `cargo publish --dry-run --workspace --allow-dirty` — `warning: aborting upload due to dry run` for buildl-core, buildl-lua, buildl, buildl-cli, in that order
+
+## Deviations
+
+- 2026-10-31, plan defect — Task 2's parse proof named `python3 -I -c` with a YAML parser or `actionlint`; neither exists on this machine. The check ran with `ruby -ryaml`, and the plan's proof line was amended.
+- 2026-10-31 — Task 5's `cargo make publish-dry-run` cannot pass in an uncommitted tree, since the task omits `--allow-dirty` by design. The proof ran as `cargo publish --dry-run --workspace --allow-dirty`; the task itself runs at a clean commit in plan 02 Task 2.
