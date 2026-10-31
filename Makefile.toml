@@ -572,6 +572,19 @@ command = "mdbook"
 args = ["build", "book"]
 
 # ---------------------------------------------------------------------------
+# Release
+# ---------------------------------------------------------------------------
+
+[tasks.publish-dry-run]
+category = "Release"
+description = "Package and dry-run publish the four crates, in dependency order"
+# Cargo orders the workspace by its dependency edges, so buildl-core, buildl-lua,
+# buildl and buildl-cli go in that order (book/src/ch11-03-four-crates.md,
+# Publishing). Run it at a clean commit: it does not pass --allow-dirty.
+command = "cargo"
+args = ["publish", "--dry-run", "--workspace"]
+
+# ---------------------------------------------------------------------------
 # Development helpers
 # ---------------------------------------------------------------------------
 

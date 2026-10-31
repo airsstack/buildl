@@ -15,6 +15,7 @@ edition      = "2024"
 rust-version = "1.94"
 license      = "Apache-2.0"
 repository   = "https://github.com/airsstack/buildl"
+homepage     = "https://airsstack.github.io/buildl/"
 authors      = ["rstlix0x0 <rstlix.dev@gmail.com>"]
 
 [workspace.dependencies]

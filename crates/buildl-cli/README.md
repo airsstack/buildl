@@ -8,7 +8,13 @@ build files are written in Lua. This crate is its command line: it parses argume
 [exit code](https://airsstack.github.io/buildl/appendix-04-exit-codes.html). Linux and macOS.
 
 ```sh
-cargo install --git https://github.com/airsstack/buildl buildl-cli --locked
+curl -LsSf https://airsstack.github.io/buildl/install.sh | sh
+```
+
+The prebuilt binary needs no Rust toolchain. To build it yourself instead:
+
+```sh
+cargo install --locked buildl-cli
 ```
 
 Commands: `check`, `graph`, `query`, `plan`, `build`, `test`, `verify`, `watch`, `log`, `clean`,
