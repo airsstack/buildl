@@ -1,0 +1,191 @@
+name: Smoke
+
+# Runs every archive a release is about to publish, on the platform it was built for.
+#
+# Not triggered on its own: the release workflow calls it through dist's
+# `global-artifacts-jobs` hook, after every archive is built and before the
+# GitHub Release exists. dist makes `host` wait for this workflow to succeed, so
+# an archive that fails here is never published, and on a pull request in
+# `pr-run-mode = "upload"` the same checks run against the PR's own builds.
+#
+# This file is written by hand, unlike the release workflow, so `dist generate`
+# never touches it.
+on:
+  workflow_call:
+    inputs:
+      plan:
+        description: The dist manifest the release's plan step produced
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  targets:
+    name: Match archives to runners
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.match.outputs.matrix }}
+      version: ${{ steps.match.outputs.version }}
+    steps:
+      # The matrix is derived from the plan, not written out, so the coverage
+      # promise holds by construction: every archive the release will publish
+      # gets a smoke job, and a target added to dist-workspace.toml without a
+      # runner below fails here instead of shipping untested.
+      #
+      # musl archives run inside Alpine, which has no glibc at all, so a musl
+      # binary that passes there needs no glibc.
+      - name: Match every archive in the plan to a runner
+        id: match
+        env:
+          PLAN: ${{ inputs.plan }}
+        run: |
+          runners='{
+            "aarch64-apple-darwin":       {"runner": "macos-14"},
+            "x86_64-apple-darwin":        {"runner": "macos-15-intel"},
+            "x86_64-unknown-linux-gnu":   {"runner": "ubuntu-22.04"},
+            "aarch64-unknown-linux-gnu":  {"runner": "ubuntu-22.04-arm"},
+            "x86_64-unknown-linux-musl":  {"runner": "ubuntu-22.04",     "alpine": true},
+            "aarch64-unknown-linux-musl": {"runner": "ubuntu-22.04-arm", "alpine": true}
+          }'
+          matrix=$(jq -c --argjson runners "$runners" '
+            [.artifacts[]
+             | select(.kind == "executable-zip")
+             | {archive: .name, target: .target_triples[0], alpine: false}
+               + ($runners[.target_triples[0]] // {})]' <<<"$PLAN")
+
+          if [ "$(jq length <<<"$matrix")" -eq 0 ]; then
+            echo "::error::the plan lists no archives to smoke-test"
+            exit 1
+          fi
+          missing=$(jq -r '[.[] | select(.runner == null) | .target] | join(" ")' <<<"$matrix")
+          if [ -n "$missing" ]; then
+            echo "::error::no smoke runner for: $missing"
+            exit 1
+          fi
+
+          jq . <<<"$matrix"
+          echo "matrix={\"include\":$matrix}" >> "$GITHUB_OUTPUT"
+          echo "version=$(jq -r '.releases[0].app_version' <<<"$PLAN")" >> "$GITHUB_OUTPUT"
+
+  smoke:
+    name: ${{ matrix.target }}
+    needs: targets
+    # One broken platform should not hide whether the others work.
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.targets.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      ARCHIVE: ${{ matrix.archive }}
+      VERSION: ${{ needs.targets.outputs.version }}
+    steps:
+      # The checkout supplies the smoke workspace and the examples the checks
+      # run, not a build: the binary under test is the downloaded archive.
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      # The same workflow artifacts `host` uploads to the Release, so the bytes
+      # tested are the bytes published.
+      - name: Fetch the built archives
+        uses: actions/download-artifact@v8
+        with:
+          pattern: artifacts-build-local-*
+          path: .smoke/artifacts
+          merge-multiple: true
+
+      - name: Archive matches its checksum
+        working-directory: .smoke/artifacts
+        run: |
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum -c "$ARCHIVE.sha256"
+          else
+            shasum -a 256 -c "$ARCHIVE.sha256"
+          fi
+
+      # Everything under test lives inside the workspace, which the Alpine
+      # container mounts at the same path, so one absolute path names the binary
+      # and the build files both inside and outside it.
+      - name: Unpack, and point BUILDL at the binary
+        env:
+          ALPINE: ${{ matrix.alpine }}
+        run: |
+          mkdir -p .smoke/unpacked
+          case "$ARCHIVE" in
+            *.tar.xz) tar -xJf ".smoke/artifacts/$ARCHIVE" -C .smoke/unpacked ;;
+            *)        echo "::error::unknown archive format: $ARCHIVE"; exit 1 ;;
+          esac
+          bin=$(find "$PWD/.smoke/unpacked" -type f -name buildl | head -n 1)
+          if [ -z "$bin" ]; then
+            echo "::error::no buildl binary inside $ARCHIVE"
+            exit 1
+          fi
+
+          if [ "$ALPINE" = "true" ]; then
+            wrapper="$PWD/.smoke/buildl-in-alpine"
+            printf '#!/bin/sh\nexec docker run --rm -v "%s:%s" -w "$PWD" alpine:3.20 "%s" "$@"\n' \
+              "$PWD" "$PWD" "$bin" > "$wrapper"
+            chmod +x "$wrapper"
+            echo "BUILDL=$wrapper" >> "$GITHUB_ENV"
+          else
+            echo "BUILDL=$bin" >> "$GITHUB_ENV"
+          fi
+
+      - name: Reports the version being released
+        run: |
+          got=$("$BUILDL" --version)
+          if [ "$got" != "buildl $VERSION" ]; then
+            echo "::error::buildl --version printed '$got', expected 'buildl $VERSION'"
+            exit 1
+          fi
+          echo "$got"
+
+      # A real build in the input sandbox, the cache and the store of the binary
+      # that ships. The actions run only sh, tr and grep, so no toolchain is
+      # needed on the runner or in Alpine.
+      - name: The smoke workspace builds
+        working-directory: .github/smoke
+        run: '"$BUILDL" build'
+
+      - name: The smoke workspace tests pass
+        working-directory: .github/smoke
+        run: '"$BUILDL" test'
+
+      - name: A second build is served from the cache
+        working-directory: .github/smoke
+        run: |
+          out=$("$BUILDL" build)
+          echo "$out"
+          if ! grep -qw '1 cached' <<<"$out"; then
+            echo "::error::the second build did not report '1 cached'"
+            exit 1
+          fi
+
+      - name: The cached outputs verify
+        working-directory: .github/smoke
+        run: '"$BUILDL" verify'
+
+      # `check` and `doctor` read build files and the ceiling and run no
+      # action, so these pass with no compiler or language toolchain installed.
+      - name: Every example checks
+        run: |
+          for example in go go-discovery plugins polyglot python rust remote; do
+            echo "::group::examples/$example"
+            (cd "examples/$example" && "$BUILDL" check)
+            echo "::endgroup::"
+          done
+
+      - name: Every example's doctor passes
+        run: |
+          for example in go go-discovery plugins polyglot python rust remote; do
+            echo "::group::examples/$example"
+            (cd "examples/$example" && "$BUILDL" doctor)
+            echo "::endgroup::"
+          done
