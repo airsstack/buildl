@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-10-31
 depends-on: [02]
 built-on: a9f5951ee52c
@@ -266,3 +266,9 @@ finding blocking. One fix round closed C1-C9:
   blocking doc findings, 3 🟡, 5 🔵, 1 ❓ answered "the run bit stays the boundary"), one fix round;
   `cargo make dod` green and `examples/check.sh` ok for `c` and `cpp`. The change is crate source
   after `0.1.0`, so it ships in the next release; `CHANGELOG.md` records it under Unreleased.
+- 2026-10-31, Task 5: PR B (#24) merged as `8f0d8b1c47bd76a8c5c9cb91e84c2fbf891f0e9f`, every check green
+  (macOS `Examples` included). Pages run `41174765252` succeeded; `curl -sS -o /dev/null -w
+  "%{http_code}" -L https://airsstack.github.io/buildl/install.sh` prints `200`; `curl -LsSf
+  https://airsstack.github.io/buildl/install.sh | BUILDL_CLI_INSTALL_DIR=<tmp>
+  BUILDL_CLI_NO_MODIFY_PATH=1 sh` prints `everything's installed!`, and `<tmp>/buildl --version`
+  prints `buildl 0.1.0`.
