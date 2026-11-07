@@ -172,6 +172,35 @@ error: uploading to the remote cache needs actions to run in the input sandbox, 
 
 That exits with code 2. Reading from the cache works under any strategy.
 
+### Who should upload
+
+The key of a target holds the digests of the files its dependencies produced. A computer that
+downloads a dependency gets the same bytes as the one that built it, so every key above it
+matches, and what is built on top is fetched too.
+
+So the most reuse comes from one builder for the shared parts: CI with `--remote-upload`, or the
+server itself under remote execution. Everyone else reads. buildl asks the remote cache only for
+what the local cache cannot serve, so an engineer who already built a dependency themself keeps
+their own bytes for it while their local cache holds it.
+
+```mermaid
+%% One builder uploads; the others fetch the same bytes
+flowchart LR
+    CI["CI builds the dependency<br/>--remote-upload"] -->|"upload"| RC[("remote cache")]
+    RC -->|"fetch, same bytes"| A["Engineer A"]
+    RC -->|"fetch, same bytes"| B["Engineer B"]
+    A --> KA["keys above it match"]
+    B --> KB["keys above it match"]
+```
+
+When everyone uploads, it still works. But each computer runs an action in a folder of its own,
+named from the workspace's path and the target's label, and a tool may write that folder into what
+it makes (see [where the folder is](ch06-00-sandbox.md#where-the-folder-is)). Two computers that
+each build the same unchanged dependency can then get other bytes. The targets that use it then get
+other keys, and are built again instead of fetched.
+
+A result is never wrong either way. It is only reused less.
+
 ## Running on the server
 
 With execution on, a target neither cache can serve is sent to the server and run on one of its
