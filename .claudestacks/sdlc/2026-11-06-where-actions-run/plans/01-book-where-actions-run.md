@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-07
 built-on: 16aef0025c8b
 ---
@@ -74,8 +74,9 @@ uploading and two others fetching the same bytes. No console output is added.
 **Change:** The bullet stops saying buildl pins "the sandbox's directory" everywhere; it says the
 action's folder has the same path on every run of one workspace. A new bullet, "Where the
 workspace is", says the folder's path differs between workspaces (a git worktree included) and
-machines, by design, so that no two workspaces share or wait on one folder; a tool that writes the
-folder into its output (debug information, an included file's path, C's `__FILE__`) gives other
+between machines whose workspace path or temporary directory differs, by design, so that no two
+workspaces share or wait on one folder; a tool that writes the folder into its output (an included
+file's path, the build directory in debug information) gives other
 bytes in another workspace; that difference is explained, it is not a bug in buildl, and the
 result is never wrong: a cache only reuses less (link to `ch09-00-remote.md#who-should-upload`).
 The closing sentence ("Outside those, …") stays true and is kept.
@@ -96,7 +97,7 @@ The closing sentence ("Outside those, …") stays true and is kept.
 **Change:** A new paragraph, or a short subsection, says the folder is a directory below the
 system's temporary directory named for the workspace's path, with one folder per target named for
 its label; so it is the same on every run of one workspace and differs in another workspace or on
-another machine. It says why: each workspace, a git worktree included, keeps a folder of its own
+a machine whose workspace path or temporary directory differs. It says why: each workspace, a git worktree included, keeps a folder of its own
 and never shares or waits on another's. It says what follows: a tool that writes the folder it ran
 in into its output gives other bytes in another workspace; this is correct and is not a cache
 error; and it points to `ch09-00-remote.md#who-should-upload` for what that means for a shared
@@ -118,7 +119,8 @@ will have another name on your machine" stay as they are.
 
 **Change:** One short paragraph says that because the key holds what a dependency made, a
 dependency built on another machine or in another workspace with other bytes (a tool that records
-its folder is one cause) changes the key of every target above it; the result is still correct,
+its folder is one cause) changes the keys of the targets that use it, and above them only as far
+as their rebuilt outputs differ too; the result is still correct,
 and `ch09-00-remote.md#who-should-upload` says how a team keeps the bytes shared.
 
 **Proof:**
@@ -146,3 +148,32 @@ and `ch09-00-remote.md#who-should-upload` says how a team keeps the bytes shared
 - `cargo make book-build` passes once all four tasks are in.
 - `book/book/ch09-00-remote.html` holds an element with `id="who-should-upload"`, and the three
   links to it (from `ch11-09`, `ch06-00`, `ch05-01`) are in their built pages.
+
+## Review findings
+
+One reviewer pass over the four pages (code 0🔴 5🟡 8🔵, plan 0🔴 1🟡 1🔵), one fix round. All fixed; re-checked
+with `cargo make book-build` (`Build Done in 1.08 seconds`), `id="who-should-upload"` and
+`id="where-the-folder-is"` present in the built pages, each link found once in its page, and the
+plan-wide grep printing nothing (exit 1).
+
+- 🟡 ch05-01 / ch09: "the key of every target above it" contradicted early cutoff — fixed: the keys of the targets that use it change, and above them only as far as their rebuilt outputs differ.
+- 🟡 ch06 / ch11-09 / ch05-01: "differs on another machine" overclaimed — fixed: the folder changes with the workspace's path and the temporary directory (`scratch.rs:56-65`, `local_ports.rs:104`); two machines with the same of both share it.
+- 🟡 ch06 / ch11-09: C's `__FILE__` as an example — fixed: removed; the c plugin passes a workspace-relative source path, so `__FILE__` holds no folder. Replaced by the build directory a compiler writes into debug information.
+- 🟡 ch09: the local cache is asked before the remote — fixed: one sentence says an engineer who built a dependency keeps their own bytes while their local cache holds it.
+- 🟡 plan: Tasks 2-4 Change text carried the three wrong premises — fixed: amended in this plan.
+- 🔵 ch06: "both names are short digests" — fixed: `buildl-` and a digest.
+- 🔵 ch06: label part "same on every run of one workspace" — fixed: depends on the label only, same everywhere.
+- 🔵 ch06: "What follows is for" — fixed: "This matters for".
+- 🔵 ch09: "holds the files" — fixed: "holds the digests of the files".
+- 🔵 ch09 / ch05-01: links to the top of ch06 or Tier 2 — fixed: `#where-the-folder-is`.
+- 🔵 ch11-09: same path "as long as the temporary directory stays the same" — fixed.
+- 🔵 ch11-09: "a tool ..., such as debug information" — fixed: names rustc and a compiler.
+- 🔵 ch06: Rust `include!` example not named in the plan — kept; true (rlib metadata, panic locations).
+
+## Deviations
+
+- 2026-11-07: the task briefer was not spawned; the plan's four tasks were already in the orchestrator's context and were passed verbatim to the coders.
+- 2026-11-07: Tasks 1-4 ran as one batch: they touch disjoint files, and Tasks 2-4 need only the anchor text `#who-should-upload`, which the plan fixes. The links were checked in the built pages afterward.
+- 2026-11-07: Coders did not run the gates (four parallel `book-build`s write one `book/book`); the orchestrator ran `cargo make book-build`, `cargo make dod` (`Build Done in 132.97 seconds`) and `cargo deny check` (`advisories ok, bans ok, licenses ok, sources ok`) once for the batch. The fix round changed Markdown only, which `dod` does not read, so only `book-build` was re-run.
+- 2026-11-07: Three plan premises were wrong in the code (see Review findings) and were amended in the Change text of Tasks 2-4. The intent's Problem says the folder "differs between workspaces, users and machines" and lists C's `__FILE__`; both are loose rather than wrong in what the intent asks for (each workspace keeps its own folder), so no `disproves` was set.
+- 2026-11-07: Nothing committed; the per-task commits are left to the author (each task touches one file).

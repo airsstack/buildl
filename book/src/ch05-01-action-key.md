@@ -195,6 +195,14 @@ $ buildl plan --json //go:service | python3 -c 'import json,sys; t=json.load(sys
 It holds what the dependency *made*, not the dependency's own key. That one choice is what the
 next page, [Early Cutoff](ch05-02-early-cutoff.md), is about.
 
+The same choice has a cost when a dependency is built somewhere else. If it is built on another
+machine or in another workspace and comes out with other bytes, its output digests change, and so
+do the keys of the targets that use it. Above those, the change goes on only as far as their rebuilt
+outputs differ too. A tool that writes the folder it ran in into its output is one cause, because
+[the folder an action runs in](ch06-00-sandbox.md#where-the-folder-is) is named for the workspace's
+path and the temporary directory. The result is still correct, only not shared. [Who should
+upload](ch09-00-remote.md#who-should-upload) says how a team keeps those bytes the same for everyone.
+
 ## One edit, start to finish
 
 Put together, this is everything that happens between saving `main.go` and the build finishing:
