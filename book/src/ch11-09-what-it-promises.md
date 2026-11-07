@@ -95,9 +95,17 @@ The ledger is finite and named, and some things are honestly outside it:
   exact processor as it affects generated code are not in any key. Two machines with the same
   operating system and processor family share cache entries even when these differ. Containers,
   tier 4, and `verify` are what exist to contain them, and only `verify` is built.
-- **Whether a tool is reproducible.** `buildl` pins the inputs, the time zone, the locale, the
-  build time and the sandbox's directory. A tool that still gives different bytes from the same
-  inputs is the tool's property. `verify` finds it and names it; nothing fixes it.
+- **Whether a tool is reproducible.** `buildl` pins the inputs, the time zone, the locale and the
+  build time, and an action's folder has the same path on every run of one workspace, as long as the
+  temporary directory stays the same. A tool that still gives different bytes from the same inputs
+  is the tool's property. `verify` finds it and names it; nothing fixes it.
+- **Where the workspace is.** The action's folder has a different path in another workspace, a git
+  worktree included, and on a machine whose workspace path or temporary directory differs. That is
+  by design: no two workspaces share a folder or wait on one. A tool that writes the folder into its
+  output, as rustc does for a file included from `OUT_DIR` or a compiler does for the build
+  directory in debug information, gives other bytes there. That difference is explained; it is not
+  a bug in `buildl`. The result is never wrong: a cache only reuses less
+  (see [Who should upload](ch09-00-remote.md#who-should-upload)).
 - **The settings left out on purpose.** `workers`, `timeout`, `strategy` and a rule's `desc` are
   in no key. Only `strategy` can change an action's bytes: under `sandbox` the action runs in
   another directory with pinned values, so a tool that records its directory or reads the clock
