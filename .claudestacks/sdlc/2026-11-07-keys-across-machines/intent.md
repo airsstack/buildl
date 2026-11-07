@@ -34,13 +34,20 @@ because all of them ran as one user, with one `HOME` and one `PATH`.
 The remote cache names an action by a second digest, of the REAPI `Action`, which holds the
 `Command` (its words, each variable with its value, the output paths), the input root, the
 platform, a salt of the action key, and the action's timeout
-(`crates/buildl/src/remote/encode.rs:105-133`, `178-188`). The timeout is `[execution] timeout`,
-a setting the book counts in no key (`book/src/ch11-09-what-it-promises.md`, "The settings left out
-on purpose"), yet it splits the remote cache. Evidence, 2026-11-07, bazel-remote 2.6.4 on
-localhost, three copies of one workspace in other folders with their own `TMPDIR`: the first built
-with `--remote-upload`; the second, same settings, printed `2 fetched`; the third, only
-`timeout = "20m"` added, printed `2 built`, the cache logging `AC GET … NOT FOUND`. The second
-copy shows that the workspace's folder and the temporary directory are in neither key.
+(`crates/buildl/src/remote/encode.rs:105-133`, `178-188`), so `HOME` and `PATH` split it too.
+Evidence, 2026-11-07, bazel-remote 2.6.4 on localhost, three copies of one workspace in other
+folders with their own `TMPDIR`: the first built with `--remote-upload`; the second, same
+`buildl.toml`, printed `2 fetched`, so the workspace's folder and the temporary directory are in
+neither key.
+
+The third copy, with only `timeout = "20m"` added to `[execution]`, printed `2 built` (the cache
+logging `AC GET … NOT FOUND`). That one stays, by the author's decision: REAPI puts the timeout in
+the `Action` on purpose ("two `Actions` with different timeouts are different … hiding the fact
+that the timeout is too short", `remote_execution.proto:706-714`), and the value comes only from
+the committed `buildl.toml` (`crates/buildl/src/manifest/interpret.rs:327`; no command-line flag
+or `BUILDL_` variable sets it), so every clone of a repository has the same one. The book says the
+timeout is in no key (`book/src/ch11-09-what-it-promises.md`, "The settings left out on purpose"),
+which is true of the local key only.
 
 A build file cannot read the environment, but a discovery target's output reaches it: a tool that
 prints an absolute path of the machine (a home folder, the sandbox folder) into what a plugin then
@@ -70,12 +77,12 @@ through the remote cache.
   tools are installed; so a result uploaded by one is fetched by the other.
 - A result is never served for another tool: a change of the program that runs, or of what a
   variable that does change the output holds, still changes the key.
-- The remote cache's name for an action follows the same rule: a setting that does not change what
-  an action produces (the timeout among them) does not change it.
+- The remote cache's name for an action follows the same rule for those variables; the timeout
+  stays in it, and the book says so.
 - `plan` still explains every change of key.
 - It cannot come back unseen: a test holds the key, and the remote name, of one target equal across
-  two machines that differ in user, home folder, `PATH`, workspace folder, temporary directory and
-  timeout, and differ when a tool or an input changes.
+  two machines that differ in user, home folder, `PATH`, workspace folder and temporary directory,
+  and differ when a tool, an input or the timeout changes.
 - A plugin author learns when a machine's absolute path reaches what a target declares.
 - The `c` plugin and the examples get the sharing without losing correctness.
 
