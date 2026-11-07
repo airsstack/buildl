@@ -43,6 +43,23 @@ The directory is outside the workspace on purpose. Tools such as `go`, `cargo` a
 upward for a `go.mod`, a `Cargo.toml` or a `node_modules`; from inside the workspace they would
 find the real ones and read what the action never declared.
 
+### Where the folder is
+
+The folder sits below the system's temporary directory (`TMPDIR`, or `/tmp`), in two parts:
+`buildl-` and a digest of the workspace's path, and inside it one folder per target, named by a
+digest of the target's label. The label part depends on the label only, so it is the same
+everywhere. The workspace part changes with the workspace's path and the temporary directory:
+another workspace, or a machine where either differs, has a folder with another name.
+
+That is on purpose. Each workspace, a git worktree included, keeps a folder of its own, so it
+never shares one with another workspace and never waits on it.
+
+This matters for a tool that writes the folder it ran in into its output. Rust's `include!` of a
+file from `OUT_DIR`, and the build directory a compiler writes into debug information, are two
+examples. Run in another folder, such a tool gives other bytes. This is correct: the output
+really does differ, and the cache is not wrong. What it means for a cache shared between
+workspaces is on [Who should upload](ch09-00-remote.md#who-should-upload).
+
 ## An input nobody declared
 
 This target runs `copy.py notes.txt`, but declares only `copy.py`:
