@@ -89,7 +89,7 @@ Declares a target that builds files. Returns nothing.
 | `inputs` | list of strings | `{}` | the files the command reads |
 | `deps` | list of labels | `{}` | the targets whose outputs the command reads |
 | `outputs` | list of strings | `{ name }` | the files the command writes |
-| `env` | list of strings | `{}` | the environment variables the command is given, read from yours |
+| `env` | table from name to `"key"` or `"unkeyed"` | `{}` | the environment variables the command is given, read from yours, each with its mark, below |
 | `network` | boolean | `false` | `true` says the command reaches the network; `plan` and the approver show it |
 | `stdout` | boolean | `false` | `true` makes what the command prints the output; needs exactly one output |
 | `always` | boolean | `false` | `true` runs the command on every build instead of caching it |
@@ -97,6 +97,35 @@ Declares a target that builds files. Returns nothing.
 ```lua
 b.target("hello.txt", { run = { "sh", "-c", "echo hello > $out" } })
 ```
+
+### The marks of `env`
+
+`env` names each variable and marks it. The mark says whether the variable's value is part of what
+makes the action's key:
+
+| Mark | Given to the command | In the action key | Sent to a remote server |
+|---|---|---|---|
+| `"key"` | its value | name and value | name and value |
+| `"unkeyed"` | its value | name only | no |
+
+```lua
+b.target("app", {
+  run = { "cargo", "build" },
+  env = { RUSTFLAGS = "key", HOME = "unkeyed", PATH = "unkeyed" },
+})
+```
+
+- Every variable is marked: there is no default mark. `env = {}`, or no `env`, declares none.
+- A list such as `env = { "HOME" }`, and a table that mixes the two, such as
+  `env = { "HOME", PATH = "unkeyed" }`, are refused.
+- A mark that is not the string `"key"` or `"unkeyed"` is refused.
+- `TZ`, `LC_ALL` and `SOURCE_DATE_EPOCH` are refused with either mark: the sandbox sets them.
+- An `"unkeyed"` variable that is not set on the machine is not given to the command, and the key is
+  the same as when it is set.
+- A `"key"` variable whose value holds one of this machine's folders is refused, and so is a
+  command that does. [Exit Codes](appendix-04-exit-codes.md#5-definition) lists the messages.
+- `"unkeyed"` needs the name in `env.unkeyed` in `buildl.toml`, beside `env.read`
+  ([`[ceiling]`](appendix-02-buildl-toml.md#ceiling)).
 
 ## `test(name, options)`
 
@@ -111,7 +140,7 @@ its exit status and what it printed.
 | `inputs` | list of strings | `{}` |
 | `deps` | list of labels | `{}` |
 | `outputs` | list of strings | `{}` |
-| `env` | list of strings | `{}` |
+| `env` | table from name to mark | `{}` |
 | `network` | boolean | `false` |
 | `always` | boolean | `false` |
 
@@ -131,7 +160,7 @@ files reads with [`discovered`](#discoveredlabel). Returns nothing. It takes the
 | `rule` | label | |
 | `inputs` | list of strings | `{}` |
 | `deps` | list of labels | `{}` |
-| `env` | list of strings | `{}` |
+| `env` | table from name to mark | `{}` |
 | `network` | boolean | `false` |
 | `stdout` | boolean | `false` |
 
