@@ -338,7 +338,12 @@ fn main() {
 
 `examples/rust-ffi` builds a static and a shared library from one Cargo workspace and links each
 into a C program through the [c plugin](ch08-04-the-c-plugin.md): `c.binary`'s `deps` names
-`//rust:mathlib` or `//rust:greeter`, and `c.rpath` points the program at `out/rust/`. The Rust
+`//rust:mathlib` or `//rust:greeter`, and `c.rpath` points the program at `out/rust/`. It goes the
+other way too: `c.library` builds `out/c/libclamp.a`, and `rust.binary("calc", { deps = {
+"//c:clamp" } })` puts it in the sandbox, where the crate's `build.rs` tells rustc to link it with
+`cargo:rustc-link-search` and `cargo:rustc-link-lib=static=clamp`. The c plugin declares its
+library on the second pass, once its compiler discovery has run, so `calc` is declared on the
+second pass as well. The Rust
 crates and the C sources sit in folders of their own, since the plugin takes every file of its
 folder as an input and a C header beside the crates would rerun cargo.
 

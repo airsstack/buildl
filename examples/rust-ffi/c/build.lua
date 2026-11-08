@@ -16,6 +16,14 @@ if platform == "linux" then
   static_libs = { "-lgcc_s", "-lutil", "-lrt", "-lpthread", "-lm", "-ldl", "-lc" }
 end
 
+-- A C library Rust calls: //rust:calc depends on it and links out/c/libclamp.a.
+c.library("clamp", {
+  srcs = { "lib/clamp.c" },
+  headers = headers,
+  cflags = cflags,
+  output = "libclamp.a",
+})
+
 c.binary("app_static", {
   srcs = { "src/static_main.c" },
   headers = headers,

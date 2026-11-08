@@ -32,6 +32,18 @@ expect "C calls the Rust static library" \
 expect "C calls the Rust shared library" \
     '^\[rust-ffi\] shared: hello from a Rust shared library$' "$(cd out && ./c/app_shared)"
 
+expect "Rust calls the C library" \
+    '^\[rust-ffi\] rust calls C: clamp(15, 0, 10) = 10, clamp(-3, 0, 10) = 0$' "$(./out/rust/calc)"
+
+# A comment in the header the C library reads reruns its object only. The object comes out the
+# same bytes, so the archive and the Rust binary linking it stay cached (early cutoff).
+echo '/* edited */' >> c/include/clamp.h
+planned="$("${BUILDL}" plan 2>&1)" || fail "plan after the clamp.h edit exits 0" "${planned}"
+expect "the object of clamp.c runs" "^run    //c:clamp.lib.clamp.c.o: " "${planned}"
+refuse "no Rust target is sure to run" "^run    //rust:" "${planned}"
+built="$("${BUILDL}" build 2>&1)" || fail "build after the clamp.h edit exits 0" "${built}"
+refuse "cargo does not run for calc" "^--- //rust:calc$" "${built}"
+
 # A C header is no input of the Rust targets: they sit in their own folder.
 echo '/* edited */' >> c/include/greeter.h
 planned="$("${BUILDL}" plan 2>&1)" || fail "plan after the header edit exits 0" "${planned}"
@@ -46,3 +58,4 @@ expect "the static library runs" "^run    //rust:mathlib: " "${planned}"
 
 tested="$("${BUILDL}" test 2>&1)" || fail "the tests pass" "${tested}"
 expect "the Rust and the C test pass" "^tests: 2 passed" "${tested}"
+

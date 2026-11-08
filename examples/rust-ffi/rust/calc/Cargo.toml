@@ -1,0 +1,7 @@
+[package]
+name = "calc"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# A Rust binary that calls the C library c/lib/clamp.c; build.rs links out/c/libclamp.a.
