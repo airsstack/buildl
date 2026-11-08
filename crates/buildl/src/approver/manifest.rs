@@ -42,12 +42,14 @@ mod tests {
         let empty = WantedSet {
             programs: BTreeSet::new(),
             env: BTreeSet::new(),
+            unkeyed: BTreeSet::new(),
             write: BTreeSet::new(),
             network: BTreeSet::new(),
         };
         let full = WantedSet {
             programs: BTreeSet::from([Program::parse("cc").unwrap()]),
             env: BTreeSet::from([EnvName::parse("PATH").unwrap()]),
+            unkeyed: BTreeSet::new(),
             write: BTreeSet::from([Directory::parse("out").unwrap()]),
             network: BTreeSet::from([Label::parse("//:fetch").unwrap()]),
         };

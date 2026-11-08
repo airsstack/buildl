@@ -135,6 +135,13 @@ impl Exit {
             | Error::MissingInput { .. }
             | Error::InputNotAFile { .. }
             | Error::PinnedEnv { .. }
+            | Error::EnvNotMarked { .. }
+            | Error::EnvBadMark { .. }
+            | Error::UnkeyedNotRead { .. }
+            | Error::MachinePathInCommand { .. }
+            | Error::MachinePathInVariable { .. }
+            | Error::MachinePathInSetting { .. }
+            | Error::MachinePathInDiscovery { .. }
             | Error::OutputConflict { .. }
             | Error::NoProgram { .. }
             | Error::PluginTree { .. }
@@ -215,6 +222,7 @@ mod tests {
     /// A ceiling that allows nothing.
     fn nothing() -> Ceiling {
         Ceiling {
+            unkeyed: BTreeSet::new(),
             run: BTreeSet::new(),
             env: BTreeSet::new(),
             read: BTreeSet::new(),
@@ -301,6 +309,7 @@ mod tests {
     /// A plugin's refusal of a target that wants to run `curl`.
     fn plugin_refused() -> Error {
         let go = PluginRef {
+            unkeyed: BTreeSet::new(),
             name: PluginName::parse("go").unwrap(),
             version: PluginVersion::parse("1.3.0").unwrap(),
             run: BTreeSet::new(),
@@ -325,6 +334,7 @@ mod tests {
             unapproved: Box::new(WantedSet {
                 programs: BTreeSet::from([Program::parse("cc").unwrap()]),
                 env: BTreeSet::new(),
+                unkeyed: BTreeSet::new(),
                 write: BTreeSet::new(),
                 network: BTreeSet::new(),
             }),
@@ -476,6 +486,37 @@ mod tests {
                 name: EnvName::parse("TZ").unwrap(),
                 value: EnvValue::parse("UTC").unwrap(),
                 site: Box::new(site()),
+            },
+            Error::EnvNotMarked {
+                site: Box::new(site()),
+            },
+            Error::EnvBadMark {
+                site: Box::new(site()),
+                name: EnvName::parse("HOME").unwrap(),
+                found: "\"pass\"".to_owned(),
+            },
+            Error::UnkeyedNotRead {
+                file: "buildl.toml".to_owned(),
+                table: "ceiling".to_owned(),
+                name: EnvName::parse("HOME").unwrap(),
+            },
+            Error::MachinePathInCommand {
+                site: Box::new(site()),
+                folder: "/home/al".to_owned(),
+            },
+            Error::MachinePathInVariable {
+                site: Box::new(site()),
+                name: EnvName::parse("RUSTFLAGS").unwrap(),
+                folder: "/home/al".to_owned(),
+            },
+            Error::MachinePathInSetting {
+                site: Box::new(site()),
+                name: SettingName::parse("prefix").unwrap(),
+                folder: "/home/al".to_owned(),
+            },
+            Error::MachinePathInDiscovery {
+                site: Box::new(site()),
+                folder: "/home/al".to_owned(),
             },
         ]
     }
@@ -749,12 +790,12 @@ mod tests {
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [9, 4, 3, 20, 4, 7]);
+        assert_eq!(counts, [9, 4, 3, 27, 4, 7]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 47, "a variant is listed twice");
+        assert_eq!(variants.len(), 54, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");

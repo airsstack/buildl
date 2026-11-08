@@ -53,9 +53,9 @@ pub(crate) fn plugin_check(
 /// # Errors
 ///
 /// Returns [`Error::Refused`] for the first want outside the ceiling. Programs are checked
-/// first, then environment variables, then inputs, then the directories written into; within
-/// each kind the lowest want first. The refusal names the lowest-labelled target wanting it,
-/// except for a directory, which no target declares.
+/// first, then environment variables, then unkeyed variables, then inputs, then the directories
+/// written into; within each kind the lowest want first. The refusal names the lowest-labelled
+/// target wanting it, except for a directory, which no target declares.
 pub(crate) fn check(
     graph: &TargetGraph,
     sites: &Sites<'_>,
@@ -82,6 +82,14 @@ pub(crate) fn check(
         .find(|(name, _)| !ceiling.env.contains(**name));
     if let Some((name, node)) = outside {
         return Err(refused(Want::Env((*name).clone()), Some(node)));
+    }
+
+    let outside = sites
+        .unkeyed
+        .iter()
+        .find(|(name, _)| !ceiling.unkeyed.contains(**name));
+    if let Some((name, node)) = outside {
+        return Err(refused(Want::Unkeyed((*name).clone()), Some(node)));
     }
 
     let outside = sites
@@ -127,13 +135,13 @@ mod tests {
     use super::{check, holds, plugin_check};
     use crate::error::{DeclarationSite, Error};
     use crate::grants::fixtures::{
-        command, dir, env_name, graph, label, node, path, program, settings,
+        command, dir, env_name, graph, keyed, label, marked, node, path, program, settings,
     };
     use crate::grants::wanted::sites;
     use crate::placement::layout::Layout;
     use crate::types::ApproverMode;
     use crate::types::{
-        Ceiling, Directory, Execution, NetworkAccess, Node, Origin, PluginName, PluginRef,
+        Ceiling, Directory, EnvMark, Execution, NetworkAccess, Node, Origin, PluginName, PluginRef,
         PluginVersion, SettingName, SettingValue, TargetGraph, Want, WantedSet, Workspace,
     };
 
@@ -144,6 +152,7 @@ mod tests {
             out: dir("out"),
             state: dir(".buildl"),
             ceiling: Ceiling {
+                unkeyed: BTreeSet::new(),
                 run: BTreeSet::from([program("cc"), program("ld")]),
                 env: BTreeSet::from([env_name("HOME"), env_name("PATH")]),
                 read: BTreeSet::from([dir("src"), dir("lib")]),
@@ -160,7 +169,7 @@ mod tests {
     fn app() -> Node {
         node("//:app", |node| {
             node.run = command(&["ld", "$in"]);
-            node.env = vec![env_name("PATH")];
+            node.env = keyed(&["PATH"]);
             node.inputs = vec![path("src/main.c")];
         })
     }
@@ -168,7 +177,7 @@ mod tests {
     /// `//lib:text` compiling with `cc`, reading `HOME`, `PATH` and `lib/text.c`, on the network.
     fn text() -> Node {
         node("//lib:text", |node| {
-            node.env = vec![env_name("PATH"), env_name("HOME")];
+            node.env = keyed(&["PATH", "HOME"]);
             node.inputs = vec![path("lib/text.c")];
             node.network = NetworkAccess::Declared;
         })
@@ -228,6 +237,7 @@ mod tests {
             WantedSet {
                 programs: BTreeSet::from([program("cc"), program("ld")]),
                 env: BTreeSet::from([env_name("HOME"), env_name("PATH")]),
+                unkeyed: BTreeSet::new(),
                 write: BTreeSet::from([dir("out"), dir(".buildl")]),
                 network: BTreeSet::from([label("//lib:text")]),
             }
@@ -285,6 +295,51 @@ mod tests {
         );
     }
 
+    /// `//:app` marking `HOME` as `mark`.
+    fn marking_home(mark: EnvMark) -> TargetGraph {
+        graph(
+            vec![node("//:app", |node| {
+                node.env = marked(&[("HOME", mark)]);
+            })],
+            &[&[]],
+        )
+    }
+
+    #[test]
+    fn unkeyed_outside_the_ceiling_is_refused() {
+        let graph = marking_home(EnvMark::Unkeyed);
+        let workspace = workspace();
+        let (want, site) = refusal(&graph, &workspace);
+        assert_eq!(want, Want::Unkeyed(env_name("HOME")));
+        assert_eq!(site, Some(named("//:app", "build.lua")));
+        let err = checked(&graph, &workspace).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app: unkeyed variable HOME is outside the ceiling (env.unkeyed allows: \
+             nothing)"
+        );
+    }
+
+    #[test]
+    fn unkeyed_inside_the_ceiling_is_wanted_apart() {
+        let mut workspace = workspace();
+        workspace.ceiling.unkeyed = BTreeSet::from([env_name("HOME")]);
+        let wanted = checked(&marking_home(EnvMark::Unkeyed), &workspace).unwrap();
+        assert_eq!(wanted.unkeyed, BTreeSet::from([env_name("HOME")]));
+        assert!(wanted.env.is_empty());
+    }
+
+    #[test]
+    fn a_key_mark_needs_only_env_read() {
+        let mut workspace = workspace();
+        workspace.ceiling.unkeyed = BTreeSet::new();
+        let wanted = checked(&marking_home(EnvMark::Key), &workspace).unwrap();
+        assert_eq!(wanted.env, BTreeSet::from([env_name("HOME")]));
+        assert!(wanted.unkeyed.is_empty());
+        workspace.ceiling.unkeyed = BTreeSet::from([env_name("HOME")]);
+        assert!(checked(&marking_home(EnvMark::Key), &workspace).is_ok());
+    }
+
     #[test]
     fn an_input_outside_the_ceiling_is_refused_with_its_site() {
         let mut workspace = workspace();
@@ -318,6 +373,7 @@ mod tests {
         let graph = graph(vec![app(), text()], &[&[], &[]]);
         let mut workspace = workspace();
         workspace.ceiling = Ceiling {
+            unkeyed: BTreeSet::new(),
             run: BTreeSet::new(),
             env: BTreeSet::new(),
             read: BTreeSet::new(),
@@ -359,6 +415,7 @@ mod tests {
     fn an_empty_ceiling_refuses_even_a_build_that_asks_for_nothing_but_its_own_directories() {
         let mut workspace = workspace();
         workspace.ceiling = Ceiling {
+            unkeyed: BTreeSet::new(),
             run: BTreeSet::new(),
             env: BTreeSet::new(),
             read: BTreeSet::new(),
@@ -417,6 +474,7 @@ mod tests {
     /// `//:app` running `curl`, declared by the plugin `go`.
     fn by_go() -> Node {
         let go = PluginRef {
+            unkeyed: BTreeSet::new(),
             name: PluginName::parse("go").unwrap(),
             version: PluginVersion::parse("1.2.0").unwrap(),
             run: BTreeSet::new(),

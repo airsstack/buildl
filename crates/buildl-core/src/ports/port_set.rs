@@ -135,6 +135,7 @@ mod tests {
                 out: Directory::parse("out")?,
                 state: Directory::parse(".buildl")?,
                 ceiling: Ceiling {
+                    unkeyed: BTreeSet::new(),
                     run: BTreeSet::new(),
                     env: BTreeSet::new(),
                     read: BTreeSet::new(),
@@ -155,6 +156,10 @@ mod tests {
 
         fn env(&self, _name: &EnvName) -> Result<Option<EnvValue>> {
             Ok(None)
+        }
+
+        fn machine_folders(&self) -> crate::types::MachineFolders {
+            crate::types::MachineFolders::default()
         }
     }
 

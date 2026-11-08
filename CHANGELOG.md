@@ -7,6 +7,43 @@ the slot Cargo treats as breaking, so a compatible change ships as a `z` bump.
 
 ## Unreleased
 
+## 0.2.0 — 2026-11-08
+
+A breaking release. It publishes the four crates at 0.2.0, and tags the `c` plugin as
+`plugin-c-v0.2.0` and the new `rust` plugin as `plugin-rust-v0.1.0`. A build file that declares
+`env` as a list (`env = { "PATH" }`) is refused: write each variable as a mark, `"key"` or
+`"unkeyed"` (see Changed). Both plugin tags need buildl 0.2.0.
+
+### Added
+
+- **The `rust` plugin.** `rust.binary`, `rust.library` and `rust.test` build and test a Rust
+  crate with the `cargo` you already have, and fill in the inputs, `HOME` and `PATH` (unkeyed) and
+  the network setting. The helpers `rust.package` and `rust.features` build the `args`,
+  `rust.platform` names the host, and `rust.shared_name` gives the file name of a shared library on
+  it. A build file loads it with `buildl.use("rust")`, and `buildl.toml` names it in
+  `[plugins.rust]` (`dir = "plugins/rust"`). It is tagged `plugin-rust-v0.1.0` at release.
+- **`examples/rust-workspace`.** A Cargo workspace with an rlib, a proc-macro and a binary using
+  both, built through the `rust` plugin: one call per artifact, none for the rlib or the
+  proc-macro, and `rust.test` over the whole workspace and over one crate with a feature on.
+- **`examples/rust-ffi`.** C and Rust calling each other through both plugins: a Cargo workspace
+  builds a static library and a shared one with `rust.library`, and `c.binary` links each by
+  label; `c.library` builds a C library that a `rust.binary` links through its `build.rs`; a C
+  header edit leaves the Rust targets clean.
+
+### Changed
+
+- **The `rust` and `polyglot` examples build through the `rust` plugin.** The binary is now
+  `out/hello` in `examples/rust` (it was `out/hello/bin/hello`) and `out/rust/cli` in
+  `examples/polyglot` (it was `out/rust/cli/bin/cli`), and `examples/polyglot` gains a Rust test
+  target, `//rust:cli_test`.
+- **`env` is a table of marks.** A target declares each variable as `"key"`, whose value is in the
+  action key, or `"unkeyed"`, which the command gets but whose name alone is in the key;
+  `env.unkeyed` in `buildl.toml` and `extension.toml` allows the unkeyed ones. The list form
+  `env = { "PATH" }` is refused. A value that holds this machine's home, workspace or sandbox
+  folder is refused with exit code 5, so the same target gets the same key on every machine.
+- **The `c` plugin is 0.2.0**, tagged `plugin-c-v0.2.0` at release: its link and archive steps
+  mark `PATH` unkeyed. `plugin-c-v0.1.0` uses the list form and works only with buildl 0.1.0.
+
 ### Fixed
 
 - **A program in `out/` that loads a shared library from its own folder.** On macOS such a program

@@ -96,6 +96,7 @@ mod tests {
             out: Directory::parse("out").unwrap(),
             state: Directory::parse(".buildl").unwrap(),
             ceiling: Ceiling {
+                unkeyed: BTreeSet::new(),
                 run: BTreeSet::new(),
                 env: BTreeSet::new(),
                 read: BTreeSet::new(),
@@ -116,6 +117,7 @@ mod tests {
             ..WantedSet::default()
         };
         let go = PluginChain::new(vec![PluginRef {
+            unkeyed: BTreeSet::new(),
             name: PluginName::parse("go").unwrap(),
             version: PluginVersion::parse("1.2.0").unwrap(),
             run: BTreeSet::new(),

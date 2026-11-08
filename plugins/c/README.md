@@ -13,17 +13,19 @@ ceiling allow them too:
 
 ```toml
 [ceiling]
-proc.run = ["cc"]
-env.read = ["PATH"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["cc"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 
 [plugins.c]
-github   = "airsstack/buildl"
-rev      = "plugin-c-v0.1.0"
-dir      = "plugins/c"
-proc.run = ["cc"]
-env.read = ["PATH"]
+github      = "airsstack/buildl"
+rev         = "plugin-c-v0.2.0"
+dir         = "plugins/c"
+proc.run    = ["cc"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
 ```
 
 `sh` is needed only for `c.library` and for a `c.test` with `deps`; add it to both `proc.run` lists
@@ -183,20 +185,23 @@ To use one, keep a copy of this folder in your workspace, add the program to the
 
 ```toml
 [plugins.c]
-path     = "plugins/c"
-proc.run = ["gcc-13"]
-env.read = ["PATH"]
+path        = "plugins/c"
+proc.run    = ["gcc-13"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
 ```
 
-Every step that links declares `env = { "PATH" }`, since the compiler driver finds the linker
-through it, so `PATH`'s value is part of each link's key.
-
+Every step that links declares `env = { PATH = "unkeyed" }`, since the compiler driver finds the
+linker through it. `PATH` only finds programs, and its value is a folder on this machine, so it is
+`unkeyed`: the command gets it, but only its name is in the key, and the same link has the same key
+on every machine. That is why `env.unkeyed` lists `PATH` beside `env.read` in the ceiling, the
+plugin table and the manifest.
 `c.library` runs `ar` through `sh` as `ZERO_AR_DATE=1 exec ar rcs …`: macOS `ar` stamps an archive
 with the time it ran unless `ZERO_AR_DATE` is set, and the archive would differ on every run. GNU
 `ar` as Debian and Ubuntu ship it is deterministic already; `ZERO_AR_DATE` does no harm there. So a
-workspace with a library allows `sh`, and the archive step declares `env = { "PATH" }` too, for `sh`
-to find `ar`. The archiver is fixed: another one, such as `llvm-ar`, means editing `graph.lua` in the
-copied folder.
+workspace with a library allows `sh`, and the archive step declares `env = { PATH = "unkeyed" }`
+too, for `sh` to find `ar`. The archiver is fixed: another one, such as `llvm-ar`, means editing
+`graph.lua` in the copied folder.
 
 ## Errors
 

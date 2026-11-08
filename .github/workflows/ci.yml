@@ -370,7 +370,7 @@ jobs:
           docker compose -f examples/remote/compose.yaml logs nativelink
           exit 1
 
-      - name: The four copies
+      - name: The copies A to E
         env:
           BUILDL: target/debug/buildl
         run: sh examples/remote/assert.sh

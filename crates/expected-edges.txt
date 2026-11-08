@@ -9,6 +9,7 @@ buildl_core
 globset
 serde
 serde_json
+toml
 walkdir
 tempfile
 # buildl

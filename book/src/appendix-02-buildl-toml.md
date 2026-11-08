@@ -47,10 +47,14 @@ a workspace that builds writes them into `fs.write` itself.
 | `fs` | table | empty | the directories, below | 114 |
 | `proc.run` | list of strings | `[]` | the programs a command may run, by bare name such as `"cc"` | 123 |
 | `env.read` | list of strings | `[]` | the environment variables a target may read | 132 |
-| `fs.read` | list of strings | `[]` | the directories inputs may come from; `"."` is the workspace root | 141 |
-| `fs.write` | list of strings | `[]` | the directories a build may write under; `"."` is the workspace root | 144 |
+| `env.unkeyed` | list of strings | `[]` | the variables a target may mark `"unkeyed"`: given to the command, but only the name enters the action key and nothing is sent to a remote server. Every name must also be in `env.read`, or the file is refused | 135 |
+| `fs.read` | list of strings | `[]` | the directories inputs may come from; `"."` is the workspace root | 144 |
+| `fs.write` | list of strings | `[]` | the directories a build may write under; `"."` is the workspace root | 147 |
 
-`proc` and `env` are also the names of the same two lists in a plugin's table, below.
+`proc` and `env` are also the names of the same lists in a plugin's table, below. A variable may
+be marked `"unkeyed"` only when every level lists it: the ceiling's `env.unkeyed` and, for a
+plugin's target, the plugin's table and its manifest too. The
+[Build File API](appendix-03-lua-api.md#targetname-options) says what the two marks do.
 
 ## `[declaration]`
 
@@ -58,17 +62,17 @@ Limits on evaluating one build file. A build file that goes over one stops with 
 
 | Key | Type | Default | Meaning | Line |
 |---|---|---|---|---|
-| `memory` | string | `"16MB"` | the memory one build file may use: a whole number followed by `B`, `KB`, `MB` or `GB`, each 1024 times the one before; not zero | 152 |
-| `instructions` | integer | `10000000` | how many Lua instructions one build file may run; at least 1 | 154 |
-| `walk_entries` | integer | `100000` | how many directory entries one build file's source listings may visit; at least 1 | 156 |
+| `memory` | string | `"16MB"` | the memory one build file may use: a whole number followed by `B`, `KB`, `MB` or `GB`, each 1024 times the one before; not zero | 155 |
+| `instructions` | integer | `10000000` | how many Lua instructions one build file may run; at least 1 | 157 |
+| `walk_entries` | integer | `100000` | how many directory entries one build file's source listings may visit; at least 1 | 159 |
 
 ## `[execution]`
 
 | Key | Type | Default | Meaning | Line |
 |---|---|---|---|---|
-| `workers` | integer | `0` | how many actions run at once; `0` is one per core of the machine | 164 |
-| `timeout` | string | `"10m"` | how long one action may run before it is stopped: a whole number followed by `ms`, `s`, `m` or `h`; not zero | 166 |
-| `strategy` | string | `"sandbox"` | how strongly actions are kept apart, one of the four below | 168 |
+| `workers` | integer | `0` | how many actions run at once; `0` is one per core of the machine | 167 |
+| `timeout` | string | `"10m"` | how long one action may run before it is stopped: a whole number followed by `ms`, `s`, `m` or `h`; not zero | 169 |
+| `strategy` | string | `"sandbox"` | how strongly actions are kept apart, one of the four below | 171 |
 
 | `strategy` | What this version does with it |
 |---|---|
@@ -81,7 +85,7 @@ Limits on evaluating one build file. A build file that goes over one stops with 
 
 | Key | Type | Default | Meaning | Line |
 |---|---|---|---|---|
-| `default` | string | `"manifest"` | who answers whether a build may have what it wants: `"manifest"`, `"interactive"` or `"deny"` | 176 |
+| `default` | string | `"manifest"` | who answers whether a build may have what it wants: `"manifest"`, `"interactive"` or `"deny"` | 179 |
 
 | `default` | Means |
 |---|---|
@@ -97,16 +101,17 @@ left out allows nothing.
 
 | Key | Type | Default | Meaning | Line |
 |---|---|---|---|---|
-| `path` | string | none | a directory of the workspace holding the plugin; not the output directory or `.buildl`, nor one holding or inside them; takes no `rev` | 223 |
-| `git` | string | none | the URL of a git repository holding the plugin; needs `rev` | 225 |
-| `github` | string | none | a GitHub repository written `owner/repo`, the same as `git = "https://github.com/owner/repo"`; needs `rev` | 227 |
-| `rev` | string | none | the tag or full commit the repository is pinned to | 229 |
-| `dir` | string | the repository root | the folder of the repository that holds the plugin, relative to its root, with no `..`, no leading `/` and no empty part; only that folder is stored and digested; takes `git` or `github`, not `path` | 231 |
-| `proc` | table | empty | holds `run`, the programs the plugin's targets may run | 234 |
-| `env` | table | empty | holds `read`, the environment variables the plugin's targets may read | 237 |
-| `network` | boolean | `false` | whether the plugin's targets may reach the network | 239 |
+| `path` | string | none | a directory of the workspace holding the plugin; not the output directory or `.buildl`, nor one holding or inside them; takes no `rev` | 226 |
+| `git` | string | none | the URL of a git repository holding the plugin; needs `rev` | 228 |
+| `github` | string | none | a GitHub repository written `owner/repo`, the same as `git = "https://github.com/owner/repo"`; needs `rev` | 230 |
+| `rev` | string | none | the tag or full commit the repository is pinned to | 232 |
+| `dir` | string | the repository root | the folder of the repository that holds the plugin, relative to its root, with no `..`, no leading `/` and no empty part; only that folder is stored and digested; takes `git` or `github`, not `path` | 234 |
+| `proc` | table | empty | holds `run`, the programs the plugin's targets may run | 237 |
+| `env` | table | empty | holds `read` and `unkeyed`, the environment variables the plugin's targets may read, and may mark `"unkeyed"` | 240 |
+| `network` | boolean | `false` | whether the plugin's targets may reach the network | 242 |
 | `proc.run` | list of strings | `[]` | as in `[ceiling]` | 123 |
 | `env.read` | list of strings | `[]` | as in `[ceiling]` | 132 |
+| `env.unkeyed` | list of strings | `[]` | as in `[ceiling]`; every name must also be in this table's `env.read` | 135 |
 
 ## `[remote]`
 
@@ -115,24 +120,24 @@ The remote cache this workspace shares results with, which may also run actions.
 
 | Key | Type | Default | Meaning | Line |
 |---|---|---|---|---|
-| `url` | string | required | the cache's address: `grpc://` or `grpcs://`, a host, and an optional `:port` | 184 |
-| `instance` | string | none | the instance name the cache's storage is addressed under | 186 |
-| `ca` | string | none | a certificate authority file to trust: an absolute path, or one inside the workspace | 188 |
-| `token` | table | none | where the token sent with every request comes from, below; only over `grpcs://` | 190 |
-| `header` | string | `"authorization"` | the request header the token is sent in | 192 |
-| `timeout` | string | `"30s"` | how long one request may take, written as in `[execution]` | 194 |
-| `execute` | boolean | `false` | whether the cache also runs the actions it has no result for | 196 |
-| `jobs` | integer | `128` | how many actions may be with the remote at once, from 1 to 1024 | 198 |
-| `queue_timeout` | string | `"1h"` | how long a remote execution may wait in the cache's queue, written as in `[execution]` | 200 |
-| `retries` | integer | `5` | how many times a failed call is tried again after the first, from 0 to 10 | 202 |
-| `properties` | table of strings | none | the platform properties asked of the remote executor, such as `pool = "large"`; `OSFamily` and `ISA` are set by `buildl` and cannot be written | 205 |
+| `url` | string | required | the cache's address: `grpc://` or `grpcs://`, a host, and an optional `:port` | 187 |
+| `instance` | string | none | the instance name the cache's storage is addressed under | 189 |
+| `ca` | string | none | a certificate authority file to trust: an absolute path, or one inside the workspace | 191 |
+| `token` | table | none | where the token sent with every request comes from, below; only over `grpcs://` | 193 |
+| `header` | string | `"authorization"` | the request header the token is sent in | 195 |
+| `timeout` | string | `"30s"` | how long one request may take, written as in `[execution]` | 197 |
+| `execute` | boolean | `false` | whether the cache also runs the actions it has no result for | 199 |
+| `jobs` | integer | `128` | how many actions may be with the remote at once, from 1 to 1024 | 201 |
+| `queue_timeout` | string | `"1h"` | how long a remote execution may wait in the cache's queue, written as in `[execution]` | 203 |
+| `retries` | integer | `5` | how many times a failed call is tried again after the first, from 0 to 10 | 205 |
+| `properties` | table of strings | none | the platform properties asked of the remote executor, such as `pool = "large"`; `OSFamily` and `ISA` are set by `buildl` and cannot be written | 208 |
 
 `token` names exactly one of its two keys:
 
 | Key | Type | Meaning | Line |
 |---|---|---|---|
-| `token.env` | string | the environment variable holding the token | 213 |
-| `token.file` | string | the file holding the token: an absolute path, or one inside the workspace | 215 |
+| `token.env` | string | the environment variable holding the token | 216 |
+| `token.file` | string | the file holding the token: an absolute path, or one inside the workspace | 218 |
 
 ## Every table at once
 
@@ -150,6 +155,7 @@ config = 1
 [ceiling]
 proc.run = ["sh"]
 env.read = ["CC"]
+env.unkeyed = ["CC"]
 fs.read = ["."]
 fs.write = ["out", ".buildl"]
 
@@ -170,6 +176,7 @@ default = "manifest"
 path = "plugins/local"
 proc.run = ["sh"]
 env.read = ["CC"]
+env.unkeyed = ["CC"]
 network = false
 
 [remote]

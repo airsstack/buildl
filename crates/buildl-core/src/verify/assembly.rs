@@ -68,9 +68,10 @@ use crate::types::{
 /// 1. [`Error::ForeignPlan`] when `plan` was not made from `graph`;
 /// 2. whatever the manifest port returns;
 /// 3. [`Error::OutputConflict`] when two outputs of `whole` would be written to one place;
-/// 4. for the first target, in id order, whose expanded command cannot run: [`Error::NoProgram`]
-///    when it names no program, and [`Error::Refused`] when the program is outside the
-///    workspace's ceiling.
+/// 4. for the first target, in id order, whose expanded command cannot run or whose environment
+///    cannot be read: [`Error::NoProgram`] when it names no program, [`Error::Refused`] when the
+///    program is outside the workspace's ceiling, and whatever the host port returns when it
+///    cannot report the value of a variable the target marks `unkeyed`.
 ///
 /// After that, returns whatever the content store returns when the manifest of a recorded output
 /// cannot be read or what a re-run printed cannot be read back, [`Error::CanonicalJson`] for a
@@ -90,7 +91,7 @@ pub fn verify<P: Ports>(
     let workspace = ports.manifest.workspace()?;
     Layout::of(whole, &workspace.out)?;
     let layout = Layout::of(graph, &workspace.out)?;
-    let targets = prepared(graph, plan, &layout, &workspace.ceiling)?;
+    let targets = prepared(graph, plan, &layout, &workspace.ceiling, &ports.host)?;
 
     let PortSet {
         cache,

@@ -5,8 +5,9 @@
 //! with them, and holds the second load to the discovery targets of the first. No phase names it.
 //!
 //! Responsibilities: `results`, the last result of each discovery target read from the build log
-//! and the content store; `load_twice` and `second_pass`, the two loads and the check between
-//! them; and `discovery_labels`, the discovery targets a load declared.
+//! and the content store; `load_twice`, `first_pass` and `second_pass`, the two loads, the check
+//! between them and the refusal of this machine's folders in what they read; and
+//! `discovery_labels`, the discovery targets a load declared.
 //!
 //! Non-responsibilities: running a discovery target, which a build does; and evaluating build
 //! files, which Load does.
@@ -16,5 +17,5 @@
 mod passes;
 mod results;
 
-pub(crate) use passes::{discovery_labels, load_twice, second_pass};
+pub(crate) use passes::{discovery_labels, first_pass, load_twice, second_pass};
 pub(crate) use results::results;

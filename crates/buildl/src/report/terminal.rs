@@ -359,7 +359,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::io::{self, Write};
     use std::path::PathBuf;
 
@@ -395,6 +395,7 @@ mod tests {
             command: command(&["cc"]),
             description: description.map(ExpandedDescription::new),
             env: BTreeMap::new(),
+            unkeyed: BTreeSet::new(),
             inputs: Vec::new(),
             deps: Vec::new(),
             outputs: Vec::new(),

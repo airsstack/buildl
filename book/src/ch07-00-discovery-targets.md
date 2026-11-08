@@ -45,7 +45,7 @@ local module = "example.com/discovery"
 b.discover("pkgs", {
   run = { "go", "list", "-json=ImportPath", "./..." },
   inputs = { "go.mod", b.sources("**/*.go") },
-  env = { "HOME" },
+  env = { HOME = "unkeyed" },
   stdout = true,
 })
 
@@ -59,7 +59,7 @@ for _, pkg in ipairs(b.decode_all(listed)) do
   b.test((dir:gsub("/", ".")), {
     inputs = { "go.mod", b.sources(dir .. "/*.go") },
     run = { "go", "test", "./" .. dir },
-    env = { "HOME" },
+    env = { HOME = "unkeyed" },
   })
 end
 ```
@@ -72,7 +72,7 @@ Three details make it work:
   is not one JSON value, so `airsstack.json.decode` would refuse it; `decode_all` returns the list.
 - **`-json=ImportPath`.** The full objects also hold absolute paths, which name the folder the
   action ran in and so differ between machines. Asking for one field keeps the output the same
-  everywhere.
+  everywhere. [A folder in the output](#a-folder-in-the-output) shows what happens without it.
 
 A target name cannot hold `/`, so the package `text/words` becomes the test `//:text.words`.
 
@@ -84,7 +84,7 @@ Commands that run nothing say so:
 ```console
 $ buildl graph
 //:pkgs has not run; run buildl build
-{"aliases":{},"settings":{},"targets":{"//:pkgs":{"deps":[],"description":null,"env":["HOME"],"freshness":"Cached","inputs":["go.mod","greet/greet.go","greet/greet_test.go","mathx/mathx.go","mathx/mathx_test.go","text/words/words.go","text/words/words_test.go"],"network":"Sealed","origin":"BuildFile","output_source":"Stdout","outputs":["pkgs.json"],"provenance":{"directory":"","file":"build.lua"},"role":"Discovery","run":["go","list","-json=ImportPath","./..."]}}}
+{"aliases":{},"settings":{},"targets":{"//:pkgs":{"deps":[],"description":null,"env":{"HOME":"unkeyed"},"freshness":"Cached","inputs":["go.mod","greet/greet.go","greet/greet_test.go","mathx/mathx.go","mathx/mathx_test.go","text/words/words.go","text/words/words_test.go"],"network":"Sealed","origin":"BuildFile","output_source":"Stdout","outputs":["pkgs.json"],"provenance":{"directory":"","file":"build.lua"},"role":"Discovery","run":["go","list","-json=ImportPath","./..."]}}}
 $ buildl plan
   write into: .buildl, out
 //:pkgs is not up to date; targets declared from it may change
@@ -195,6 +195,36 @@ tests: 4 passed (3 cached)
 `//:pkgs` reads every `.go` file, so the new files changed its key and `go list` ran again. The
 second pass declared `//:shout`, which ran, and the three old tests came from the cache.
 
+## A folder in the output
+
+A discovery output decides which targets exist, so one that holds a path of this machine would give
+every machine its own graph. When the second pass reads the output, `buildl` looks for this
+machine's folders in it: the home folder, the workspace and the action's folder. Change
+`-json=ImportPath` to `-json` in the build file above, and `go list` prints the full objects, with
+the `Dir` of each package:
+
+```console
+$ buildl build 2>&1 | tail -n 2
+1 built
+error: build.lua: //:pkgs: its output holds this machine's path /private/tmp/buildl-book/keys/tmp/buildl-d40680c030c69f01d404b0ac8609d069
+```
+
+The command exits with code 5, a fault in the build files, and `Dir` is why: it names the folder the
+action ran in. The path in the message is the longest of this machine's folders the output holds,
+and it will be your own. The output was stored as any output is, so it is read and refused again
+on every run, `1 cached` this time, until the discovery's command changes:
+
+```console
+$ buildl build 2>&1 | tail -n 2
+1 cached
+error: build.lua: //:pkgs: its output holds this machine's path /private/tmp/buildl-book/keys/tmp/buildl-d40680c030c69f01d404b0ac8609d069
+```
+
+Put `-json=ImportPath` back, and the command is a different key, so it runs again. Under
+[`watch`](ch10-00-watch.md) the refusal is printed and the watch goes on waiting. The
+same check covers a command, a `key` variable and a setting; [What buildl
+Promises](ch11-09-what-it-promises.md) has the list.
+
 ## The rules
 
 | Rule | Detail |
@@ -202,6 +232,7 @@ second pass declared `//:shout`, which ran, and the three old tests came from th
 | a target like any other | keyed, cached, run in [the sandbox](ch06-00-sandbox.md), held to the ceiling and approved, and logged. `buildl verify //:pkgs` re-runs it |
 | default scope | `build` and `test` leave discovery targets out of what they run by default; `buildl build //:pkgs` builds just that one |
 | two approvals | the discovery run and the build proper are each put to the approver. `interactive` asks the second time only about what the first yes did not cover |
+| no machine folder | the output may not hold this machine's home, workspace or action's folder: it is refused with exit code 5 when the second pass reads it, whether it was just run, cached or fetched |
 | a failure stops it | a discovery target that fails ends the command, and nothing is declared from it |
 | other commands | `plan`, `graph`, `check`, `query`, `doctor`, `verify` and `gc` never run a discovery target to get the targets it declares. They read the last result this checkout recorded |
 | no discovery from discovery | the second pass must declare exactly the discovery targets the first did. One added, removed or changed is refused, with exit code 5 |
@@ -274,7 +305,7 @@ Plugin](ch08-04-the-c-plugin.md) shows it.
 
 The gap is narrower than it looks. Go, Cargo, Bun and the rest track their own sources, so a target
 that hands a whole toolchain all of its sources, as the Go, Rust and Python examples do, has no
-hole.
+hole. [The Rust Plugin](ch08-05-the-rust-plugin.md) writes that target for Cargo.
 And where a build does need a tool to tell it what exists, the discovery target is the answer: not
 a file a compiler happened to drop, but a target with its own key, its own approval and its own
 line in the plan, like everything else `buildl` runs.

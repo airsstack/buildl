@@ -14,6 +14,7 @@ mod gc;
 mod graph;
 mod load;
 mod log;
+mod machine_paths;
 mod plan;
 mod query;
 mod remote;

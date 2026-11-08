@@ -8,7 +8,7 @@
     reason = "fixtures unwrap known-valid text; a panic is the intended failure signal"
 )]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use crate::types::{
@@ -64,7 +64,7 @@ pub(crate) fn target_item(raw: &str, change: impl FnOnce(&mut Target)) -> Declar
         action: Action::Run(command(&["cc"])),
         inputs: Vec::new(),
         deps: Vec::new(),
-        env: Vec::new(),
+        env: BTreeMap::new(),
         network: NetworkAccess::Sealed,
         output_source: OutputSource::Command,
         freshness: Freshness::Cached,
@@ -126,6 +126,7 @@ pub(crate) fn setting_item(name: &str) -> Declared {
 /// A plugin named `name` at version `1.0.0`, whose manifest asks for nothing.
 pub(crate) fn plugin(name: &str) -> PluginRef {
     PluginRef {
+        unkeyed: BTreeSet::new(),
         name: PluginName::parse(name).unwrap(),
         version: PluginVersion::parse("1.0.0").unwrap(),
         run: BTreeSet::new(),

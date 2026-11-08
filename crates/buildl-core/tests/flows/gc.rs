@@ -10,7 +10,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
     Argument, Collected, Command, ContentStore, Digest, EntryName, LiveOutput, LogLine, LoggedRun,
-    OnFailure, OutcomeClass, OutputManifest, Pipeline, Scope, StagedItem, Timestamp, pipeline,
+    MachineFolders, OnFailure, OutcomeClass, OutputManifest, Pipeline, Scope, StagedItem,
+    Timestamp, pipeline,
 };
 
 use crate::common::{
@@ -67,6 +68,7 @@ fn gc(pipeline: &mut Pipeline<FakePorts>, source: &FakeSource, history: &FakeHis
         source,
         &mut FakeDispatcher::default(),
         &entry(),
+        &MachineFolders::default(),
         &mut ports.cache,
         &ports.cas,
         &ports.cas,

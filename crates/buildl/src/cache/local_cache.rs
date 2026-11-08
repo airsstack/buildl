@@ -174,7 +174,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs::{self, File, OpenOptions};
     use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     use std::path::Path;
@@ -212,6 +212,7 @@ mod tests {
                 inputs: Vec::new(),
                 outputs: vec![OutputName::parse(name).unwrap()],
                 env: BTreeMap::new(),
+                unkeyed: BTreeSet::new(),
                 tool: None,
                 settings: BTreeMap::new(),
                 network: NetworkAccess::Sealed,
@@ -232,7 +233,7 @@ mod tests {
             r#"{"key":{"components":{"deps":[],"own":{"command":["cc"],"env":{},"inputs":[],"#,
             r#""network":"Sealed","output_source":"Command","outputs":[""#,
             name,
-            r#""],"platform":"linux/x86_64","settings":{},"tool":null}},"digest":""#,
+            r#""],"platform":"linux/x86_64","settings":{},"tool":null,"unkeyed":[]}},"digest":""#,
             key,
             r#""},"outputs":[""#,
             output,
@@ -246,7 +247,7 @@ mod tests {
     fn written_a() -> String {
         written(
             "a",
-            "06ff22740d6f5f789d0a8f80e0ff1cc7a5177a3747ab772ac1cb4a409b6db82f",
+            "3bb83b33a8d1aac2e129d733d4daf4a8e828b95cf0979b399dc77fd44cb5799f",
             "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
         )
     }
@@ -255,7 +256,7 @@ mod tests {
     fn written_b() -> String {
         written(
             "b",
-            "ae55ab4380cf4f86aa8fbe640660bccc3946276babd1f9d8e2d75156268c5c24",
+            "132f656c04ced5c0079f1b917584fe5a00d7408b8d3cade8c7e95b881cd18f0c",
             "3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d",
         )
     }
@@ -264,7 +265,7 @@ mod tests {
     fn written_c() -> String {
         written(
             "c",
-            "500a943e2c8dba30dedc3181722445a245d0d206b1161d95796b407f26bf6e78",
+            "097a2f80c5652225e0b390595fc2d5ddd59c5135a650d0ff41b54ac20df92ec6",
             "2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25aefc6",
         )
     }
@@ -545,7 +546,7 @@ mod tests {
     fn a_damaged_journal_line_is_refused_naming_the_journal() {
         let (_dir, layout) = workspace();
         // The first line's key no longer has the digest written beside it.
-        let damaged = line("a", &written_a()).replacen("06ff2274", "06ff2275", 1);
+        let damaged = line("a", &written_a()).replacen("3bb83b33", "3bb83b34", 1);
         let journal = format!("{damaged}\n{}\n", line("b", &written_b()));
         fs::write(layout.journal(), &journal).unwrap();
 

@@ -81,10 +81,11 @@ approver   manifest
 execution  workers 0 (one per core), timeout 10m, strategy sandbox
 remote: none
 ceiling
-  proc.run  sort
-  env.read  -
-  fs.read   .
-  fs.write  .buildl, out
+  proc.run     sort
+  env.read     -
+  env.unkeyed  -
+  fs.read      .
+  fs.write     .buildl, out
 wants            ceiling  approved
   run sort       allowed  yes
   write .buildl  allowed  yes

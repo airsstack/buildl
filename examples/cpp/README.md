@@ -57,34 +57,37 @@ lets a target run any program through it, so the ceiling's program list limits l
 
 ```toml
 [ceiling]
-proc.run = ["cc", "c++", "sh"]
-env.read = ["PATH"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["cc", "c++", "sh"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 
 [plugins.c]
-github   = "airsstack/buildl"
-rev      = "plugin-c-v0.1.0"
-dir      = "plugins/c"
-proc.run = ["cc", "c++", "sh"]
-env.read = ["PATH"]
+github      = "airsstack/buildl"
+rev         = "plugin-c-v0.2.0"
+dir         = "plugins/c"
+proc.run    = ["cc", "c++", "sh"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
 ```
 
 `cc` runs `-dumpmachine` for `c.platform`; `c++` compiles and links. `PATH` is read because the
-compiler driver finds the linker through it.
+compiler driver finds the linker through it, and it is `unkeyed` (the plugin declares
+`env = { PATH = "unkeyed" }`): the command gets the value, only the name enters the key.
 
 ## Run it
 
 Needs the `buildl` binary, a C compiler (`cc`) and a C++ compiler (`c++`), both gcc or clang, and `git`.
 
 ```sh
-buildl plugins fetch     # fetches the plugin at plugin-c-v0.1.0 into buildl.lock and the store
+buildl plugins fetch     # fetches the plugin at plugin-c-v0.2.0 into buildl.lock and the store
 buildl build             # out/hello and out/libgreet.so (out/libgreet.dylib on macOS)
 buildl test              # tests: 1 passed
 ./out/hello
 ```
 
-The tag `plugin-c-v0.1.0` is published, and fetching it is the normal route. From `examples/`,
+Fetching the tag `plugin-c-v0.2.0` from GitHub is the normal route. From `examples/`,
 `sh check.sh cpp` runs the shared checks on a copy, as CI does, with this checkout's plugin instead:
 `prepare.sh` makes a git repository from this checkout's `plugins/c`, tags it and points the copy's
 `buildl.toml` at it; then `assert.sh` checks the output, the library's file name, that editing

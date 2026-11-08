@@ -12,10 +12,12 @@
 //! whether a dependency exists, and whether a rule reference names a rule all need every build
 //! file, so they belong to the phase that builds the graph.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    Command, Description, EnvName, Label, Origin, OutputName, Provenance, SettingName,
+    Command, Description, EnvMark, EnvName, Label, Origin, OutputName, Provenance, SettingName,
     SettingValue, SourcePath,
 };
 
@@ -94,8 +96,8 @@ pub struct Target {
     pub deps: Vec<Label>,
     /// The outputs it produces, each a file or a directory, relative to its output directory.
     pub outputs: Vec<OutputName>,
-    /// The environment variables it reads.
-    pub env: Vec<EnvName>,
+    /// The environment variables it reads, each with its mark, held sorted by name.
+    pub env: BTreeMap<EnvName, EnvMark>,
     /// Whether it may reach the network.
     pub network: NetworkAccess,
     /// Where its one output comes from.
@@ -210,6 +212,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use super::{
@@ -217,8 +220,8 @@ mod tests {
         Setting, Target, TargetRole,
     };
     use crate::types::{
-        Argument, Command, Description, Directory, Label, Origin, OutputName, Provenance,
-        SettingName, SettingValue,
+        Argument, Command, Description, Directory, EnvMark, EnvName, Label, Origin, OutputName,
+        Provenance, SettingName, SettingValue,
     };
 
     fn label(raw: &str) -> Label {
@@ -237,7 +240,7 @@ mod tests {
             inputs: Vec::new(),
             deps: vec![label("//:main.o")],
             outputs: vec![OutputName::parse("app").unwrap()],
-            env: Vec::new(),
+            env: BTreeMap::new(),
             network: NetworkAccess::Sealed,
             output_source: OutputSource::Command,
             freshness: Freshness::Cached,
@@ -301,7 +304,7 @@ mod tests {
             json,
             concat!(
                 r#"{"item":{"Target":{"action":{"Run":["cc","$deps","-o","$out"]},"#,
-                r#""deps":["//:main.o"],"env":[],"freshness":"Cached","inputs":[],"#,
+                r#""deps":["//:main.o"],"env":{},"freshness":"Cached","inputs":[],"#,
                 r#""label":"//:app","network":"Sealed","output_source":"Command","outputs":["app"],"#,
                 r#""role":"Build"}},"#,
                 r#""origin":"BuildFile","provenance":{"directory":"","file":"build.lua"}}"#
@@ -351,6 +354,36 @@ mod tests {
                 declaration
             );
         }
+    }
+
+    #[test]
+    fn declaration_env_is_sorted_by_name() {
+        let marks = [
+            ("RUSTFLAGS", EnvMark::Key),
+            ("PATH", EnvMark::Unkeyed),
+            ("HOME", EnvMark::Unkeyed),
+        ];
+        let json_of = |pairs: &[(&str, EnvMark)]| {
+            let mut declared = target();
+            declared.env = pairs
+                .iter()
+                .map(|(name, mark)| (EnvName::parse(*name).unwrap(), *mark))
+                .collect();
+            let declaration = Declaration::new(
+                Provenance::new(PathBuf::from("build.lua"), Directory::root()),
+                Origin::BuildFile,
+                Declared::Target(declared),
+            );
+            crate::json::canonical::to_string(&declaration).unwrap()
+        };
+        let mut reversed = marks;
+        reversed.reverse();
+        let json = json_of(&marks);
+        assert_eq!(json, json_of(&reversed));
+        assert!(
+            json.contains(r#""env":{"HOME":"unkeyed","PATH":"unkeyed","RUSTFLAGS":"key"}"#),
+            "{json}"
+        );
     }
 
     #[test]

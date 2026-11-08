@@ -24,6 +24,10 @@ fn difference_text(difference: &Difference, own: &OwnComponents) -> String {
         Difference::InputOrder => "inputs reordered".to_owned(),
         Difference::Outputs => "declared outputs changed".to_owned(),
         Difference::Env(name) => format!("environment variable {name} changed"),
+        Difference::UnkeyedAdded(name) => format!("unkeyed variable {name} added"),
+        Difference::UnkeyedRemoved(name) => format!("unkeyed variable {name} removed"),
+        Difference::NowUnkeyed(name) => format!("variable {name} is now unkeyed"),
+        Difference::NowKeyed(name) => format!("variable {name} is now keyed"),
         Difference::Tool => own.tool.as_ref().map_or_else(
             || "tool changed".to_owned(),
             |tool| format!("tool {} changed", tool.program),
@@ -146,13 +150,13 @@ mod tests {
         Action, ActionCache, ActionKey, Approval, Approver, ApproverMode, Argument, Attribution,
         BuildFile, CacheRow, Ceiling, Clock, Command, ContentStore, Declaration, DeclarationSource,
         Declared, DepProducts, Diagnostic, Difference, Digest, Digester, Directory, DirtyReason,
-        Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy,
-        Execution, FileMode, FileStat, Found, Freshness, GraphRecord, Host, InputDigest, InputStat,
-        KeyComponents, Label, LiveSink, LogLine, Manifest, NetworkAccess, NoRemote, Origin,
-        OutcomeEvent, OutputName, OutputPath, OutputSource, OwnComponents, Plan, PlannedKey,
-        Platform, PluginCap, PluginName, PluginRef, PluginVersion, PortName, PortSet, Ports,
-        Produced, Program, Provenance, RawOutcome, ReadyAction, Rerun, Result, RunHistory, Setting,
-        SettingName, SettingValue, SourcePath, StatCache, StatEntry, Target, TargetGraph,
+        Discovered, Dispatcher, EnvMark, EnvName, EnvValue, Error, Evaluated, EventLog,
+        ExecStrategy, Execution, FileMode, FileStat, Found, Freshness, GraphRecord, Host,
+        InputDigest, InputStat, KeyComponents, Label, LiveSink, LogLine, Manifest, NetworkAccess,
+        NoRemote, Origin, OutcomeEvent, OutputName, OutputPath, OutputSource, OwnComponents, Plan,
+        PlannedKey, Platform, PluginCap, PluginName, PluginRef, PluginVersion, PortName, PortSet,
+        Ports, Produced, Program, Provenance, RawOutcome, ReadyAction, Rerun, Result, RunHistory,
+        Setting, SettingName, SettingValue, SourcePath, StatCache, StatEntry, Target, TargetGraph,
         TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn, Verdict, WantedSet, Workspace,
         plan, resolve,
     };
@@ -171,6 +175,7 @@ mod tests {
                 out: Directory::parse("out")?,
                 state: Directory::parse(".buildl")?,
                 ceiling: Ceiling {
+                    unkeyed: BTreeSet::new(),
                     run: BTreeSet::from([Program::parse("cc")?]),
                     env: BTreeSet::from([EnvName::parse("CC_FLAGS")?]),
                     read: BTreeSet::from([Directory::root()]),
@@ -197,6 +202,10 @@ mod tests {
 
         fn env(&self, _name: &EnvName) -> Result<Option<EnvValue>> {
             Ok(Some(EnvValue::parse("-Wall")?))
+        }
+
+        fn machine_folders(&self) -> buildl_core::MachineFolders {
+            buildl_core::MachineFolders::default()
         }
     }
 
@@ -439,7 +448,7 @@ mod tests {
             inputs: Vec::new(),
             deps: Vec::new(),
             outputs: Vec::new(),
-            env: Vec::new(),
+            env: BTreeMap::new(),
             network: NetworkAccess::Sealed,
             output_source: OutputSource::Command,
             freshness: Freshness::Cached,
@@ -483,7 +492,7 @@ mod tests {
                 inputs: paths(&["changed.c"]),
                 deps: deps(&["//:docs"]),
                 outputs: vec![OutputName::parse("changed").unwrap()],
-                env: vec![EnvName::parse("CC_FLAGS").unwrap()],
+                env: BTreeMap::from([(EnvName::parse("CC_FLAGS").unwrap(), EnvMark::Key)]),
                 ..target("//:changed", &["cc", "-O$opt:mode", "$in", "-o", "$out"])
             }),
             declared(target("//:docs", &["cc", "--doc"])),
@@ -602,6 +611,7 @@ mod tests {
             }],
             outputs: vec![OutputName::parse("older").unwrap()],
             env: BTreeMap::new(),
+            unkeyed: BTreeSet::new(),
             tool: Some(ToolIdentity {
                 program: Program::parse("cc").unwrap(),
                 fingerprint: Digest::of(b"an older cc"),
@@ -656,6 +666,49 @@ mod tests {
         );
     }
 
+    /// The words for `difference` on a target of the test graph.
+    fn worded(difference: &Difference) -> String {
+        let graph = graph();
+        let first = planned(&graph, Rows::default());
+        difference_text(difference, &own(&first, &graph, "//:new"))
+    }
+
+    fn home() -> EnvName {
+        EnvName::parse("HOME").unwrap()
+    }
+
+    #[test]
+    fn prints_unkeyed_added() {
+        assert_eq!(
+            worded(&Difference::UnkeyedAdded(home())),
+            "unkeyed variable HOME added"
+        );
+    }
+
+    #[test]
+    fn prints_unkeyed_removed() {
+        assert_eq!(
+            worded(&Difference::UnkeyedRemoved(home())),
+            "unkeyed variable HOME removed"
+        );
+    }
+
+    #[test]
+    fn prints_now_unkeyed() {
+        assert_eq!(
+            worded(&Difference::NowUnkeyed(home())),
+            "variable HOME is now unkeyed"
+        );
+    }
+
+    #[test]
+    fn prints_now_keyed() {
+        assert_eq!(
+            worded(&Difference::NowKeyed(home())),
+            "variable HOME is now keyed"
+        );
+    }
+
     #[test]
     fn a_rerun_reads_as_asked_to_run_again() {
         let graph = graph();
@@ -670,6 +723,7 @@ mod tests {
     #[test]
     fn plan_text_lists_attribution_under_the_wanted_set() {
         let go = PluginRef {
+            unkeyed: BTreeSet::new(),
             name: PluginName::parse("go").unwrap(),
             version: PluginVersion::parse("1.2.0").unwrap(),
             run: BTreeSet::from([Program::parse("cc").unwrap()]),

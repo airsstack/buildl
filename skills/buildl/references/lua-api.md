@@ -61,7 +61,7 @@ relative to the workspace root.
 | `inputs` | list of strings | `{}` | the files the command reads |
 | `deps` | list of labels | `{}` | the targets whose outputs the command reads |
 | `outputs` | list of strings | `{ name }` | the files the command writes |
-| `env` | list of strings | `{}` | the environment variables the command is given, read from yours |
+| `env` | table of name to mark | `{}` | the environment variables the command is given, read from yours. Each is marked `"key"` (its value enters the action key and goes to a remote server) or `"unkeyed"` (its value reaches the command, only its name enters the key, nothing goes to a remote server). Every name needs a mark: a list such as `{ "HOME" }` is exit 5 |
 | `network` | boolean | `false` | `true` says the command reaches the network |
 | `stdout` | boolean | `false` | `true` makes what the command prints the output. Needs exactly one output |
 | `always` | boolean | `false` | `true` runs the command on every build instead of caching it |
@@ -70,6 +70,21 @@ relative to the workspace root.
 local b = buildl
 b.target("hello.txt", { run = { "sh", "-c", "echo hello > $out" } })
 ```
+
+A variable that changes what the command makes is `"key"`. One that only helps it find programs
+(`HOME`, `PATH`) is `"unkeyed"`, so machines with other homes or `PATH`s share cache entries. The
+workspace allows an unkeyed name with `env.unkeyed` in `buildl.toml`.
+
+```lua
+local b = buildl
+b.target("app", {
+  run = { "cargo", "build", "--release" },
+  env = { RUSTFLAGS = "key", HOME = "unkeyed", PATH = "unkeyed" },
+})
+```
+
+A `"key"` variable whose value holds this machine's folder (home, workspace or sandbox) is exit 5.
+`TZ`, `LC_ALL` and `SOURCE_DATE_EPOCH` cannot be declared with either mark.
 
 ## `test(name, options)`
 
@@ -90,7 +105,7 @@ read the build files again.
 
 ```lua
 local b = buildl
-b.discover("pkgs", { run = { "go", "list", "-json=ImportPath", "./..." }, stdout = true, env = { "HOME" } })
+b.discover("pkgs", { run = { "go", "list", "-json=ImportPath", "./..." }, stdout = true, env = { HOME = "unkeyed" } })
 ```
 
 ## `rule(name, options)`
@@ -150,7 +165,7 @@ searched.
 ```lua
 local b = buildl
 local go_files = b.sources("**/*.go")
-b.target("app", { inputs = { "go.mod", go_files }, run = { "go", "build", "-o", "$out", "." }, env = { "HOME" } })
+b.target("app", { inputs = { "go.mod", go_files }, run = { "go", "build", "-o", "$out", "." }, env = { HOME = "unkeyed" } })
 ```
 
 ## `folder()`
@@ -174,7 +189,7 @@ empty list. Its errors are plain Lua errors that `pcall` can catch.
 
 ```lua
 local b = buildl
-b.discover("pkgs", { run = { "go", "list", "-json=ImportPath", "./..." }, stdout = true, env = { "HOME" } })
+b.discover("pkgs", { run = { "go", "list", "-json=ImportPath", "./..." }, stdout = true, env = { HOME = "unkeyed" } })
 local listed = b.discovered(":pkgs")
 for _, pkg in ipairs(b.decode_all(listed or "")) do
   b.target("note_" .. pkg.ImportPath:gsub("/", "_"), { run = { "echo", pkg.ImportPath }, stdout = true })

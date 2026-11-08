@@ -29,8 +29,8 @@ use crate::manifest::anchor::table_written_at;
 use crate::manifest::memory::memory_bytes;
 use crate::manifest::root::MANIFEST_FILE;
 use crate::manifest::schema::{
-    ApproverTable, CeilingTable, DeclarationTable, ExecutionTable, PluginTable, Raw, RemoteTable,
-    Tabular, TokenTable, WorkspaceTable,
+    ApproverTable, CeilingTable, DeclarationTable, EnvTable, ExecutionTable, PluginTable, Raw,
+    RemoteTable, Tabular, TokenTable, WorkspaceTable,
 };
 use crate::manifest::toml_manifest::DeclarationSettings;
 
@@ -111,13 +111,21 @@ fn caps(
         .map(|(name, Tabular(plugin))| {
             let name = plugin_name(text, name)?;
             let key = |field: &str| format!("plugins.{name}.{field}");
+            let env = set(text, &key("env.read"), &plugin.env.read, |raw| {
+                EnvName::parse(raw)
+            })?;
             let cap = PluginCap {
                 run: set(text, &key("proc.run"), &plugin.proc.run, |raw| {
                     Program::parse(raw)
                 })?,
-                env: set(text, &key("env.read"), &plugin.env.read, |raw| {
-                    EnvName::parse(raw)
-                })?,
+                unkeyed: unkeyed(
+                    text,
+                    &format!("[plugins.{name}]"),
+                    &key("env.unkeyed"),
+                    &plugin.env,
+                    &env,
+                )?,
+                env,
                 network: match plugin.network.as_ref().map(|written| *written.get_ref()) {
                     Some(true) => PluginNetwork::Allowed,
                     Some(false) | None => PluginNetwork::Sealed,
@@ -302,15 +310,17 @@ fn unused(text: &str, table: &WorkspaceTable) -> Result<()> {
     Ok(())
 }
 
-/// The `[ceiling]` table as four sets. A list left out is empty: it allows nothing.
+/// The `[ceiling]` table as five sets. A list left out is empty: it allows nothing.
 fn ceiling(text: &str, table: &CeilingTable) -> Result<Ceiling> {
+    let env = set(text, "ceiling.env.read", &table.env.read, |raw| {
+        EnvName::parse(raw)
+    })?;
     Ok(Ceiling {
         run: set(text, "ceiling.proc.run", &table.proc.run, |raw| {
             Program::parse(raw)
         })?,
-        env: set(text, "ceiling.env.read", &table.env.read, |raw| {
-            EnvName::parse(raw)
-        })?,
+        unkeyed: unkeyed(text, "ceiling", "ceiling.env.unkeyed", &table.env, &env)?,
+        env,
         read: directories(text, "ceiling.fs.read", &table.fs.read)?,
         write: directories(text, "ceiling.fs.write", &table.fs.write)?,
     })
@@ -545,6 +555,29 @@ fn directory(raw: &str) -> core::result::Result<Directory, String> {
         )),
         other => Directory::parse(other).map_err(|error| error.to_string()),
     }
+}
+
+/// The `env.unkeyed` list of `table`, as a set, held to the `read` set of the same table.
+///
+/// `named` is how the table is called in a refusal and `key` is the list's key, for the refusal
+/// of an entry that is not a variable name. A name `read` does not hold is
+/// [`Error::UnkeyedNotRead`].
+fn unkeyed(
+    text: &str,
+    named: &str,
+    key: &str,
+    table: &EnvTable,
+    read: &BTreeSet<EnvName>,
+) -> Result<BTreeSet<EnvName>> {
+    let listed = set(text, key, &table.unkeyed, |raw| EnvName::parse(raw))?;
+    if let Some(name) = listed.difference(read).next() {
+        return Err(Error::UnkeyedNotRead {
+            file: MANIFEST_FILE.to_owned(),
+            table: named.to_owned(),
+            name: name.clone(),
+        });
+    }
+    Ok(listed)
 }
 
 /// Every entry of the list `key`, read by `read`, as a set.

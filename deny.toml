@@ -95,9 +95,10 @@ deny = [
         directly""" },
     { crate = "mlua", wrappers = ["airsl"], reason = """\
         the Lua runtime is airsl's implementation detail; no buildl crate names it directly""" },
-    { crate = "toml", wrappers = ["airsl", "buildl"], reason = """\
+    { crate = "toml", wrappers = ["airsl", "buildl-lua", "buildl"], reason = """\
         book/src/ch11-03-four-crates.md: buildl-core must never depend on toml; buildl.toml parsing is \
-        the Manifest adapter's, inside buildl""" },
+        the Manifest adapter's, inside buildl; buildl-lua reads a plugin's extension.toml for \
+        env.unkeyed, a key of buildl's own that airsl's manifest parser refuses""" },
     { crate = "walkdir", wrappers = ["airsl", "buildl-lua", "notify"], reason = """\
         book/src/ch11-03-four-crates.md: buildl-core does no filesystem traversal; buildl-lua walks the declaring \
         directory for b.sources(); notify walks a directory to watch it, inside the watch \

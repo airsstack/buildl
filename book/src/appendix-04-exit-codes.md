@@ -124,7 +124,8 @@ $ echo $?
 
 The build wants something it may not have:
 
-- a program, variable or directory outside the ceiling in `buildl.toml`;
+- a program, variable or directory outside the ceiling in `buildl.toml`, or a variable marked
+  `"unkeyed"` that `env.unkeyed` does not list;
 - a plugin's target wants something its plugin does not allow;
 - the approver said no, or is `deny`.
 
@@ -141,6 +142,31 @@ $ echo $?
 4
 ```
 
+A variable marked `"unkeyed"` is held to `env.unkeyed` at every level, as a variable marked `"key"`
+is held to `env.read`. Here the ceiling lists `HOME` in `env.read` but not in `env.unkeyed`, and the
+target marks it `"unkeyed"`:
+
+```lua
+b.target("app", { inputs = { "a.txt" }, env = { HOME = "unkeyed" }, run = { "cp", "$in", "$out" } })
+```
+
+```console
+$ buildl plan
+error: build.lua: //:app: unkeyed variable HOME is outside the ceiling (env.unkeyed allows: nothing)
+$ echo $?
+4
+```
+
+When the plugin's table in `buildl.toml` is what leaves `HOME` out of `env.unkeyed`, the message
+names the plugin and its version:
+
+```console
+$ buildl plan
+error: build.lua: //:bye (plugin gobin@0.1.0): unkeyed variable HOME is outside plugin gobin@0.1.0 (env.unkeyed allows: nothing)
+$ echo $?
+4
+```
+
 ## 5, Definition
 
 A build file or `buildl.toml` is wrong, and editing it is the fix:
@@ -152,9 +178,11 @@ A build file or `buildl.toml` is wrong, and editing it is the fix:
   exist, two targets writing the same output, a command with no program;
 - two evaluations of the build files declared different things;
 - a target declares `TZ`, `LC_ALL` or `SOURCE_DATE_EPOCH`, which the sandbox sets itself;
+- a target's `env` is wrong, or a target or a discovery output holds one of this machine's
+  folders, below;
 - a git plugin has not been fetched;
-- `buildl.toml` is missing, does not parse, or asks for what this version cannot do, such as
-  `strategy = "container"`.
+- `buildl.toml` is missing, does not parse, lists a name in `env.unkeyed` that `env.read` does not,
+  or asks for what this version cannot do, such as `strategy = "container"`.
 
 This `build.lua` is missing the `})` that closes the options and the call:
 
@@ -168,6 +196,48 @@ $ buildl build
 error: build.lua: syntax error: lua error in build.lua: syntax error: build.lua:3: '}' expected (to close '{' at line 2) near <eof>
 $ echo $?
 5
+```
+
+### `env` and this machine's folders
+
+These cases are also exit 5. Each message starts with the file that is wrong: a build file with the
+target, or `buildl.toml`. Where a message shows the home folder, it is `/home/alice`, the `HOME` of
+the run it was captured from.
+
+| Case | Message |
+|---|---|
+| `env` written as a list, or a list mixed with marks | `error: build.lua: //:app: env must mark each variable "key" or "unkeyed", such as env = { HOME = "unkeyed" }` |
+| a mark that is not `"key"` or `"unkeyed"` | `error: build.lua: //:app: env HOME is marked "pass"; mark it "key" or "unkeyed"` |
+| a variable name that is not valid | `error: build.lua: declaration #0: invalid env: invalid environment variable name: "A-B" — may hold only ASCII letters, digits and '_'` |
+| `TZ`, `LC_ALL` or `SOURCE_DATE_EPOCH`, with either mark | `error: build.lua: //:app: env TZ is set to UTC by the sandbox and cannot be declared` |
+| `env.unkeyed` lists a name its table's `env.read` does not | `error: buildl.toml: ceiling env.unkeyed lists HOME, which env.read does not` |
+| a word of a command holds this machine's folder | `error: build.lua: //:note: the command holds this machine's path /home/alice; it would give the target another key on every machine` |
+| a `"key"` variable's value holds one | `error: build.lua: //:app: the variable RUSTFLAGS holds this machine's path /home/alice; mark it "unkeyed" if it only finds files` |
+| a setting a command names holds one | `error: build.lua: //:app: the setting prefix holds this machine's path /home/alice; it would give the target another key on every machine` |
+| a discovery target's output holds one | `error: build.lua: //:cargo.metadata: its output holds this machine's path /home/alice` |
+
+A name in `env.unkeyed` that `env.read` does not list is refused in the same way in a
+`[plugins.<name>]` table and in a plugin's `extension.toml`, and the message names that table or
+file.
+
+The folders checked are the home folder, the workspace folder and the action's folder. Inputs and outputs are workspace-relative, so they are not checked, and neither is
+the value of an `"unkeyed"` variable, which is in no key. Each check runs at its own moment:
+
+| What holds the folder | When it is refused |
+|---|---|
+| a word of a command | by every command that reads the build files, before anything runs |
+| a `"key"` variable's value, or a setting's value | when the action's key is gathered |
+| a discovery target's output | when the second pass reads it |
+
+The discovery's own run finishes, as the `1 built` line shows, and its output stays in the cache, so
+the refusal comes again on every run until the discovery's command changes. `tail -n 2` leaves out
+anything the discovery printed, and `/home/alice` stands for your own home folder. The command
+exits with code 5:
+
+```console
+$ buildl build 2>&1 | tail -n 2
+1 built
+error: build.lua: //:cargo.metadata: its output holds this machine's path /home/alice
 ```
 
 ## 6, CorruptState

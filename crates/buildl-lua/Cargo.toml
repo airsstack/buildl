@@ -1,6 +1,6 @@
 [package]
 name         = "buildl-lua"
-version      = "0.1.0"
+version      = "0.2.0"
 description  = "Lua build-file evaluation for buildl, on the airsl embedded runtime."
 readme       = "README.md"
 edition.workspace      = true
@@ -21,6 +21,10 @@ globset     = { workspace = true }
 serde       = { workspace = true }
 # `buildl.decode_all()` splits a stream of JSON values at the byte offset of each value's end.
 serde_json  = { workspace = true }
+# A plugin's `extension.toml`: `env.unkeyed` is buildl's own key, which airsl's parser refuses, so
+# it is read from the parsed text and left out of what airsl is given. The workspace's copy,
+# read-only.
+toml        = { workspace = true }
 # `buildl.sources()` traversal of the declaring directory, host-side.
 walkdir     = { workspace = true }
 

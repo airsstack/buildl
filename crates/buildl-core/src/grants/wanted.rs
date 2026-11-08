@@ -17,8 +17,8 @@ use crate::grants::built::built;
 use crate::placement::expand::{Lists, expand};
 use crate::placement::layout::Layout;
 use crate::types::{
-    Argument, EnvName, NetworkAccess, Node, NodeId, Program, SettingName, SettingValue, SourcePath,
-    TargetGraph, WantedSet, Workspace,
+    Argument, EnvMark, EnvName, NetworkAccess, Node, NodeId, Program, SettingName, SettingValue,
+    SourcePath, TargetGraph, WantedSet, Workspace,
 };
 
 /// Everything a graph's targets want, each with the lowest-labelled target wanting it.
@@ -30,8 +30,10 @@ pub(crate) struct Sites<'g> {
     /// The programs commands run, whether written out, named through a build setting, or named
     /// through `$in`, `$out` or `$deps`; never one a dependency of the target builds.
     pub(crate) programs: BTreeMap<Program, &'g Node>,
-    /// The environment variables targets read.
+    /// The environment variables targets read and mark `key`.
     pub(crate) env: BTreeMap<&'g EnvName, &'g Node>,
+    /// The environment variables targets read and mark `unkeyed`.
+    pub(crate) unkeyed: BTreeMap<&'g EnvName, &'g Node>,
     /// The workspace files targets read.
     pub(crate) inputs: BTreeMap<&'g SourcePath, &'g Node>,
 }
@@ -49,13 +51,18 @@ pub(crate) fn sites<'g>(
 ) -> Sites<'g> {
     let mut programs = BTreeMap::new();
     let mut env = BTreeMap::new();
+    let mut unkeyed = BTreeMap::new();
     let mut inputs = BTreeMap::new();
     for (node, id) in graph.nodes().iter().zip((0_u32..).map(NodeId::new)) {
         if let Some(program) = program_of(graph, node, id, settings, layout) {
             programs.entry(program).or_insert(node);
         }
-        for name in &node.env {
-            env.entry(name).or_insert(node);
+        for (name, mark) in &node.env {
+            let sites = match mark {
+                EnvMark::Key => &mut env,
+                EnvMark::Unkeyed => &mut unkeyed,
+            };
+            sites.entry(name).or_insert(node);
         }
         for path in &node.inputs {
             inputs.entry(path).or_insert(node);
@@ -64,6 +71,7 @@ pub(crate) fn sites<'g>(
     Sites {
         programs,
         env,
+        unkeyed,
         inputs,
     }
 }
@@ -100,6 +108,7 @@ pub(crate) fn wanted(graph: &TargetGraph, sites: &Sites<'_>, workspace: &Workspa
     WantedSet {
         programs: sites.programs.keys().cloned().collect(),
         env: sites.env.keys().map(|name| (*name).clone()).collect(),
+        unkeyed: sites.unkeyed.keys().map(|name| (*name).clone()).collect(),
         write: BTreeSet::from([workspace.out.clone(), workspace.state.clone()]),
         network: graph
             .nodes()
@@ -117,13 +126,15 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::path::Path;
 
-    use super::sites;
-    use crate::grants::fixtures::{command, dir, env_name, graph, node, path, settings};
+    use super::{sites, wanted as wanted_set};
+    use crate::grants::fixtures::{
+        command, dir, env_name, graph, keyed, marked, node, path, settings,
+    };
     use crate::placement::layout::Layout;
-    use crate::types::{NetworkAccess, SettingName, SettingValue, TargetGraph};
+    use crate::types::{EnvMark, NetworkAccess, SettingName, SettingValue, TargetGraph, Workspace};
 
     /// The programs `graph` wants, each with the label of the target wanting it.
     fn wanted(
@@ -146,11 +157,11 @@ mod tests {
     fn sites_name_the_lowest_labelled_target_for_each_want() {
         let app = node("//:app", |node| {
             node.run = command(&["ld", "$in"]);
-            node.env = vec![env_name("PATH")];
+            node.env = keyed(&["PATH"]);
             node.inputs = vec![path("src/main.c")];
         });
         let text = node("//lib:text", |node| {
-            node.env = vec![env_name("PATH"), env_name("HOME")];
+            node.env = keyed(&["PATH", "HOME"]);
             node.inputs = vec![path("lib/text.c")];
             node.network = NetworkAccess::Declared;
         });
@@ -190,6 +201,62 @@ mod tests {
                 ("src/main.c", Path::new("build.lua")),
             ]
         );
+    }
+
+    /// What `graph` wants under a workspace writing to `out` and `.buildl`.
+    fn wanted_of(graph: &TargetGraph) -> crate::types::WantedSet {
+        let layout = Layout::of(graph, &dir("out")).unwrap();
+        let sites = sites(graph, &BTreeMap::new(), &layout);
+        wanted_set(graph, &sites, &workspace())
+    }
+
+    fn workspace() -> Workspace {
+        Workspace {
+            out: dir("out"),
+            state: dir(".buildl"),
+            ceiling: crate::types::Ceiling {
+                run: BTreeSet::new(),
+                env: BTreeSet::new(),
+                unkeyed: BTreeSet::new(),
+                read: BTreeSet::new(),
+                write: BTreeSet::new(),
+            },
+            execution: crate::types::Execution::default(),
+            approver: crate::types::ApproverMode::Manifest,
+            plugins: BTreeMap::new(),
+            remote: None,
+        }
+    }
+
+    #[test]
+    fn unkeyed_names_are_wanted_apart() {
+        let graph = graph(
+            vec![node("//:app", |node| {
+                node.env = marked(&[("RUSTFLAGS", EnvMark::Key), ("HOME", EnvMark::Unkeyed)]);
+            })],
+            &[&[]],
+        );
+        let wanted = wanted_of(&graph);
+        assert_eq!(wanted.env, BTreeSet::from([env_name("RUSTFLAGS")]));
+        assert_eq!(wanted.unkeyed, BTreeSet::from([env_name("HOME")]));
+    }
+
+    #[test]
+    fn a_name_marked_both_ways_is_in_both_sets() {
+        let graph = graph(
+            vec![
+                node("//:a", |node| {
+                    node.env = marked(&[("PATH", EnvMark::Key)]);
+                }),
+                node("//:b", |node| {
+                    node.env = marked(&[("PATH", EnvMark::Unkeyed)]);
+                }),
+            ],
+            &[&[], &[]],
+        );
+        let wanted = wanted_of(&graph);
+        assert_eq!(wanted.env, BTreeSet::from([env_name("PATH")]));
+        assert_eq!(wanted.unkeyed, BTreeSet::from([env_name("PATH")]));
     }
 
     #[test]

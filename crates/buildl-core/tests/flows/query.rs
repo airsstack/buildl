@@ -8,7 +8,8 @@
 use std::collections::BTreeSet;
 
 use buildl_core::{
-    Direction, EntryName, Error, Label, Pipeline, Query, StagedItem, Written, pipeline,
+    Direction, EntryName, Error, Label, MachineFolders, Pipeline, Query, StagedItem, Written,
+    pipeline,
 };
 
 use crate::common::{
@@ -68,6 +69,7 @@ fn deps_answer_what_a_target_needs_across_build_files() {
             &source,
             &mut FakeDispatcher::default(),
             &entry(),
+            &MachineFolders::default(),
             &FakeHistory::default(),
             &FakeCas::default(),
             &asked(Direction::Deps, start),
@@ -85,6 +87,7 @@ fn rdeps_answer_what_needs_a_target_across_build_files() {
         &source,
         &mut FakeDispatcher::default(),
         &entry(),
+        &MachineFolders::default(),
         &FakeHistory::default(),
         &FakeCas::default(),
         &asked(Direction::Rdeps, "//lib:text"),
@@ -97,6 +100,7 @@ fn rdeps_answer_what_needs_a_target_across_build_files() {
         &source,
         &mut FakeDispatcher::default(),
         &entry(),
+        &MachineFolders::default(),
         &FakeHistory::default(),
         &FakeCas::default(),
         &asked(Direction::Rdeps, "//:app"),
@@ -113,6 +117,7 @@ fn a_pipeline_answers_what_the_free_function_answers() {
         &fixture(),
         &mut FakeDispatcher::default(),
         &entry(),
+        &MachineFolders::default(),
         &FakeHistory::default(),
         &FakeCas::default(),
         &question,
@@ -132,6 +137,7 @@ fn a_target_naming_nothing_is_refused_with_the_nearest_one() {
         &fixture(),
         &mut FakeDispatcher::default(),
         &entry(),
+        &MachineFolders::default(),
         &FakeHistory::default(),
         &FakeCas::default(),
         &asked(Direction::Deps, "//lib:txt"),
@@ -153,6 +159,7 @@ fn a_missing_build_file_stops_the_query_before_it_is_answered() {
         &source,
         &mut FakeDispatcher::default(),
         &entry(),
+        &MachineFolders::default(),
         &FakeHistory::default(),
         &FakeCas::default(),
         &asked(Direction::Deps, "//:app"),

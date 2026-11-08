@@ -1,6 +1,6 @@
 [package]
 name         = "buildl-core"
-version      = "0.1.0"
+version      = "0.2.0"
 description  = "Domain data, ports, and pure pipeline logic for the buildl build system — no I/O, no Lua."
 readme       = "README.md"
 edition.workspace      = true

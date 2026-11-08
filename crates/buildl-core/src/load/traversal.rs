@@ -15,18 +15,20 @@
 //! graph does.
 
 use std::cmp::Ordering;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 
 use super::evaluation::{FileResult, evaluate_file};
 use super::loading::Loading;
-use crate::error::{ActionFound, DeclarationField, Error, NameKind, Result};
+use crate::error::{ActionFound, DeclarationField, DeclarationSite, Error, NameKind, Result};
 use crate::ports::{DeclarationSource, Dispatcher};
 use crate::types::{
     Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
-    Directory, Discovered, EntryName, Freshness, Label, Origin, OutputName, OutputSource,
-    Provenance, Rule, Setting, SourcePath, StagedAlias, StagedDeclaration, StagedItem, StagedRule,
-    StagedSetting, StagedSubdir, StagedTarget, Target, TargetName, TargetRole, Turn, Written,
+    Directory, Discovered, EntryName, EnvMark, EnvName, Freshness, Label, Origin, OutputName,
+    OutputSource, Provenance, Rule, Setting, SourcePath, StagedAlias, StagedDeclaration, StagedEnv,
+    StagedItem, StagedMark, StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target,
+    TargetName, TargetRole, Turn, Written,
 };
 
 /// Evaluates the workspace's build files and returns their declarations, validated and sorted.
@@ -273,10 +275,7 @@ fn convert_target(staged: StagedTarget, site: &Site<'_>) -> Result<Target> {
             },
         ));
     }
-    let mut env = Vec::with_capacity(staged.env.len());
-    for name in &staged.env {
-        env.push(name.parse().map_err(site.invalid(DeclarationField::Env))?);
-    }
+    let env = convert_env(&staged.env, &label, site)?;
     Ok(Target {
         label,
         role: staged.role,
@@ -289,6 +288,70 @@ fn convert_target(staged: StagedTarget, site: &Site<'_>) -> Result<Target> {
         output_source: staged.output_source,
         freshness: staged.freshness,
     })
+}
+
+/// Turns a target's staged `env` entries into its marked variables.
+///
+/// A list entry is refused before anything else, so a table that is both a list and badly marked
+/// is told to mark its variables. Past that, the first entry in staged order that is refused is
+/// the one reported.
+fn convert_env(
+    entries: &[StagedEnv],
+    label: &Label,
+    site: &Site<'_>,
+) -> Result<BTreeMap<EnvName, EnvMark>> {
+    let at = || {
+        Box::new(DeclarationSite {
+            label: label.clone(),
+            provenance: site.provenance.clone(),
+            origin: site.origin.clone(),
+        })
+    };
+    if entries
+        .iter()
+        .any(|entry| matches!(entry, StagedEnv::ListEntry))
+    {
+        return Err(Error::EnvNotMarked { site: at() });
+    }
+    let mut env = BTreeMap::new();
+    for entry in entries {
+        match entry {
+            StagedEnv::Marked { name, mark } => {
+                let name = name.parse().map_err(site.invalid(DeclarationField::Env))?;
+                let mark = match mark {
+                    StagedMark::Word(word) => word.parse().map_err(|_| Error::EnvBadMark {
+                        site: at(),
+                        name: name.clone(),
+                        found: format!("{:?}", word.as_written()),
+                    })?,
+                    StagedMark::NotAString { found } => {
+                        return Err(Error::EnvBadMark {
+                            site: at(),
+                            name,
+                            found: found.clone(),
+                        });
+                    }
+                };
+                env.insert(name, mark);
+            }
+            StagedEnv::NotAName { found } => {
+                return Err(site.invalid(DeclarationField::Env)(Error::InvalidName {
+                    kind: NameKind::EnvName,
+                    value: format!("<{found}>"),
+                    reason: "must be a string",
+                }));
+            }
+            StagedEnv::NotUtf8Name => {
+                return Err(site.invalid(DeclarationField::Env)(Error::InvalidName {
+                    kind: NameKind::EnvName,
+                    value: String::from("<non-UTF-8 text>"),
+                    reason: "must be valid UTF-8",
+                }));
+            }
+            StagedEnv::ListEntry => {}
+        }
+    }
+    Ok(env)
 }
 
 fn convert_rule(staged: StagedRule, site: &Site<'_>) -> Result<Rule> {
@@ -350,16 +413,17 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::path::{Path, PathBuf};
 
     use super::{build_file, convert, declaration_order, resolve_subdirs};
-    use crate::error::{ActionFound, DeclarationField, Error};
+    use crate::error::{ActionFound, DeclarationField, Error, NameKind};
     use crate::types::{
-        Action, Declaration, DeclarationOrder, Declared, Directory, EntryName, Freshness, Label,
-        NetworkAccess, Origin, OutputName, OutputSource, PluginName, PluginRef, PluginVersion,
-        Provenance, StagedAlias, StagedDeclaration, StagedItem, StagedRule, StagedSetting,
-        StagedSubdir, StagedTarget, Target, TargetRole, Written,
+        Action, Declaration, DeclarationOrder, Declared, Directory, EntryName, EnvMark, EnvName,
+        Freshness, Label, NetworkAccess, Origin, OutputName, OutputSource, PluginName, PluginRef,
+        PluginVersion, Provenance, StagedAlias, StagedDeclaration, StagedEnv, StagedItem,
+        StagedMark, StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target, TargetRole,
+        Written,
     };
 
     fn file_in(directory: &str) -> Provenance {
@@ -385,6 +449,13 @@ mod tests {
             network: NetworkAccess::Sealed,
             output_source: OutputSource::Command,
             freshness: Freshness::Cached,
+        }
+    }
+
+    fn marked(name: &str, mark: &str) -> StagedEnv {
+        StagedEnv::Marked {
+            name: Written::new(name),
+            mark: StagedMark::Word(Written::new(mark)),
         }
     }
 
@@ -477,6 +548,123 @@ mod tests {
         assert_eq!(target.label.to_string(), "//app:app");
         let deps: Vec<String> = target.deps.iter().map(ToString::to_string).collect();
         assert_eq!(deps, ["//app:main.o", "//app:util.o", "//lib:text"]);
+    }
+
+    #[test]
+    fn env_table_of_marks_is_read() {
+        let mut staged = staged_target("app");
+        staged.env = vec![marked("RUSTFLAGS", "key"), marked("HOME", "unkeyed")];
+        let declaration = convert_target_in("", staged).unwrap();
+        assert_eq!(
+            target_of(&declaration).env,
+            BTreeMap::from([
+                (EnvName::parse("HOME").unwrap(), EnvMark::Unkeyed),
+                (EnvName::parse("RUSTFLAGS").unwrap(), EnvMark::Key),
+            ])
+        );
+    }
+
+    #[test]
+    fn empty_or_absent_env_declares_nothing() {
+        let declaration = convert_target_in("", staged_target("app")).unwrap();
+        assert!(target_of(&declaration).env.is_empty());
+    }
+
+    /// The refusal `staged` earns, rendered as a user would read it.
+    fn env_refusal(staged: Vec<StagedEnv>) -> (Error, String) {
+        let mut target = staged_target("app");
+        target.env = staged;
+        let error = convert_target_in("", target).unwrap_err();
+        let text = error.to_string();
+        (error, text)
+    }
+
+    #[test]
+    fn env_list_is_refused() {
+        let (error, text) = env_refusal(vec![StagedEnv::ListEntry]);
+        assert!(matches!(error, Error::EnvNotMarked { .. }), "{error:?}");
+        assert_eq!(
+            text,
+            "build.lua: //:app: env must mark each variable \"key\" or \"unkeyed\", such as \
+             env = { HOME = \"unkeyed\" }"
+        );
+    }
+
+    #[test]
+    fn env_mixed_table_is_refused() {
+        let (error, _) = env_refusal(vec![StagedEnv::ListEntry, marked("PATH", "unkeyed")]);
+        assert!(matches!(error, Error::EnvNotMarked { .. }), "{error:?}");
+    }
+
+    #[test]
+    fn env_bad_mark_is_refused() {
+        let (error, text) = env_refusal(vec![marked("HOME", "pass")]);
+        assert!(matches!(error, Error::EnvBadMark { .. }), "{error:?}");
+        assert_eq!(
+            text,
+            "build.lua: //:app: env HOME is marked \"pass\"; mark it \"key\" or \"unkeyed\""
+        );
+        let (_, text) = env_refusal(vec![StagedEnv::Marked {
+            name: Written::new("HOME"),
+            mark: StagedMark::NotAString {
+                found: "true".to_owned(),
+            },
+        }]);
+        assert_eq!(
+            text,
+            "build.lua: //:app: env HOME is marked true; mark it \"key\" or \"unkeyed\""
+        );
+    }
+
+    #[test]
+    fn env_list_entry_wins_over_a_bad_mark() {
+        let (error, _) = env_refusal(vec![marked("HOME", "pass"), StagedEnv::ListEntry]);
+        assert!(matches!(error, Error::EnvNotMarked { .. }), "{error:?}");
+    }
+
+    #[test]
+    fn env_bad_name_is_refused() {
+        let (error, _) = env_refusal(vec![marked("A-B", "key")]);
+        let Error::InvalidDeclaration { field, source, .. } = error else {
+            unreachable!("expected InvalidDeclaration");
+        };
+        assert_eq!(field, DeclarationField::Env);
+        assert!(
+            matches!(
+                *source,
+                Error::InvalidName {
+                    kind: NameKind::EnvName,
+                    ..
+                }
+            ),
+            "{source:?}"
+        );
+        let (error, _) = env_refusal(vec![StagedEnv::NotAName {
+            found: "boolean".to_owned(),
+        }]);
+        assert!(
+            matches!(
+                error,
+                Error::InvalidDeclaration {
+                    field: DeclarationField::Env,
+                    ..
+                }
+            ),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn env_key_that_is_not_utf8_is_refused_as_such() {
+        let (error, _) = env_refusal(vec![StagedEnv::NotUtf8Name]);
+        let Error::InvalidDeclaration { field, source, .. } = error else {
+            unreachable!("expected InvalidDeclaration");
+        };
+        assert_eq!(field, DeclarationField::Env);
+        assert_eq!(
+            source.to_string(),
+            "invalid environment variable name: \"<non-UTF-8 text>\" — must be valid UTF-8"
+        );
     }
 
     #[test]
@@ -648,6 +836,7 @@ mod tests {
             version: PluginVersion::parse("1.2.0").unwrap(),
             run: BTreeSet::new(),
             env: BTreeSet::new(),
+            unkeyed: BTreeSet::new(),
         };
         let origin = Origin::plugins(vec![go]).unwrap();
         let by_plugin = |target: StagedTarget| StagedDeclaration {
@@ -711,7 +900,7 @@ mod tests {
         );
 
         let mut env = staged_target("app");
-        env.env = vec![Written::new("1X")];
+        env.env = vec![marked("1X", "key")];
         assert_eq!(
             invalid_field(convert_target_in("", env)),
             DeclarationField::Env

@@ -21,14 +21,14 @@ plugins/
 -- plugins/gobin/main.lua
 local module = {}
 
--- Declares a target building the Go program in directory `dir` of the module
--- whose go.mod sits beside the calling build file. The Go toolchain keeps its
--- build cache under $HOME, so the target reads HOME.
+-- Declares a target building the Go program in directory `dir` of the module whose go.mod sits
+-- beside the calling build file. The Go toolchain keeps its build cache under $HOME, so the target
+-- reads HOME, as `unkeyed`: the value goes to `go`, only the name enters the key.
 function module.binary(name, dir)
   buildl.target(name, {
     inputs = { "go.mod", buildl.sources(dir .. "/*.go") },
     run    = { "go", "build", "-o", "$out", "./" .. dir },
-    env    = { "HOME" },
+    env    = { HOME = "unkeyed" },
   })
 end
 
@@ -51,8 +51,9 @@ api     = 1
 
 # The most the plugin's targets may want; the workspace can narrow it further.
 [capabilities]
-proc.run = ["go"]
-env.read = ["HOME"]
+proc.run    = ["go"]
+env.read    = ["HOME"]
+env.unkeyed = ["HOME"]
 ```
 
 The format is airsl's, so buildl has no manifest grammar of its own. buildl reads these keys:
@@ -65,6 +66,7 @@ The format is airsl's, so buildl has no manifest grammar of its own. buildl read
 | `api` | which version of the plugin API it was written for |
 | `proc.run` | the programs its targets may run |
 | `env.read` | the variables its targets may read |
+| `env.unkeyed` | the ones among them its targets may mark `"unkeyed"`; each must be in `env.read` too |
 
 airsl's manifest can say more than that: `fs.read`, `fs.write`, a module flag, a
 `[capabilities.optional]` block, a `[limits]` value. buildl refuses a manifest that holds any of
@@ -76,22 +78,25 @@ A build file cannot load whatever plugin it likes. `buildl.toml` names each one:
 
 ```toml
 [ceiling]
-proc.run = ["go"]
-env.read = ["HOME"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["go"]
+env.read    = ["HOME"]
+env.unkeyed = ["HOME"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 
 # A plugin kept in the workspace. Its targets may want at most what this table
 # allows, and what its own extension.toml allows, and what the ceiling allows.
 [plugins.gobin]
-path     = "plugins/gobin"
-proc.run = ["go"]
-env.read = ["HOME"]
+path        = "plugins/gobin"
+proc.run    = ["go"]
+env.read    = ["HOME"]
+env.unkeyed = ["HOME"]
 ```
 
-`path` is a folder of the workspace. The `proc.run` and `env.read` beside it are the workspace's
-own limit for this plugin, its **cap**. [How buildl Decides](ch08-03-how-buildl-decides.md) shows
-the manifest, the cap and the ceiling at work.
+`path` is a folder of the workspace. The `proc.run`, `env.read` and `env.unkeyed` beside it are the
+workspace's own limit for this plugin, its **cap**.
+[How buildl Decides](ch08-03-how-buildl-decides.md) shows the manifest, the cap and the ceiling at
+work.
 
 ## Using it
 
@@ -111,11 +116,11 @@ calls:
 $ buildl plan
 run    //:bye: never built
 run    //:hello: never built
-  run programs:   go
-  read variables: HOME
-  write into:     .buildl, out
+  run programs:      go
+  unkeyed variables: HOME
+  write into:        .buildl, out
   go: declared by plugin gobin@0.1.0 for //:bye
-  HOME: declared by plugin gobin@0.1.0 for //:bye
+  HOME (unkeyed): declared by plugin gobin@0.1.0 for //:bye
 2 to run, 0 conditional, 0 clean
 $ buildl build
 2 built
@@ -125,8 +130,9 @@ $ ./out/bye
 bye from a plugin
 ```
 
-The two `declared by` lines are the plugin's name on its wants. A build file cannot hide a program
-behind a plugin: you see which plugin wanted it, and for which target.
+The two `declared by` lines are the plugin's name on its wants; `(unkeyed)` marks the variable the
+plugin reads as `"unkeyed"`. A build file cannot hide a program behind a plugin: you see which
+plugin wanted it, and for which target.
 
 ## What a plugin sees
 

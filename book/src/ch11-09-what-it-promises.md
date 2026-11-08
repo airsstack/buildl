@@ -11,6 +11,10 @@ A build tool is only as useful as your knowledge of where its promises stop. Her
   `buildl.toml`, and shown to the approver before any action runs.
 - **The same declared inputs run the same action.** That is what the action key is, and `plan`
   can always say what will rebuild and why.
+- **A machine's own folders stay out of the key.** A variable that only finds programs is marked
+  `unkeyed`, and its key holds the name alone. A command, a `key` variable, a setting or a discovery
+  output that holds this machine's home, workspace or action's folder is refused, so users and CI can
+  share a cache ([The Action Key](ch05-01-action-key.md#variables-that-only-find-files)).
 - **A crash never leaves a cache row pointing at nothing.** Content goes into the cas first, the
   cache row after, and failures are never cached.
 - **Nothing on the ledger is hidden.** Every input that can change an action's result is in the
@@ -55,6 +59,30 @@ pass and not the action running now. If that case is ever needed, it will extend
 target can do, rather than add a side channel to the executor. Ninja's depfile format would then be
 one way to feed it, not the design.
 
+## Rust goes through the plugin too
+
+`buildl` builds a Rust crate through the `rust` plugin, which runs plain `cargo`. There is no depfile
+gap here, since cargo tracks the sources it reads, and so there is no discovery per file: a call
+declares one target for the crate, with every file below the build file's folder as an input.
+[The Rust Plugin](ch08-05-the-rust-plugin.md) shows how. Its limits:
+
+- **Dependencies compile again whenever an input changes.** Each build runs in a fresh sandbox, so
+  cargo has no `target/` from the last one. Plain `cargo` keeps its own `target/` and is faster for
+  an edit loop on one crate.
+- **Crates live in cargo's cache, outside buildl's store.** Cargo finds them under `HOME`
+  (`~/.cargo`), which is `unkeyed`, so a crate a machine already holds is not part of the key.
+- **Programs cargo starts are unseen.** The ceiling sees the `sh` that started cargo, not the
+  `rustc`, the linker or the build scripts cargo runs beneath it.
+- **The dev profile does not verify.** Its debug info holds the absolute path of the folder the
+  crate was built in, and `buildl verify` runs the action in a folder of its own, so it reports a
+  `dev` binary as differing. The examples build with `profile = "release"`, which holds no path.
+- **A toolchain update goes unseen**, with `rustup` or without. Each target runs `sh`, so its key
+  records neither `cargo` nor `rustc`. Unless a call sets `version_probe = true`, a new toolchain
+  does not rebuild the target; with it, `plan` lists the target as conditional even after a full
+  build.
+
+Linux and macOS only, and no cross-compiling.
+
 ## What each isolation tier does not guarantee
 
 [The Sandbox](ch06-00-sandbox.md) shows the tiers in use. Here is what each one leaves open.
@@ -95,13 +123,28 @@ The ledger is finite and named, and some things are honestly outside it:
   exact processor as it affects generated code are not in any key. Two machines with the same
   operating system and processor family share cache entries even when these differ. Containers,
   tier 4, and `verify` are what exist to contain them, and only `verify` is built.
-- **Whether a tool is reproducible.** `buildl` pins the inputs, the time zone, the locale, the
-  build time and the sandbox's directory. A tool that still gives different bytes from the same
-  inputs is the tool's property. `verify` finds it and names it; nothing fixes it.
+- **A folder the check cannot see.** `buildl` searches for this machine's folders in the places a
+  text enters a key. It does not search an `unkeyed` value, which is in no key, and it does not
+  name the programs a command starts by itself, such as the linker a compiler runs. A tool that writes a folder into its own output is under
+  *Where the workspace is*, below.
+- **Whether a tool is reproducible.** `buildl` pins the inputs, the time zone, the locale and the
+  build time, and an action's folder has the same path on every run of one workspace, as long as the
+  temporary directory stays the same. A tool that still gives different bytes from the same inputs
+  is the tool's property. `verify` finds it and names it; nothing fixes it.
+- **Where the workspace is.** The action's folder has a different path in another workspace, a git
+  worktree included, and on a machine whose workspace path or temporary directory differs. That is
+  by design: no two workspaces share a folder or wait on one. A tool that writes the folder into its
+  output, as rustc does for a file included from `OUT_DIR` or a compiler does for the build
+  directory in debug information, gives other bytes there. That difference is explained; it is not
+  a bug in `buildl`. The result is never wrong: a cache only reuses less
+  (see [Who should upload](ch09-00-remote.md#who-should-upload)).
 - **The settings left out on purpose.** `workers`, `timeout`, `strategy` and a rule's `desc` are
-  in no key. Only `strategy` can change an action's bytes: under `sandbox` the action runs in
-  another directory with pinned values, so a tool that records its directory or reads the clock
-  can give other bytes than under `bare`. A compile with debug information is one such tool.
+  in no local key. The `timeout` is in the remote key, not the local one: a remote server names an
+  action by its timeout as well, so a copy with another `timeout` in `buildl.toml` fetches nothing
+  the first uploaded ([Who should upload](ch09-00-remote.md#who-should-upload)). Only `strategy`
+  can change an action's bytes: under `sandbox` the action runs in another directory with pinned
+  values, so a tool that records its directory or reads the clock can give other bytes than under
+  `bare`. A compile with debug information is one such tool.
 
 Outside those, a difference between two builds that the ledger cannot explain is not your build's
 fault. It is a bug in `buildl`.

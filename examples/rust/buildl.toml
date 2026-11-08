@@ -4,8 +4,26 @@ entry  = "build.lua"
 out    = "out"
 config = 1
 
+# sh runs cargo and copies the binary cargo wrote to out/hello. rustc is for the plugin's
+# rust.platform and version_probe, which run it themselves; the ceiling does not see the
+# programs cargo starts. cargo finds its linker through PATH and keeps its registry and
+# toolchains under HOME.
 [ceiling]
-proc.run = ["cargo"]
-env.read = ["HOME", "PATH"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["sh", "rustc"]
+env.read    = ["HOME", "PATH"]
+env.unkeyed = ["HOME", "PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
+
+# The plugin, fetched from a subfolder of a git repository by `buildl plugins fetch`.
+# Its targets may want at most what this table allows, what its own extension.toml
+# allows, and what the ceiling allows. cargo downloads crates, so the table says
+# `network = true`.
+[plugins.rust]
+github      = "airsstack/buildl"
+rev         = "plugin-rust-v0.1.0"
+dir         = "plugins/rust"
+proc.run    = ["sh", "rustc"]
+env.read    = ["HOME", "PATH"]
+env.unkeyed = ["HOME", "PATH"]
+network     = true

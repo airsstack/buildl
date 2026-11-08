@@ -113,6 +113,7 @@ mod tests {
         WantedSet {
             programs: BTreeSet::from([Program::parse("cc").unwrap()]),
             env: BTreeSet::from([EnvName::parse("PATH").unwrap()]),
+            unkeyed: BTreeSet::new(),
             write: BTreeSet::from([Directory::parse("out").unwrap()]),
             network: BTreeSet::from([Label::parse("//:fetch").unwrap()]),
         }

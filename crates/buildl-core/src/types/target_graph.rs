@@ -15,8 +15,9 @@ use std::collections::BTreeMap;
 use serde::{Serialize, Serializer};
 
 use crate::types::{
-    Command, Description, EnvName, Freshness, Label, NetworkAccess, NodeId, Origin, OutputName,
-    OutputSource, PluginRef, Provenance, SettingName, SettingValue, SourcePath, TargetRole,
+    Command, Description, EnvMark, EnvName, Freshness, Label, NetworkAccess, NodeId, Origin,
+    OutputName, OutputSource, PluginRef, Provenance, SettingName, SettingValue, SourcePath,
+    TargetRole,
 };
 
 /// One runnable target: what a build or test target became once its references were resolved.
@@ -46,8 +47,8 @@ pub struct Node {
     pub inputs: Vec<SourcePath>,
     /// The outputs it produces, each a file or a directory, in written order without repeats.
     pub outputs: Vec<OutputName>,
-    /// The environment variables it reads, in written order without repeats.
-    pub env: Vec<EnvName>,
+    /// The environment variables it reads, each with its mark, held sorted by name.
+    pub env: BTreeMap<EnvName, EnvMark>,
     /// Whether it may reach the network.
     pub network: NetworkAccess,
     /// Where its one output comes from.
@@ -175,7 +176,7 @@ impl TargetGraph {
 struct TargetView<'a> {
     deps: Vec<&'a Label>,
     description: Option<&'a Description>,
-    env: &'a [EnvName],
+    env: &'a BTreeMap<EnvName, EnvMark>,
     freshness: Freshness,
     inputs: &'a [SourcePath],
     network: NetworkAccess,
@@ -256,8 +257,9 @@ mod tests {
 
     use super::{Node, TargetGraph};
     use crate::types::{
-        Argument, Command, Description, EnvName, Freshness, Label, NetworkAccess, NodeId, Origin,
-        OutputName, OutputSource, Provenance, SettingName, SettingValue, SourcePath, TargetRole,
+        Argument, Command, Description, EnvMark, EnvName, Freshness, Label, NetworkAccess, NodeId,
+        Origin, OutputName, OutputSource, Provenance, SettingName, SettingValue, SourcePath,
+        TargetRole,
     };
 
     fn label(raw: &str) -> Label {
@@ -281,7 +283,7 @@ mod tests {
             description: None,
             inputs: Vec::new(),
             outputs: vec![OutputName::parse(label.name().as_str()).unwrap()],
-            env: Vec::new(),
+            env: BTreeMap::new(),
             network: NetworkAccess::Sealed,
             output_source: OutputSource::Command,
             freshness: Freshness::Cached,
@@ -370,7 +372,7 @@ mod tests {
         graph_nodes[0].role = TargetRole::Test;
         graph_nodes[0].description = Some(Description::parse("link $out").unwrap());
         graph_nodes[0].inputs = vec![SourcePath::parse("main.c").unwrap()];
-        graph_nodes[0].env = vec![EnvName::parse("HOME").unwrap()];
+        graph_nodes[0].env = BTreeMap::from([(EnvName::parse("HOME").unwrap(), EnvMark::Unkeyed)]);
         graph_nodes[0].network = NetworkAccess::Declared;
         graph_nodes[0].output_source = OutputSource::Stdout;
         graph_nodes[0].freshness = Freshness::Always;
@@ -387,15 +389,15 @@ mod tests {
             concat!(
                 r#"{"aliases":{"//:default":"//:app"},"settings":{"test_filter":""},"targets":{"#,
                 r#""//:app":{"deps":["//a-b:x","//a:z"],"description":"link $out","#,
-                r#""env":["HOME"],"freshness":"Always","inputs":["main.c"],"#,
+                r#""env":{"HOME":"unkeyed"},"freshness":"Always","inputs":["main.c"],"#,
                 r#""network":"Declared","origin":"BuildFile","output_source":"Stdout","outputs":["app"],"#,
                 r#""provenance":{"directory":"","file":"build.lua"},"role":"Test","run":["cc"]},"#,
-                r#""//a-b:x":{"deps":[],"description":null,"env":[],"freshness":"Cached","#,
+                r#""//a-b:x":{"deps":[],"description":null,"env":{},"freshness":"Cached","#,
                 r#""inputs":[],"network":"Sealed","origin":"BuildFile","output_source":"Command","#,
                 r#""outputs":["x"],"#,
                 r#""provenance":{"directory":"a-b","file":"a-b/build.lua"},"role":"Build","#,
                 r#""run":["cc"]},"#,
-                r#""//a:z":{"deps":[],"description":null,"env":[],"freshness":"Cached","#,
+                r#""//a:z":{"deps":[],"description":null,"env":{},"freshness":"Cached","#,
                 r#""inputs":[],"network":"Sealed","origin":"BuildFile","output_source":"Command","#,
                 r#""outputs":["z"],"#,
                 r#""provenance":{"directory":"a","file":"a/build.lua"},"role":"Build","#,

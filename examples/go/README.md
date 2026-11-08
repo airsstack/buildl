@@ -7,9 +7,12 @@ A Go program and its test, built and run by buildl.
 | `//:hello` | `go build -o $out .`, giving `out/hello` |
 | `//:unit` | `go test ./...`, a test target |
 
-Both actions read `HOME`, because the Go toolchain keeps its build cache under it: run without
-it, `go` stops because it finds no build cache directory (`GOCACHE is not defined and $HOME is not defined`, as macOS words it). `buildl.toml` lets the
-build read `HOME` and run `go`, and nothing else.
+Both actions read `HOME`, because the Go toolchain keeps its build cache under it: run without it,
+`go` stops because it finds no build cache directory
+(`GOCACHE is not defined and $HOME is not defined`, as macOS words it). `buildl.toml` lets the
+build read `HOME` and run `go`, and nothing else. `HOME` is `unkeyed`: `go` gets its value, but
+only the name is in the action key, since the value is a folder on this machine and would give the
+same build a different key on every machine. `env.unkeyed` in `buildl.toml` allows that.
 
 ## Run it
 

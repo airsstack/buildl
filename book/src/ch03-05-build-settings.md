@@ -70,7 +70,7 @@ appear in `buildl graph`, under `"settings"`:
 
 ```console
 $ buildl graph
-{"aliases":{},"settings":{"greeting":"hello"},"targets":{"//:message":{"deps":[],"description":null,"env":[],"freshness":"Cached","inputs":[],"network":"Sealed","origin":"BuildFile","output_source":"Stdout","outputs":["message"],"provenance":{"directory":"","file":"build.lua"},"role":"Build","run":["echo","$opt:greeting","world"]}}}
+{"aliases":{},"settings":{"greeting":"hello"},"targets":{"//:message":{"deps":[],"description":null,"env":{},"freshness":"Cached","inputs":[],"network":"Sealed","origin":"BuildFile","output_source":"Stdout","outputs":["message"],"provenance":{"directory":"","file":"build.lua"},"role":"Build","run":["echo","$opt:greeting","world"]}}}
 ```
 
 So everything that shapes a build is written down: in a build file, or on the command line that ran

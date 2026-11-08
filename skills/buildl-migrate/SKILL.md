@@ -50,8 +50,11 @@ it first. This skill does not repeat them.
    - `old.env`: every environment variable a recipe reads
    - `old.network`: `true` when any recipe downloads or calls out, else `false`
 
-   Keep `buildl.toml`'s `proc.run` and `env.read` inside these lists. Check 6 fails when the ceiling
-   allows a program or variable the old build did not use.
+   Keep `buildl.toml`'s `proc.run`, `env.read` and `env.unkeyed` inside these lists. Check 6 fails
+   when the ceiling allows a program or variable the old build did not use. Mark each variable on
+   its target: `"unkeyed"` for one that only finds programs (`HOME`, `PATH`), `"key"` for one whose
+   value changes what the recipe makes (`TOKEN`, `NODE_ENV`). The `"unkeyed"` names go in both
+   `env.read` and `env.unkeyed`.
 4. List in `skip` the intermediate files an earlier run left in `P`. Each entry is one path relative
    to `P`, never a pattern: `*.o` skips nothing. Write each `.o` path, or the folder that holds
    them. A folder entry leaves out everything below it, and the folder itself. So skip a folder only
@@ -182,7 +185,7 @@ The last line is `parity: PASS`, or `parity: FAIL (<n> rows)`. The verdict words
 | The message says | Cause | The agent |
 |---|---|---|
 | it cannot read `new.graph.json` or `new.doctor.txt` | that step-2 line was not run, or ran somewhere else | runs the line in `W/new` and runs step 3 again |
-| the doctor output has no `ceiling` line, or no `proc.run` or `env.read` line | `buildl doctor` failed and wrote an error into the file | runs `buildl doctor` in `W/new`, reads its error, fixes the new build |
+| the doctor output has no `ceiling` line, or no `proc.run`, `env.read` or `env.unkeyed` line | `buildl doctor` failed and wrote an error into the file | runs `buildl doctor` in `W/new`, reads its error, fixes the new build |
 | there is no `Makefile`, `justfile` or `package.json` in the project folder | `tool` in `parity.json` does not match the old build, or the file is not named as `compare` reads it (see the reference for the tool) | fixes `tool`, or tells the user the file name |
 
 A `FAIL` is fixed in the new build. Never edit `parity.json` to make a row pass: no dropping a recipe
@@ -192,7 +195,7 @@ legitimate fix in `parity.json` is a mistake in what you wrote about the old bui
 Check 5 compares only whether the old test run and the buildl test run each passed. It does not count
 single tests. Whether each old test recipe has a buildl test target is check 1.
 
-## E. C and C++, and a case that stops and asks
+## E. C, C++ and Cargo, and a case that stops and asks
 
 An archive that stamps file times has its own answer: see `"judge": "tests"` in B.
 
@@ -204,10 +207,11 @@ so a change to one source or header rebuilds only the objects that read it. Do n
 targets by hand, and do not offer one target for the whole program.
 
 1. Add the plugin to `buildl.toml` and run `buildl plugins fetch`. The `buildl` skill shows the
-   `[plugins.c]` table. Put the compiler the old build runs in `proc.run` and `PATH` in `env.read`,
-   in the ceiling and in the table, and set the call's `cc` (and `cxx` for C++ sources) to it. The
-   plugin allows `cc`, `c++`, `gcc`, `g++`, `clang` and `clang++`; a ceiling program the old build
-   did not run fails check 6. Add `sh` only for `c.library` or a `c.test` with `deps`.
+   `[plugins.c]` table. Put the compiler the old build runs in `proc.run` and `PATH` in `env.read`
+   and `env.unkeyed`, in the ceiling and in the table, and set the call's `cc` (and `cxx` for C++
+   sources) to it. The plugin allows `cc`, `c++`, `gcc`, `g++`, `clang` and `clang++`; a ceiling
+   program the old build did not run fails check 6. Add `sh` only for `c.library` or a `c.test` with
+   `deps`.
 2. Declare the program with one call, `c.binary`, `c.library`, `c.shared_library` or `c.test`. Give
    `srcs` and `headers` as the old build lists them, and the old build's `-I`, `-D` and warning
    flags in `cflags` or `cxxflags`, and its `-l` flags in `ldlibs`. The call's own target, `app`,
@@ -251,6 +255,40 @@ Do not mark an output `"judge": "tests"` that matches the old build's bytes. Do 
 difference from any other cause.
 
 If the plugin cannot be fetched, or the ceiling cannot allow the compiler, stop and tell the user.
+
+### A Cargo build
+
+The old build runs `cargo build` or `cargo test`. Move it to the `rust` plugin, a thin wrapper over
+the same `cargo`: one call per artifact, and it fills in the inputs, `HOME`, `PATH` and the network
+setting. Do not write a `cargo` target by hand.
+
+1. Add the plugin to `buildl.toml` and run `buildl plugins fetch`. The `buildl` skill shows the
+   `[plugins.rust]` table. The ceiling and the table list `sh` and `rustc` in `proc.run`, `HOME`
+   and `PATH` in `env.read` and `env.unkeyed`, and the table says `network = true`. List `cargo`,
+   `sh` and `rustc` in `old.programs`, `HOME` and `PATH` in `old.env`, and `old.network` as `true`,
+   so check 6 passes: the plugin runs `cargo` through `sh`.
+2. Put the build file in the crate's folder, beside `Cargo.toml` and `Cargo.lock`. One call per
+   artifact: `rust.binary` for each `--bin`, `rust.library` (with `kind`) for a `staticlib` or
+   `cdylib`, `rust.test` for each `cargo test`. The old build's other cargo arguments go in `args`.
+3. For a workspace member, use `args = rust.package("name")`, with the build file at the workspace
+   root. Cargo still reads `Cargo.toml` for members, features and profile settings.
+4. Set `profile = "release"` when the old build's output must match: the default, `dev`, keeps the
+   absolute path of the build folder as debug info, and `buildl verify` builds in another folder.
+   If the old build used `--release`, this is the same profile.
+5. In `parity.json`, map the old recipe to the call's target, `//:hello`, and the output to
+   `out/<folder>/<name>`, the build file's folder and the binary's name (`out/<name>` for a build
+   file at the workspace root, as `out/hello` is).
+
+```lua no-check
+-- needs the rust plugin fetched: buildl.use("rust") fails without it
+local rust = buildl.use("rust")
+
+rust.binary("server", { args = rust.package("server"), profile = "release" })
+rust.test("server-test", { args = rust.package("server") })
+```
+
+The plugin's functions, options and limits are in `plugins/rust/README.md` in the buildl repository.
+If the plugin cannot be fetched, or the crate has no `Cargo.lock`, stop and tell the user.
 
 ### A recipe that is not a build step
 

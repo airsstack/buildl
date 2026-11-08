@@ -8,7 +8,7 @@
     reason = "fixtures unwrap known-valid text; a panic is the intended failure signal"
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::grants::fixtures::command;
 use crate::types::{
@@ -23,6 +23,7 @@ pub(crate) fn components(output: &str, change: impl FnOnce(&mut OwnComponents)) 
         inputs: Vec::new(),
         outputs: vec![OutputName::parse(output).unwrap()],
         env: BTreeMap::new(),
+        unkeyed: BTreeSet::new(),
         tool: None,
         settings: BTreeMap::new(),
         network: NetworkAccess::Sealed,

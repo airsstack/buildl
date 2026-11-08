@@ -22,7 +22,7 @@ use crate::grants::attribution::attribution;
 use crate::grants::wanted::sites;
 use crate::placement::layout::Layout;
 use crate::plan::authority::{check, plugin_check};
-use crate::plan::components::{Gathered, environment, own};
+use crate::plan::components::{Gathered, check_settings, environment, own};
 use crate::plan::inputs::digests;
 use crate::plan::order::topological;
 use crate::plan::pinned::pinned;
@@ -78,7 +78,11 @@ use crate::types::{Plan, Rerun, SettingName, SettingValue, TargetGraph};
 /// 7. [`Error::MissingTool`](crate::Error::MissingTool) for a program that cannot be found;
 /// 8. [`Error::MissingInput`](crate::Error::MissingInput) for an input that does not exist, and
 ///    [`Error::InputNotAFile`](crate::Error::InputNotAFile) for one that is not a regular file;
-/// 9. whatever the host port returns for an environment variable.
+/// 9. [`Error::MachinePathInSetting`](crate::Error::MachinePathInSetting) for a setting a command
+///    names whose value holds one of the host's folders, then whatever the host port returns for
+///    an environment variable, or
+///    [`Error::MachinePathInVariable`](crate::Error::MachinePathInVariable) for a `key` variable
+///    whose value holds one.
 ///
 /// A port's own failure is returned from the step that met it.
 pub fn plan<P: Ports>(
@@ -103,7 +107,8 @@ pub fn plan<P: Ports>(
     let fingerprints = fingerprints(&programs, &ports.tools)?;
     let digests = digests(&sites.inputs, &ports.digester, &mut ports.stat_cache)?;
     let platform = ports.host.platform();
-    let env = environment(sites.env.keys().copied(), &ports.host)?;
+    check_settings(graph.nodes(), &settings, &ports.host.machine_folders())?;
+    let env = environment(graph.nodes(), &ports.host)?;
     let gathered = Gathered {
         settings,
         fingerprints,

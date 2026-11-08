@@ -130,6 +130,9 @@ pub(crate) struct EnvTable {
     /// The environment variables a target may read.
     #[serde(default)]
     pub(crate) read: Vec<Spanned<String>>,
+    /// The environment variables a target may read and leave out of its key.
+    #[serde(default)]
+    pub(crate) unkeyed: Vec<Spanned<String>>,
 }
 
 /// `[ceiling.fs]`.

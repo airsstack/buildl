@@ -5,14 +5,16 @@ out    = "out"
 config = 1
 
 [ceiling]
-proc.run = ["cc", "c++", "sh"]
-env.read = ["PATH"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["cc", "c++", "sh"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 
 [plugins.c]
-github   = "airsstack/buildl"
-rev      = "plugin-c-v0.1.0"
-dir      = "plugins/c"
-proc.run = ["cc", "c++", "sh"]
-env.read = ["PATH"]
+github      = "airsstack/buildl"
+rev         = "plugin-c-v0.2.0"
+dir         = "plugins/c"
+proc.run    = ["cc", "c++", "sh"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]

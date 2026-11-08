@@ -12,8 +12,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use crate::types::{
-    Argument, Command, Directory, EnvName, Freshness, Label, NetworkAccess, Node, NodeId, Origin,
-    OutputName, OutputPath, OutputSource, Program, Provenance, SettingName, SettingValue,
+    Argument, Command, Directory, EnvMark, EnvName, Freshness, Label, NetworkAccess, Node, NodeId,
+    Origin, OutputName, OutputPath, OutputSource, Program, Provenance, SettingName, SettingValue,
     SourcePath, TargetGraph, TargetRole,
 };
 
@@ -25,6 +25,22 @@ pub(crate) fn dir(raw: &str) -> Directory {
 /// An environment variable name from known-valid text.
 pub(crate) fn env_name(raw: &str) -> EnvName {
     EnvName::parse(raw).unwrap()
+}
+
+/// Variables from known-valid names, each marked `key`.
+pub(crate) fn keyed(names: &[&str]) -> BTreeMap<EnvName, EnvMark> {
+    names
+        .iter()
+        .map(|name| (env_name(name), EnvMark::Key))
+        .collect()
+}
+
+/// Variables from known-valid `(name, mark)` pairs.
+pub(crate) fn marked(pairs: &[(&str, EnvMark)]) -> BTreeMap<EnvName, EnvMark> {
+    pairs
+        .iter()
+        .map(|(name, mark)| (env_name(name), *mark))
+        .collect()
 }
 
 /// A label from known-valid text.
@@ -99,7 +115,7 @@ pub(crate) fn node(raw: &str, change: impl FnOnce(&mut Node)) -> Node {
         description: None,
         inputs: Vec::new(),
         outputs: outputs(&[label.name().as_str()]),
-        env: Vec::new(),
+        env: BTreeMap::new(),
         network: NetworkAccess::Sealed,
         output_source: OutputSource::Command,
         freshness: Freshness::Cached,

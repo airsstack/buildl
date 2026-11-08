@@ -5,8 +5,9 @@
 //! first, since a discovery target that depended on a discovery result would have no result to
 //! start from.
 //!
-//! Responsibilities: [`load_twice`], [`second_pass`], and the labels of the discovery targets a
-//! load declared.
+//! Responsibilities: [`load_twice`], [`first_pass`], [`second_pass`], the labels of the discovery
+//! targets a load declared, and refusing a command or a discovery output that holds this
+//! machine's folders as each pass is read.
 //!
 //! Non-responsibilities: reading the results, which `results` does; running a discovery target,
 //! which a build does; and evaluating build files, which Load does.
@@ -14,9 +15,12 @@
 use core::cmp::min_by;
 
 use crate::error::{Error, Result};
+use crate::load::machine_paths::{refuse_commands, refuse_discovered};
 use crate::load::{declaration_order, load};
 use crate::ports::{DeclarationSource, Dispatcher};
-use crate::types::{Declaration, Declared, Discovered, EntryName, Label, Loaded, TargetRole};
+use crate::types::{
+    Declaration, Declared, Discovered, EntryName, Label, Loaded, MachineFolders, TargetRole,
+};
 
 /// The label `declaration` declares when it declares a discovery target.
 fn discovery_target(declaration: &Declaration) -> Option<&Label> {
@@ -65,12 +69,34 @@ fn discovery_change(pass_one: &[Declaration], pass_two: &[Declaration]) -> Optio
     })
 }
 
-/// Loads the workspace with `discovered` and returns its declarations, once its discovery targets
-/// are the ones `pass_one` declared.
+/// Loads the workspace without discovery results and refuses a command that holds one of
+/// `folders`.
 ///
 /// # Errors
 ///
-/// Returns whatever the load returns, and [`Error::DiscoveryChanged`] when a discovery target was
+/// Returns whatever the load returns, and [`Error::MachinePathInCommand`].
+pub(crate) fn first_pass<S: DeclarationSource, D: Dispatcher>(
+    source: &S,
+    dispatcher: &mut D,
+    entry: &EntryName,
+    folders: &MachineFolders,
+) -> Result<Vec<Declaration>> {
+    let pass_one = load(source, dispatcher, entry, &Discovered::empty())?;
+    refuse_commands(&pass_one, folders)?;
+    Ok(pass_one)
+}
+
+/// Refuses a discovery output in `discovered` that holds one of `folders`, loads the workspace
+/// with `discovered`, and returns its declarations, once its discovery targets are the ones
+/// `pass_one` declared and no command of them holds one of `folders`.
+///
+/// The outputs are searched before anything is evaluated from them, whether they were just run,
+/// served from the cache or fetched.
+///
+/// # Errors
+///
+/// Returns [`Error::MachinePathInDiscovery`], whatever the load returns,
+/// [`Error::MachinePathInCommand`], and [`Error::DiscoveryChanged`] when a discovery target was
 /// added, removed or changed since `pass_one`.
 pub(crate) fn second_pass<S: DeclarationSource, D: Dispatcher>(
     source: &S,
@@ -78,8 +104,11 @@ pub(crate) fn second_pass<S: DeclarationSource, D: Dispatcher>(
     entry: &EntryName,
     pass_one: &[Declaration],
     discovered: &Discovered,
+    folders: &MachineFolders,
 ) -> Result<Vec<Declaration>> {
+    refuse_discovered(pass_one, discovered, folders)?;
     let pass_two = load(source, dispatcher, entry, discovered)?;
+    refuse_commands(&pass_two, folders)?;
     discovery_change(pass_one, &pass_two).map_or(Ok(pass_two), Err)
 }
 
@@ -91,12 +120,15 @@ pub(crate) fn second_pass<S: DeclarationSource, D: Dispatcher>(
 ///
 /// # Errors
 ///
-/// Returns whatever either load returns, and [`Error::DiscoveryChanged`] when the second load
-/// declares different discovery targets than the first.
+/// Returns whatever either load returns, [`Error::MachinePathInCommand`] and
+/// [`Error::MachinePathInDiscovery`] for what holds one of `folders`, and
+/// [`Error::DiscoveryChanged`] when the second load declares different discovery targets than the
+/// first.
 pub(crate) fn load_twice<S, D, R>(
     source: &S,
     dispatcher: &mut D,
     entry: &EntryName,
+    folders: &MachineFolders,
     results_for: R,
 ) -> Result<Loaded>
 where
@@ -104,7 +136,7 @@ where
     D: Dispatcher,
     R: FnOnce(&[Label]) -> (Discovered, Vec<Label>),
 {
-    let pass_one = load(source, dispatcher, entry, &Discovered::empty())?;
+    let pass_one = first_pass(source, dispatcher, entry, folders)?;
     let labels = discovery_labels(&pass_one);
     if labels.is_empty() {
         return Ok(Loaded {
@@ -114,7 +146,7 @@ where
     }
     let (discovered, missing) = results_for(&labels);
     Ok(Loaded {
-        declarations: second_pass(source, dispatcher, entry, &pass_one, &discovered)?,
+        declarations: second_pass(source, dispatcher, entry, &pass_one, &discovered, folders)?,
         missing,
     })
 }
@@ -126,6 +158,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use super::{discovery_change, discovery_labels};
@@ -159,7 +192,7 @@ mod tests {
                 inputs: Vec::new(),
                 deps: Vec::new(),
                 outputs: Vec::new(),
-                env: Vec::new(),
+                env: BTreeMap::new(),
                 network: NetworkAccess::Sealed,
                 output_source: OutputSource::Command,
                 freshness: Freshness::Cached,

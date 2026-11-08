@@ -242,8 +242,8 @@ fn graph_json_shows_each_node_s_origin() {
     let json = json::canonical::to_string(&graph(source).unwrap()).unwrap();
     assert!(json.contains(r#""origin":"BuildFile""#), "{json}");
     let plugins = concat!(
-        r#""origin":{"Plugins":[{"env":[],"name":"ourgo","run":[],"version":"0.1.0"},"#,
-        r#"{"env":[],"name":"go","run":[],"version":"1.2.0"}]}"#
+        r#""origin":{"Plugins":[{"env":[],"name":"ourgo","run":[],"unkeyed":[],"version":"0.1.0"},"#,
+        r#"{"env":[],"name":"go","run":[],"unkeyed":[],"version":"1.2.0"}]}"#
     );
     assert!(json.contains(plugins), "{json}");
 }

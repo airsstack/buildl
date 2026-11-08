@@ -1,0 +1,12 @@
+[extension]
+name    = "rust"
+version = "0.1.0"
+entry   = "main.lua"
+api     = 1
+
+# The most the plugin's targets may want; the workspace can narrow it further. The targets
+# reach the network too, so the workspace's cap for the plugin says `network = true`.
+[capabilities]
+proc.run    = ["sh", "rustc"]
+env.read    = ["HOME", "PATH"]
+env.unkeyed = ["HOME", "PATH"]

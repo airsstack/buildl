@@ -49,7 +49,7 @@ fn target(
                 .collect(),
             deps: deps.iter().map(|dep| Label::parse(dep).unwrap()).collect(),
             outputs: vec![OutputName::parse(output).unwrap()],
-            env: Vec::new(),
+            env: BTreeMap::new(),
             network: NetworkAccess::Sealed,
             output_source: OutputSource::Command,
             freshness: Freshness::Cached,

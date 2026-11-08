@@ -54,6 +54,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::BTreeMap;
     use std::fs;
     use std::path::PathBuf;
 
@@ -97,7 +98,7 @@ mod tests {
                     inputs: Vec::new(),
                     deps: deps.iter().map(|dep| label(dep)).collect(),
                     outputs: vec![OutputName::parse(name).unwrap()],
-                    env: Vec::new(),
+                    env: BTreeMap::new(),
                     network: NetworkAccess::Sealed,
                     output_source: OutputSource::Command,
                     freshness: Freshness::Cached,
@@ -137,12 +138,12 @@ mod tests {
             fs::read_to_string(layout.graph()).unwrap(),
             concat!(
                 r#"{"aliases":{"//:default":"//:app"},"settings":{},"targets":{"#,
-                r#""//:app":{"deps":["//:lib"],"description":null,"env":[],"#,
+                r#""//:app":{"deps":["//:lib"],"description":null,"env":{},"#,
                 r#""freshness":"Cached","inputs":[],"network":"Sealed","origin":"BuildFile","#,
                 r#""output_source":"Command","outputs":["app"],"#,
                 r#""provenance":{"directory":"","file":"build.lua"},"role":"Build","#,
                 r#""run":["cc"]},"#,
-                r#""//:lib":{"deps":[],"description":null,"env":[],"#,
+                r#""//:lib":{"deps":[],"description":null,"env":{},"#,
                 r#""freshness":"Cached","inputs":[],"network":"Sealed","origin":"BuildFile","#,
                 r#""output_source":"Command","outputs":["lib"],"#,
                 r#""provenance":{"directory":"","file":"build.lua"},"role":"Build","#,

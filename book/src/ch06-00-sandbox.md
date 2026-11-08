@@ -25,7 +25,8 @@ says nothing.
 Each action runs in a directory of its own, outside the workspace, made fresh for it. Into it
 `buildl` copies the action's declared inputs and the outputs of its dependencies, each at its path
 in the workspace, and makes the folders its outputs go in. Nothing else of the workspace is there.
-The environment holds the variables the target declared and three that the sandbox sets itself:
+The environment holds the variables the target declared, each with its value, marked `"key"` or
+`"unkeyed"` alike, and three that the sandbox sets itself:
 
 | Variable | Value | Why |
 |---|---|---|
@@ -42,6 +43,23 @@ When the action is done, `buildl` reads its outputs into the store and removes t
 The directory is outside the workspace on purpose. Tools such as `go`, `cargo` and `node` search
 upward for a `go.mod`, a `Cargo.toml` or a `node_modules`; from inside the workspace they would
 find the real ones and read what the action never declared.
+
+### Where the folder is
+
+The folder sits below the system's temporary directory (`TMPDIR`, or `/tmp`), in two parts:
+`buildl-` and a digest of the workspace's path, and inside it one folder per target, named by a
+digest of the target's label. The label part depends on the label only, so it is the same
+everywhere. The workspace part changes with the workspace's path and the temporary directory:
+another workspace, or a machine where either differs, has a folder with another name.
+
+That is on purpose. Each workspace, a git worktree included, keeps a folder of its own, so it
+never shares one with another workspace and never waits on it.
+
+This matters for a tool that writes the folder it ran in into its output. Rust's `include!` of a
+file from `OUT_DIR`, and the build directory a compiler writes into debug information, are two
+examples. Run in another folder, such a tool gives other bytes. This is correct: the output
+really does differ, and the cache is not wrong. What it means for a cache shared between
+workspaces is on [Who should upload](ch09-00-remote.md#who-should-upload).
 
 ## An input nobody declared
 
@@ -180,7 +198,11 @@ __CF_USER_TEXT_ENCODING=0x1F5:0x0:0x0
 Only its one input and the folder for its output, and the three pinned variables. `LC_CTYPE` and
 `__CF_USER_TEXT_ENCODING` are not from `buildl`: Python and macOS set them as the process starts,
 and on Linux you will not see the second. Neither run got anything of your own environment, not
-even `PATH` or `HOME`, because the target declared no variables.
+even `PATH` or `HOME`, because the target declared no variables. Had it declared `HOME`, marked
+`"key"` or `"unkeyed"`, the command would have been given `HOME` with its value either way: the mark
+only decides whether the value is in the [action key](ch05-01-action-key.md) and whether it is sent
+to a remote server. A variable marked `"unkeyed"` that is not set is not given to the command at
+all.
 
 ## Tiers that are not built yet
 

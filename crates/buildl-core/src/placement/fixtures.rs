@@ -89,7 +89,7 @@ pub(crate) fn node(raw: &str, change: impl FnOnce(&mut Node)) -> Node {
         description: None,
         inputs: Vec::new(),
         outputs: outputs(&[label.name().as_str()]),
-        env: Vec::new(),
+        env: BTreeMap::new(),
         network: NetworkAccess::Sealed,
         output_source: OutputSource::Command,
         freshness: Freshness::Cached,

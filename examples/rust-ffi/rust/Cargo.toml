@@ -1,0 +1,6 @@
+# Three crates: mathlib and greeter are libraries C calls (static and shared), calc a binary
+# that calls a C library. A workspace of its own, so cargo run inside a checkout of the buildl
+# repository does not take them for members of buildl's workspace.
+[workspace]
+members  = ["mathlib", "greeter", "calc"]
+resolver = "2"

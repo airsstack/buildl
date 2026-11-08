@@ -17,6 +17,7 @@ use buildl_core::{
     StagedAlias, StagedRule, StagedSetting, StagedTarget, TargetName, TargetRole, Written,
 };
 
+use crate::env_marks;
 use crate::refusal::Refusal;
 use crate::values::{closed, field, flag, list, optional_list, optional_text, string, table, text};
 
@@ -74,7 +75,7 @@ fn target_fields(
         inputs: optional_list(&field(&options, "inputs")?, "inputs")?.unwrap_or_default(),
         deps: optional_list(&field(&options, "deps")?, "deps")?.unwrap_or_default(),
         outputs: optional_list(&field(&options, "outputs")?, "outputs")?,
-        env: optional_list(&field(&options, "env")?, "env")?.unwrap_or_default(),
+        env: env_marks::stage(&field(&options, "env")?)?,
         network: match flag(&field(&options, "network")?, "network")? {
             Some(true) => NetworkAccess::Declared,
             Some(false) | None => NetworkAccess::Sealed,
@@ -161,7 +162,7 @@ mod tests {
     use airsl::mlua::{Lua, Value};
     use buildl_core::{
         Directory, EvaluationFailure, Freshness, Label, NetworkAccess, OutputSource, StagedAlias,
-        StagedRule, StagedSetting, StagedTarget, TargetRole, Written,
+        StagedEnv, StagedMark, StagedRule, StagedSetting, StagedTarget, TargetRole, Written,
     };
 
     use super::{alias, discovered, option, pattern, rule, subdir, target};
@@ -183,7 +184,7 @@ mod tests {
             &eval(
                 &lua,
                 "return { rule = 'cc', run = { 'cc', '$in' }, inputs = { { 'a.c' }, 'b.c' }, \
-                 deps = { '//lib:text' }, outputs = { 'app' }, env = { 'HOME' }, \
+                 deps = { '//lib:text' }, outputs = { 'app' }, env = { HOME = 'unkeyed' }, \
                  network = true, always = true }",
             ),
             TargetRole::Build,
@@ -199,11 +200,50 @@ mod tests {
                 inputs: strings(&["a.c", "b.c"]),
                 deps: strings(&["//lib:text"]),
                 outputs: Some(strings(&["app"])),
-                env: strings(&["HOME"]),
+                env: vec![StagedEnv::Marked {
+                    name: Written::new("HOME"),
+                    mark: StagedMark::Word(Written::new("unkeyed")),
+                }],
                 network: NetworkAccess::Declared,
                 output_source: OutputSource::Command,
                 freshness: Freshness::Always,
             }
+        );
+    }
+
+    #[test]
+    fn env_on_test_and_discover_is_read_the_same() {
+        let lua = Lua::new();
+        let env_of = |role| {
+            target(
+                &eval(&lua, "return 'x'"),
+                &eval(
+                    &lua,
+                    "return { run = { 'x' }, env = { HOME = 'unkeyed', FLAGS = 'key' } }",
+                ),
+                role,
+            )
+            .unwrap()
+            .env
+        };
+        let build = env_of(TargetRole::Build);
+        assert_eq!(build.len(), 2);
+        assert_eq!(env_of(TargetRole::Test), build);
+        assert_eq!(env_of(TargetRole::Discovery), build);
+    }
+
+    #[test]
+    fn env_must_be_a_table() {
+        let lua = Lua::new();
+        let refusal = target(
+            &eval(&lua, "return 'app'"),
+            &eval(&lua, "return { run = { 'x' }, env = 'HOME' }"),
+            TargetRole::Build,
+        )
+        .unwrap_err();
+        assert_eq!(
+            refusal.diagnostic("target", None).as_str(),
+            "buildl.target 'app': field 'env' must be a table, found string"
         );
     }
 

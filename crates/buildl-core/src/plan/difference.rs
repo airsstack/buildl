@@ -7,9 +7,12 @@
 //!
 //! Non-responsibilities: deciding what a difference means for a target, which is its verdict.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::types::{Difference, Digest, KeyComponents, Label, OwnComponents, Produced, SourcePath};
+use crate::types::{
+    Difference, Digest, EnvName, EnvValue, KeyComponents, Label, OwnComponents, Produced,
+    SourcePath,
+};
 
 /// One dependency as a comparison sees it: its label, and its products when they are known.
 ///
@@ -26,9 +29,9 @@ pub(crate) struct Known<'a> {
 /// Every way a key made of `own` and `deps` is known to differ from `previous`.
 ///
 /// The differences come in a fixed order: the command; each input that was added, removed or
-/// changed, in path order; the inputs' order; the outputs; each environment variable, in name
-/// order; the tool; each setting, in name order; the network; where the output comes from; the
-/// platform; each dependency that was added, removed or produced something else, in label order;
+/// changed, in path order; the inputs' order; the outputs; each environment variable that
+/// differs, `key` or `unkeyed`, in name order; the tool; each setting, in name order; the
+/// network; where the output comes from; the platform; each dependency that was added, removed or produced something else, in label order;
 /// the dependencies' order.
 ///
 /// A dependency whose products are not known cannot be said to have produced something else, so
@@ -56,7 +59,7 @@ pub(crate) fn between(
     if own.outputs != old.outputs {
         found.push(Difference::Outputs);
     }
-    found.extend(changed(&own.env, &old.env).into_iter().map(Difference::Env));
+    found.extend(variables(own, old));
     if own.tool != old.tool {
         found.push(Difference::Tool);
     }
@@ -112,6 +115,59 @@ pub(crate) fn between(
     found
 }
 
+/// How one environment variable takes part in a key.
+#[derive(PartialEq)]
+enum Standing<'a> {
+    /// Not read.
+    Absent,
+    /// Read, marked `key`, with this value; `None` when it is unset.
+    Keyed(&'a Option<EnvValue>),
+    /// Read, marked `unkeyed`.
+    Unkeyed,
+}
+
+/// The standing of `name` in `components`.
+fn standing<'a>(components: &'a OwnComponents, name: &EnvName) -> Standing<'a> {
+    if components.unkeyed.contains(name) {
+        Standing::Unkeyed
+    } else {
+        components
+            .env
+            .get(name)
+            .map_or(Standing::Absent, Standing::Keyed)
+    }
+}
+
+/// What differs between the variables `own` and `old` read, in name order.
+///
+/// A `key` variable added, removed or with another value is an [`Difference::Env`]; an `unkeyed`
+/// one added or removed is [`Difference::UnkeyedAdded`] or [`Difference::UnkeyedRemoved`]; one
+/// whose mark changed is [`Difference::NowUnkeyed`] or [`Difference::NowKeyed`]. An `unkeyed`
+/// variable's value is in neither key, so it is no difference.
+fn variables(own: &OwnComponents, old: &OwnComponents) -> Vec<Difference> {
+    let names: BTreeSet<&EnvName> = own
+        .env
+        .keys()
+        .chain(&own.unkeyed)
+        .chain(old.env.keys())
+        .chain(&old.unkeyed)
+        .collect();
+    names
+        .into_iter()
+        .filter_map(|name| {
+            let name = name.clone();
+            match (standing(old, &name), standing(own, &name)) {
+                (Standing::Unkeyed, Standing::Unkeyed) => None,
+                (Standing::Absent, Standing::Unkeyed) => Some(Difference::UnkeyedAdded(name)),
+                (Standing::Unkeyed, Standing::Absent) => Some(Difference::UnkeyedRemoved(name)),
+                (Standing::Keyed(_), Standing::Unkeyed) => Some(Difference::NowUnkeyed(name)),
+                (Standing::Unkeyed, Standing::Keyed(_)) => Some(Difference::NowKeyed(name)),
+                (then, now) => (then != now).then_some(Difference::Env(name)),
+            }
+        })
+        .collect()
+}
+
 /// The inputs of `components`, each path with its digest.
 fn input_digests(components: &OwnComponents) -> BTreeMap<&SourcePath, Digest> {
     components
@@ -157,14 +213,18 @@ mod tests {
     )]
 
     use super::{Known, between, changed, reordered};
-    use crate::grants::fixtures::{command, env_name, label, path, program, settings};
+    use crate::grants::fixtures::{
+        command, env_name, label, marked, node, path, program, settings,
+    };
+    use crate::plan::components::{Gathered, environment, own};
     use crate::plan::fixtures::{components, produced};
+    use crate::ports::two_machines::TwoMachines;
     use crate::types::{
-        DepProducts, Difference, Digest, EnvValue, InputDigest, KeyComponents, Label,
+        DepProducts, Difference, Digest, EnvMark, EnvValue, InputDigest, KeyComponents, Label,
         NetworkAccess, OutputName, OutputSource, OwnComponents, Platform, Produced, SettingName,
         ToolIdentity,
     };
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     fn input(raw: &str, content: &str) -> InputDigest {
         InputDigest {
@@ -417,6 +477,111 @@ mod tests {
         assert_eq!(
             dep_differences(&deps),
             [Difference::Dep(label("//lib:util")), Difference::DepOrder]
+        );
+    }
+
+    /// The differences of `own` against a recorded key whose own components are `then`.
+    fn against(own: &OwnComponents, then: OwnComponents) -> Vec<Difference> {
+        let previous = KeyComponents {
+            own: then,
+            deps: Vec::new(),
+        };
+        between(own, &[], &previous)
+    }
+
+    /// The components of [`full`] with `HOME` read as `home` says: marked `key` and unset,
+    /// marked `unkeyed`, or not read. What else [`full`] holds is left as it is.
+    fn marking(home: Option<EnvMark>) -> OwnComponents {
+        let mut own = full();
+        own.env.remove(&env_name("HOME"));
+        match home {
+            Some(EnvMark::Key) => {
+                own.env.insert(env_name("HOME"), None);
+            }
+            Some(EnvMark::Unkeyed) => {
+                own.unkeyed.insert(env_name("HOME"));
+            }
+            None => {}
+        }
+        own
+    }
+
+    #[test]
+    fn unkeyed_added_is_a_difference() {
+        assert_eq!(
+            against(&marking(Some(EnvMark::Unkeyed)), marking(None)),
+            [Difference::UnkeyedAdded(env_name("HOME"))]
+        );
+    }
+
+    #[test]
+    fn unkeyed_removed_is_a_difference() {
+        assert_eq!(
+            against(&marking(None), marking(Some(EnvMark::Unkeyed))),
+            [Difference::UnkeyedRemoved(env_name("HOME"))]
+        );
+    }
+
+    #[test]
+    fn key_to_unkeyed_is_a_difference() {
+        assert_eq!(
+            against(
+                &marking(Some(EnvMark::Unkeyed)),
+                marking(Some(EnvMark::Key))
+            ),
+            [Difference::NowUnkeyed(env_name("HOME"))]
+        );
+    }
+
+    #[test]
+    fn unkeyed_to_key_is_a_difference() {
+        assert_eq!(
+            against(
+                &marking(Some(EnvMark::Key)),
+                marking(Some(EnvMark::Unkeyed))
+            ),
+            [Difference::NowKeyed(env_name("HOME"))]
+        );
+    }
+
+    #[test]
+    fn an_unkeyed_variable_beside_a_key_one_is_reported_in_name_order() {
+        let mut now = marking(Some(EnvMark::Unkeyed));
+        now.env
+            .insert(env_name("PATH"), Some(EnvValue::parse("/usr/bin").unwrap()));
+        now.unkeyed.insert(env_name("ZONE"));
+        assert_eq!(
+            against(&now, marking(Some(EnvMark::Key))),
+            [
+                Difference::NowUnkeyed(env_name("HOME")),
+                Difference::Env(env_name("PATH")),
+                Difference::UnkeyedAdded(env_name("ZONE")),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_unkeyed_value_change_is_not_a_difference() {
+        let node = node("//:app", |node| {
+            node.env = marked(&[("HOME", EnvMark::Unkeyed), ("PATH", EnvMark::Unkeyed)]);
+        });
+        let own_on = |machine: &TwoMachines| {
+            let gathered = Gathered {
+                settings: BTreeMap::new(),
+                fingerprints: BTreeMap::new(),
+                built: BTreeSet::new(),
+                digests: BTreeMap::new(),
+                env: environment(std::slice::from_ref(&node), machine).unwrap(),
+                platform: Platform::parse("linux/x86_64").unwrap(),
+            };
+            own(&node, &gathered)
+        };
+        assert_eq!(
+            against(
+                &own_on(&TwoMachines::second()),
+                own_on(&TwoMachines::first())
+            ),
+            []
         );
     }
 

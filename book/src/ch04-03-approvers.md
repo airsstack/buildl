@@ -36,15 +36,15 @@ Nothing runs, ever, even when every target could come from the cache. `plan`, `c
 $ buildl plan
 run    //:report: never built
 run    //tools:hello: never built
-  run programs:   go
-  read variables: HOME
-  write into:     .buildl, out
+  run programs:      go
+  unkeyed variables: HOME
+  write into:        .buildl, out
 2 to run, 0 conditional, 0 clean
 $ buildl build
 error: the workspace's approver is deny
-  run programs:   go
-  read variables: HOME
-  write into:     .buildl, out
+  run programs:      go
+  unkeyed variables: HOME
+  write into:        .buildl, out
 ```
 
 The build exits with code 4, as a want outside the ceiling does. The error lists what the build
@@ -59,8 +59,10 @@ is refused with exit code 4.
 
 A yes is remembered, and the next build whose wants are all covered by remembered yeses asks
 nothing. If a later build wants something new, say a build file starts running `protoc`, buildl
-asks again about the new wants only. When a plugin's targets are behind a new want, a line under
-the list names the plugin.
+asks again about the new wants only. A variable read as `"key"` and the same variable read as
+`"unkeyed"` are two wants: a yes to `read variables: HOME` does not cover `unkeyed variables: HOME`,
+so a build file that changes a mark is asked about once more. When a plugin's targets are behind a
+new want, a line under the list names the plugin.
 
 The remembered yeses live outside the workspace, in
 `$XDG_DATA_HOME/buildl/approved/`, in a JSON file named for the workspace's location, or under
@@ -75,9 +77,9 @@ in CI there is nobody to answer, so the build is refused, never quietly allowed:
 ```console
 $ buildl build
 error: no terminal to ask on; run the build in a terminal once to approve, or set [approver] default = "manifest"
-  run programs:   go
-  read variables: HOME
-  write into:     .buildl, out
+  run programs:      go
+  unkeyed variables: HOME
+  write into:        .buildl, out
 ```
 
 Run the build once in a terminal and answer yes, and later runs in a pipe go through, as long as
@@ -96,15 +98,16 @@ approver   manifest
 execution  workers 0 (one per core), timeout 10m, strategy sandbox
 remote: none
 ceiling
-  proc.run  go
-  env.read  HOME
-  fs.read   .
-  fs.write  .buildl, out
-wants            ceiling  approved
-  run go         allowed  yes
-  read HOME      allowed  yes
-  write .buildl  allowed  yes
-  write out      allowed  yes
+  proc.run     go
+  env.read     HOME
+  env.unkeyed  HOME
+  fs.read      .
+  fs.write     .buildl, out
+wants                ceiling  approved
+  run go             allowed  yes
+  read HOME unkeyed  allowed  yes
+  write .buildl      allowed  yes
+  write out          allowed  yes
 ```
 
 The same workspace under `deny` says no to every want, though each is inside the ceiling:
@@ -116,15 +119,16 @@ approver   deny
 execution  workers 0 (one per core), timeout 10m, strategy sandbox
 remote: none
 ceiling
-  proc.run  go
-  env.read  HOME
-  fs.read   .
-  fs.write  .buildl, out
-wants            ceiling  approved
-  run go         allowed  no
-  read HOME      allowed  no
-  write .buildl  allowed  no
-  write out      allowed  no
+  proc.run     go
+  env.read     HOME
+  env.unkeyed  HOME
+  fs.read      .
+  fs.write     .buildl, out
+wants                ceiling  approved
+  run go             allowed  no
+  read HOME unkeyed  allowed  no
+  write .buildl      allowed  no
+  write out          allowed  no
 ```
 
 And the untrusted clone from [Nothing Is Ambient](ch04-01-nothing-is-ambient.md), whose `plan` is
@@ -137,16 +141,17 @@ approver   manifest
 execution  workers 0 (one per core), timeout 10m, strategy sandbox
 remote: none
 ceiling
-  proc.run  go
-  env.read  HOME
-  fs.read   .
-  fs.write  .buildl, out
-wants            ceiling  approved
-  run curl       REFUSED  -
-  run go         allowed  yes
-  read HOME      allowed  yes
-  write .buildl  allowed  yes
-  write out      allowed  yes
+  proc.run     go
+  env.read     HOME
+  env.unkeyed  HOME
+  fs.read      .
+  fs.write     .buildl, out
+wants                ceiling  approved
+  run curl           REFUSED  -
+  run go             allowed  yes
+  read HOME unkeyed  allowed  yes
+  write .buildl      allowed  yes
+  write out          allowed  yes
 ```
 
 `doctor` exits 0 in all three. It reports; `plan` and `build` decide.

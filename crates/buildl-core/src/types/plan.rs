@@ -38,6 +38,14 @@ pub enum Difference {
     Outputs,
     /// An environment variable that was added, removed, or whose value changed.
     Env(EnvName),
+    /// A variable that is now marked `unkeyed` and was not read before.
+    UnkeyedAdded(EnvName),
+    /// A variable that was marked `unkeyed` and is no longer read.
+    UnkeyedRemoved(EnvName),
+    /// A variable that was marked `key` and is now marked `unkeyed`.
+    NowUnkeyed(EnvName),
+    /// A variable that was marked `unkeyed` and is now marked `key`.
+    NowKeyed(EnvName),
     /// The program the command names, or its fingerprint.
     Tool,
     /// A build setting that was added, removed, or whose value changed.
@@ -339,6 +347,7 @@ mod tests {
             inputs: Vec::new(),
             outputs: vec![OutputName::parse(output).unwrap()],
             env: BTreeMap::new(),
+            unkeyed: BTreeSet::new(),
             tool: None,
             settings: BTreeMap::new(),
             network: NetworkAccess::Sealed,
@@ -359,6 +368,7 @@ mod tests {
         WantedSet {
             programs: BTreeSet::from([Program::parse("cc").unwrap()]),
             env: BTreeSet::from([EnvName::parse("HOME").unwrap()]),
+            unkeyed: BTreeSet::new(),
             write: BTreeSet::from([
                 Directory::parse("out").unwrap(),
                 Directory::parse(".buildl").unwrap(),
@@ -459,6 +469,7 @@ mod tests {
         let empty = WantedSet {
             programs: BTreeSet::new(),
             env: BTreeSet::new(),
+            unkeyed: BTreeSet::new(),
             write: BTreeSet::new(),
             network: BTreeSet::new(),
         };
@@ -475,9 +486,9 @@ mod tests {
         assert_eq!(
             canonical::to_string(&plan).unwrap(),
             concat!(
-                r#"{"attribution":{"env":{},"network":{},"programs":{}},"#,
+                r#"{"attribution":{"env":{},"network":{},"programs":{},"unkeyed":{}},"#,
                 r#""settings":{},"stale_discovery":[],"targets":{},"#,
-                r#""wanted":{"env":[],"network":[],"programs":[],"write":[]}}"#
+                r#""wanted":{"env":[],"network":[],"programs":[],"unkeyed":[],"write":[]}}"#
             )
         );
     }
@@ -495,6 +506,22 @@ mod tests {
             (
                 Difference::Env(EnvName::parse("HOME").unwrap()),
                 r#"{"Env":"HOME"}"#,
+            ),
+            (
+                Difference::UnkeyedAdded(EnvName::parse("HOME").unwrap()),
+                r#"{"UnkeyedAdded":"HOME"}"#,
+            ),
+            (
+                Difference::UnkeyedRemoved(EnvName::parse("HOME").unwrap()),
+                r#"{"UnkeyedRemoved":"HOME"}"#,
+            ),
+            (
+                Difference::NowUnkeyed(EnvName::parse("HOME").unwrap()),
+                r#"{"NowUnkeyed":"HOME"}"#,
+            ),
+            (
+                Difference::NowKeyed(EnvName::parse("HOME").unwrap()),
+                r#"{"NowKeyed":"HOME"}"#,
             ),
             (Difference::Tool, r#""Tool""#),
             (
@@ -546,7 +573,7 @@ mod tests {
         let key_of = |output: &str| canonical::to_string(&key(output)).unwrap();
         let own_of = |output: &str| canonical::to_string(&own(output)).unwrap();
         let expected = [
-            r#"{"attribution":{"env":{},"network":{},"programs":{}},"#,
+            r#"{"attribution":{"env":{},"network":{},"programs":{},"unkeyed":{}},"#,
             r#""settings":{"mode":"release","test_filter":""},"stale_discovery":[],"targets":{"#,
             r#""//:a":{"key":"#,
             &key_of("a"),
@@ -565,7 +592,7 @@ mod tests {
             &own_of("e"),
             r#"},"verdict":"Conditional"}},"#,
             r#""wanted":{"env":["HOME"],"network":["//:e"],"programs":["cc"],"#,
-            r#""write":[".buildl","out"]}}"#,
+            r#""unkeyed":[],"write":[".buildl","out"]}}"#,
         ]
         .concat();
         assert_eq!(json, expected);

@@ -10,10 +10,11 @@ Instead of `path`, the plugin's table in `buildl.toml` gives `git` and `rev`:
 
 ```toml
 [plugins.gobin]
-git      = "file:///tmp/buildl-book/p05/git/gobin.git"
-rev      = "v0.1.0"
-proc.run = ["go"]
-env.read = ["HOME"]
+git         = "file:///tmp/buildl-book/p05/git/gobin.git"
+rev         = "v0.1.0"
+proc.run    = ["go"]
+env.read    = ["HOME"]
+env.unkeyed = ["HOME"]
 ```
 
 | Key | Says |
@@ -29,10 +30,10 @@ written relative to the repository root, with `/` between folders, and takes no 
 directly in it, and the rest of the repository plays no part. A plugin that comes from a `path` has
 no `dir`.
 
-The cap, `proc.run` and `env.read`, works as it does for a plugin kept in the workspace. For this
-page the repository is a bare one made on the same machine, holding the `gobin` plugin from
-[Writing a Plugin](ch08-01-writing-a-plugin.md) under the tag `v0.1.0`, so nothing here needs the
-network.
+The cap, `proc.run`, `env.read` and `env.unkeyed`, works as it does for a plugin kept in the
+workspace. For this page the repository is a bare one made on the same machine, holding the `gobin`
+plugin from [Writing a Plugin](ch08-01-writing-a-plugin.md) under the tag `v0.1.0`, so nothing here
+needs the network.
 
 ## Nothing loads until it is fetched
 
@@ -49,7 +50,7 @@ That exits with code 5.
 
 ```console
 $ buildl plugins fetch
-fetched gobin c6a408f28f821a67d8393db4018f2178bb813f6c
+fetched gobin b9d7c9afdd7177719d6d1fca8d65a4f4bca46137
 ```
 
 It takes no flags of its own beyond `--color`. For each plugin that comes from git, in name order,
@@ -65,7 +66,7 @@ The fetch writes `buildl.lock` in the workspace root:
 
 ```console
 $ cat buildl.lock
-{"gobin":{"commit":"c6a408f28f821a67d8393db4018f2178bb813f6c","dir":"","git":"file:///tmp/buildl-book/p05/git/gobin.git","rev":"v0.1.0","sha256":"e49c02079e363a98f1fb3001eaff256db2a59c48c02d5205e5e18bf0990166f4"}}
+{"gobin":{"commit":"b9d7c9afdd7177719d6d1fca8d65a4f4bca46137","dir":"","git":"file:///tmp/buildl-book/p05/git/gobin.git","rev":"v0.1.0","sha256":"232d8abc6a17a467574ea0f57bd5b5cd76e6b05084afc76a02fc77a2b989cb4a"}}
 ```
 
 | Field | Records |
@@ -84,8 +85,8 @@ The files go under the state directory, one folder per plugin and commit:
 
 ```console
 $ ls .buildl/plugins/gobin
-c6a408f28f821a67d8393db4018f2178bb813f6c
-$ ls .buildl/plugins/gobin/c6a408f28f821a67d8393db4018f2178bb813f6c
+b9d7c9afdd7177719d6d1fca8d65a4f4bca46137
+$ ls .buildl/plugins/gobin/b9d7c9afdd7177719d6d1fca8d65a4f4bca46137
 extension.toml
 main.lua
 ```
@@ -103,7 +104,7 @@ A second fetch with nothing changed runs no `git` at all:
 
 ```console
 $ buildl plugins fetch
-unchanged gobin c6a408f28f821a67d8393db4018f2178bb813f6c
+unchanged gobin b9d7c9afdd7177719d6d1fca8d65a4f4bca46137
 ```
 
 ## Checked every time
@@ -114,9 +115,9 @@ longer matches:
 
 ```console
 $ buildl build
-error: plugin gobin was changed after it was fetched: its files digest to 918aa0f1e0deb3f25eab81f9fd230ce2ff883bec7a73ddf2c571fb30b5401c76 and buildl.lock pins e49c02079e363a98f1fb3001eaff256db2a59c48c02d5205e5e18bf0990166f4
+error: plugin gobin was changed after it was fetched: its files digest to 4f44f261367f027f0988af25deb94e3bc5db2ba2f3c46f0f4ca4f633e7a5ce06 and buildl.lock pins 232d8abc6a17a467574ea0f57bd5b5cd76e6b05084afc76a02fc77a2b989cb4a
 $ buildl plugins fetch
-fetched gobin c6a408f28f821a67d8393db4018f2178bb813f6c
+fetched gobin b9d7c9afdd7177719d6d1fca8d65a4f4bca46137
 $ buildl build
 2 cached
 ```

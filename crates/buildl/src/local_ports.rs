@@ -14,13 +14,14 @@
 
 use core::marker::PhantomData;
 use std::collections::BTreeSet;
+use std::ffi::OsString;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 
 use buildl_core::{
-    ApproverMode, ChangedPath, Diagnostic, Directory, EntryName, Error, Isolation, Manifest,
-    Pipeline, PluginSource, PortName, PortSet, Ports, RemoteExecution, RemotePolicy,
-    RemoteSettings, Reporter, Result, Want, WatchLayout, ensure_sandboxed_remote,
+    ApproverMode, ChangedPath, Diagnostic, Directory, EntryName, Error, Host, Isolation,
+    MachineFolders, Manifest, Pipeline, PluginSource, PortName, PortSet, Ports, RemoteExecution,
+    RemotePolicy, RemoteSettings, Reporter, Result, Want, WatchLayout, ensure_sandboxed_remote,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -34,7 +35,7 @@ use crate::digest::FileDigester;
 use crate::dispatch::ThreadPool;
 use crate::exec::{Bare, InputSandbox, Local, OutPaths};
 use crate::graph::GraphFile;
-use crate::host::LocalHost;
+use crate::host::{LocalHost, written_root};
 use crate::log::LocalLog;
 use crate::manifest::{TomlManifest, WorkspaceRoot};
 use crate::plugins::{Lock, check};
@@ -79,6 +80,8 @@ pub type LocalPipeline<R, C> = Pipeline<LocalPorts<R, C>>;
 #[derive(Debug)]
 pub struct Wiring {
     root: WorkspaceRoot,
+    /// The root as the shell names it, when that is not its canonical form.
+    written: Option<PathBuf>,
     manifest: TomlManifest,
     workspace: buildl_core::Workspace,
     search: SearchPath,
@@ -98,12 +101,25 @@ impl Wiring {
     /// [`PortName::Manifest`](buildl_core::PortName::Manifest), when no directory at or above
     /// `start` holds a manifest, and when the manifest cannot be read or is refused.
     pub fn read(start: &Path) -> Result<Self> {
+        Self::read_with_pwd(start, std::env::var_os("PWD"))
+    }
+
+    /// As [`Wiring::read`], with the `PWD` given as `pwd` instead of read from the process. It
+    /// decides the form of the root the machine's folders know besides the canonical one; see
+    /// [`written_root`].
+    ///
+    /// # Errors
+    ///
+    /// Returns what [`Wiring::read`] returns.
+    pub fn read_with_pwd(start: &Path, pwd: Option<OsString>) -> Result<Self> {
         let root = WorkspaceRoot::find(start)?;
         let manifest = TomlManifest::read(&root)?;
         let workspace = manifest.workspace()?;
         let scratch = Scratch::new(&std::env::temp_dir(), root.as_path());
+        let written = written_root(pwd, start, root.as_path());
         Ok(Self {
             root,
+            written,
             manifest,
             workspace,
             search: SearchPath::from_process(),
@@ -118,7 +134,7 @@ impl Wiring {
     /// replaced by a workspace around it.
     ///
     /// What the first reading was told rather than read stays: the directory approvals are kept
-    /// in, and the search path. Nothing else is carried over, so a change to `buildl.toml` since
+    /// in, the search path and the form of the root the shell names. Nothing else is carried over, so a change to `buildl.toml` since
     /// the first reading is in the result and not in `self`.
     ///
     /// # Errors
@@ -137,6 +153,7 @@ impl Wiring {
             });
         }
         again.data = self.data.clone();
+        again.written.clone_from(&self.written);
         again.search = self.search.clone();
         Ok(again)
     }
@@ -184,6 +201,25 @@ impl Wiring {
     #[must_use]
     pub const fn scratch(&self) -> &Scratch {
         &self.scratch
+    }
+
+    /// This machine's home, workspace and sandbox folders, as the host the ports hold reports
+    /// them, for a command that reads build files and makes no port.
+    ///
+    /// # Errors
+    ///
+    /// Returns what [`LocalHost::new`] returns.
+    pub fn machine_folders(&self) -> Result<MachineFolders> {
+        Ok(self.host()?.machine_folders())
+    }
+
+    /// The host of this workspace: its root in both forms and its sandbox folder.
+    fn host(&self) -> Result<LocalHost> {
+        LocalHost::new(
+            self.root.as_path(),
+            self.written.as_deref(),
+            self.scratch.dir(),
+        )
     }
 
     /// The directories programs are looked for in: the one search path the tool lookup, the
@@ -529,7 +565,7 @@ impl Wiring {
         Ok(PortSet {
             source: self.source()?,
             manifest: self.manifest.clone(),
-            host: LocalHost::new()?,
+            host: self.host()?,
             digester: FileDigester::new(root),
             stat_cache: LocalStatCache::open(layout, lock.acquired())?,
             tools: PathTools::new(root, self.search.clone()),
@@ -558,6 +594,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::fs;
     use std::num::NonZeroUsize;
+    use std::os::unix::fs::symlink;
     use std::path::{Path, PathBuf};
 
     use buildl_core::{
@@ -606,6 +643,31 @@ mod tests {
     /// That manifest, under the first tier.
     fn bare() -> String {
         format!("{CEILING}[execution]\nstrategy = \"bare\"\n")
+    }
+
+    #[test]
+    fn the_machine_folders_hold_the_root_as_the_shell_writes_it() {
+        let (_dir, root) = workspace("");
+        let elsewhere = tempfile::tempdir().unwrap();
+        let link = elsewhere.path().join("ws");
+        symlink(&root, &link).unwrap();
+        let link_text = link.to_str().unwrap();
+        let command = format!("cat {link_text}/a.txt");
+
+        let written = Wiring::read_with_pwd(&root, Some(link.clone().into_os_string())).unwrap();
+        let unset = Wiring::read_with_pwd(&root, None).unwrap();
+
+        assert_eq!(
+            written.machine_folders().unwrap().find_in(&command),
+            Some(link_text)
+        );
+        assert_eq!(unset.machine_folders().unwrap().find_in(&command), None);
+        let reopened = written.reopened().unwrap();
+        assert_eq!(
+            reopened.machine_folders().unwrap().find_in(&command),
+            Some(link_text),
+            "a watch cycle keeps the form"
+        );
     }
 
     #[test]
@@ -1036,7 +1098,10 @@ mod tests {
 
         assert_eq!(ports.source, wiring.source().unwrap());
         assert_eq!(ports.manifest, TomlManifest::read(wiring.root()).unwrap());
-        assert_eq!(ports.host, LocalHost::new().unwrap());
+        assert_eq!(
+            ports.host,
+            LocalHost::new(&root, None, wiring.scratch().dir()).unwrap()
+        );
         assert_eq!(ports.digester, FileDigester::new(&root));
         assert_eq!(ports.tools, PathTools::new(&root, search.clone()));
         // The adapters below cannot be compared, so each is held to the rendering of one made

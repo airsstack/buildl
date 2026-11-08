@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use buildl_core::{
     BuildFile, DeclarationSource, Directory, Discovered, Evaluated, EvaluationFailure, Freshness,
-    Label, NetworkAccess, OutputSource, PluginName, Provenance, StagedFile, StagedItem,
-    StagedTarget, TargetRole, Written,
+    Label, NetworkAccess, OutputSource, PluginName, Provenance, StagedEnv, StagedFile, StagedItem,
+    StagedMark, StagedTarget, TargetRole, Written,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -88,7 +88,7 @@ fn alias_names(staged: &StagedFile) -> Vec<&str> {
 fn discover_stages_a_discovery_target() {
     let (_dir, root) = workspace(
         "buildl.discover('pkgs', { run = { 'go', 'list' }, inputs = { 'go.mod' }, \
-         deps = { ':gen' }, env = { 'HOME' }, network = true })",
+         deps = { ':gen' }, env = { HOME = 'unkeyed' }, network = true })",
     );
     let staged = staged(&root, &[], &root_file(), &Discovered::empty());
     let [declaration] = staged.declarations.as_slice() else {
@@ -104,7 +104,10 @@ fn discover_stages_a_discovery_target() {
             inputs: vec![Written::new("go.mod")],
             deps: vec![Written::new(":gen")],
             outputs: None,
-            env: vec![Written::new("HOME")],
+            env: vec![StagedEnv::Marked {
+                name: Written::new("HOME"),
+                mark: StagedMark::Word(Written::new("unkeyed")),
+            }],
             network: NetworkAccess::Declared,
             output_source: OutputSource::Command,
             freshness: Freshness::Cached,

@@ -14,18 +14,19 @@ use std::collections::BTreeMap;
 use crate::grants::wanted::program_of;
 use crate::placement::layout::Layout;
 use crate::types::{
-    Attribution, NetworkAccess, NodeId, Origin, SettingName, SettingValue, TargetGraph, Want,
+    Attribution, EnvMark, NetworkAccess, NodeId, Origin, SettingName, SettingValue, TargetGraph,
+    Want,
 };
 
 /// The attribution of `graph`'s wants, when its build settings have the values `settings` gives
 /// them and its outputs are placed as `layout` places them.
 ///
-/// A target declared by plugins wants the program its command runs, each variable it reads, and
-/// the network when it declares it, as the wanted set counts them: a program one of its
-/// dependencies builds is no want. Each want is attributed to the chain in the target's
-/// `origin`, with the lowest-labelled target of that origin wanting it. A target written in a
-/// build file attributes nothing, even when it names a plugin's rule and so answers to that
-/// plugin's caps.
+/// A target declared by plugins wants the program its command runs, each variable it reads
+/// under the want its mark names, and the network when it declares it, as the wanted set counts
+/// them: a program one of its dependencies builds is no want. Each want is attributed to the
+/// chain in the target's `origin`, with the lowest-labelled target of that origin wanting it. A
+/// target written in a build file attributes nothing, even when it names a plugin's rule and so
+/// answers to that plugin's caps.
 pub(crate) fn attribution(
     graph: &TargetGraph,
     settings: &BTreeMap<SettingName, SettingValue>,
@@ -39,8 +40,12 @@ pub(crate) fn attribution(
         if let Some(program) = program_of(graph, node, id, settings, layout) {
             attribution.record(Want::Program(program), chain, &node.label);
         }
-        for name in &node.env {
-            attribution.record(Want::Env(name.clone()), chain, &node.label);
+        for (name, mark) in &node.env {
+            let want = match mark {
+                EnvMark::Key => Want::Env(name.clone()),
+                EnvMark::Unkeyed => Want::Unkeyed(name.clone()),
+            };
+            attribution.record(want, chain, &node.label);
         }
         if node.network == NetworkAccess::Declared {
             attribution.record(Want::Network(node.label.clone()), chain, &node.label);
@@ -59,16 +64,19 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use super::attribution;
-    use crate::grants::fixtures::{command, dir, env_name, graph, label, node, program};
+    use crate::grants::fixtures::{
+        command, dir, env_name, graph, keyed, label, marked, node, program,
+    };
     use crate::placement::layout::Layout;
     use crate::types::{
-        Attribution, NetworkAccess, Node, Origin, PluginName, PluginRef, PluginVersion,
+        Attribution, EnvMark, NetworkAccess, Node, Origin, PluginName, PluginRef, PluginVersion,
         TargetGraph, Want,
     };
 
     /// The plugin `name` at `version`.
     fn plugin(name: &str, version: &str) -> PluginRef {
         PluginRef {
+            unkeyed: BTreeSet::new(),
             name: PluginName::parse(name).unwrap(),
             version: PluginVersion::parse(version).unwrap(),
             run: BTreeSet::new(),
@@ -139,7 +147,7 @@ mod tests {
             vec![
                 node("//:app", |node| {
                     node.run = command(&["curl"]);
-                    node.env = vec![env_name("HOME")];
+                    node.env = keyed(&["HOME"]);
                     node.network = NetworkAccess::Declared;
                 }),
                 by("//:gen", &["go"], &[go], |_| {}),
@@ -159,7 +167,7 @@ mod tests {
         let fetch = |raw: &str| {
             by(raw, &["go"], std::slice::from_ref(&go), |node| {
                 node.network = NetworkAccess::Declared;
-                node.env = vec![env_name("GOPATH")];
+                node.env = keyed(&["GOPATH"]);
             })
         };
         let graph = graph(vec![fetch("//:one"), fetch("//:two")], &[&[], &[]]);
@@ -175,12 +183,32 @@ mod tests {
     }
 
     #[test]
+    fn an_unkeyed_variable_is_attributed_apart_from_a_key_one() {
+        let go = plugin("go", "1.2.0");
+        let graph = graph(
+            vec![by("//:one", &["go"], &[go], |node| {
+                node.env = marked(&[("GOPATH", EnvMark::Key), ("HOME", EnvMark::Unkeyed)]);
+            })],
+            &[&[]],
+        );
+        let attribution = attributed(&graph);
+        assert!(attribution.get(&Want::Env(env_name("GOPATH"))).is_some());
+        assert!(attribution.get(&Want::Env(env_name("HOME"))).is_none());
+        assert!(attribution.get(&Want::Unkeyed(env_name("HOME"))).is_some());
+        assert!(
+            attribution
+                .get(&Want::Unkeyed(env_name("GOPATH")))
+                .is_none()
+        );
+    }
+
+    #[test]
     fn a_hand_written_target_using_a_plugin_rule_is_not_attributed() {
         let go = plugin("go", "1.2.0");
         let graph = graph(
             vec![node("//:app", |node| {
                 node.run = command(&["go"]);
-                node.env = vec![env_name("GOPATH")];
+                node.env = keyed(&["GOPATH"]);
                 node.narrowing = vec![go];
             })],
             &[&[]],

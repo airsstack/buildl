@@ -11,6 +11,7 @@
 mod arguments;
 mod common;
 mod exit_codes;
+mod machines;
 mod output;
 mod remote;
 mod verify;

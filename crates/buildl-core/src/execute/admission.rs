@@ -75,6 +75,7 @@ mod tests {
     /// A ceiling allowing `run` and nothing else.
     fn ceiling(run: &[&str]) -> Ceiling {
         Ceiling {
+            unkeyed: BTreeSet::new(),
             run: run.iter().map(|raw| program(raw)).collect(),
             env: BTreeSet::new(),
             read: BTreeSet::new(),

@@ -12,7 +12,7 @@
 //!
 //! This file holds only a type definition, so it carries no logic to unit-test.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::types::{
     Command, EnvName, EnvValue, ExpandedDescription, Label, NetworkAccess, OutputPath,
@@ -34,8 +34,13 @@ pub struct ReadyAction {
     /// place: whoever shows the action chooses what to show instead. It is display text and no
     /// part of the action's key.
     pub description: Option<ExpandedDescription>,
-    /// The environment the command runs with: each variable the target reads that has a value.
+    /// The environment the command runs with: each variable the target reads that has a value,
+    /// marked `key` or `unkeyed`.
     pub env: BTreeMap<EnvName, EnvValue>,
+    /// The names of the variables the target marks `unkeyed`, set or not: the command gets the
+    /// values of those that are set, but neither the action key nor a description sent to a
+    /// remote holds them.
+    pub unkeyed: BTreeSet<EnvName>,
     /// The workspace files the command reads, in the order the target wrote them.
     pub inputs: Vec<SourcePath>,
     /// Every output of every dependency, in the order the dependencies were written, each

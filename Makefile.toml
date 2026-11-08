@@ -400,16 +400,24 @@ fi
 T="$(mktemp -d)"
 trap 'rm -rf "${T}"' EXIT
 
-# The tests require the modules they test as siblings, so both go in one folder.
-for file in plugins/c/*.lua plugins/c/tests/*.lua; do
-    [ -f "${file}" ] || continue
-    if [ -e "${T}/$(basename "${file}")" ]; then
-        echo "plugins: ${file} has the name of another staged file" >&2
-        exit 1
-    fi
-    cp "${file}" "${T}/"
+# The tests require the modules they test as siblings, so a plugin's modules and tests
+# go in one folder. Each plugin gets a folder of its own, so two plugins may hold files
+# of the same name.
+for plugin in plugins/*/; do
+    [ -d "${plugin}tests" ] || continue
+    name="$(basename "${plugin}")"
+    mkdir "${T}/${name}"
+    for file in "${plugin}"*.lua "${plugin}"tests/*.lua; do
+        [ -f "${file}" ] || continue
+        if [ -e "${T}/${name}/$(basename "${file}")" ]; then
+            echo "plugins: ${file} has the name of another staged file" >&2
+            exit 1
+        fi
+        cp "${file}" "${T}/${name}/"
+    done
+    echo "plugins: ${name}"
+    (cd "${T}/${name}" && airsl test --allow-read . .)
 done
-(cd "${T}" && airsl test --allow-read . .)
 '''
 
 # ---------------------------------------------------------------------------

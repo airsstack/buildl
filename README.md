@@ -75,7 +75,7 @@ sh install.sh --claude
 | Features | [Plugins](https://airsstack.github.io/buildl/ch08-00-plugins.html) · [Remote cache and execution](https://airsstack.github.io/buildl/ch09-00-remote.html) · [Watch mode](https://airsstack.github.io/buildl/ch10-00-watch.html) |
 | Reference | [Command line](https://airsstack.github.io/buildl/appendix-01-cli.html) · [Exit codes](https://airsstack.github.io/buildl/appendix-04-exit-codes.html) · [Under the hood](https://airsstack.github.io/buildl/ch11-00-under-the-hood.html) |
 | AI agents | [With an AI agent](https://airsstack.github.io/buildl/ch01-04-with-an-ai-agent.html) |
-| Examples | [`examples/`](examples/): working workspaces for Go, Rust and Python |
+| Examples | [`examples/`](examples/): working workspaces for Go, Rust and Python; the Rust one uses the [`rust` plugin](plugins/rust/README.md), as [`plugins/c`](plugins/c/README.md) serves C and C++ |
 
 ## Crates
 

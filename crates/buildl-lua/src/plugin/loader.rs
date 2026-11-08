@@ -300,6 +300,7 @@ mod tests {
 
     fn reference(name: &str) -> PluginRef {
         PluginRef {
+            unkeyed: BTreeSet::new(),
             name: PluginName::parse(name).unwrap(),
             version: PluginVersion::parse("1.0.0").unwrap(),
             run: BTreeSet::new(),

@@ -13,7 +13,7 @@ b.target("app", {
   deps    = { "main.o", "//lib:text" },
   run     = { "cc", "$deps", "-o", "$out" },
   outputs = { "app" },
-  env     = { "HOME" },
+  env     = { HOME = "unkeyed" },
   network = true,
   always  = true,
 })

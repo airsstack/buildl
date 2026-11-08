@@ -69,7 +69,7 @@ A target and a test take the same table. Every field is optional:
 | `inputs` | the files the command reads, relative to the build file's directory |
 | `deps` | the targets whose outputs the command reads, by label |
 | `outputs` | what the command writes; a target defaults to its own name, a test to nothing |
-| `env` | the environment variables the command may see |
+| `env` | the environment variables the command may see, each marked `"key"` or `"unkeyed"`: `{ HOME = "unkeyed" }` |
 | `network` | `true` says the command reaches the network; `plan` and the approver show it |
 | `stdout` | `true` makes what the command prints the target's one output (not for tests) |
 | `always` | `true` runs the command every time, never from the cache |

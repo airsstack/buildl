@@ -1,0 +1,10 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The binary: cargo builds the rlib and runs the proc-macro on the way.
+[dependencies]
+answer = { path = "../answer" }
+greeting = { path = "../greeting" }

@@ -28,20 +28,25 @@ program and the variable it may use, and let the ceiling allow them too:
 
 ```toml
 [ceiling]
-proc.run = ["cc"]
-env.read = ["PATH"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["cc"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 
 [plugins.c]
-github   = "airsstack/buildl"
-rev      = "plugin-c-v0.1.0"
-dir      = "plugins/c"
-proc.run = ["cc"]
-env.read = ["PATH"]
+github      = "airsstack/buildl"
+rev         = "plugin-c-v0.2.0"
+dir         = "plugins/c"
+proc.run    = ["cc"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
 ```
 
-`PATH` is there because a compiler driver finds the linker through it. `sh` is on neither list
+`PATH` is there because a compiler driver finds the linker through it. The plugin reads it as
+`"unkeyed"`: the compiler is given the value, but only the name is in the action key, so the same
+link has the same key on every machine. That is why `env.unkeyed` lists it beside `env.read`, in the
+ceiling and in the plugin's table, as the plugin's own manifest does. `sh` is on neither list
 yet: a workspace needs it only for `c.library`, whose archive step runs through it, and for a
 `c.test` with `deps` (see [Libraries and tests](#libraries-and-tests)). Allowing `sh` lets a target
 run any program through `sh -c`, so the ceiling's program list then limits less. Start from `cc`
@@ -51,7 +56,7 @@ Fetch the plugin once. A build does not fetch:
 
 ```console
 $ buildl plugins fetch
-fetched c 1ae7ecf0cbe0e36162ae849b8d882f0444f5ccdf
+fetched c ae08f395e6fdf8aedb9eed40f3989ee1f1ba9878
 ```
 
 ## A first binary
@@ -120,11 +125,11 @@ $ buildl plan
 maybe  //:app: runs only if //:app.src.main.c.o, //:app.src.util.c.o produces something else
 run    //:app.src.main.c.o: input include/util.h changed
 run    //:app.src.util.c.o: input include/util.h changed
-  run programs:   cc
-  read variables: PATH
-  write into:     .buildl, out
-  cc: declared by plugin c@0.1.0 for //:app
-  PATH: declared by plugin c@0.1.0 for //:app
+  run programs:      cc
+  unkeyed variables: PATH
+  write into:        .buildl, out
+  cc: declared by plugin c@0.2.0 for //:app
+  PATH (unkeyed): declared by plugin c@0.2.0 for //:app
 //:app.src.main.c.deps is not up to date; targets declared from it may change
 //:app.src.util.c.deps is not up to date; targets declared from it may change
 2 to run, 1 conditional, 0 clean
@@ -150,11 +155,11 @@ $ buildl plan
 maybe  //:app: runs only if //:app.src.util.c.o produces something else
 clean  //:app.src.main.c.o
 run    //:app.src.util.c.o: input src/util.c changed
-  run programs:   cc
-  read variables: PATH
-  write into:     .buildl, out
-  cc: declared by plugin c@0.1.0 for //:app
-  PATH: declared by plugin c@0.1.0 for //:app
+  run programs:      cc
+  unkeyed variables: PATH
+  write into:        .buildl, out
+  cc: declared by plugin c@0.2.0 for //:app
+  PATH (unkeyed): declared by plugin c@0.2.0 for //:app
 //:app.src.util.c.deps is not up to date; targets declared from it may change
 1 to run, 1 conditional, 1 clean
 ```
@@ -451,7 +456,7 @@ $ buildl build
 --- //:util.src.util.c.deps
 obj: src/util.c include/util.h
 1 built
-error: build.lua: //:util (plugin c@0.1.0): program sh is outside plugin c@0.1.0 (proc.run allows: cc)
+error: build.lua: //:util (plugin c@0.2.0): program sh is outside plugin c@0.2.0 (proc.run allows: cc)
 ```
 
 That is exit code 4, and the fix is `sh` in the ceiling and in the plugin's `proc.run`, as
@@ -459,17 +464,19 @@ That is exit code 4, and the fix is `sh` in the ceiling and in the plugin's `pro
 
 ```toml
 [ceiling]
-proc.run = ["cc", "sh"]
-env.read = ["PATH"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["cc", "sh"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 
 [plugins.c]
-github   = "airsstack/buildl"
-rev      = "plugin-c-v0.1.0"
-dir      = "plugins/c"
-proc.run = ["cc", "sh"]
-env.read = ["PATH"]
+github      = "airsstack/buildl"
+rev         = "plugin-c-v0.2.0"
+dir         = "plugins/c"
+proc.run    = ["cc", "sh"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
 ```
 
 ```mermaid
@@ -576,12 +583,12 @@ clean  //:util
 clean  //:util.lib.util.c.o
 clean  //:util_test.bin
 clean  //:util_test.test.util_test.c.o
-  run programs:   cc, sh
-  read variables: PATH
-  write into:     .buildl, out
-  cc: declared by plugin c@0.1.0 for //:hello
-  sh: declared by plugin c@0.1.0 for //:util
-  PATH: declared by plugin c@0.1.0 for //:hello
+  run programs:      cc, sh
+  unkeyed variables: PATH
+  write into:        .buildl, out
+  cc: declared by plugin c@0.2.0 for //:hello
+  sh: declared by plugin c@0.2.0 for //:util
+  PATH (unkeyed): declared by plugin c@0.2.0 for //:hello
 1 to run, 2 conditional, 6 clean
 ```
 
@@ -602,14 +609,16 @@ option:
 
 ```toml
 [plugins.c]
-path     = "plugins/c"
-proc.run = ["gcc-13"]
-env.read = ["PATH"]
+path        = "plugins/c"
+proc.run    = ["gcc-13"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
 ```
 
-Every link step and every archive step declares `env = { "PATH" }`, so `PATH`'s value is part of
-their keys. Compiles and discovery declare no variable. The archiver is fixed to `ar`; another
-one, such as `llvm-ar`, means editing `graph.lua` in the copied folder.
+Every link step and every archive step declares `env = { PATH = "unkeyed" }`, so they are given
+`PATH`'s value but only its name is part of their keys. Compiles and discovery declare no variable.
+The archiver is fixed to `ar`; another one, such as `llvm-ar`, means editing `graph.lua` in the
+copied folder.
 
 ## When it goes wrong
 

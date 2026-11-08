@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use buildl_core::{EntryName, Error, Label, Pipeline};
+use buildl_core::{EntryName, Error, Label, MachineFolders, Pipeline};
 
 use crate::common::{
     FakeCas, FakeDispatcher, FakeHistory, FakePorts, FakeSource, file, ports, setting, target,
@@ -115,6 +115,7 @@ fn a_caller_holding_only_a_source_checks_like_a_pipeline() {
         &agreeing(),
         &mut FakeDispatcher::default(),
         &entry(),
+        &MachineFolders::default(),
         &FakeHistory::default(),
         &FakeCas::default(),
     )
@@ -136,6 +137,7 @@ fn a_caller_holding_only_a_source_checks_like_a_pipeline() {
             &differing,
             &mut FakeDispatcher::default(),
             &entry(),
+            &MachineFolders::default(),
             &FakeHistory::default(),
             &FakeCas::default()
         ),
@@ -155,6 +157,7 @@ fn a_caller_holding_only_a_source_gets_the_graph_a_pipeline_gets() {
         &fixture(),
         &mut FakeDispatcher::default(),
         &entry(),
+        &MachineFolders::default(),
         &FakeHistory::default(),
         &FakeCas::default(),
     )

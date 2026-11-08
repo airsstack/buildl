@@ -19,3 +19,5 @@ This chapter covers:
   how `plan`, `doctor`, the approver and `graph` tell you which plugin wanted it
 - **[The C and C++ Plugin](ch08-04-the-c-plugin.md)**: the `c` plugin kept in this repository,
   compiling one object per source with each object declaring the headers it read
+- **[The Rust Plugin](ch08-05-the-rust-plugin.md)**: the `rust` plugin kept in this repository,
+  running plain `cargo` for a binary, a library or a test

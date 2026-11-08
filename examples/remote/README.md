@@ -5,11 +5,12 @@ A target runs on the server, a second checkout fetches the result, and a change 
 uploaded for the next checkout to fetch.
 
 ```text
-            ┌──────────── compose.yaml: NativeLink, 127.0.0.1:50051 ────────────┐
-            │  CAS + action cache + scheduler + one local worker with python3  │
-            └───────▲─────────────────────────▲─────────────────────────▲───────┘
-  A --remote-execute│ runs there    B         │ fetches    C --remote-upload│ sends   D fetches
-         1 remote                    1 fetched             1 built            1 fetched
+            ┌─────────────────────────── compose.yaml: NativeLink, 127.0.0.1:50051 ───────────────────────────┐
+            │  CAS + action cache + scheduler + one local worker with python3                                 │
+            └───────▲─────────────────────────▲─────────────────────────────▲─────────────────────────▲───────┘
+  A --remote-execute│ runs there    B         │ fetches    C --remote-upload│ sends   D fetches       │ E sends, then a copy
+         1 remote                    1 fetched             1 built              1 fetched             │ with another HOME,
+                                                                                                      │ PATH and TMPDIR fetches
 ```
 
 ## What it uses
@@ -19,6 +20,7 @@ uploaded for the next checkout to fetch.
 | `[remote] url` in `buildl.toml` | the server to share action results through; with no flag, `build` looks up there a target the local cache cannot serve and reports a hit as `fetched` |
 | `--remote-execute` | a target neither cache serves runs on the server's worker, reported as `remote` |
 | `--remote-upload` | what ran here is sent to the server's cache, for another checkout to fetch |
+| `env = { HOME = "unkeyed", PATH = "unkeyed" }` | `python3` gets both when the action runs here, and neither goes into the action key, so a checkout with another home folder or `PATH` still finds the result on the server; under `--remote-execute` they are not sent and the worker uses its own environment |
 | `--remote-strict` | a failed remote call fails the build, instead of the build going on locally |
 | `docker/Dockerfile` | NativeLink's static binary on a Debian base with `python3`: the worker runs each action as a process in the container, so the program it names must be there |
 | `docker/nativelink.json5` | one process serving the CAS, the action cache, the scheduler and a worker that matches Linux x86-64 |
@@ -42,7 +44,7 @@ Nothing is claimed for other machines.
 
 ```sh
 docker compose up -d --build      # wait for 'Worker registered with scheduler' in docker compose logs
-sh assert.sh                      # the four copies A, B, C, D in temporary directories
+sh assert.sh                      # the copies A to E in temporary directories
 docker compose down
 ```
 

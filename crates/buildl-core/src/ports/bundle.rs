@@ -62,6 +62,7 @@ use crate::ports::{
 ///             ceiling: Ceiling {
 ///                 run: BTreeSet::new(),
 ///                 env: BTreeSet::new(),
+///                 unkeyed: BTreeSet::new(),
 ///                 read: BTreeSet::new(),
 ///                 write: BTreeSet::new(),
 ///             },
@@ -80,6 +81,10 @@ use crate::ports::{
 ///
 ///     fn env(&self, _name: &EnvName) -> Result<Option<EnvValue>> {
 ///         Ok(None)
+///     }
+///
+///     fn machine_folders(&self) -> buildl_core::MachineFolders {
+///         buildl_core::MachineFolders::default()
 ///     }
 /// }
 ///

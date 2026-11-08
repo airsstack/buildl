@@ -704,6 +704,22 @@ mod tests {
     }
 
     #[test]
+    fn a_different_timeout_gives_a_different_action() {
+        let root = digest_of(b"root");
+        let mut other = remote_action();
+        other.timeout = Timeout::parse("120s").unwrap();
+        let command_of = |remote: &RemoteAction| Encoded::of(&command(remote)).blob.digest;
+        let action_of = |remote: &RemoteAction| {
+            let command_digest = wire_digest(&Encoded::of(&command(remote)).blob).unwrap();
+            Encoded::of(&action(&command_digest, &root, remote))
+                .blob
+                .digest
+        };
+        assert_eq!(command_of(&remote_action()), command_of(&other));
+        assert_ne!(action_of(&remote_action()), action_of(&other));
+    }
+
+    #[test]
     fn the_salt_changes_the_action_digest() {
         let command_digest = digest_of(b"command");
         let root = digest_of(b"root");

@@ -2,8 +2,8 @@
 
 use buildl_core::{
     DeclarationOrder, Evaluated, Freshness, NetworkAccess, Origin, OutputSource, StagedAlias,
-    StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir,
-    StagedTarget, TargetRole, Written,
+    StagedDeclaration, StagedEnv, StagedFile, StagedItem, StagedMark, StagedRule, StagedSetting,
+    StagedSubdir, StagedTarget, TargetRole, Written,
 };
 
 use crate::common::{evaluate, fixture, workspace};
@@ -58,7 +58,10 @@ fn every_primitive_and_field_is_staged_as_written() {
                     inputs: Vec::new(),
                     deps: strings(&["main.o", "//lib:text"]),
                     outputs: Some(strings(&["app"])),
-                    env: strings(&["HOME"]),
+                    env: vec![StagedEnv::Marked {
+                        name: Written::new("HOME"),
+                        mark: StagedMark::Word(Written::new("unkeyed")),
+                    }],
                     network: NetworkAccess::Declared,
                     output_source: OutputSource::Command,
                     freshness: Freshness::Always,

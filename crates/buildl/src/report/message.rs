@@ -142,6 +142,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use buildl_core::{
@@ -298,7 +299,7 @@ mod tests {
                 inputs: Vec::new(),
                 deps: deps.iter().map(|dep| Label::parse(dep).unwrap()).collect(),
                 outputs: Vec::new(),
-                env: Vec::new(),
+                env: BTreeMap::new(),
                 network: NetworkAccess::Sealed,
                 output_source: OutputSource::Command,
                 freshness: Freshness::Cached,
@@ -357,13 +358,13 @@ mod tests {
             concat!(
                 "error: lib/build.lua: declarations differ between two evaluations\n",
                 "    first evaluation:  {\"item\":{\"Target\":{\"action\":{\"Run\":[\"cc\"]},",
-                "\"deps\":[],\"env\":[],\"freshness\":\"Cached\",\"inputs\":[],",
+                "\"deps\":[],\"env\":{},\"freshness\":\"Cached\",\"inputs\":[],",
                 "\"label\":\"//lib:text\",\"network\":\"Sealed\",\"output_source\":\"Command\",",
                 "\"outputs\":[],",
                 "\"role\":\"Build\"}},\"origin\":\"BuildFile\",",
                 "\"provenance\":{\"directory\":\"lib\",\"file\":\"lib/build.lua\"}}\n",
                 "    second evaluation: {\"item\":{\"Target\":{\"action\":{\"Run\":[\"cc\"]},",
-                "\"deps\":[\"//:main.o\"],\"env\":[],\"freshness\":\"Cached\",\"inputs\":[],",
+                "\"deps\":[\"//:main.o\"],\"env\":{},\"freshness\":\"Cached\",\"inputs\":[],",
                 "\"label\":\"//lib:text\",\"network\":\"Sealed\",\"output_source\":\"Command\",",
                 "\"outputs\":[],",
                 "\"role\":\"Build\"}},\"origin\":\"BuildFile\",",

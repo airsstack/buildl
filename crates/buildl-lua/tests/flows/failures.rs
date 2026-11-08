@@ -78,6 +78,27 @@ fn staging_past_the_staging_budget_reaches_the_staging_limit() {
 }
 
 #[test]
+fn an_env_list_shared_by_many_targets_reaches_the_staging_limit() {
+    let (failure, diagnostic) = failure_of(
+        "local env = {}\n\
+         for i = 1, 100000 do env[i] = 'HOME' end\n\
+         for i = 1, 20 do buildl.target('t' .. i, { run = { 'cc' }, env = env }) end",
+    );
+    assert_eq!(
+        failure,
+        EvaluationFailure::LimitReached {
+            limit: EvaluationLimit::Staging,
+        }
+    );
+    assert!(
+        diagnostic
+            .as_str()
+            .ends_with("buildl.target: staging budget of 16777216 bytes exceeded"),
+        "{diagnostic}"
+    );
+}
+
+#[test]
 fn a_source_walk_past_the_walk_ceiling_reaches_the_walk_limit_even_when_caught() {
     let (_dir, root) = workspace("pcall(buildl.sources, '*.c')\nreturn 'ok'");
     for name in ["a.c", "b.c", "c.c"] {

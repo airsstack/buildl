@@ -31,7 +31,7 @@ Check 1 of `compare` reads recipe names from the old build itself. For `tool: "n
 | a command whose output is a file (`cmd > file`) | `stdout = true`, and no `>` |
 | `npm install`, `npm ci`, anything that downloads | the same command with `network = true`, and `npm` in `proc.run`. A later target reads files, so declare the files the install makes in `outputs`; if that cannot be done, stop and ask the user. Do not set `strategy = "bare"` |
 | a script in a package in another folder (`npm run build --workspace=pkg`, `cd pkg && npm run build`) | `b.subdir("pkg")` and a `build.lua` in that folder. Its targets are `//pkg:name` |
-| `$NODE_ENV`, `process.env.TOKEN` read by a script | `env = { "NODE_ENV" }` on the target and `env.read = ["NODE_ENV"]` in the ceiling |
+| `$NODE_ENV`, `process.env.TOKEN` read by a script | `env = { NODE_ENV = "key" }` on the target and `env.read = ["NODE_ENV"]` in the ceiling. A variable that only finds programs (`HOME`, `PATH`) is `"unkeyed"` instead, and is also in `env.unkeyed` |
 | `start`, `dev`, `watch`, `serve` (run until stopped) | the stop rule, last section |
 | `publish`, `prepublishOnly`, `deploy`, `release`, `version` | the stop rule, last section |
 

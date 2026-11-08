@@ -86,8 +86,8 @@ fn interactive_asks_only_about_new_wants() {
     );
     chain.replace_line(
         "build.lua",
-        "  env    = { \"BUILDL_FIXTURE_FLAVOR\" },",
-        "  env    = { \"BUILDL_FIXTURE_FLAVOR\", \"X\" },",
+        "  env    = { BUILDL_FIXTURE_FLAVOR = \"key\" },",
+        "  env    = { BUILDL_FIXTURE_FLAVOR = \"key\", X = \"key\" },",
     );
     let mut console = Fake::answering(&["y"]);
 
@@ -110,7 +110,7 @@ fn interactive_asks_for_discovered_targets_only_about_what_discovery_did_not_cov
     discovery.replace_line(
         "build.lua",
         "  b.target(name, { inputs = { \"item.txt\" }, run = { \"cp\", \"$in\", \"$out\" } })",
-        "  b.target(name, { inputs = { \"item.txt\" }, env = { \"X\" }, run = { \"cp\", \"$in\", \"$out\" } })",
+        "  b.target(name, { inputs = { \"item.txt\" }, env = { X = \"key\" }, run = { \"cp\", \"$in\", \"$out\" } })",
     );
     let mut console = Fake::answering(&["y", "y"]);
 

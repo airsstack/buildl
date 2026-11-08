@@ -188,7 +188,7 @@ function M.declare(buildl, kind, name, options)
             run = { "sh", "-c", 'ZERO_AR_DATE=1 exec ar rcs "$0" "$@"', "$out", "$deps" },
             deps = objects,
             outputs = { options.output },
-            env = { "PATH" },
+            env = { PATH = "unkeyed" },
         })
         return
     end
@@ -198,7 +198,7 @@ function M.declare(buildl, kind, name, options)
     buildl.target(link, {
         run = join(options.linker, options.ldflags, shared, { "-o", "$out", "$deps" }, options.ldlibs),
         deps = join(objects, options.deps),
-        env = { "PATH" },
+        env = { PATH = "unkeyed" },
         outputs = { options.output },
     })
     if kind ~= "test" then

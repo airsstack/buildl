@@ -17,7 +17,7 @@ use crate::grants::wanted::{sites, wanted};
 use crate::placement::layout::Layout;
 use crate::ports::{ContentStore, DeclarationSource, Dispatcher, Manifest, RunHistory};
 use crate::resolve::resolve;
-use crate::types::{Checkup, EntryName, Label};
+use crate::types::{Checkup, EntryName, Label, MachineFolders};
 
 /// Loads the workspace through `source`, resolves it, and reports what its build wants against
 /// the ceiling `manifest` describes.
@@ -33,16 +33,19 @@ use crate::types::{Checkup, EntryName, Label};
 ///
 /// # Errors
 ///
-/// Returns whatever the load returns, [`Error::DiscoveryChanged`](crate::Error::DiscoveryChanged)
-/// when the second load declares different discovery targets than the first, whatever
-/// [`resolve`] returns, whatever the manifest port returns, and
-/// [`Error::OutputConflict`](crate::Error::OutputConflict) for two outputs that would be written
-/// to one place.
+/// Returns whatever the load returns,
+/// [`Error::MachinePathInCommand`](crate::Error::MachinePathInCommand) and
+/// [`Error::MachinePathInDiscovery`](crate::Error::MachinePathInDiscovery) for what holds one of
+/// `folders`, [`Error::DiscoveryChanged`](crate::Error::DiscoveryChanged) when the second load
+/// declares different discovery targets than the first, whatever [`resolve`] returns, whatever
+/// the manifest port returns, and [`Error::OutputConflict`](crate::Error::OutputConflict) for two
+/// outputs that would be written to one place.
 pub fn doctor<S, D, M, H, C>(
     source: &S,
     dispatcher: &mut D,
     manifest: &M,
     entry: &EntryName,
+    folders: &MachineFolders,
     history: &H,
     cas: &C,
 ) -> Result<(Checkup, Vec<Label>)>
@@ -53,7 +56,7 @@ where
     H: RunHistory,
     C: ContentStore,
 {
-    let loaded = load_twice(source, dispatcher, entry, |labels| {
+    let loaded = load_twice(source, dispatcher, entry, folders, |labels| {
         results(history, cas, labels)
     })?;
     let graph = resolve(loaded.declarations)?;

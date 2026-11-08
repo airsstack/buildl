@@ -171,6 +171,9 @@ pub struct PluginCap {
     pub run: BTreeSet<Program>,
     /// The environment variables the plugin's targets may read.
     pub env: BTreeSet<EnvName>,
+    /// The environment variables the plugin's targets may read and leave out of their keys; each
+    /// is also in `env`.
+    pub unkeyed: BTreeSet<EnvName>,
     /// Whether the plugin's targets may reach the network.
     pub network: PluginNetwork,
 }
@@ -188,6 +191,9 @@ pub struct PluginRef {
     pub run: BTreeSet<Program>,
     /// The environment variables its manifest says its targets may read.
     pub env: BTreeSet<EnvName>,
+    /// The environment variables its manifest says its targets may read and leave out of their
+    /// keys; each is also in `env`.
+    pub unkeyed: BTreeSet<EnvName>,
 }
 
 impl fmt::Display for PluginRef {
@@ -309,6 +315,7 @@ impl fmt::Display for PluginViolation {
         let (wanted, list) = match &self.want {
             Want::Program(program) => (format!("program {program}"), "proc.run"),
             Want::Env(name) => (format!("environment variable {name}"), "env.read"),
+            Want::Unkeyed(name) => (format!("unkeyed variable {name}"), "env.unkeyed"),
             Want::Read(path) => (format!("input {path}"), "fs.read"),
             Want::Write(directory) => (
                 format!("directory {}", directory_text(directory)),
@@ -349,6 +356,7 @@ mod tests {
 
     fn plugin(name: &str, version: &str) -> PluginRef {
         PluginRef {
+            unkeyed: BTreeSet::new(),
             name: PluginName::parse(name).unwrap(),
             version: PluginVersion::parse(version).unwrap(),
             run: BTreeSet::new(),

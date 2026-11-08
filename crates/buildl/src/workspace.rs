@@ -255,6 +255,7 @@ impl Workspace {
             &self.wiring.source()?,
             &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
+            &self.wiring.machine_folders()?,
             &self.history(),
             &self.cas(),
         )
@@ -275,6 +276,7 @@ impl Workspace {
             &self.wiring.source()?,
             &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
+            &self.wiring.machine_folders()?,
             &self.history(),
             &self.cas(),
         )
@@ -296,6 +298,7 @@ impl Workspace {
             &self.wiring.source()?,
             &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
+            &self.wiring.machine_folders()?,
             &self.history(),
             &self.cas(),
             query,
@@ -321,6 +324,7 @@ impl Workspace {
             &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.manifest(),
             self.wiring.entry(),
+            &self.wiring.machine_folders()?,
             &self.history(),
             &self.cas(),
         )?;
@@ -566,6 +570,7 @@ impl Workspace {
     /// fold's error.
     pub fn gc(&self) -> Result<Collected> {
         let source = self.wiring.source()?;
+        let folders = self.wiring.machine_folders()?;
         let lock = self.wiring.lock()?;
         let layout = lock.layout();
         let mut cache = LocalCache::open(layout)?;
@@ -575,6 +580,7 @@ impl Workspace {
             &source,
             &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
+            &folders,
             &mut cache,
             &cas,
             &cas,
@@ -913,7 +919,7 @@ mod tests {
         assert_eq!(
             canonical::to_string(&graph).unwrap(),
             "{\"aliases\":{},\"settings\":{},\"targets\":{\"//:copy\":{\"deps\":[],\
-             \"description\":null,\"env\":[],\"freshness\":\"Cached\",\"inputs\":[\"a.txt\"],\
+             \"description\":null,\"env\":{},\"freshness\":\"Cached\",\"inputs\":[\"a.txt\"],\
              \"network\":\"Sealed\",\"origin\":\"BuildFile\",\"output_source\":\"Command\",\
              \"outputs\":[\"copy\"],\"provenance\":{\"directory\":\"\",\
              \"file\":\"build.lua\"},\"role\":\"Build\",\"run\":[\"cp\",\"$in\",\"$out\"]}}}"

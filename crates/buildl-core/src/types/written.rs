@@ -14,7 +14,7 @@ use core::marker::PhantomData;
 
 use crate::error::{Error, NameKind, Result};
 use crate::types::{
-    Argument, Description, Directory, EnvName, FieldName, Label, OutputName, SettingName,
+    Argument, Description, Directory, EnvMark, EnvName, FieldName, Label, OutputName, SettingName,
     SettingValue, SourcePath, TargetName,
 };
 
@@ -126,6 +126,17 @@ impl Written<EnvName> {
     }
 }
 
+impl Written<EnvMark> {
+    /// Validates the text as the mark of an environment variable.
+    ///
+    /// # Errors
+    ///
+    /// Returns whatever [`EnvMark::parse`] rejects.
+    pub fn parse(&self) -> Result<EnvMark> {
+        EnvMark::parse(&self.text)
+    }
+}
+
 impl Written<Argument> {
     /// Validates the text as a command argument.
     ///
@@ -190,8 +201,8 @@ mod tests {
 
     use super::Written;
     use crate::types::{
-        Argument, Description, Directory, EnvName, FieldName, Label, OutputName, SettingName,
-        SettingValue, SourcePath, TargetName,
+        Argument, Description, Directory, EnvMark, EnvName, FieldName, Label, OutputName,
+        SettingName, SettingValue, SourcePath, TargetName,
     };
 
     #[test]
@@ -278,6 +289,11 @@ mod tests {
         assert!(Written::<OutputName>::new("/app").parse().is_err());
         assert!(Written::<EnvName>::new("PATH").parse().is_ok());
         assert!(Written::<EnvName>::new("1X").parse().is_err());
+        assert_eq!(
+            Written::<EnvMark>::new("unkeyed").parse().unwrap(),
+            EnvMark::Unkeyed
+        );
+        assert!(Written::<EnvMark>::new("pass").parse().is_err());
         assert!(Written::<Argument>::new("$in").parse().is_ok());
         assert!(Written::<Argument>::new("a\0b").parse().is_err());
         assert!(Written::<Description>::new("compile $in").parse().is_ok());

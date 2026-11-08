@@ -18,8 +18,8 @@ use buildl_core::{
 use buildl_core::{Execution, Isolation, Manifest, Scope, Timeout, Workers};
 
 use crate::common::{
-    Answer, FakeApprover, FakeContent, FakeFile, FakePorts, FakeSource, dir, file, file_by, plugin,
-    ports, program, setting, target, target_with, workspace,
+    Answer, FakeApprover, FakeContent, FakeFile, FakePorts, FakeSource, dir, file, file_by, keyed,
+    plugin, ports, program, setting, target, target_with, workspace,
 };
 
 /// The serialized plan of [`crate::graph::fixture`] after a build and one edit, pinned.
@@ -458,7 +458,7 @@ fn an_override_dirties_exactly_the_targets_whose_commands_name_the_setting() {
 #[test]
 fn an_environment_value_a_tool_and_the_platform_each_reach_the_key() {
     let mut pipeline = root_only(vec![target_with("app", |target| {
-        target.env = vec![Written::new("PATH")];
+        target.env = keyed(&["PATH"]);
     })]);
     let path_name = env_name("PATH");
     let value = |text: &str| EnvValue::parse(text).unwrap();
@@ -586,7 +586,7 @@ fn a_program_outside_the_ceiling_is_refused_before_anything_is_read() {
 #[test]
 fn a_variable_an_input_and_a_directory_outside_the_ceiling_are_each_refused() {
     let mut reads_secret = root_only(vec![target_with("app", |target| {
-        target.env = vec![Written::new("AWS_SECRET")];
+        target.env = keyed(&["AWS_SECRET"]);
     })]);
     let error = reads_secret
         .plan(&entry(), &Scope::Workspace, &Overrides::new())
@@ -624,7 +624,7 @@ fn a_variable_an_input_and_a_directory_outside_the_ceiling_are_each_refused() {
 #[test]
 fn a_pinned_variable_is_refused_after_the_ceiling_and_before_any_tool() {
     let mut pipeline = root_only(vec![target_with("app", |target| {
-        target.env = vec![Written::new("TZ")];
+        target.env = keyed(&["TZ"]);
         target.inputs = vec![Written::new("missing.c")];
     })]);
     pipeline.ports_mut().tools.fingerprints.clear();
@@ -745,7 +745,7 @@ fn a_program_named_by_several_targets_is_looked_up_once() {
 #[test]
 fn of_two_variables_the_host_cannot_report_the_lower_name_is_the_error() {
     let mut pipeline = root_only(vec![target_with("app", |target| {
-        target.env = vec![Written::new("ZED"), Written::new("ALPHA")];
+        target.env = keyed(&["ZED", "ALPHA"]);
     })]);
     let names = BTreeSet::from([env_name("ALPHA"), env_name("ZED")]);
     {

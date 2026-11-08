@@ -8,7 +8,7 @@ declares one:
 b.test("unit", {
   inputs = sources,
   run = { "go", "test", "./..." },
-  env = { "HOME" },
+  env = { HOME = "unkeyed" },
 })
 ```
 

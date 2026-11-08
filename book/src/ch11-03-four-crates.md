@@ -188,13 +188,14 @@ graph TD
 | Crate | Role | Depends on | Must not depend on |
 |---|---|---|---|
 | `buildl-core` | domain data, ports, the pure logic of every phase | `serde`, `serde_json`, `thiserror`, `sha2` | any buildl crate, `airsl`, any I/O API |
-| `buildl-lua` | the `DeclarationSource` adapter: evaluates one build file through airsl, and loads the plugins it uses | `buildl-core`, `airsl`, `globset`, `walkdir`, `serde`, `serde_json` | `buildl` |
+| `buildl-lua` | the `DeclarationSource` adapter: evaluates one build file through airsl, and loads the plugins it uses | `buildl-core`, `airsl`, `globset`, `walkdir`, `serde`, `serde_json`, `toml` | `buildl` |
 | `buildl` | every other adapter; the `plugins` module; `LocalPorts`; the `Workspace` facade; re-exports `buildl-core` as `buildl::buildl_core` | `buildl-core`, `buildl-lua`, `toml`, `toml_edit`, `rayon`, `serde`, `thiserror`, `tempfile`, `tonic`, `tonic-prost`, `prost`, `prost-types`, `tokio`, `uuid`, `notify` | nothing: it is the composition root |
 | `buildl-cli` | argument surface and exit codes | `buildl`, `clap` | `buildl-core` and `buildl-lua` directly |
 
 `crates/expected-edges.txt` holds that list as the gate checks it. Each adapter dependency has a
 reason: `toml` reads `buildl.toml`, and `toml_edit` points at the place in it where a `[remote]`
-table is refused, since `toml` keeps no positions; `rayon` hashes files, in the `Digester` adapter
+table is refused, since `toml` keeps no positions; in `buildl-lua`, `toml` reads the
+`env.unkeyed` list of a plugin's `extension.toml`, a key airsl's manifest parser refuses; `rayon` hashes files, in the `Digester` adapter
 and nowhere else; `tempfile` gives the write-then-rename every state file and blob goes through.
 The remote cache's gRPC client is `tonic`, with `tonic-prost`, `prost` and `prost-types` for its
 messages, `tokio` for the runtime the client needs, and `uuid` to name uploads. Only the `remote`

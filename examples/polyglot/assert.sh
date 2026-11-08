@@ -18,7 +18,7 @@ expect() {
 }
 
 expect "the Go service prints the schema" "^go service 1.0: hello from the schema$" "$(./out/go/service)"
-expect "the Rust CLI prints the schema" "^rust cli 1.0: hello from the schema$" "$(./out/rust/cli/bin/cli)"
+expect "the Rust CLI prints the schema" "^rust cli 1.0: hello from the schema$" "$(./out/rust/cli)"
 expect "the Python tool prints the schema" "^python tool 1.0: hello from the schema$" "$(python3 out/python/tool.pyz)"
 
 # An edit to the comment changes the generator's input, so it runs again; it writes the
@@ -37,8 +37,26 @@ for label in sorted(targets):
 ')"
 [ -z "${dirty}" ] || fail "every target is clean after the build" "${dirty}"
 
-# One target writes the Go, Rust and Python sources, so what depends on it spans all three.
+# One target writes the Go, Rust and Python sources, so what depends on it spans all three
+# (the Rust test compiles the same sources, so it is listed too).
 reached="$("${BUILDL}" query 'rdeps(//schema:gen)' 2>&1)" || fail "query exits 0" "${reached}"
 [ "${reached}" = "//go:service
 //python:tool.pyz
-//rust:cli" ] || fail "rdeps(//schema:gen) names the program of each language" "${reached}"
+//rust:cli
+//rust:cli_test" ] || fail "rdeps(//schema:gen) names the program of each language and the Rust test" "${reached}"
+
+# An edit to the Rust source changes the inputs of the binary and of its test, so `plan`, asked
+# for the two (it leaves tests out otherwise), names both as the targets to run.
+sed -e 's/rust cli/rust cli (edited)/' rust/src/main.rs > main.rs.new
+mv main.rs.new rust/src/main.rs
+stale="$("${BUILDL}" plan --json //rust:cli //rust:cli_test | python3 -c '
+import json, sys
+targets = json.load(sys.stdin)["targets"]
+for label in sorted(targets):
+    if targets[label]["verdict"] != "Clean":
+        print(label)
+')"
+[ "${stale}" = "//rust:cli
+//rust:cli_test" ] || fail "an edit to rust/src/main.rs runs //rust:cli and //rust:cli_test" "${stale}"
+
+tested="$("${BUILDL}" test 2>&1)" || fail "test after the Rust edit exits 0" "${tested}"

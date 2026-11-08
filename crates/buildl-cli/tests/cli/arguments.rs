@@ -578,7 +578,7 @@ fn an_env_value_change_rebuilds_the_target_that_reads_it() {
         ),
         (
             "build.lua",
-            "buildl.target(\"flavor\", { inputs = { \"a.txt\" }, env = { \"BUILDL_FIXTURE_FLAVOR\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+            "buildl.target(\"flavor\", { inputs = { \"a.txt\" }, env = { BUILDL_FIXTURE_FLAVOR = \"key\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
         ),
         ("a.txt", "a\n"),
     ]);

@@ -35,17 +35,19 @@ out    = "out"
 config = 1
 
 [ceiling]
-proc.run = ["go"]
-env.read = ["HOME"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["go"]
+env.read    = ["HOME"]
+env.unkeyed = ["HOME"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 ```
 
 The `[workspace]` table spells out three settings the last chapter left at their defaults: the
 build file to start from, the folder outputs go in, and the version of the config format. The
-ceiling is new in one way: `env.read` lets the build see one environment variable, `HOME`. The Go
+ceiling is new in two ways. `env.read` lets the build see one environment variable, `HOME`. The Go
 toolchain keeps its build cache under your home folder, and without `HOME` it stops, because it
-cannot find one.
+cannot find one. `env.unkeyed` lets that variable be left out of the target's cache key, which the
+build file below puts to use.
 
 `build.lua` declares two targets:
 
@@ -58,13 +60,13 @@ local sources = { "go.mod", b.sources("*.go") }
 b.target("hello", {
   inputs = sources,
   run = { "go", "build", "-o", "$out", "." },
-  env = { "HOME" },
+  env = { HOME = "unkeyed" },
 })
 
 b.test("unit", {
   inputs = sources,
   run = { "go", "test", "./..." },
-  env = { "HOME" },
+  env = { HOME = "unkeyed" },
 })
 ```
 
@@ -77,6 +79,14 @@ instead of `b.target`: it makes no file, and what `buildl` keeps for it is wheth
 what it printed. Both name `HOME` in `env`. A command sees only the variables its target lists, plus
 a few that `buildl` pins itself ([The Sandbox](ch06-00-sandbox.md)), so a build cannot read the rest of
 your environment by accident.
+
+`env` is a table from a variable's name to a mark, and every variable has one. `HOME` is marked
+`"unkeyed"`: `go` is given its value, but only the name `HOME` goes into the target's cache key. The
+value is a folder on your machine, and a key that held it would be a different key on every other
+machine, though the build is the same. The other mark, `"key"`, puts the value in the key as well; it
+is for a variable that changes what the build makes, such as `RUSTFLAGS`. [The Action
+Key](ch05-01-action-key.md) has the details. `env.unkeyed` in the ceiling is the permission that lets
+a target use the `"unkeyed"` mark.
 
 Go is already good at deciding what to recompile. `buildl` does not try to do that job again: it
 runs the whole `go build` as one action, and adds what Go lacks, such as a cache shared by every
@@ -110,15 +120,15 @@ Make a change to `main.go` that Go will not mind, and ask what a build would do:
 $ echo "// an edit" >> main.go
 $ buildl plan
 run    //:hello: input main.go changed
-  run programs:   go
-  read variables: HOME
-  write into:     .buildl, out
+  run programs:      go
+  unkeyed variables: HOME
+  write into:        .buildl, out
 1 to run, 0 conditional, 0 clean
 ```
 
 `plan` names the file that changed. It lists only `//:hello`, because like `build` it leaves the
-tests out when no target is named. The list under it now includes `read variables: HOME`, from the
-targets' `env`.
+tests out when no target is named. The list under it now includes `unkeyed variables: HOME`, from
+the targets' `env`. A variable marked `"key"` would be on a line of its own, `read variables:`.
 
 `main.go` is an input of `unit` too, so the next test run runs it again. The run after that has
 nothing new to test:
@@ -152,31 +162,31 @@ does, Go decides how little it has to redo.
 ## The same project in Rust and Python
 
 The repository has two more starters, `examples/rust` and `examples/python`. Each is the same
-project: a program that prints a greeting, and a test, with the same steps in its `README.md`.
+project: a program that prints a greeting, and a test, with its steps in its `README.md`.
 
 | Starter | The program | The test | The ceiling allows |
 |---|---|---|---|
-| `examples/go` | `go build -o $out .`, giving `out/hello` | `go test ./...` | `go`; `HOME` |
-| `examples/rust` | `cargo install`, giving `out/hello/bin/hello` | `cargo test --target-dir tt` | `cargo`; `HOME`, `PATH` |
+| `examples/go` | `go build -o $out .`, giving `out/hello` | `go test ./...` | `go`; `HOME`, unkeyed |
+| `examples/rust` | `rust.binary`, giving `out/hello` | `rust.test`, which runs `cargo test` | `sh`, `rustc`; `HOME`, `PATH`, both unkeyed |
 | `examples/python` | `python3 -m zipapp app -o $out`, giving `out/app.pyz` | `python3 -m unittest discover -s tests` | `python3`; no variables |
 
-The Rust target is worth a closer look, because the obvious command does not work:
+The Rust starter is the one that loads a plugin. Running `cargo` as a plain target takes some
+care: `cargo build` writes its binary under `target/`, where `buildl` does not look for the
+output, and cargo needs `HOME` for its registry and `PATH` to find the linker. The `rust` plugin
+does that part, so the build file is two lines:
 
 ```lua
-b.target("hello", {
-  inputs = sources,
-  run = { "cargo", "install", "--path", ".", "--root", "$out", "--target-dir", "tt", "--no-track" },
-  env = { "HOME", "PATH" },
-})
+local rust = buildl.use("rust")
+
+rust.binary("hello", { profile = "release" })
+rust.test("unit")
 ```
 
-`buildl` looks for a target's output under `out/`, at the path `$out` names. `cargo build
---release` writes its binary under `target/` instead, so the output is never found.
-`cargo install --root $out` puts the binary where `buildl` looks, at `out/hello/bin/hello`, which
-makes this target's output a folder rather than a single file. `--target-dir tt` keeps cargo's
-working files inside the folder the action runs in, and `--no-track` stops cargo writing its
-install records into `$out`. Cargo needs `HOME` for its registry and toolchains, and `PATH` to find
-the linker.
+`rust.binary` runs `cargo build` for the binary `hello` and copies the file cargo wrote to
+`out/hello`, and `rust.test` runs `cargo test`. Both take every file in the folder as inputs, and
+`HOME` and `PATH` are given as unkeyed variables. The plugin is named in `buildl.toml`, with the
+programs and variables it may use, and fetched once with `buildl plugins fetch`;
+[The Rust Plugin](ch08-05-the-rust-plugin.md) shows the table and everything the plugin does.
 
 The next chapter looks at build files properly: labels, dependencies between targets, more than
 one folder, and the functions `buildl` gives you to write them with.

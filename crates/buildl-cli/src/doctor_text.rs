@@ -74,6 +74,9 @@ pub(crate) struct RemoteReport {
 /// platform property in name order, or `properties: none`. The token itself is never in the
 /// text.
 ///
+/// The ceiling section lists `proc.run`, `env.read`, `env.unkeyed`, `fs.read` and `fs.write`. A
+/// variable a target marks `unkeyed` has its own row, `read HOME unkeyed`, apart from `read HOME`.
+///
 /// Under a want that plugins' targets are behind, one line for each chain reads
 /// `    declared by plugin go@1.2.0 for //services/api:server`. When a plugin does not allow a want
 /// of its targets, a `plugin violations` section ends the report with one line for each, worded
@@ -92,6 +95,7 @@ pub(crate) fn doctor_text(doctor: &Doctor, remote: &RemoteReport) -> String {
     let entries = [
         ("proc.run", joined(&ceiling.run)),
         ("env.read", joined(&ceiling.env)),
+        ("env.unkeyed", joined(&ceiling.unkeyed)),
         ("fs.read", directories(&ceiling.read)),
         ("fs.write", directories(&ceiling.write)),
     ];
@@ -144,8 +148,8 @@ type Row = [String; 3];
 /// A row of the wants table and the lines saying which plugins are behind its want.
 type Wanted = (Row, Vec<String>);
 
-/// The rows of the wants table, in the order of `wanted`: programs, variables, directories,
-/// then the network, each with its attribution lines.
+/// The rows of the wants table, in the order of `wanted`: programs, variables, unkeyed variables,
+/// directories, then the network, each with its attribution lines.
 fn wants(
     wanted: &WantedSet,
     outside: &WantedSet,
@@ -179,6 +183,16 @@ fn wants(
                 unapproved.env.contains(name),
             ),
             attribution.lines(&Want::Env(name.clone())),
+        ));
+    }
+    for name in &wanted.unkeyed {
+        rows.push((
+            row(
+                format!("  read {name} unkeyed"),
+                outside.unkeyed.contains(name),
+                unapproved.unkeyed.contains(name),
+            ),
+            attribution.lines(&Want::Unkeyed(name.clone())),
         ));
     }
     for directory in &wanted.write {
@@ -370,6 +384,7 @@ mod tests {
             out: Directory::parse("out").unwrap(),
             state: Directory::parse(".buildl").unwrap(),
             ceiling: Ceiling {
+                unkeyed: BTreeSet::new(),
                 run: programs(&["go", "protoc"]),
                 env: env(&["HOME", "PATH"]),
                 read: dirs(&["."]),
@@ -664,6 +679,7 @@ mod tests {
         let wanted = WantedSet {
             programs: programs(&["curl", "go"]),
             env: env(&["HOME"]),
+            unkeyed: BTreeSet::new(),
             write: dirs(&["out"]),
             network: labels(&["//:fetch"]),
         };
@@ -714,10 +730,11 @@ mod tests {
                 "  --remote-execute and --no-remote-execute change execute, and --remote-jobs ",
                 "changes jobs, for one run\n",
                 "ceiling\n",
-                "  proc.run  go, protoc\n",
-                "  env.read  HOME, PATH\n",
-                "  fs.read   .\n",
-                "  fs.write  .buildl, out\n",
+                "  proc.run     go, protoc\n",
+                "  env.read     HOME, PATH\n",
+                "  env.unkeyed  -\n",
+                "  fs.read      .\n",
+                "  fs.write     .buildl, out\n",
                 "wants               ceiling  approved\n",
                 "  run curl          REFUSED  -\n",
                 "  run go            allowed  yes\n",
@@ -730,6 +747,7 @@ mod tests {
 
     fn go() -> PluginRef {
         PluginRef {
+            unkeyed: BTreeSet::new(),
             name: PluginName::parse("go").unwrap(),
             version: PluginVersion::parse("1.2.0").unwrap(),
             run: programs(&["go"]),
@@ -789,6 +807,60 @@ mod tests {
     }
 
     #[test]
+    fn doctor_prints_env_unkeyed() {
+        let mut workspace = workspace(ApproverMode::Manifest, Workers::PerCore);
+        workspace.ceiling.unkeyed = env(&["PATH"]);
+        let wanted = WantedSet {
+            unkeyed: env(&["HOME", "PATH"]),
+            ..WantedSet::default()
+        };
+        let outside = WantedSet {
+            unkeyed: env(&["HOME"]),
+            ..WantedSet::default()
+        };
+        let unapproved = WantedSet {
+            unkeyed: env(&["PATH"]),
+            ..WantedSet::default()
+        };
+        let chain = PluginChain::new(vec![go()]).unwrap();
+        let mut attribution = Attribution::default();
+        attribution.record(
+            Want::Unkeyed(EnvName::parse("PATH").unwrap()),
+            &chain,
+            &Label::parse("//:app").unwrap(),
+        );
+
+        let text = doctor_text(
+            &Doctor::new(
+                Checkup::new(workspace, wanted, outside, attribution, Vec::new()),
+                PathBuf::from("/path/to/myapp"),
+                unapproved,
+            ),
+            &machine(),
+        );
+
+        assert!(
+            text.contains(concat!(
+                "ceiling\n",
+                "  proc.run     go, protoc\n",
+                "  env.read     HOME, PATH\n",
+                "  env.unkeyed  PATH\n",
+                "  fs.read      .\n",
+            )),
+            "{text}"
+        );
+        assert!(
+            text.ends_with(concat!(
+                "wants                ceiling  approved\n",
+                "  read HOME unkeyed  REFUSED  -\n",
+                "  read PATH unkeyed  allowed  no\n",
+                "    declared by plugin go@1.2.0 for //:app\n",
+            )),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn an_empty_ceiling_list_shows_a_dash() {
         let mut workspace = workspace(ApproverMode::Manifest, Workers::PerCore);
         workspace.ceiling.run.clear();
@@ -801,8 +873,8 @@ mod tests {
             WantedSet::default(),
         );
 
-        assert!(text.contains("  proc.run  -\n"), "{text}");
-        assert!(text.contains("  env.read  -\n"), "{text}");
+        assert!(text.contains("  proc.run     -\n"), "{text}");
+        assert!(text.contains("  env.read     -\n"), "{text}");
     }
 
     #[test]

@@ -145,8 +145,9 @@ leaves nothing half-recorded: the next build simply downloads again.
 ### How a target is described
 
 The server does not know buildl's action key. buildl describes each target in the API's own terms,
-an `Action` holding its command, its environment with the sandbox's pinned variables, its sorted
-outputs, a tree of its inputs, its timeout and its platform. buildl's key goes along as the
+an `Action` holding its command, its environment, its sorted outputs, a tree of its inputs, its
+timeout and its platform. The environment is the target's `key` variables with their values and the
+sandbox's pinned variables; an `unkeyed` variable is not in it. buildl's key goes along as the
 `Action`'s salt. So two targets with different keys never share an entry, and nothing is shared
 with Bazel or any other client of the same server.
 
@@ -171,6 +172,55 @@ error: uploading to the remote cache needs actions to run in the input sandbox, 
 ```
 
 That exits with code 2. Reading from the cache works under any strategy.
+
+### Who should upload
+
+The key of a target holds the digests of the files its dependencies produced. A computer that
+downloads a dependency gets the same bytes as the one that built it, so every key above it
+matches, and what is built on top is fetched too.
+
+So the most reuse comes from one builder for the shared parts: CI with `--remote-upload`, or the
+server itself under remote execution. Everyone else reads. buildl asks the remote cache only for
+what the local cache cannot serve, so an engineer who already built a dependency themself keeps
+their own bytes for it while their local cache holds it.
+
+```mermaid
+%% One builder uploads; the others fetch the same bytes
+flowchart LR
+    CI["CI builds the dependency<br/>--remote-upload"] -->|"upload"| RC[("remote cache")]
+    RC -->|"fetch, same bytes"| A["Engineer A"]
+    RC -->|"fetch, same bytes"| B["Engineer B"]
+    A --> KA["keys above it match"]
+    B --> KB["keys above it match"]
+```
+
+When everyone uploads, it still works. But each computer runs an action in a folder of its own,
+named from the workspace's path and the target's label, and a tool may write that folder into what
+it makes (see [where the folder is](ch06-00-sandbox.md#where-the-folder-is)). Two computers that
+each build the same unchanged dependency can then get other bytes. The targets that use it then get
+other keys, and are built again instead of fetched.
+
+A result is never wrong either way. It is only reused less.
+
+Three more things decide whether two computers share a result, and all are in the build files and
+`buildl.toml`, which everyone has the same copy of:
+
+- **Variables that find programs.** `HOME` and `PATH` differ between users and machines, and a
+  target that marks them `key` has another key, and another `Action`, on each. Users and CI share
+  only when those variables are `unkeyed`: the command still gets them when it runs here, but the
+  key holds their names alone, and they are not sent to the server. `examples/remote` marks both
+  in its build file, `env = { HOME = "unkeyed", PATH = "unkeyed" }`, and lists them in
+  `env.unkeyed` in its `buildl.toml`.
+- **The server's own environment.** Because an `unkeyed` variable is not sent, a target that runs on
+  the server runs with the server's environment, not yours, and the server decides how it finds a
+  program. The program has to be there, and one of the same version. A `key` variable is sent and
+  set.
+- **The timeout.** The server's `Action` holds the action's timeout, because two actions with
+  different timeouts are different actions to the API: a result found at a short timeout says
+  nothing about a long one. So the timeout is part of the remote key, though not of the local key.
+  It comes only from `[execution] timeout` in `buildl.toml`, with no flag or variable, so a team
+  that commits one `buildl.toml` has one timeout. A copy with another timeout fetches nothing the
+  first one uploaded.
 
 ## Running on the server
 

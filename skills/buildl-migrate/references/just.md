@@ -38,7 +38,7 @@ an error and prints no table. Its recipes are the recipe headers at the start of
 | `{{arg}}` | `$opt:arg` |
 | a recipe that calls `just other/…` or a script in another folder | `b.subdir("other")` and a `build.lua` in that folder. Its targets are `//other:name` |
 | a recipe that downloads | the same command with `network = true`, and the program in `proc.run` |
-| an environment variable the recipe reads (`$HOME`, `env_var("HOME")`) | `env = { "HOME" }` on the target and `env.read = ["HOME"]` in the ceiling |
+| an environment variable the recipe reads (`$HOME`, `env_var("HOME")`) | `env = { HOME = "unkeyed" }` on the target, and `HOME` in `env.read` and `env.unkeyed` in the ceiling. A variable that changes what the recipe makes is `"key"` instead, and is not in `env.unkeyed` |
 | `deploy`, `release`, `publish`, `tag`, `push`, `clean` | the stop rule, last section |
 
 A just recipe body is a script. buildl runs a program with arguments and no shell. A body with
@@ -48,8 +48,8 @@ shell the justfile names (`sh` by default), so list that shell in `old.programs`
 the old build does not use fails check 6. For the build command of a language, see the table in
 the `buildl` skill.
 
-A recipe that only runs `cargo build` has no named output file. Give the target the file the
-command makes: for a Rust binary see the `buildl` skill's Rust row, which installs it into `$out`.
+A recipe that only runs `cargo build` has no named output file. It maps to the `rust` plugin, whose
+`rust.binary` copies the binary to `out/<name>`: see "A Cargo build" in the `buildl-migrate` skill.
 
 ## Example
 

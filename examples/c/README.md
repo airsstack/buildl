@@ -35,18 +35,24 @@ link finds the same bytes and is taken from the cache.
 
 ```toml
 [ceiling]
-proc.run = ["cc", "sh"]
-env.read = ["PATH"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["cc", "sh"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 
 [plugins.c]
-github   = "airsstack/buildl"
-rev      = "plugin-c-v0.1.0"
-dir      = "plugins/c"
-proc.run = ["cc", "sh"]
-env.read = ["PATH"]
+github      = "airsstack/buildl"
+rev         = "plugin-c-v0.2.0"
+dir         = "plugins/c"
+proc.run    = ["cc", "sh"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
 ```
+
+`PATH` is `unkeyed`: the plugin declares `env = { PATH = "unkeyed" }` for each step that links or
+archives, so a command gets the value and only the name enters the key, and `env.unkeyed` allows it
+in the ceiling and the plugin table.
 
 `cc` compiles and links. `sh` is there for two reasons: `c.library` runs `ar` through it
 (`sh -c 'ZERO_AR_DATE=1 exec ar rcs …'`, so `ar` needs no entry of its own, and the archive is the
@@ -59,7 +65,7 @@ ceiling's program list limits less.
 Needs the `buildl` binary, a C compiler (`cc`) and `git`. With the published tag:
 
 ```sh
-buildl plugins fetch     # clones the repository at plugin-c-v0.1.0, keeps plugins/c, writes buildl.lock
+buildl plugins fetch     # clones the repository at plugin-c-v0.2.0, keeps plugins/c, writes buildl.lock
 buildl build             # config.h, the discovery targets, then objects, libutil.a, hello
 ./out/hello              # [c example] hello from buildl: util_add(2, 3) = 5, blob = 42
 buildl test              # tests: 1 passed
@@ -68,6 +74,6 @@ buildl test              # tests: 1 passed
 From `examples/`, `sh check.sh c` runs the shared checks on a copy. The published tag is the normal
 route; to run the plugin as this checkout holds it instead, as CI does, the copy first runs
 `prepare.sh`: it commits this checkout's `plugins/c` to a temporary git repository, tags it
-`plugin-c-v0.1.0`, points the copy's `buildl.toml` at that repository with `git = "file://…"`
+`plugin-c-v0.2.0`, points the copy's `buildl.toml` at that repository with `git = "file://…"`
 instead of `github`, and fetches. Then `assert.sh` checks the program's output, that a comment added
 to `include/banner.h` rebuilds only the object of `src/main.c`, and that the test passes.

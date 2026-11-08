@@ -11,6 +11,8 @@
 //! Non-responsibilities: asking the remote, encoding the description for the wire, and reading
 //! the bytes of a declared input, which are the remote adapter's.
 
+use std::collections::BTreeMap;
+
 use crate::error::{Error, PortName, Result};
 use crate::execute::perform::Task;
 use crate::ports::ContentStore;
@@ -21,9 +23,11 @@ use crate::types::{
 
 /// The `RemoteAction` of `task`, run under `execution`.
 ///
-/// The environment is the action's own with the variables the strategy pins laid over it, as
-/// the strategy sets them where the command runs. The outputs are sorted and hold no path
-/// twice. A target whose output is its standard output keeps its path among them: the command is
+/// The environment is the action's own `key` variables with the variables the strategy pins laid
+/// over them, as the strategy sets them where the command runs. An `unkeyed` variable is left
+/// out: its value is the machine's, and the description is what the remote caches by. The
+/// outputs are sorted and hold no path twice. A target whose output is its standard output keeps
+/// its path among them: the command is
 /// asked for a file there, so that a server reports one the command wrote, and the result is
 /// then refused for it. The files are every declared input, with no mode, and every file of
 /// every output of every dependency, with the mode its manifest records, all sorted by path.
@@ -43,7 +47,12 @@ pub(crate) fn remote_action<C: ContentStore>(
     cas: &C,
 ) -> Result<RemoteAction> {
     let (ready, key) = (&task.action, &task.key);
-    let mut env = ready.env.clone();
+    let mut env: BTreeMap<_, _> = ready
+        .env
+        .iter()
+        .filter(|(name, _)| !ready.unkeyed.contains(*name))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
     env.extend(execution.strategy.pinned());
 
     let mut outputs = ready.outputs.clone();
@@ -139,13 +148,17 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use super::remote_action;
     use crate::error::{Error, PortName, Result};
-    use crate::execute::fixtures::{command, digest_of, file, label, output_path, own, path, tree};
+    use crate::execute::assembly::ready as ready_on;
+    use crate::execute::fixtures::{
+        command, digest_of, file, label, node, output_path, own, path, tree,
+    };
     use crate::execute::perform::Task;
-    use crate::ports::ContentStore;
+    use crate::ports::two_machines::TwoMachines;
+    use crate::ports::{ContentStore, Host};
     use crate::types::{
         ActionKey, DepProducts, Digest, EnvName, EnvValue, Execution, FileMode, InputDigest,
         Isolation, KeyComponents, NetworkAccess, NodeId, OutputManifest, OutputName, OutputPath,
@@ -224,6 +237,7 @@ mod tests {
             command: command(&["cc"]),
             description: None,
             env,
+            unkeyed: BTreeSet::new(),
             inputs: Vec::new(),
             deps: Vec::new(),
             outputs,
@@ -536,6 +550,66 @@ mod tests {
                 timeout: Execution::default().timeout,
                 properties: PlatformProperties::default(),
             }
+        );
+    }
+
+    /// The ready action and key of the cargo target of `machine`: `RUSTFLAGS` keyed, `HOME` and
+    /// `PATH` unkeyed.
+    fn cargo_task_on(machine: &TwoMachines) -> Task {
+        let name = |text: &str| EnvName::parse(text).unwrap();
+        let mut own = own(&["app"]);
+        own.env = BTreeMap::from([(name("RUSTFLAGS"), machine.env(&name("RUSTFLAGS")).unwrap())]);
+        own.unkeyed = BTreeSet::from([name("HOME"), name("PATH")]);
+        let node = node("//app:app", |_| {});
+        let action = ready_on(
+            &node,
+            &own,
+            machine,
+            command(&["cc"]),
+            None,
+            &[],
+            Vec::new(),
+        )
+        .unwrap();
+        let key = ActionKey::new(KeyComponents {
+            own,
+            deps: Vec::new(),
+        })
+        .unwrap();
+        task(action, key)
+    }
+
+    #[test]
+    fn two_machines_give_the_same_remote_action() {
+        let describe_on = |machine: &TwoMachines| {
+            let task = cargo_task_on(machine);
+            let command_env = task.action.env.clone();
+            let described = remote_action(
+                &task,
+                &execution(Isolation::Sandbox),
+                &PlatformProperties::default(),
+                &Manifests::holding(&[]),
+            )
+            .unwrap();
+            (command_env, described)
+        };
+
+        let (first_command_env, first) = describe_on(&TwoMachines::first());
+        let (second_command_env, second) = describe_on(&TwoMachines::second());
+
+        assert_ne!(
+            first_command_env, second_command_env,
+            "each command runs with its own machine's HOME and PATH"
+        );
+        assert_eq!(first, second);
+        assert_eq!(
+            first.env,
+            env(&[
+                ("LC_ALL", "C"),
+                ("RUSTFLAGS", "-Cdebuginfo=0"),
+                ("SOURCE_DATE_EPOCH", "315532800"),
+                ("TZ", "UTC"),
+            ])
         );
     }
 }

@@ -40,7 +40,7 @@ files it makes.
 | a repeated command shape | `b.rule(name, { run })` once, then targets with `rule = ":name"` |
 | `sh other/script.sh`, or `cd other && ./build.sh` | `b.subdir("other")` and a `build.lua` in that folder. Its targets are `//other:name` |
 | `curl`, `wget`, `git clone`, `npm install` | the same command with `network = true`, and the program in `proc.run` |
-| `$TOKEN`, `${HOME}` | `env = { "TOKEN" }` on the target and `env.read = ["TOKEN"]` in the ceiling |
+| `$TOKEN`, `${HOME}` | `env = { TOKEN = "key" }` on the target and `env.read = ["TOKEN"]` in the ceiling. `HOME` and `PATH`, which only find programs, are `"unkeyed"` instead, and also in `env.unkeyed` |
 | `mkdir -p out`, `cd`, `set -e` | nothing: buildl places `$out` and runs from the workspace root, and a failed command stops the target |
 | `export NAME=value` | the value goes in the command: `{ "sh", "-c", "NAME=value program" }` with `sh` in `proc.run`. An export of a variable the script reads (`export PATH=$HOME/bin:$PATH`) is an `env` entry, as in the `$TOKEN` row |
 | `deploy`, `scp`, `git push`, `docker push`, `git tag` | the stop rule, last section |
@@ -140,7 +140,7 @@ local b = buildl
 
 b.target("greeting.txt", {
   run = { "sh", "-c", 'echo "$GREETING"' },
-  env = { "GREETING" },
+  env = { GREETING = "key" },
   stdout = true,
 })
 ```
