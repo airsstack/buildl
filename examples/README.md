@@ -3,8 +3,9 @@
 Each directory here is a buildl workspace of its own: a `buildl.toml`, its build files, its
 sources, a `README.md` saying what it shows, and an `assert.sh` holding its own checks. Copy one
 anywhere and run `buildl build` in it; it needs the `buildl` binary and its language's
-toolchain. The `c`, `cpp`, `rust` and `polyglot` examples also need `git`: their `prepare.sh`
-fetches the `c` or `rust` plugin when the example is checked, from a temporary git repository.
+toolchain. The `c`, `cpp`, `rust`, `rust-ffi` and `polyglot` examples also need `git`: their
+`prepare.sh` fetches the `c` or `rust` plugin, or both, when the example is checked, from a
+temporary git repository.
 
 | Example | Shows | Needs |
 |---|---|---|
@@ -15,6 +16,7 @@ fetches the `c` or `rust` plugin when the example is checked, from a temporary g
 | [`polyglot`](polyglot/) | a Go service, a Rust CLI and a Python tool built from one generated schema; labels across directories; early cutoff after a comment edit; `buildl query 'rdeps(…)'` | Go 1.22, a Rust toolchain, Python 3, `git` |
 | [`c`](c/) | C compiled one object per source through the `c` plugin, fetched by git from a subfolder: `c.library`, `c.binary`, `c.test`, a generated `config.h` through `header_deps`, `c.includes`, `c.defines`, and an assembly file built by the build file's own discovery target read with `c.depfile.parse`; a header edit recompiles only the object that reads it | a C compiler (gcc or clang), `git` |
 | [`cpp`](cpp/) | C++ through the same plugin: `c.shared_library` and a binary and a test using it; `c.platform`, `c.shared_name`, `c.soname`, `c.rpath`; the two declaration passes | a C compiler and a C++ compiler (gcc and g++, or clang and clang++), `git` |
+| [`rust-ffi`](rust-ffi/) | C calling Rust through both plugins: a Cargo workspace whose `rust.library` calls build a static library (`kind = "staticlib"`) and a shared one (`kind = "cdylib"`, named by `rust.shared_name`), and `c.binary` calls linking them by label; `c.rpath` composed to point one folder over; a C header edit leaves the Rust targets clean | a Rust toolchain, a C compiler, `git` |
 | [`plugins`](plugins/) | two Go programs declared through a plugin kept in the workspace, `buildl.use`; its manifest and the workspace's cap; `plan` and `doctor` naming the plugin | Go 1.22 |
 | [`remote`](remote/) | the Python starter run on a NativeLink server it starts with `docker compose`: `--remote-execute`, a fresh copy fetching the result, `--remote-upload`; left out of `cargo make examples`, run by its own CI job | Python 3, Docker; execution needs Linux x86_64 |
 
@@ -41,8 +43,8 @@ toolchain. `buildl` is `$BUILDL` when set, else the first `buildl` on `PATH`.
 
 An example that holds a `prepare.sh` has it run as step 0, inside the copy. `BUILDL_REPO` is set to
 the repository root while `prepare.sh` runs, so the script can reach files of this checkout. The
-`c`, `cpp`, `rust` and `polyglot` examples use it to put this checkout's plugin (`c` or `rust`) in
-a temporary git repository and run `buildl plugins fetch` against it.
+`c`, `cpp`, `rust`, `rust-ffi` and `polyglot` examples use it to put this checkout's plugins (`c`,
+`rust`, or both) in a temporary git repository and run `buildl plugins fetch` against it.
 
 From the repository root, `cargo make examples` builds `buildl` and checks every example but
 `remote`, which needs its server. CI runs it on Linux and macOS, and runs `remote` in a job of

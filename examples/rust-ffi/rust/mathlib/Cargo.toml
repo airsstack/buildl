@@ -1,0 +1,9 @@
+[package]
+name = "mathlib"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# A static library C links in: out/libmathlib.a.
+[lib]
+crate-type = ["staticlib"]

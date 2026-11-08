@@ -1,0 +1,6 @@
+# Two crates, each a library for C: mathlib a static one, greeter a shared one. A workspace of
+# its own, so cargo run inside a checkout of the buildl repository does not take them for
+# members of buildl's workspace.
+[workspace]
+members  = ["mathlib", "greeter"]
+resolver = "2"

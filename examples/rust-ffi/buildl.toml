@@ -1,0 +1,37 @@
+[workspace]
+name   = "rust-ffi"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+# sh runs cargo (rust plugin), the archive step and the test with deps (c plugin). cc
+# compiles and links the C side. rustc is for rust.platform, which runs it itself; the
+# ceiling does not see the programs cargo starts. cargo keeps its registry and toolchains
+# under HOME; both find their programs through PATH.
+[ceiling]
+proc.run    = ["cc", "rustc", "sh"]
+env.read    = ["HOME", "PATH"]
+env.unkeyed = ["HOME", "PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
+
+# Two plugins from one repository, each fetched by `buildl plugins fetch`. A target may want
+# at most what its plugin's table allows, what the plugin's own extension.toml allows, and
+# what the ceiling allows. cargo may download crates, so the rust table says
+# `network = true`.
+[plugins.rust]
+github      = "airsstack/buildl"
+rev         = "plugin-rust-v0.1.0"
+dir         = "plugins/rust"
+proc.run    = ["sh", "rustc"]
+env.read    = ["HOME", "PATH"]
+env.unkeyed = ["HOME", "PATH"]
+network     = true
+
+[plugins.c]
+github      = "airsstack/buildl"
+rev         = "plugin-c-v0.2.0"
+dir         = "plugins/c"
+proc.run    = ["cc", "sh"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]

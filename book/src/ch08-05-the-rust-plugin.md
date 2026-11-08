@@ -318,6 +318,30 @@ applies; the second pass has `libffi.dylib` or `libffi.so`. The plugin copies a 
 The discovery target is the same on both passes, because `rust.platform()` takes no option, so
 the platform may go anywhere in a call's options.
 
+A C program that links the library finds it at run time by the name the library carries. Left
+alone, rustc names a `cdylib` by the path it was linked at, inside the sandbox, and the program
+fails to start once that folder is gone. The crate names itself in a `build.rs`, which is cargo's
+business and not the plugin's:
+
+```rust
+// greeter/build.rs, in examples/rust-ffi
+fn main() {
+    match std::env::var("CARGO_CFG_TARGET_OS").as_deref() {
+        Ok("linux") => println!("cargo:rustc-cdylib-link-arg=-Wl,-soname,libgreeter.so"),
+        Ok("macos") => {
+            println!("cargo:rustc-cdylib-link-arg=-Wl,-install_name,@rpath/libgreeter.dylib");
+        }
+        _ => {}
+    }
+}
+```
+
+`examples/rust-ffi` builds a static and a shared library from one Cargo workspace and links each
+into a C program through the [c plugin](ch08-04-the-c-plugin.md): `c.binary`'s `deps` names
+`//rust:mathlib` or `//rust:greeter`, and `c.rpath` points the program at `out/rust/`. The Rust
+crates and the C sources sit in folders of their own, since the plugin takes every file of its
+folder as an input and a C header beside the crates would rerun cargo.
+
 ## A target a build reads from another
 
 `deps` lists targets whose outputs the build reads, so they are in the sandbox when cargo runs.
@@ -425,8 +449,8 @@ for what the first three mean for a build's repeatability.
 
 ## Try it
 
-`examples/rust` and `examples/polyglot` in the buildl repository are the builds above, each with a
-README. From `examples/`, `sh check.sh rust` and `sh check.sh polyglot` run `check`, `build`,
+`examples/rust`, `examples/rust-ffi` and `examples/polyglot` in the buildl repository are the
+builds above, each with a README. From `examples/`, `sh check.sh rust` (or `rust-ffi`, `polyglot`) runs `check`, `build`,
 `test`, `verify` and the example's own assertions on a copy. The copy first runs `prepare.sh`,
 which commits this checkout's `plugins/rust` to a temporary git repository, tags it
 `plugin-rust-v0.1.0` and points the copy's `buildl.toml` at it, so the check runs the plugin as the

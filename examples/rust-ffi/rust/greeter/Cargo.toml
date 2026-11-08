@@ -1,0 +1,9 @@
+[package]
+name = "greeter"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# A shared library C loads when it starts: out/libgreeter.so or out/libgreeter.dylib.
+[lib]
+crate-type = ["cdylib"]

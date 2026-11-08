@@ -15,6 +15,9 @@ the slot Cargo treats as breaking, so a compatible change ships as a `z` bump.
   `rust.platform` names the host, and `rust.shared_name` gives the file name of a shared library on
   it. A build file loads it with `buildl.use("rust")`, and `buildl.toml` names it in
   `[plugins.rust]` (`dir = "plugins/rust"`). It is tagged `plugin-rust-v0.1.0` at release.
+- **`examples/rust-ffi`.** C calling Rust through both plugins: a Cargo workspace builds a static
+  library and a shared one with `rust.library`, and `c.binary` links each by label; a C header
+  edit leaves the Rust targets clean.
 
 ### Changed
 
