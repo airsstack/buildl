@@ -11,6 +11,10 @@ A build tool is only as useful as your knowledge of where its promises stop. Her
   `buildl.toml`, and shown to the approver before any action runs.
 - **The same declared inputs run the same action.** That is what the action key is, and `plan`
   can always say what will rebuild and why.
+- **A machine's own folders stay out of the key.** A variable that only finds programs is marked
+  `unkeyed`, and its key holds the name alone. A command, a `key` variable, a setting or a discovery
+  output that holds this machine's home, workspace or action's folder is refused, so users and CI can
+  share a cache ([The Action Key](ch05-01-action-key.md#variables-that-only-find-files)).
 - **A crash never leaves a cache row pointing at nothing.** Content goes into the cas first, the
   cache row after, and failures are never cached.
 - **Nothing on the ledger is hidden.** Every input that can change an action's result is in the
@@ -95,6 +99,10 @@ The ledger is finite and named, and some things are honestly outside it:
   exact processor as it affects generated code are not in any key. Two machines with the same
   operating system and processor family share cache entries even when these differ. Containers,
   tier 4, and `verify` are what exist to contain them, and only `verify` is built.
+- **A folder the check cannot see.** `buildl` searches for this machine's folders in the places a
+  text enters a key. It does not search an `unkeyed` value, which is in no key, and it does not
+  name the programs a command starts by itself, such as the linker a compiler runs. A tool that writes a folder into its own output is under
+  *Where the workspace is*, below.
 - **Whether a tool is reproducible.** `buildl` pins the inputs, the time zone, the locale and the
   build time, and an action's folder has the same path on every run of one workspace, as long as the
   temporary directory stays the same. A tool that still gives different bytes from the same inputs
@@ -107,9 +115,12 @@ The ledger is finite and named, and some things are honestly outside it:
   a bug in `buildl`. The result is never wrong: a cache only reuses less
   (see [Who should upload](ch09-00-remote.md#who-should-upload)).
 - **The settings left out on purpose.** `workers`, `timeout`, `strategy` and a rule's `desc` are
-  in no key. Only `strategy` can change an action's bytes: under `sandbox` the action runs in
-  another directory with pinned values, so a tool that records its directory or reads the clock
-  can give other bytes than under `bare`. A compile with debug information is one such tool.
+  in no local key. The `timeout` is in the remote key, not the local one: a remote server names an
+  action by its timeout as well, so a copy with another `timeout` in `buildl.toml` fetches nothing
+  the first uploaded ([Who should upload](ch09-00-remote.md#who-should-upload)). Only `strategy`
+  can change an action's bytes: under `sandbox` the action runs in another directory with pinned
+  values, so a tool that records its directory or reads the clock can give other bytes than under
+  `bare`. A compile with debug information is one such tool.
 
 Outside those, a difference between two builds that the ledger cannot explain is not your build's
 fault. It is a bug in `buildl`.

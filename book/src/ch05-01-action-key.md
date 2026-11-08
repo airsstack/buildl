@@ -11,7 +11,7 @@ graph TD
     CMD["Command<br/>argv template"] --> KEY["Action key<br/>sha256 of all five"]
     IN["Input hashes<br/>via the stat cache"] --> KEY
     DEP["Dep output hashes<br/>early cutoff built in"] --> KEY
-    ENV["Env values<br/>granted names only"] --> KEY
+    ENV["Env: values of key variables,<br/>names of unkeyed ones"] --> KEY
     SET["Tool fingerprints, settings,<br/>network, output source, os/arch"] --> KEY
     KEY --> CMP{"equals cached key?"}
     CMP -- yes --> CLEAN["Clean — served from cache"]
@@ -29,24 +29,24 @@ use `sed -i ''`, the macOS form; on Linux, drop the `''`:
 ```console
 $ buildl plan
 clean  //:hello
-  run programs:   go
-  read variables: HOME
-  write into:     .buildl, out
+  run programs:      go
+  unkeyed variables: HOME
+  write into:        .buildl, out
 0 to run, 0 conditional, 1 clean
 $ sed -i '' 's/hello from go/hello again from go/' main.go
 $ buildl plan
 run    //:hello: input main.go changed
-  run programs:   go
-  read variables: HOME
-  write into:     .buildl, out
+  run programs:      go
+  unkeyed variables: HOME
+  write into:        .buildl, out
 1 to run, 0 conditional, 0 clean
 $ buildl build
 1 built
 $ buildl plan
 clean  //:hello
-  run programs:   go
-  read variables: HOME
-  write into:     .buildl, out
+  run programs:      go
+  unkeyed variables: HOME
+  write into:        .buildl, out
 0 to run, 0 conditional, 1 clean
 ```
 
@@ -62,7 +62,8 @@ $ buildl plan --json | python3 -m json.tool
     "attribution": {
         "env": {},
         "network": {},
-        "programs": {}
+        "programs": {},
+        "unkeyed": {}
     },
     "settings": {},
     "stale_discovery": [],
@@ -79,9 +80,7 @@ $ buildl plan --json | python3 -m json.tool
                             "$out",
                             "."
                         ],
-                        "env": {
-                            "HOME": "/tmp/buildl-book/home"
-                        },
+                        "env": {},
                         "inputs": [
                             {
                                 "digest": "d38681ddfea2335850882acc2698e6d7774a756145aa33b2a609a7e017557758",
@@ -106,10 +105,13 @@ $ buildl plan --json | python3 -m json.tool
                         "tool": {
                             "fingerprint": "45bd4639e304aed73901b60255c0eaffbf35ef0b2f23775fbb0a415a3618cfb6",
                             "program": "go"
-                        }
+                        },
+                        "unkeyed": [
+                            "HOME"
+                        ]
                     }
                 },
-                "digest": "c78ccfa8b689322380fbf639ec7ae072b574353dd5157f6907661670350eda22"
+                "digest": "3ce0dd2ff689ab3da2a054836c76a059102e470fd56ed3c6fa2a47cd6253d5d7"
             },
             "reason": {
                 "Changed": [
@@ -123,12 +125,13 @@ $ buildl plan --json | python3 -m json.tool
         }
     },
     "wanted": {
-        "env": [
-            "HOME"
-        ],
+        "env": [],
         "network": [],
         "programs": [
             "go"
+        ],
+        "unkeyed": [
+            "HOME"
         ],
         "write": [
             ".buildl",
@@ -139,15 +142,16 @@ $ buildl plan --json | python3 -m json.tool
 ```
 
 `components` is what the key is made of, `digest` is the key itself, and `reason` is the piece that
-differs from the last build: the words `input main.go changed` come from it. The digests, the
-`HOME` value and the platform will be your own.
+differs from the last build: the words `input main.go changed` come from it. The digests and the
+platform will be your own. `env` is empty and `unkeyed` holds `HOME`: more on that [below](#variables-that-only-find-files).
 
 | Component | What it holds |
 |---|---|
 | `command` | the command as written, before `$out` and the others are filled in |
 | `inputs` | the path and a SHA-256 of the contents of every input file |
 | `deps` | for each dependency, a digest of each output it produced: its name, a hash of its bytes and whether it is executable |
-| `env` | the value of each variable the target declared, and nothing of the rest of the environment |
+| `env` | the name and value of each variable the target marked `key`, and nothing of the rest of the environment |
+| `unkeyed` | the name, and only the name, of each variable the target marked `unkeyed` |
 | `tool` | the program the command runs, and a fingerprint of that program's file |
 | `settings` | the [build settings](ch03-05-build-settings.md) the target uses, with their values for this run |
 | `network`, `output_source`, `outputs` | whether it may reach the network, whether its output is a file it writes or what it prints, and the names of its outputs |
@@ -156,7 +160,80 @@ differs from the last build: the words `input main.go changed` come from it. The
 So a new Go toolchain is a new `tool` fingerprint and rebuilds everything that runs `go`, and a
 cache filled on a Mac is never used on Linux. Some things are left out on purpose. How many actions
 run at once, the timeout, and whether actions run in [the sandbox](ch06-00-sandbox.md) change how a
-build runs, not what an action is given, so none of them is part of the key.
+build runs, not what an action is given, so none of them is part of this key. The timeout is part of
+the name a [remote server](ch09-00-remote.md#who-should-upload) knows an action by, which is a
+different thing from this key.
+
+## Variables that only find files
+
+A command is given only the variables its target names, and `env` marks each one:
+
+| Mark | The command gets | The key holds | Sent to a remote server |
+|---|---|---|---|
+| `"key"` | its value | its name and value | name and value |
+| `"unkeyed"` | its value | its name | no |
+
+`go` needs `HOME` to find its build cache, but the value is a folder on one machine. Keyed, the same
+target would have another key for every user and every machine, and nothing one made could be used
+by another. Marked `unkeyed`, `HOME` still reaches `go`, and the key holds the word `HOME` and no
+more. Use `unkeyed` for a variable that only finds programs or files: `HOME`, `PATH`, a cache
+folder. Use `key` for one that changes what the action makes, such as a compiler flag.
+
+`unkeyed` is something the workspace has to allow, as reading a variable is. The ceiling lists the
+names that may be marked so in `env.unkeyed`, and every name in it has to be in `env.read` too (the
+[`buildl.toml` appendix](appendix-02-buildl-toml.md) has the table).
+
+Mark `GOCACHE` `key`, point it at a folder, build, then point it at another folder:
+
+```console
+$ GOCACHE=/tmp/buildl-book/keys/cache-a buildl build
+1 built
+$ GOCACHE=/tmp/buildl-book/keys/cache-b buildl plan
+run    //:hello: environment variable GOCACHE changed
+  run programs:      go
+  read variables:    GOCACHE
+  unkeyed variables: HOME
+  write into:        .buildl, out
+1 to run, 0 conditional, 0 clean
+```
+
+The folder is in the key, so the target runs again for nothing. Change the mark to `unkeyed`, and add
+`GOCACHE` to `env.unkeyed` in `buildl.toml`. The change is in the key, so `plan` says so once, and a
+build stores the new key:
+
+```console
+$ GOCACHE=/tmp/buildl-book/keys/cache-b buildl plan
+run    //:hello: variable GOCACHE is now unkeyed
+  run programs:      go
+  unkeyed variables: GOCACHE, HOME
+  write into:        .buildl, out
+1 to run, 0 conditional, 0 clean
+$ GOCACHE=/tmp/buildl-book/keys/cache-b buildl build
+1 built
+$ GOCACHE=/tmp/buildl-book/keys/cache-a buildl plan
+clean  //:hello
+  run programs:      go
+  unkeyed variables: GOCACHE, HOME
+  write into:        .buildl, out
+0 to run, 0 conditional, 1 clean
+```
+
+Now a different folder is no change at all. What `plan` says when the set of variables or a mark
+changes:
+
+| Change | `plan` prints |
+|---|---|
+| a `key` variable's value, added or removed | `environment variable X changed` |
+| an `unkeyed` variable added | `unkeyed variable X added` |
+| an `unkeyed` variable removed | `unkeyed variable X removed` |
+| `key` to `unkeyed` | `variable X is now unkeyed` |
+| `unkeyed` to `key` | `variable X is now keyed` |
+| an `unkeyed` variable's value | nothing: the key does not change |
+
+The other way a machine gets into a key is a folder written into a command, a `key` variable's value,
+a setting's value or a discovery output. `buildl` refuses those with exit code 5 instead of letting
+the key split. [What buildl Promises](ch11-09-what-it-promises.md) lists what is checked, and [Discovery
+Targets](ch07-00-discovery-targets.md#a-folder-in-the-output) shows one refusal.
 
 ## What a dependency produced, not its key
 
@@ -212,7 +289,7 @@ Put together, this is everything that happens between saving `main.go` and the b
 flowchart TD
     EDIT["Edit main.go"] --> STAT["Stat cache check<br/>mtime changed — rehash the file"]
     STAT --> H["New content hash<br/>for main.go"]
-    H --> KEY["Action key recomputed<br/>argv + input hashes + env values<br/>+ tool fingerprint + os/arch"]
+    H --> KEY["Action key recomputed<br/>argv + input hashes + key variables<br/>+ unkeyed names + tool fingerprint + os/arch"]
     KEY --> CMP{"Equals cached key<br/>for //:hello?"}
     CMP -->|no| DIRTY["Dirty — reason recorded:<br/>input main.go changed"]
     DIRTY --> EXEC["Worker runs go build<br/>outputs to temp dir"]

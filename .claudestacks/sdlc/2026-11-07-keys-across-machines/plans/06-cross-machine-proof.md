@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-11-07
 depends-on: [05]
 built-on: f3bc0d9fa2e7
@@ -94,6 +94,7 @@ One reviewer pass over Tasks 1-2 (`08-reviewer-p06`, blocking: none), one fix ro
 - 🔵 `assert.sh` row E's expected-summary column was off by 3; a comment read "keeps the changes from" — fixed.
 - 🔵 `build.lua` and the README said HOME and PATH reach the action; under remote execution unkeyed variables are not sent (`remote_action.rs:50-56`) — fixed: both say the worker uses its own environment.
 - 🔵 the README diagram's E lines had no arrow to the server — fixed.
+- Task 2 green: CI run 42463337274 (`workflow_dispatch` on `3f380e8`, branch `worktree-plugin-rust`), all 11 jobs success; job "Remote example on NativeLink" printed `remote: e: a copy builds here and uploads`, `remote: elsewhere: a copy with another folder, TMPDIR, HOME and PATH fetches what was uploaded` (asserted `1 fetched`), `remote: ok`.
 - Task 1 red/green: with `PATH` marked `key`, `two_machines_plan_the_same_keys` failed with differing keys; with `unkeyed` both tests pass. `cargo make dod` and `cargo deny check` green.
 
 ## Deviations

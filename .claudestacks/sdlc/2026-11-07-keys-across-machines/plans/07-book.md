@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-07
 depends-on: [06]
 built-on: f3bc0d9fa2e7
@@ -95,5 +95,27 @@ new sentences.
 
 ## Proof
 
-- `git grep -n -E 'env *= *\{ *"' -- book/src` prints nothing.
+- `git grep -n -E 'env *= *\{ *"' -- book/src` prints only `appendix-03-lua-api.md`'s example of the refused list form.
 - `cargo make book-build` passes.
+
+## Review findings
+
+One reviewer pass over Tasks 1-3 (`13-reviewer-p07`, blocking: ch11-05:85, ch09-00:205, ch11-09:104), one fix round (`14-coder-p07-fix`, `cargo make book-build` green, `git grep -n -i 'hiraq\|/Users/' -- book/src` prints nothing):
+
+- 🟡 ch11-05 rule 6 said "nothing runs" on a match, but a discovery's output is checked after it ran — fixed: "nothing more runs".
+- 🟡 ch09-00 said "Two more things" before three bullets — fixed: three.
+- 🟡 ch11-09 said a plugin's version check covers machine folders — fixed: the clause is dropped.
+- 🔵 appendix-04's E7 console block left out what the discovery printed — fixed: shown as `buildl build 2>&1 | tail -n 2`, as ch07-00 does.
+- 🔵 ch06-00 said the mark decides only key membership — fixed: it also decides whether the value is sent to a remote server.
+- 🔵 the sandbox folder had three names — fixed: "the action's folder" in ch07-00, ch11-05, ch11-09 and appendix-04.
+- 🔵 reflowed lines past the wrap width in eight pages — fixed.
+- 🔵 appendix-02's `Line` column cites `schema.rs` line numbers — accepted: the appendix's convention; every cited line checked correct.
+- ❓ ch08-04 named the published tag `plugin-c-v0.1.0`, whose `graph.lua:191,201` holds `env = { "PATH" }`, refused by this buildl — resolved with the author: the c plugin is 0.2.0 (see Deviations).
+- Gates at the end: `sh examples/check.sh examples/c` and `examples/cpp` ok; `cargo make skills` 62 passed; `cargo make book-build` done; `cargo make dod` exit 0; `cargo deny check` "advisories ok, bans ok, licenses ok, sources ok".
+
+## Deviations
+
+- 2026-11-08 — the c plugin is bumped to 0.2.0 (author's choice): `plugins/c/extension.toml` `version = "0.2.0"`, and every `plugin-c-v0.1.0` / `c@0.1.0` in `book/src/ch08-04`, `examples/{c,cpp}` (`buildl.toml`, `README.md`, `prepare.sh`), `plugins/c/README.md` and `skills/buildl/SKILL.md` now names 0.2.0; `CHANGELOG.md` notes it under Unreleased. The tag `plugin-c-v0.2.0` is pushed when this branch reaches `main`, at release. The `c@0.2.0` lines in ch08-04's captures were edited, not re-run: the plugin version is not in the action key (`action_key.rs` has no plugin field), so a run prints the same lines with the new version.
+- 2026-11-08 — Task 2's grep proof prints `appendix-03-lua-api.md:119-120`, which show the refused list form on purpose; the Proof line is amended.
+- 2026-11-08 — Task 3's ch05-01 captures could not use a fake `HOME` (setting it was refused by the capture shell); they run on `examples/go` with `HOME` unkeyed, so only its name shows. E7 there names a temporary sandbox path under `/tmp/buildl-book`.
+- 2026-11-08 — appendix-04's E7 reads the home folder (`/home/alice`) as the longest match, not `/home/alice/shop` as spec §7's example; the book prints the captured text.

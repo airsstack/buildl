@@ -70,6 +70,23 @@ asserts that `out/`, `graph.json`, `cache.json` and the cas are byte for byte th
 `log.jsonl` and `statcache.json` are left out of that comparison: the first holds clock readings
 and finishing order, the second modification times.
 
+### 6. This machine's folders never reach a key
+
+The home folder, the workspace folder and the action's folder differ between users and
+machines, so a key that held one would be another key on every machine, and a cache could not be
+shared. Two things keep them out. A path that can only be relative is relative by its type: inputs
+are workspace-relative paths and outputs are names, so they hold no folder. A variable that only
+finds programs is marked `unkeyed`, and its key holds the name and never the value
+([The Action Key](ch05-01-action-key.md#variables-that-only-find-files)).
+
+What is left is text the build file wrote or a tool printed, and for that `buildl` looks. The host
+reports the folders, and `buildl-core` searches for them in each word of a command, in the value of
+each `key` variable, in the value of each setting a command names and in each discovery output,
+through one type, `MachineFolders`. A match is a refusal with exit code 5 that names the folder, and
+nothing more runs; a discovery's output is checked after the discovery has run. The match rule is
+in one place, so a path that only starts the same as a folder, such as `/home/al` inside
+`/home/alice`, is not a match. An `unkeyed` value is not searched: it is in no key.
+
 ## Build files: deterministic by construction
 
 A build file runs on airsl, and airsl's `confined` preset is already close. Two changes close the
@@ -133,7 +150,8 @@ The ledger is the full list of what can make two builds differ, and how each one
 |---|---|
 | source files | `inputs`, hashed by content through the stat cache ([The Action Key](ch05-01-action-key.md)) |
 | what other targets made | `deps`: the digests of their outputs go into the key ([Early Cutoff](ch05-02-early-cutoff.md)) |
-| environment variables | only names the target declares, and their values go into the key |
+| environment variables | only names the target declares, marked `key` or `unkeyed`; a `key` variable's value goes into the key, and an `unkeyed` variable's name does, with no value |
+| this machine's folders | refused where they would enter a key: a command, a `key` variable, a setting, a discovery output (rule 6) |
 | tools | a fingerprint of the program's file; a program a dependency built enters as that dependency's output |
 | operating system and processor | a `platform` in every key, so a Mac and a Linux machine never share entries |
 | the network | `network = true` is a declaration in the key, shown by `plan` and the approver; taking the network away from the rest is tier 3's job |
@@ -142,11 +160,13 @@ The ledger is the full list of what can make two builds differ, and how each one
 | the build file's own logic | reaches a key only through the fields it declares, not through a hash of the file; declaring is sandboxed, has no `os`, and is checked by running it twice |
 
 Two things a workspace sets are left out of the ledger on purpose: the `[execution]` settings
-(`workers`, `timeout`, `strategy`), and a rule's `desc`. Neither is part of any key. `workers`,
-`timeout` and `desc` change nothing an action produces from its inputs. `strategy` changes none of
-the key's parts either, but under `sandbox` the action runs in another directory with the pinned
-values, so a tool that records its directory or reads the clock, the locale or the time zone can
-give other bytes than under `bare`.
+(`workers`, `timeout`, `strategy`), and a rule's `desc`. Neither is part of the action key.
+`workers`, `timeout` and `desc` change nothing an action produces from its inputs. The `timeout`
+does reach the remote key: a remote server holds the timeout in its `Action`, and
+[Who should upload](ch09-00-remote.md#who-should-upload) says what that means for sharing.
+`strategy` changes none of the key's parts either, but under `sandbox` the action runs in another
+directory with the pinned values, so a tool that records its directory or reads the clock, the
+locale or the time zone can give other bytes than under `bare`.
 
 What the ledger leaves out, and what that means, is on
 [What buildl Can and Cannot Promise](ch11-09-what-it-promises.md).
