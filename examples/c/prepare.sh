@@ -29,12 +29,12 @@ git -C "${repo}" -c user.name=buildl -c user.email=buildl@example.invalid \
     -c tag.gpgsign=false tag plugin-c-v0.1.0
 
 # Point the plugin at the local repository instead of the published one.
-line='github   = "airsstack/buildl"'
+line='github      = "airsstack/buildl"'
 grep -qxF "${line}" buildl.toml || {
     echo "prepare: buildl.toml has no line ${line}" >&2
     exit 1
 }
-sed "s|^github   = \"airsstack/buildl\"\$|git      = \"file://${repo}\"|" buildl.toml > buildl.toml.new
+sed "s|^github      = \"airsstack/buildl\"\$|git         = \"file://${repo}\"|" buildl.toml > buildl.toml.new
 mv buildl.toml.new buildl.toml
 
 "${BUILDL}" plugins fetch

@@ -6,11 +6,11 @@ local sources = { "go.mod", b.sources("*.go") }
 b.target("hello", {
   inputs = sources,
   run = { "go", "build", "-o", "$out", "." },
-  env = { "HOME" },
+  env = { HOME = "unkeyed" },
 })
 
 b.test("unit", {
   inputs = sources,
   run = { "go", "test", "./..." },
-  env = { "HOME" },
+  env = { HOME = "unkeyed" },
 })

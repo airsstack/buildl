@@ -7,8 +7,11 @@ A Rust binary and its test, built and run by buildl.
 | `//:hello` | `cargo install --path . --root $out --target-dir tt --no-track`, giving `out/hello/bin/hello` |
 | `//:unit` | `cargo test --target-dir tt`, a test target |
 
-Both actions read `HOME`, where cargo keeps its registry and toolchains, and `PATH`, where it
-finds the linker: without `PATH` the build stops with ``error: linker `cc` not found``.
+Both actions read `HOME`, where cargo keeps its registry and toolchains, and `PATH`, where it finds
+the linker: without `PATH` the build stops with ``error: linker `cc` not found``. Both are
+`unkeyed`, since a value that is a folder on this machine would split the cache between machines:
+the command gets the value, only the name enters the key, and `env.unkeyed` in `buildl.toml` allows
+it.
 
 ## Why `cargo install --root $out`
 

@@ -8,11 +8,11 @@ local sources = { "Cargo.toml", "Cargo.lock", b.sources("src/*.rs") }
 b.target("hello", {
   inputs = sources,
   run = { "cargo", "install", "--path", ".", "--root", "$out", "--target-dir", "tt", "--no-track" },
-  env = { "HOME", "PATH" },
+  env = { HOME = "unkeyed", PATH = "unkeyed" },
 })
 
 b.test("unit", {
   inputs = sources,
   run = { "cargo", "test", "--target-dir", "tt" },
-  env = { "HOME", "PATH" },
+  env = { HOME = "unkeyed", PATH = "unkeyed" },
 })

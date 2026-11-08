@@ -6,5 +6,5 @@ b.target("cli", {
   inputs = { "Cargo.toml", "Cargo.lock", b.sources("src/*.rs") },
   deps = { "//schema:gen" },
   run = { "cargo", "install", "--path", "rust", "--root", "$out", "--target-dir", "tt", "--no-track" },
-  env = { "HOME", "PATH" },
+  env = { HOME = "unkeyed", PATH = "unkeyed" },
 })

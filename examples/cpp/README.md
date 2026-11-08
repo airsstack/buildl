@@ -57,21 +57,24 @@ lets a target run any program through it, so the ceiling's program list limits l
 
 ```toml
 [ceiling]
-proc.run = ["cc", "c++", "sh"]
-env.read = ["PATH"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["cc", "c++", "sh"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 
 [plugins.c]
-github   = "airsstack/buildl"
-rev      = "plugin-c-v0.1.0"
-dir      = "plugins/c"
-proc.run = ["cc", "c++", "sh"]
-env.read = ["PATH"]
+github      = "airsstack/buildl"
+rev         = "plugin-c-v0.1.0"
+dir         = "plugins/c"
+proc.run    = ["cc", "c++", "sh"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
 ```
 
 `cc` runs `-dumpmachine` for `c.platform`; `c++` compiles and links. `PATH` is read because the
-compiler driver finds the linker through it.
+compiler driver finds the linker through it, and it is `unkeyed` (the plugin declares
+`env = { PATH = "unkeyed" }`): the command gets the value, only the name enters the key.
 
 ## Run it
 

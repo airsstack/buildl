@@ -35,18 +35,24 @@ link finds the same bytes and is taken from the cache.
 
 ```toml
 [ceiling]
-proc.run = ["cc", "sh"]
-env.read = ["PATH"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["cc", "sh"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 
 [plugins.c]
-github   = "airsstack/buildl"
-rev      = "plugin-c-v0.1.0"
-dir      = "plugins/c"
-proc.run = ["cc", "sh"]
-env.read = ["PATH"]
+github      = "airsstack/buildl"
+rev         = "plugin-c-v0.1.0"
+dir         = "plugins/c"
+proc.run    = ["cc", "sh"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
 ```
+
+`PATH` is `unkeyed`: the plugin declares `env = { PATH = "unkeyed" }` for each step that links or
+archives, so a command gets the value and only the name enters the key, and `env.unkeyed` allows it
+in the ceiling and the plugin table.
 
 `cc` compiles and links. `sh` is there for two reasons: `c.library` runs `ar` through it
 (`sh -c 'ZERO_AR_DATE=1 exec ar rcs …'`, so `ar` needs no entry of its own, and the archive is the

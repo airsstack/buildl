@@ -10,7 +10,7 @@ local module = "example.com/discovery"
 b.discover("pkgs", {
   run = { "go", "list", "-json=ImportPath", "./..." },
   inputs = { "go.mod", b.sources("**/*.go") },
-  env = { "HOME" },
+  env = { HOME = "unkeyed" },
   stdout = true,
 })
 
@@ -29,6 +29,6 @@ for _, pkg in ipairs(b.decode_all(listed)) do
   b.test((dir:gsub("/", ".")), {
     inputs = { "go.mod", b.sources(dir .. "/*.go") },
     run = { "go", "test", "./" .. dir },
-    env = { "HOME" },
+    env = { HOME = "unkeyed" },
   })
 end

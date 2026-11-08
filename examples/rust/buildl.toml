@@ -5,7 +5,8 @@ out    = "out"
 config = 1
 
 [ceiling]
-proc.run = ["cargo"]
-env.read = ["HOME", "PATH"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["cargo"]
+env.read    = ["HOME", "PATH"]
+env.unkeyed = ["HOME", "PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
