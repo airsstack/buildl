@@ -4,9 +4,22 @@ entry  = "build.lua"
 out    = "out"
 config = 1
 
+# go and python3 are run by the targets of the go and python directories; sh and rustc are
+# what the rust plugin's targets run (sh starts cargo, which finds rustc through PATH).
 [ceiling]
-proc.run    = ["go", "cargo", "python3"]
+proc.run    = ["go", "python3", "rustc", "sh"]
 env.read    = ["HOME", "PATH"]
 env.unkeyed = ["HOME", "PATH"]
 fs.read     = ["."]
 fs.write    = ["out", ".buildl"]
+
+# The rust plugin, fetched from a subfolder of a git repository by `buildl plugins fetch`.
+# Cargo downloads the crates it does not have, so the plugin's table says `network = true`.
+[plugins.rust]
+github      = "airsstack/buildl"
+rev         = "plugin-rust-v0.1.0"
+dir         = "plugins/rust"
+proc.run    = ["sh", "rustc"]
+env.read    = ["HOME", "PATH"]
+env.unkeyed = ["HOME", "PATH"]
+network     = true

@@ -1,10 +1,8 @@
-local b = buildl
+-- The rust plugin runs cargo in this folder and copies the binary to out/rust/cli.
+-- src/main.rs includes out/schema/gen.rs, which //schema:gen writes, so the test needs it too.
+-- The release profile: the dev one gave a binary whose bytes differed on a second run, which
+-- `buildl verify` reports.
+local rust = buildl.use("rust")
 
--- cargo install puts the binary at out/rust/cli/bin/cli. src/main.rs includes
--- out/schema/gen.rs, which //schema:gen writes.
-b.target("cli", {
-  inputs = { "Cargo.toml", "Cargo.lock", b.sources("src/*.rs") },
-  deps = { "//schema:gen" },
-  run = { "cargo", "install", "--path", "rust", "--root", "$out", "--target-dir", "tt", "--no-track" },
-  env = { HOME = "unkeyed", PATH = "unkeyed" },
-})
+rust.binary("cli", { deps = { "//schema:gen" }, profile = "release" })
+rust.test("cli_test", { deps = { "//schema:gen" } })
