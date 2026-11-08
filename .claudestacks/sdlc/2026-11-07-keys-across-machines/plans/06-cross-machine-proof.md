@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-11-07
 depends-on: [05]
 built-on: f3bc0d9fa2e7
@@ -84,3 +84,20 @@ branch, and the CI job "Remote example on NativeLink" passes on that push; `carg
 
 - `cargo test -p buildl-cli --test cli machines` passes.
 - CI job "Remote example on NativeLink" passes with step `e`.
+
+## Review findings
+
+One reviewer pass over Tasks 1-2 (`08-reviewer-p06`, blocking: none), one fix round (`12-coder-p06-fix`: `cargo test -p buildl-cli --test cli machines` 2 passed, `sh -n examples/remote/assert.sh` ok, `cargo make dod` green):
+
+- 🔵 `machines.rs` asserted `first.len() == TARGETS.len()`, which cannot fail (`keys()` panics on a missing target) — fixed: removed; the per-target guard stays.
+- 🔵 `machines.rs` reads each digest by a substring scan of `plan --json` — accepted: buildl prints JSON through one canonical sorted-key serializer, so the layout is fixed; the comment now says so.
+- 🔵 `assert.sh` row E's expected-summary column was off by 3; a comment read "keeps the changes from" — fixed.
+- 🔵 `build.lua` and the README said HOME and PATH reach the action; under remote execution unkeyed variables are not sent (`remote_action.rs:50-56`) — fixed: both say the worker uses its own environment.
+- 🔵 the README diagram's E lines had no arrow to the server — fixed.
+- Task 1 red/green: with `PATH` marked `key`, `two_machines_plan_the_same_keys` failed with differing keys; with `unkeyed` both tests pass. `cargo make dod` and `cargo deny check` green.
+
+## Deviations
+
+- 2026-11-08 — `.github/workflows/ci.yml` changed (not listed): the job's step "The four copies" is now "The copies A to E".
+- 2026-11-08 — the test writes the workspace into each folder rather than copying it; the content is the same.
+- 2026-11-08 — Task 2's red CI run was not made (author's choice): the red side is shown by Task 1's red run (keys differ with `PATH` marked `key`); one green CI run on the pushed branch proves step `e`.

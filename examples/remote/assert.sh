@@ -8,6 +8,9 @@
 #   B  build                     a fresh copy fetches what A ran     1 fetched
 #   C  edit, --remote-upload     runs here and sends the result      1 built
 #   D  same edit, build          a fresh copy fetches what C sent    1 fetched
+#   E  --remote-upload, then a   a copy with another folder, TMPDIR,
+#      copy with another HOME,   HOME and PATH fetches it as well    1 built, then 1 fetched
+#      TMPDIR and PATH, build
 #
 # BUILDL names the buildl binary.
 
@@ -70,5 +73,21 @@ step c "1 built" "an edited copy builds here and uploads" --remote-upload
 copy d
 echo "# an edit" >> "${work}/d/app/greet.py"
 step d "1 fetched" "a fresh copy with the same edit fetches what was uploaded"
+
+# E: another machine differs in its folder, TMPDIR, HOME and PATH. HOME and PATH are unkeyed,
+# so none of the four splits the action key. The subshell keeps these changes away from the other steps.
+copy e
+echo "# another machine's edit" >> "${work}/e/app/greet.py"
+step e "1 built" "a copy builds here and uploads" --remote-upload
+copy elsewhere
+echo "# another machine's edit" >> "${work}/elsewhere/app/greet.py"
+mkdir "${work}/elsewhere-tmp" "${work}/elsewhere-home" "${work}/elsewhere-bin"
+(
+    TMPDIR="${work}/elsewhere-tmp"
+    HOME="${work}/elsewhere-home"
+    PATH="${work}/elsewhere-bin:${PATH}"
+    export TMPDIR HOME PATH
+    step elsewhere "1 fetched" "a copy with another folder, TMPDIR, HOME and PATH fetches what was uploaded"
+)
 
 echo "remote: ok"
