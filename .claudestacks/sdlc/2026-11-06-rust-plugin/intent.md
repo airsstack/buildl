@@ -76,30 +76,24 @@ on one crate stays faster with plain `cargo`, which keeps rustc's incremental st
 
 ## Desired outcome
 
-- A workspace builds a Cargo project of any layout (one crate, a Cargo workspace, path
-  dependencies, crates.io and git dependencies, `build.rs`, proc-macros, `-sys` crates that build
-  C/C++) by calling an official `rust` plugin it fetches from this repository at a tag.
-- The dependencies are cached apart from the project: an edit to the project's sources rebuilds
-  the project only, and a dependency layer is rebuilt only when the manifests or the lockfile
-  change.
+- The plugin is a thin `cargo` wrapper, as the `c` plugin is a thin `cc` wrapper: helpers that
+  save the engineer the boilerplate `examples/rust` writes by hand (inputs, the `cargo install`
+  trick, `HOME` and `PATH`), and run plain `cargo`. It changes nothing about how Rust builds.
+- A workspace builds a Cargo project by calling an official `rust` plugin it fetches from this
+  repository at a tag.
 - The project's binaries, static libraries and C-ABI dynamic libraries land in `out/`, named,
-  for other targets to use: a `c` plugin binary linking a Rust `staticlib`, a package step taking
-  a binary.
+  for other targets to use.
 - Tests run as buildl tests, cached.
-- Network use is declared and shown by `plan` and the approver; the build itself runs without it.
+- Network use is declared and shown by `plan` and the approver.
 - A toolchain update can be made to rebuild, as the `c` plugin's `version_probe` does for a
   compiler.
-- Re-running a cached action gives the same bytes on the same machine, so `buildl verify` passes
-  on the plugin's targets.
-- Linux and macOS, x86_64 and arm64.
+- Linux and macOS.
 - The examples show the plugin and CI checks them through a real git fetch; the book, skills and
   README describe it, its value, its costs and its limits.
 
 ## Constraints
 
-- No change to buildl's core in this chain. The sandbox folder differs per workspace by design;
-  this chapter states that the dependency layer's bytes can differ between workspaces and machines
-  and points to the remote chapter's advice on who should upload (`2026-11-06-where-actions-run`).
+- No change to buildl's core in this chain.
 - No depfile read by the executor, and no side channel into an action's inputs.
 - Cargo 1.99 stable features only: nothing behind `-Z` or `cargo-features`.
 - The programs the plugin may run are listed in its manifest, as in `c`. Programs cargo starts
@@ -107,13 +101,9 @@ on one crate stays faster with plain `cargo`, which keeps rustc's incremental st
   book says so plainly.
 - One build file per Cargo project, at its root: an input cannot name a file outside its build
   file's folder.
-- The debug-info costs found by the probe are open for design: it may keep them, find a cheaper
-  way, or offer a choice that trades identical bytes for debug info.
-- The size of the dependency layer in the store and the remote cache is a cost the design must
-  state.
-- buildl is unpublished: nothing keeps compatibility with an earlier form of anything.
-- Candidate direction: a call such as `rust.cargo(".")` that declares a `cargo metadata`
-  discovery, a dependency layer, the project layer and its tests.
+- No vendoring, no cached dependency layer, no rewritten files: the 2026-11-06 layer findings in
+  the Problem section are history, not the design.
+- Candidate direction: helpers `rust.binary`, `rust.library`, `rust.test`, shaped like `c.binary`.
 
 ## Non-goals
 
