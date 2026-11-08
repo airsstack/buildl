@@ -1,0 +1,9 @@
+# A Cargo workspace of three crates, one of each kind cargo builds for Rust alone:
+#   greeting  an rlib, a library other Rust crates use
+#   answer    a proc-macro, code run by rustc while it compiles
+#   cli       a binary using both
+# A workspace of its own, so cargo run inside a checkout of the buildl repository does not take
+# them for members of buildl's workspace.
+[workspace]
+members  = ["greeting", "answer", "cli"]
+resolver = "2"

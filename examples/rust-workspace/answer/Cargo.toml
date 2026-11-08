@@ -1,0 +1,9 @@
+[package]
+name = "answer"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# A proc-macro: rustc loads it while compiling a crate that uses it, and runs it there.
+[lib]
+proc-macro = true

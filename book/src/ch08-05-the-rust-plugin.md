@@ -285,7 +285,8 @@ plugin runs cargo in that folder.
 `rust.library` gives the two crate types other languages use, `staticlib` and `cdylib`. An `rlib`
 (the default `lib`), a Rust `dylib` and a `proc-macro` are read only by rustc. Cargo builds them
 itself for any `rust.binary` or `rust.test` that depends on them, as a plain `cargo build` does, so
-they have no function of their own. To test one, use `rust.test`:
+they have no function of their own. `examples/rust-workspace` builds a binary from an rlib and a
+proc-macro this way, and copies only the binary to `out/`. To test one, use `rust.test`:
 
 ```lua
 rust.test("codec-test", { args = rust.package("codec") })
@@ -454,8 +455,9 @@ for what the first three mean for a build's repeatability.
 
 ## Try it
 
-`examples/rust`, `examples/rust-ffi` and `examples/polyglot` in the buildl repository are the
-builds above, each with a README. From `examples/`, `sh check.sh rust` (or `rust-ffi`, `polyglot`) runs `check`, `build`,
+`examples/rust`, `examples/rust-workspace`, `examples/rust-ffi` and `examples/polyglot` in the
+buildl repository are the builds above, each with a README. From `examples/`, `sh check.sh rust`
+(or `rust-workspace`, `rust-ffi`, `polyglot`) runs `check`, `build`,
 `test`, `verify` and the example's own assertions on a copy. The copy first runs `prepare.sh`,
 which commits this checkout's `plugins/rust` to a temporary git repository, tags it
 `plugin-rust-v0.1.0` and points the copy's `buildl.toml` at it, so the check runs the plugin as the

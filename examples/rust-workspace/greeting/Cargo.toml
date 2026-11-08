@@ -1,0 +1,12 @@
+[package]
+name = "greeting"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# An rlib, the default kind of a library: only rustc reads it, through cargo, when it builds
+# a crate that depends on this one.
+
+# `shout` upper-cases the greeting; the build file turns it on with rust.features.
+[features]
+shout = []
