@@ -4,8 +4,10 @@ entry  = "build.lua"
 out    = "out"
 config = 1
 
-# sh runs cargo and copies the binary cargo wrote to out/hello; rustc is what cargo runs,
-# found through PATH, and cargo keeps its registry and toolchains under HOME.
+# sh runs cargo and copies the binary cargo wrote to out/hello. rustc is for the plugin's
+# rust.platform and version_probe, which run it themselves; the ceiling does not see the
+# programs cargo starts. cargo finds its linker through PATH and keeps its registry and
+# toolchains under HOME.
 [ceiling]
 proc.run    = ["sh", "rustc"]
 env.read    = ["HOME", "PATH"]

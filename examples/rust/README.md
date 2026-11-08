@@ -3,23 +3,22 @@
 A Rust binary and its test, built with the [`rust` plugin](../../plugins/rust/README.md).
 
 ```text
-Cargo.toml
-Cargo.lock ─────► src/main.rs ──► rust.binary //:hello   (out/hello)
-
-Cargo.toml
-Cargo.lock ─────► src/main.rs ──► rust.test //:unit
+Cargo.toml ─┐
+Cargo.lock ─┼──► rust.binary //:hello   (out/hello)
+src/main.rs ┤
+            └──► rust.test //:unit
 ```
 
 ## What it uses
 
 | Piece | Why |
 |---|---|
-| `rust.binary("hello", { profile = "release" })` | runs `cargo build --locked --profile release --bin hello` and copies the file cargo wrote to `out/hello` |
-| `rust.test("unit")` | runs `cargo test --locked`, a test target |
+| `rust.binary("hello", { profile = "release" })` | runs `cargo build --locked --bin hello --profile release --target-dir target` and copies the file cargo wrote to `out/hello` |
+| `rust.test("unit")` | runs `cargo test --locked --profile dev --target-dir target`, a test target |
 | `profile = "release"` | the default profile, `dev`, keeps the absolute path of the folder it was built in as debug info, and `buildl verify` runs the action in a folder of its own, so it would find the binary differing; `release` holds no path |
 | `Cargo.lock` | both targets use `--locked`, and the plugin refuses a folder with a `Cargo.toml` and no `Cargo.lock` |
 
-Both targets take every file in the folder, except `target/`, as inputs, so an edit to
+Both targets take every file in the folder, except `target/` and `.git/`, as inputs, so an edit to
 `src/main.rs` runs both. `Cargo.toml` holds an empty `[workspace]` table so cargo treats the
 example as a workspace of its own, wherever it is copied.
 
@@ -72,4 +71,6 @@ normal route; to run the plugin as this checkout holds it instead, as CI does, t
 `prepare.sh`: it commits this checkout's `plugins/rust` to a temporary git repository, tags it
 `plugin-rust-v0.1.0`, points the copy's `buildl.toml` at that repository with `git = "file://…"`
 instead of `github`, and fetches. Then `assert.sh` checks the program's output, that `buildl plan`
-after an edit to `src/main.rs` runs `//:hello` and `//:unit`, and that the test passes.
+after an edit to `src/main.rs` runs `//:hello` and `//:unit`, that the test passes, that a second
+`buildl test` is served from the cache, and that `buildl log //:unit` shows what `cargo test`
+printed.

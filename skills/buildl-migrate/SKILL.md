@@ -276,7 +276,8 @@ setting. Do not write a `cargo` target by hand.
    absolute path of the build folder as debug info, and `buildl verify` builds in another folder.
    If the old build used `--release`, this is the same profile.
 5. In `parity.json`, map the old recipe to the call's target, `//:hello`, and the output to
-   `out/hello` (the binary's name, with no folder below `out/`).
+   `out/<folder>/<name>`, the build file's folder and the binary's name (`out/<name>` for a build
+   file at the workspace root, as `out/hello` is).
 
 ```lua no-check
 -- needs the rust plugin fetched: buildl.use("rust") fails without it

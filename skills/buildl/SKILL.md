@@ -212,7 +212,7 @@ Plugin". Keep a C or C++ project in one build file: a header outside the build
 file's folder cannot be declared.
 
 Rust has a plugin too, `rust`, a thin wrapper over the `cargo` you already have. One call is one
-artifact, and it fills in the inputs (every file below the build file's folder, except `target/`),
+artifact, and it fills in the inputs (every file below the build file's folder, except `target/` and `.git/`),
 `HOME` and `PATH` as unkeyed, and `network = true`. Name it in `buildl.toml` and run
 `buildl plugins fetch` once:
 

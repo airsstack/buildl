@@ -11,15 +11,17 @@ the slot Cargo treats as breaking, so a compatible change ships as a `z` bump.
 
 - **The `rust` plugin.** `rust.binary`, `rust.library` and `rust.test` build and test a Rust
   crate with the `cargo` you already have, and fill in the inputs, `HOME` and `PATH` (unkeyed) and
-  the network setting. `rust.package` and `rust.features` build the `args`, and `rust.platform`
-  names the host. A build file loads it with `buildl.use("rust")`, and `buildl.toml` names it in
+  the network setting. The helpers `rust.package` and `rust.features` build the `args`,
+  `rust.platform` names the host, and `rust.shared_name` gives the file name of a shared library on
+  it. A build file loads it with `buildl.use("rust")`, and `buildl.toml` names it in
   `[plugins.rust]` (`dir = "plugins/rust"`). It is tagged `plugin-rust-v0.1.0` at release.
 
 ### Changed
 
 - **The `rust` and `polyglot` examples build through the `rust` plugin.** The binary is now
   `out/hello` in `examples/rust` (it was `out/hello/bin/hello`) and `out/rust/cli` in
-  `examples/polyglot` (it was `out/rust/cli/bin/cli`), and each example has a Rust test target.
+  `examples/polyglot` (it was `out/rust/cli/bin/cli`), and `examples/polyglot` gains a Rust test
+  target, `//rust:cli_test`.
 - **`env` is a table of marks.** A target declares each variable as `"key"`, whose value is in the
   action key, or `"unkeyed"`, which the command gets but whose name alone is in the key;
   `env.unkeyed` in `buildl.toml` and `extension.toml` allows the unkeyed ones. The list form

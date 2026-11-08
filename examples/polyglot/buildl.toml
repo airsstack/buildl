@@ -4,8 +4,9 @@ entry  = "build.lua"
 out    = "out"
 config = 1
 
-# go and python3 are run by the targets of the go and python directories; sh and rustc are
-# what the rust plugin's targets run (sh starts cargo, which finds rustc through PATH).
+# go and python3 are run by the targets of the go and python directories; sh starts cargo for
+# the rust plugin's targets, and rustc is for the plugin's rust.platform and version_probe. The
+# ceiling does not see the programs cargo starts.
 [ceiling]
 proc.run    = ["go", "python3", "rustc", "sh"]
 env.read    = ["HOME", "PATH"]

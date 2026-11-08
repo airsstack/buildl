@@ -3,9 +3,9 @@
 # fetches it. ../check.sh runs this in a fresh copy of the example, with BUILDL_REPO set
 # to the repository root and BUILDL naming the buildl binary.
 #
-# The tag is published, but CI runs the plugin as this checkout has it, not the published
-# tag. So the checkout's plugins/rust goes into a temporary git repository, tagged
-# plugin-rust-v0.1.0, and the copy's buildl.toml names that repository instead of GitHub.
+# The tag exists once the plugin is released, but CI runs the plugin as this checkout has it,
+# not the published tag. So the checkout's plugins/rust goes into a temporary git repository,
+# tagged plugin-rust-v0.1.0, and the copy's buildl.toml names that repository instead of GitHub.
 
 set -eu
 BUILDL="${BUILDL:-buildl}"

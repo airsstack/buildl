@@ -27,4 +27,11 @@ expect "plan runs //:hello" "^run    //:hello: " "${planned}"
 expect "plan runs //:unit" "^run    //:unit: " "${planned}"
 
 tested="$("${BUILDL}" test 2>&1)" || fail "the test passes" "${tested}"
-expect "the test passes" "^tests: 1 passed" "${tested}"
+expect "the test passes" "^tests: 1 passed$" "${tested}"
+
+# Nothing changed since, so the second test is served from the cache, and the log holds what
+# cargo test printed when it last ran.
+cached="$("${BUILDL}" test 2>&1)" || fail "the second test passes" "${cached}"
+expect "the second test is served from the cache" "^tests: 1 passed (1 cached)$" "${cached}"
+shown="$("${BUILDL}" log //:unit 2>&1)" || fail "log exits 0" "${shown}"
+expect "log shows what cargo test printed" "^test result: ok" "${shown}"

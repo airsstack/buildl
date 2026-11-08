@@ -154,22 +154,24 @@ run    //:unit: input src/main.rs changed
 ```mermaid
 %% What rust.binary and rust.test declare for examples/rust
 graph LR
-    F["every file of the crate<br/>Cargo.toml, Cargo.lock, src/, build.rs, ...<br/>not target/"] --> B
+    F["every file of the crate<br/>Cargo.toml, Cargo.lock, src/, build.rs, ...<br/>not target/ or .git/"] --> B
     F --> T
     B["hello<br/>sh -c: cargo build --locked --bin hello,<br/>then cp target/release/hello to out/hello"]
     T["unit, a test target<br/>sh -c: cargo test --locked"]
 ```
 
-A call declares one target, with no discovery pass: cargo finds what a crate reads. Each runs in
-the build file's folder through `sh -c`, the folder being `cd <folder> && …` and nothing at the
-workspace root, since an action starts at the sandbox root:
+A call declares one target, with no discovery pass: cargo finds what a crate reads. Each runs
+through `sh -c`, and an action starts at the sandbox root. So in a folder other than the workspace
+root the script runs cargo as `(cd <folder> && cargo …)`, in a subshell, and nothing is added at
+the root:
 
 ```text
 cargo <build or test> --locked … --profile <profile> --target-dir target <args>
 ```
 
 For `rust.binary` and `rust.library`, the same script then copies the file cargo wrote under
-`<folder>/target/<profile folder>/` to the output. `rust.test` copies nothing. `--locked` is why a
+`<folder>/target/<profile folder>/` to the output. The `cd` sits in the subshell so that the copy,
+which comes after it, still reads the path from the root. `rust.test` copies nothing. `--locked` is why a
 folder with a `Cargo.toml` and no `Cargo.lock` is refused.
 
 | Function | Declares |
@@ -335,9 +337,9 @@ Directories](ch03-04-many-directories.md) walks through the workspace.
 
 ## The toolchain and its version
 
-`rustc` and `cargo` on `PATH` are usually links to the `rustup` launcher, and an [action
-key](ch05-01-action-key.md) records the program file, so a toolchain change moves no key: a target
-built by the old toolchain would be served from the cache.
+Each target runs `sh`, so its [action key](ch05-01-action-key.md) records the `sh` program file and
+neither `cargo` nor `rustc`, whether or not they are links to the `rustup` launcher. A toolchain
+change moves no key: a target built by the old toolchain would be served from the cache.
 
 `version_probe = true` closes that. The call declares `<name>.version`, `rustc -vV` as an always-run
 target, and makes its target depend on it, so a new toolchain prints a new version and the target
@@ -373,8 +375,8 @@ error: build.lua: runtime error: lua error in build.lua: runtime error: build.lu
 stack traceback:
 	[C]: in ?
 	[C]: in function 'error'
-	...ns/rust/c97eb8836fddb2a1ed42248bee4315020957e2d2/api.lua:22: in upvalue 'relocate'
-	...ns/rust/c97eb8836fddb2a1ed42248bee4315020957e2d2/api.lua:57: in field 'binary'
+	...ns/rust/d6dce47e11479c6b66f8ec41fa6a73691822d46b/api.lua:23: in upvalue 'relocate'
+	...ns/rust/d6dce47e11479c6b66f8ec41fa6a73691822d46b/api.lua:45: in field 'binary'
 	build.lua:3: in main chunk
 ```
 
@@ -399,6 +401,7 @@ The other messages:
 | `rust.platform` on a host that is neither | `rust.platform: the target triple <triple> is neither macos nor linux` |
 | `rustc -vV` without a `host:` line | `rust.platform: the output of rustc -vV has no host line` |
 | `rust.package` without a string | `rust.package: the name must be a string` |
+| `rust.shared_name` without a string | `rust.shared_name: the name must be a string` |
 | `rust.features` without a list of strings | `rust.features: the features must be a list of strings` |
 
 What cargo itself refuses (a bad `Cargo.toml`, a path dependency outside the folder, a failed
@@ -414,7 +417,7 @@ plugin's manifest, your cap or your ceiling is refused with exit code 4, as the 
 | keeps crates in cargo's cache, outside buildl's store | cargo finds them under `HOME` (`~/.cargo`), which is `unkeyed` |
 | does not see the programs cargo starts | the ceiling sees the `sh` that started cargo, not the `rustc`, linker or build scripts under it |
 | builds `staticlib` and `cdylib` only as libraries | the other crate types are read only by rustc, and cargo builds them for the binary that needs them |
-| does not cross-compile | not supported |
+| does not cross-compile | cargo would need `--target`, and the plugin copies the file from `target/<profile folder>/`, where cargo writes only without it |
 | wraps no registry, vendoring or lock-file tool | cargo does its own; the plugin changes nothing about how Rust builds |
 
 See [What buildl Can and Cannot Promise](ch11-09-what-it-promises.md#rust-goes-through-the-plugin-too)

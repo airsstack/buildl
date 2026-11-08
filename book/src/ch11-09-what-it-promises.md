@@ -76,9 +76,10 @@ declares one target for the crate, with every file below the build file's folder
 - **The dev profile does not verify.** Its debug info holds the absolute path of the folder the
   crate was built in, and `buildl verify` runs the action in a folder of its own, so it reports a
   `dev` binary as differing. The examples build with `profile = "release"`, which holds no path.
-- **A toolchain update behind `rustup` goes unseen**, as a compiler update behind a launcher does
-  for `c`. Unless a call sets `version_probe = true`, a new toolchain does not rebuild the target;
-  with it, `plan` lists the target as conditional even after a full build.
+- **A toolchain update goes unseen**, with `rustup` or without. Each target runs `sh`, so its key
+  records neither `cargo` nor `rustc`. Unless a call sets `version_probe = true`, a new toolchain
+  does not rebuild the target; with it, `plan` lists the target as conditional even after a full
+  build.
 
 Linux and macOS only, and no cross-compiling.
 

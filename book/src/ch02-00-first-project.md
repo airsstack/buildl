@@ -162,7 +162,7 @@ does, Go decides how little it has to redo.
 ## The same project in Rust and Python
 
 The repository has two more starters, `examples/rust` and `examples/python`. Each is the same
-project: a program that prints a greeting, and a test, with the same steps in its `README.md`.
+project: a program that prints a greeting, and a test, with its steps in its `README.md`.
 
 | Starter | The program | The test | The ceiling allows |
 |---|---|---|---|
