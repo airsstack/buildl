@@ -48,8 +48,8 @@ shell the justfile names (`sh` by default), so list that shell in `old.programs`
 the old build does not use fails check 6. For the build command of a language, see the table in
 the `buildl` skill.
 
-A recipe that only runs `cargo build` has no named output file. Give the target the file the
-command makes: for a Rust binary see the `buildl` skill's Rust row, which installs it into `$out`.
+A recipe that only runs `cargo build` has no named output file. It maps to the `rust` plugin, whose
+`rust.binary` copies the binary to `out/<name>`: see "A Cargo build" in the `buildl-migrate` skill.
 
 ## Example
 

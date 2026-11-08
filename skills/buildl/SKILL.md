@@ -151,10 +151,10 @@ target's `run` for the language:
 | Language | `run`, and what else the target needs |
 |---|---|
 | Go | `{ "go", "build", "-o", "$out", "." }` with `env = { HOME = "unkeyed" }` |
-| Rust | `{ "cargo", "install", "--path", ".", "--root", "$out", "--target-dir", "tt", "--no-track" }` with `env = { HOME = "unkeyed", PATH = "unkeyed" }`. Without `PATH` the build stops with ``error: linker `cc` not found`` |
+| Rust | the `rust` plugin, below: it runs `cargo` and fills in `HOME`, `PATH` and the inputs |
 | Python | `{ "python3", "-m", "zipapp", "app", "-o", "$out" }` |
 
-Go, Rust and Python have one target over all their sources. Do not make one target per file.
+Go and Python have one target over all their sources. Do not make one target per file.
 
 `HOME` and `PATH` are marked `"unkeyed"` above, and the ceiling must allow that. A variable that
 only helps a program find files (`HOME`, `PATH`) is `"unkeyed"`: its value reaches the command, but
@@ -210,6 +210,50 @@ through `sh`: add `sh` to both lists only then. All of the plugin's functions an
 README (`plugins/c/README.md` in the buildl repository), and in the book chapter "The C and C++
 Plugin". Keep a C or C++ project in one build file: a header outside the build
 file's folder cannot be declared.
+
+Rust has a plugin too, `rust`, a thin wrapper over the `cargo` you already have. One call is one
+artifact, and it fills in the inputs (every file below the build file's folder, except `target/`),
+`HOME` and `PATH` as unkeyed, and `network = true`. Name it in `buildl.toml` and run
+`buildl plugins fetch` once:
+
+```toml
+[ceiling]
+proc.run    = ["sh", "rustc"]
+env.read    = ["HOME", "PATH"]
+env.unkeyed = ["HOME", "PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
+
+[plugins.rust]
+github      = "airsstack/buildl"
+rev         = "plugin-rust-v0.1.0"
+dir         = "plugins/rust"
+proc.run    = ["sh", "rustc"]
+env.read    = ["HOME", "PATH"]
+env.unkeyed = ["HOME", "PATH"]
+network     = true
+```
+
+Then the build file sits in the crate's folder, beside `Cargo.toml` and `Cargo.lock` (the plugin
+refuses a folder with no `Cargo.lock`):
+
+```lua no-check
+-- needs the rust plugin fetched: buildl.use("rust") fails without it
+local rust = buildl.use("rust")
+
+rust.binary("hello", { profile = "release" })
+rust.test("unit")
+```
+
+`rust.binary("hello")` runs `cargo build --locked --bin hello` and copies the binary to
+`out/hello`; `rust.test` runs `cargo test --locked`. Pass `profile = "release"` when
+`buildl verify` must match: the default, `dev`, keeps the absolute path of the build folder as
+debug info, and `verify` builds in another folder. In a Cargo workspace, put one build file at the
+root and one call per artifact, each with `args = rust.package("name")`. `rust.library` builds a
+`staticlib` or `cdylib` (`kind` is required). Allowing `sh` lets a target run any program through
+`sh -c`, so the ceiling's program list then limits less. All of the plugin's functions and options
+are in its README (`plugins/rust/README.md` in the buildl repository), and in the book chapter on
+the rust plugin.
 
 ## References
 

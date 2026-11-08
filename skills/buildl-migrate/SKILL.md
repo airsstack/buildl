@@ -195,7 +195,7 @@ legitimate fix in `parity.json` is a mistake in what you wrote about the old bui
 Check 5 compares only whether the old test run and the buildl test run each passed. It does not count
 single tests. Whether each old test recipe has a buildl test target is check 1.
 
-## E. C and C++, and a case that stops and asks
+## E. C, C++ and Cargo, and a case that stops and asks
 
 An archive that stamps file times has its own answer: see `"judge": "tests"` in B.
 
@@ -255,6 +255,39 @@ Do not mark an output `"judge": "tests"` that matches the old build's bytes. Do 
 difference from any other cause.
 
 If the plugin cannot be fetched, or the ceiling cannot allow the compiler, stop and tell the user.
+
+### A Cargo build
+
+The old build runs `cargo build` or `cargo test`. Move it to the `rust` plugin, a thin wrapper over
+the same `cargo`: one call per artifact, and it fills in the inputs, `HOME`, `PATH` and the network
+setting. Do not write a `cargo` target by hand.
+
+1. Add the plugin to `buildl.toml` and run `buildl plugins fetch`. The `buildl` skill shows the
+   `[plugins.rust]` table. The ceiling and the table list `sh` and `rustc` in `proc.run`, `HOME`
+   and `PATH` in `env.read` and `env.unkeyed`, and the table says `network = true`. List `cargo`,
+   `sh` and `rustc` in `old.programs`, `HOME` and `PATH` in `old.env`, and `old.network` as `true`,
+   so check 6 passes: the plugin runs `cargo` through `sh`.
+2. Put the build file in the crate's folder, beside `Cargo.toml` and `Cargo.lock`. One call per
+   artifact: `rust.binary` for each `--bin`, `rust.library` (with `kind`) for a `staticlib` or
+   `cdylib`, `rust.test` for each `cargo test`. The old build's other cargo arguments go in `args`.
+3. For a workspace member, use `args = rust.package("name")`, with the build file at the workspace
+   root. Cargo still reads `Cargo.toml` for members, features and profile settings.
+4. Set `profile = "release"` when the old build's output must match: the default, `dev`, keeps the
+   absolute path of the build folder as debug info, and `buildl verify` builds in another folder.
+   If the old build used `--release`, this is the same profile.
+5. In `parity.json`, map the old recipe to the call's target, `//:hello`, and the output to
+   `out/hello` (the binary's name, with no folder below `out/`).
+
+```lua no-check
+-- needs the rust plugin fetched: buildl.use("rust") fails without it
+local rust = buildl.use("rust")
+
+rust.binary("server", { args = rust.package("server"), profile = "release" })
+rust.test("server-test", { args = rust.package("server") })
+```
+
+The plugin's functions, options and limits are in `plugins/rust/README.md` in the buildl repository.
+If the plugin cannot be fetched, or the crate has no `Cargo.lock`, stop and tell the user.
 
 ### A recipe that is not a build step
 

@@ -125,3 +125,17 @@ error: build.lua: //:bye (plugin gobin@0.1.0): program go is outside plugin gobi
 The line alone does not say which stops it. Compare the want with the plugin's `extension.toml` and
 with its `[plugins.<name>]` table: if the cap lacks it, ask the user about the cap. If the manifest
 lacks it, tell the user, and offer no edit to the manifest. A wrong `api` is exit 5.
+
+## The plugins in the buildl repository
+
+Two plugins are fetched from `airsstack/buildl`, each with its own `dir` and tag:
+
+| Plugin | `rev` | `dir` | Functions |
+|---|---|---|---|
+| `c` | `plugin-c-v0.2.0` | `plugins/c` | `c.binary`, `c.library`, `c.shared_library`, `c.test` |
+| `rust` | `plugin-rust-v0.1.0` | `plugins/rust` | `rust.binary`, `rust.library`, `rust.test` |
+
+The `rust` plugin runs `cargo` through `sh -c`, so its table lists `sh` and `rustc` in `proc.run`,
+`HOME` and `PATH` in `env.read` and `env.unkeyed`, and `network = true`, because cargo downloads
+crates. The ceiling allows the same programs and variables. Its functions and options are in
+`plugins/rust/README.md`, and the `buildl` skill shows a build file.
