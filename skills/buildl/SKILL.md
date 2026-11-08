@@ -186,7 +186,7 @@ fs.write    = ["out", ".buildl"]
 
 [plugins.c]
 github      = "airsstack/buildl"
-rev         = "plugin-c-v0.1.0"
+rev         = "plugin-c-v0.2.0"
 dir         = "plugins/c"
 proc.run    = ["cc"]
 env.read    = ["PATH"]

@@ -7,6 +7,16 @@ the slot Cargo treats as breaking, so a compatible change ships as a `z` bump.
 
 ## Unreleased
 
+### Changed
+
+- **`env` is a table of marks.** A target declares each variable as `"key"`, whose value is in the
+  action key, or `"unkeyed"`, which the command gets but whose name alone is in the key;
+  `env.unkeyed` in `buildl.toml` and `extension.toml` allows the unkeyed ones. The list form
+  `env = { "PATH" }` is refused. A value that holds this machine's home, workspace or sandbox
+  folder is refused with exit code 5, so the same target gets the same key on every machine.
+- **The `c` plugin is 0.2.0**, tagged `plugin-c-v0.2.0` at release: its link and archive steps
+  mark `PATH` unkeyed. `plugin-c-v0.1.0` uses the list form and works only with buildl 0.1.0.
+
 ### Fixed
 
 - **A program in `out/` that loads a shared library from its own folder.** On macOS such a program

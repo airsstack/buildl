@@ -5,7 +5,7 @@
 #
 # The tag is published, but CI runs the plugin as this checkout has it, not the published
 # tag. So the checkout's plugins/c goes into a temporary git repository, tagged
-# plugin-c-v0.1.0, and the copy's buildl.toml names that repository instead of GitHub.
+# plugin-c-v0.2.0, and the copy's buildl.toml names that repository instead of GitHub.
 
 set -eu
 BUILDL="${BUILDL:-buildl}"
@@ -26,7 +26,7 @@ git -C "${repo}" add plugins
 git -C "${repo}" -c user.name=buildl -c user.email=buildl@example.invalid \
     -c commit.gpgsign=false commit --quiet -m "the c plugin"
 git -C "${repo}" -c user.name=buildl -c user.email=buildl@example.invalid \
-    -c tag.gpgsign=false tag plugin-c-v0.1.0
+    -c tag.gpgsign=false tag plugin-c-v0.2.0
 
 # Point the plugin at the local repository instead of the published one.
 line='github      = "airsstack/buildl"'
