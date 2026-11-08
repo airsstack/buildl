@@ -16,7 +16,7 @@ language; the three programs depend on it.
 graph TD
     SCHEMA["schema/schema.json<br/>source of truth"] --> GEN["//schema:gen<br/>python3 generate.py"]
     GEN --> GO["//go:service<br/>go build"]
-    GEN --> RS["//rust:cli<br/>cargo install"]
+    GEN --> RS["//rust:cli<br/>rust.binary, cargo build"]
     GEN --> PY["//python:tool.pyz<br/>python3 pack.py"]
 ```
 
@@ -44,9 +44,14 @@ maybe  //go:service: runs only if //schema:gen produces something else
 maybe  //python:tool.pyz: runs only if //schema:gen produces something else
 maybe  //rust:cli: runs only if //schema:gen produces something else
 run    //schema:gen: input schema/schema.json changed
-  run programs:      cargo, go, python3
+  run programs:      go, python3, sh
   unkeyed variables: HOME, PATH
   write into:        .buildl, out
+  reach the network: //rust:cli
+  sh: declared by plugin rust@0.1.0 for //rust:cli
+  HOME (unkeyed): declared by plugin rust@0.1.0 for //rust:cli
+  PATH (unkeyed): declared by plugin rust@0.1.0 for //rust:cli
+  //rust:cli: declared by plugin rust@0.1.0 for //rust:cli
 1 to run, 3 conditional, 0 clean
 ```
 
@@ -61,21 +66,22 @@ Now build:
 ```console
 $ buildl build
 --- //rust:cli (cached)
-  Installing cli v0.1.0 (/private/tmp/buildl-book/tmp/buildl-a86dd71bd5c414e596a687f4d70e5ec8/709bb78cafdc4445f4217a9db757a876/rust)
-   Compiling cli v0.1.0 (/private/tmp/buildl-book/tmp/buildl-a86dd71bd5c414e596a687f4d70e5ec8/709bb78cafdc4445f4217a9db757a876/rust)
+   Compiling cli v0.1.0 (/private/var/folders/8w/4ccj7cw90nx4d32s72tqf5nw0000gn/T/buildl-4a04b4d480388c7fb246c52f872863b3/709bb78cafdc4445f4217a9db757a876/rust)
     Finished `release` profile [optimized] target(s) in 1.18s
-  Installing /private/tmp/buildl-book/tmp/buildl-a86dd71bd5c414e596a687f4d70e5ec8/709bb78cafdc4445f4217a9db757a876/out/rust/cli/bin/cli
-   Installed package `cli v0.1.0 (/private/tmp/buildl-book/tmp/buildl-a86dd71bd5c414e596a687f4d70e5ec8/709bb78cafdc4445f4217a9db757a876/rust)` (executable `cli`)
-warning: be sure to add `/private/tmp/buildl-book/tmp/buildl-a86dd71bd5c414e596a687f4d70e5ec8/709bb78cafdc4445f4217a9db757a876/out/rust/cli/bin` to your PATH to be able to run the installed binaries
 1 built, 3 cached
 $ buildl plan
 clean  //go:service
 clean  //python:tool.pyz
 clean  //rust:cli
 clean  //schema:gen
-  run programs:      cargo, go, python3
+  run programs:      go, python3, sh
   unkeyed variables: HOME, PATH
   write into:        .buildl, out
+  reach the network: //rust:cli
+  sh: declared by plugin rust@0.1.0 for //rust:cli
+  HOME (unkeyed): declared by plugin rust@0.1.0 for //rust:cli
+  PATH (unkeyed): declared by plugin rust@0.1.0 for //rust:cli
+  //rust:cli: declared by plugin rust@0.1.0 for //rust:cli
 0 to run, 0 conditional, 4 clean
 ```
 
@@ -98,18 +104,19 @@ maybe  //go:service: runs only if //schema:gen produces something else
 maybe  //python:tool.pyz: runs only if //schema:gen produces something else
 maybe  //rust:cli: runs only if //schema:gen produces something else
 run    //schema:gen: input schema/schema.json changed
-  run programs:      cargo, go, python3
+  run programs:      go, python3, sh
   unkeyed variables: HOME, PATH
   write into:        .buildl, out
+  reach the network: //rust:cli
+  sh: declared by plugin rust@0.1.0 for //rust:cli
+  HOME (unkeyed): declared by plugin rust@0.1.0 for //rust:cli
+  PATH (unkeyed): declared by plugin rust@0.1.0 for //rust:cli
+  //rust:cli: declared by plugin rust@0.1.0 for //rust:cli
 1 to run, 3 conditional, 0 clean
 $ buildl build
 --- //rust:cli
-  Installing cli v0.1.0 (/private/tmp/buildl-book/tmp/buildl-a86dd71bd5c414e596a687f4d70e5ec8/709bb78cafdc4445f4217a9db757a876/rust)
-   Compiling cli v0.1.0 (/private/tmp/buildl-book/tmp/buildl-a86dd71bd5c414e596a687f4d70e5ec8/709bb78cafdc4445f4217a9db757a876/rust)
+   Compiling cli v0.1.0 (/private/var/folders/8w/4ccj7cw90nx4d32s72tqf5nw0000gn/T/buildl-4a04b4d480388c7fb246c52f872863b3/709bb78cafdc4445f4217a9db757a876/rust)
     Finished `release` profile [optimized] target(s) in 1.08s
-  Installing /private/tmp/buildl-book/tmp/buildl-a86dd71bd5c414e596a687f4d70e5ec8/709bb78cafdc4445f4217a9db757a876/out/rust/cli/bin/cli
-   Installed package `cli v0.1.0 (/private/tmp/buildl-book/tmp/buildl-a86dd71bd5c414e596a687f4d70e5ec8/709bb78cafdc4445f4217a9db757a876/rust)` (executable `cli`)
-warning: be sure to add `/private/tmp/buildl-book/tmp/buildl-a86dd71bd5c414e596a687f4d70e5ec8/709bb78cafdc4445f4217a9db757a876/out/rust/cli/bin` to your PATH to be able to run the installed binaries
 4 built
 ```
 

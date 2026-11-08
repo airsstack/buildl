@@ -59,6 +59,29 @@ pass and not the action running now. If that case is ever needed, it will extend
 target can do, rather than add a side channel to the executor. Ninja's depfile format would then be
 one way to feed it, not the design.
 
+## Rust goes through the plugin too
+
+`buildl` builds a Rust crate through the `rust` plugin, which runs plain `cargo`. There is no depfile
+gap here, since cargo tracks the sources it reads, and so there is no discovery per file: a call
+declares one target for the crate, with every file below the build file's folder as an input.
+[The Rust Plugin](ch08-05-the-rust-plugin.md) shows how. Its limits:
+
+- **Dependencies compile again whenever an input changes.** Each build runs in a fresh sandbox, so
+  cargo has no `target/` from the last one. Plain `cargo` keeps its own `target/` and is faster for
+  an edit loop on one crate.
+- **Crates live in cargo's cache, outside buildl's store.** Cargo finds them under `HOME`
+  (`~/.cargo`), which is `unkeyed`, so a crate a machine already holds is not part of the key.
+- **Programs cargo starts are unseen.** The ceiling sees the `sh` that started cargo, not the
+  `rustc`, the linker or the build scripts cargo runs beneath it.
+- **The dev profile does not verify.** Its debug info holds the absolute path of the folder the
+  crate was built in, and `buildl verify` runs the action in a folder of its own, so it reports a
+  `dev` binary as differing. The examples build with `profile = "release"`, which holds no path.
+- **A toolchain update behind `rustup` goes unseen**, as a compiler update behind a launcher does
+  for `c`. Unless a call sets `version_probe = true`, a new toolchain does not rebuild the target;
+  with it, `plan` lists the target as conditional even after a full build.
+
+Linux and macOS only, and no cross-compiling.
+
 ## What each isolation tier does not guarantee
 
 [The Sandbox](ch06-00-sandbox.md) shows the tiers in use. Here is what each one leaves open.

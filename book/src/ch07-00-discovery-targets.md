@@ -305,7 +305,7 @@ Plugin](ch08-04-the-c-plugin.md) shows it.
 
 The gap is narrower than it looks. Go, Cargo, Bun and the rest track their own sources, so a target
 that hands a whole toolchain all of its sources, as the Go, Rust and Python examples do, has no
-hole.
+hole. [The Rust Plugin](ch08-05-the-rust-plugin.md) writes that target for Cargo.
 And where a build does need a tool to tell it what exists, the discovery target is the answer: not
 a file a compiler happened to drop, but a target with its own key, its own approval and its own
 line in the plan, like everything else `buildl` runs.

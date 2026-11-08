@@ -78,11 +78,23 @@ b.target("service", {
 })
 ```
 
-`rust/build.lua` and `python/build.lua` do the same with `cargo` and `python3`. A command runs from
-the workspace root, so the Go target builds with `go build -C go`, and each language finds the
-generated files under `out/schema/`.
+`python/build.lua` does the same with `python3`. `rust/build.lua` asks the `rust` plugin
+([The Rust Plugin](ch08-05-the-rust-plugin.md)) for a binary and a test, which run `cargo` in
+`rust/`, and lists the same dependency:
 
-The graph has one target in the middle and three around it:
+```lua
+-- rust/build.lua
+local rust = buildl.use("rust")
+
+rust.binary("cli", { deps = { "//schema:gen" }, profile = "release" })
+rust.test("cli_test", { deps = { "//schema:gen" } })
+```
+
+The workspace's `buildl.toml` names the plugin and lets it run `sh`; that chapter shows the table.
+A command runs from the workspace root, so the Go target builds with `go build -C go`, and each
+language finds the generated files under `out/schema/`.
+
+The graph has one target in the middle and four around it, the Rust test being the fourth:
 
 ```console
 $ buildl graph --dot
@@ -90,39 +102,38 @@ digraph buildl {
   "//go:service";
   "//python:tool.pyz";
   "//rust:cli";
+  "//rust:cli_test";
   "//schema:gen";
   "//go:service" -> "//schema:gen";
   "//python:tool.pyz" -> "//schema:gen";
   "//rust:cli" -> "//schema:gen";
+  "//rust:cli_test" -> "//schema:gen";
 }
 $ buildl query 'rdeps(//schema:gen)'
 //go:service
 //python:tool.pyz
 //rust:cli
+//rust:cli_test
 ```
 
-`rdeps` names one target per language: an edit to the schema can affect all three programs, and
-nothing else.
+`rdeps` names one target per language and the Rust test: an edit to the schema can affect all
+three programs and that test, and nothing else.
 
 ```console
 $ buildl build
 --- //rust:cli
-  Installing cli v0.1.0 (/private/tmp/buildl-book/tmp/buildl-510c2c2d7c9d4afaeb5c7353b92c9838/709bb78cafdc4445f4217a9db757a876/rust)
-   Compiling cli v0.1.0 (/private/tmp/buildl-book/tmp/buildl-510c2c2d7c9d4afaeb5c7353b92c9838/709bb78cafdc4445f4217a9db757a876/rust)
+   Compiling cli v0.1.0 (/private/var/folders/8w/4ccj7cw90nx4d32s72tqf5nw0000gn/T/buildl-4a04b4d480388c7fb246c52f872863b3/709bb78cafdc4445f4217a9db757a876/rust)
     Finished `release` profile [optimized] target(s) in 1.18s
-  Installing /private/tmp/buildl-book/tmp/buildl-510c2c2d7c9d4afaeb5c7353b92c9838/709bb78cafdc4445f4217a9db757a876/out/rust/cli/bin/cli
-   Installed package `cli v0.1.0 (/private/tmp/buildl-book/tmp/buildl-510c2c2d7c9d4afaeb5c7353b92c9838/709bb78cafdc4445f4217a9db757a876/rust)` (executable `cli`)
-warning: be sure to add `/private/tmp/buildl-book/tmp/buildl-510c2c2d7c9d4afaeb5c7353b92c9838/709bb78cafdc4445f4217a9db757a876/out/rust/cli/bin` to your PATH to be able to run the installed binaries
 4 built
 $ ./out/go/service
 go service 1.0: hello from the schema
-$ ./out/rust/cli/bin/cli
+$ ./out/rust/cli
 rust cli 1.0: hello from the schema
 $ python3 out/python/tool.pyz
 python tool 1.0: hello from the schema
 ```
 
-The paths `cargo` printed are the sandbox: a directory outside the workspace, laid out like it,
+The path `cargo` printed is the sandbox: a directory outside the workspace, laid out like it,
 where the command ran ([The Sandbox](ch06-00-sandbox.md)). The schema ran first because all three
 programs depend on it; the three programs then ran side by side.
 

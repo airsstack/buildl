@@ -167,26 +167,26 @@ project: a program that prints a greeting, and a test, with the same steps in it
 | Starter | The program | The test | The ceiling allows |
 |---|---|---|---|
 | `examples/go` | `go build -o $out .`, giving `out/hello` | `go test ./...` | `go`; `HOME`, unkeyed |
-| `examples/rust` | `cargo install`, giving `out/hello/bin/hello` | `cargo test --target-dir tt` | `cargo`; `HOME`, `PATH`, both unkeyed |
+| `examples/rust` | `rust.binary`, giving `out/hello` | `rust.test`, which runs `cargo test` | `sh`, `rustc`; `HOME`, `PATH`, both unkeyed |
 | `examples/python` | `python3 -m zipapp app -o $out`, giving `out/app.pyz` | `python3 -m unittest discover -s tests` | `python3`; no variables |
 
-The Rust target is worth a closer look, because the obvious command does not work:
+The Rust starter is the one that loads a plugin. Running `cargo` as a plain target takes some
+care: `cargo build` writes its binary under `target/`, where `buildl` does not look for the
+output, and cargo needs `HOME` for its registry and `PATH` to find the linker. The `rust` plugin
+does that part, so the build file is two lines:
 
 ```lua
-b.target("hello", {
-  inputs = sources,
-  run = { "cargo", "install", "--path", ".", "--root", "$out", "--target-dir", "tt", "--no-track" },
-  env = { HOME = "unkeyed", PATH = "unkeyed" },
-})
+local rust = buildl.use("rust")
+
+rust.binary("hello", { profile = "release" })
+rust.test("unit")
 ```
 
-`buildl` looks for a target's output under `out/`, at the path `$out` names. `cargo build
---release` writes its binary under `target/` instead, so the output is never found.
-`cargo install --root $out` puts the binary where `buildl` looks, at `out/hello/bin/hello`, which
-makes this target's output a folder rather than a single file. `--target-dir tt` keeps cargo's
-working files inside the folder the action runs in, and `--no-track` stops cargo writing its
-install records into `$out`. Cargo needs `HOME` for its registry and toolchains, and `PATH` to find
-the linker. Both only find files, so both are `"unkeyed"`.
+`rust.binary` runs `cargo build` for the binary `hello` and copies the file cargo wrote to
+`out/hello`, and `rust.test` runs `cargo test`. Both take every file in the folder as inputs, and
+`HOME` and `PATH` are given as unkeyed variables. The plugin is named in `buildl.toml`, with the
+programs and variables it may use, and fetched once with `buildl plugins fetch`;
+[The Rust Plugin](ch08-05-the-rust-plugin.md) shows the table and everything the plugin does.
 
 The next chapter looks at build files properly: labels, dependencies between targets, more than
 one folder, and the functions `buildl` gives you to write them with.
