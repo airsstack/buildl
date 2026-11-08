@@ -148,7 +148,7 @@ dependencies = [
 
 [[package]]
 name = "buildl"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "buildl-core",
  "buildl-lua",
@@ -169,7 +169,7 @@ dependencies = [
 
 [[package]]
 name = "buildl-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "buildl",
  "clap",
@@ -178,7 +178,7 @@ dependencies = [
 
 [[package]]
 name = "buildl-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -188,7 +188,7 @@ dependencies = [
 
 [[package]]
 name = "buildl-lua"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "airsl",
  "buildl-core",

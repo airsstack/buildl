@@ -1,6 +1,6 @@
 [package]
 name         = "buildl-lua"
-version      = "0.1.0"
+version      = "0.2.0"
 description  = "Lua build-file evaluation for buildl, on the airsl embedded runtime."
 readme       = "README.md"
 edition.workspace      = true

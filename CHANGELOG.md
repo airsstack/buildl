@@ -7,6 +7,13 @@ the slot Cargo treats as breaking, so a compatible change ships as a `z` bump.
 
 ## Unreleased
 
+## 0.2.0 — 2026-11-08
+
+A breaking release. It publishes the four crates at 0.2.0, and tags the `c` plugin as
+`plugin-c-v0.2.0` and the new `rust` plugin as `plugin-rust-v0.1.0`. A build file that declares
+`env` as a list (`env = { "PATH" }`) is refused: write each variable as a mark, `"key"` or
+`"unkeyed"` (see Changed). Both plugin tags need buildl 0.2.0.
+
 ### Added
 
 - **The `rust` plugin.** `rust.binary`, `rust.library` and `rust.test` build and test a Rust

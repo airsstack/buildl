@@ -738,7 +738,10 @@ mod tests {
                 &["build", "--help"][..],
                 "Build targets and what they need\n",
             ),
-            (&["--version"][..], "buildl 0.1.0\n"),
+            (
+                &["--version"][..],
+                concat!("buildl ", env!("CARGO_PKG_VERSION"), "\n"),
+            ),
         ] {
             let ran = ran(&root, args);
             assert_eq!(ran.exit, Exit::Success, "{args:?}");
@@ -1117,7 +1120,10 @@ mod tests {
             &mut NoTerminal,
         );
         assert_eq!(exit, Exit::Success);
-        assert_eq!(stdout, b"buildl 0.1.0\n");
+        assert_eq!(
+            stdout,
+            concat!("buildl ", env!("CARGO_PKG_VERSION"), "\n").as_bytes()
+        );
         assert_eq!(stderr, b"");
     }
 

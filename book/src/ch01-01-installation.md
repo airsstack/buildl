@@ -14,7 +14,7 @@ terminal so the change takes effect, then check it worked:
 
 ```console
 $ buildl --version
-buildl 0.1.0
+buildl 0.2.0
 ```
 
 `buildl --help` lists every command. If you would rather the installer left your `PATH` alone, set
@@ -62,7 +62,7 @@ $ cargo install --git https://github.com/airsstack/buildl buildl-cli --locked
 This needs the same Rust and C compiler as above. Cargo prints where it put the binary:
 
 ```console
-   Installed package `buildl-cli v0.1.0 (https://github.com/airsstack/buildl#d99e72c9)` (executable `buildl`)
+   Installed package `buildl-cli v0.2.0 (https://github.com/airsstack/buildl#d99e72c9)` (executable `buildl`)
 ```
 
 The commit after the `#` is whichever one the repository's default branch is at when you install.
