@@ -210,7 +210,7 @@ return {
         assert(link.kind == "target")
         same(link.options.deps, { ":app.src.a.c.o", ":app.src.b.c.o", ":lib" }, "deps")
         same(link.options.run, { "cc", "-L.", "-o", "$out", "$deps", "-lm" }, "run")
-        same(link.options.env, { "PATH" }, "env")
+        same(link.options.env, { PATH = "unkeyed" }, "env")
         same(link.options.outputs, { "app" }, "outputs")
     end,
 
@@ -228,7 +228,7 @@ return {
         local fake = declare("shared_library", "greet", given, { [":greet.a.c.deps"] = "obj: cpp/a.c" })
         local link = get(fake, "greet").options
         same(link.run, { "cc", "-fPIC", "-shared", "-o", "$out", "$deps", "-lm" }, "run")
-        same(link.env, { "PATH" }, "env")
+        same(link.env, { PATH = "unkeyed" }, "env")
         same(link.deps, { ":greet.a.c.o" }, "deps")
 
         local bare = declare("shared_library", "greet", { srcs = { "a.c" } }, { [":greet.a.c.deps"] = "obj: cpp/a.c" })
@@ -244,7 +244,7 @@ return {
         same(archive.run, { "sh", "-c", 'ZERO_AR_DATE=1 exec ar rcs "$0" "$@"', "$out", "$deps" }, "run")
         same(archive.deps, { ":lib.a.c.o", ":lib.b.c.o" }, "deps")
         same(archive.outputs, { "lib" }, "outputs")
-        same(archive.env, { "PATH" }, "env")
+        same(archive.env, { PATH = "unkeyed" }, "env")
     end,
 
     test_without_deps_runs_the_binary = function()
@@ -252,7 +252,7 @@ return {
         local binary = get(fake, "unit.bin")
         assert(binary.kind == "target")
         same(binary.options.outputs, { "unit.bin" }, "outputs")
-        same(binary.options.env, { "PATH" }, "env")
+        same(binary.options.env, { PATH = "unkeyed" }, "env")
         local test = get(fake, "unit")
         assert(test.kind == "test")
         same(test.options.deps, { ":unit.bin" }, "deps")

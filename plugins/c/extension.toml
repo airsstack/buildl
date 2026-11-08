@@ -6,5 +6,6 @@ api     = 1
 
 # The most the plugin's targets may want; the workspace can narrow it further.
 [capabilities]
-proc.run = ["cc", "c++", "gcc", "g++", "clang", "clang++", "sh"]
-env.read = ["PATH"]
+proc.run    = ["cc", "c++", "gcc", "g++", "clang", "clang++", "sh"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
