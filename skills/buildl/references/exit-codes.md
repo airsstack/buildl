@@ -65,8 +65,8 @@ The build wants something it may not have. Three causes:
 
 | Cause | Error text |
 |---|---|
-| the ceiling | `error: build.lua: //:version.txt: program python3 is outside the ceiling (proc.run allows: sh)` |
-| a plugin | `error: build.lua: //:bye (plugin gobin@0.1.0): environment variable HOME is outside plugin gobin@0.1.0 (env.read allows: nothing)` |
+| the ceiling | `error: build.lua: //:version.txt: program python3 is outside the ceiling (proc.run allows: sh)`, or for a variable marked `"unkeyed"` that `env.unkeyed` does not list, `error: build.lua: //:app: unkeyed variable HOME is outside the ceiling (env.unkeyed allows: nothing)` |
+| a plugin | `error: build.lua: //:bye (plugin gobin@0.1.0): environment variable HOME is outside plugin gobin@0.1.0 (env.read allows: nothing)`, or `error: build.lua: //:bye (plugin gobin@0.1.0): unkeyed variable HOME is outside plugin gobin@0.1.0 (env.unkeyed allows: nothing)` |
 | the approver | `error: no terminal to ask on; run the build in a terminal once to approve, or set [approver] default = "manifest"`, or `error: the workspace's approver is deny` |
 
 `plan` gives the same refusals as `build`, before anything runs. Run `buildl doctor`; it differs by cause:
@@ -90,8 +90,26 @@ A build file or `buildl.toml` is wrong, and editing it is the fix. The error nam
   twice, a label that names nothing, a dependency cycle, an input file that does not exist, two
   targets writing the same output, a command with no program;
 - a target declares `TZ`, `LC_ALL` or `SOURCE_DATE_EPOCH`, which the sandbox sets itself;
+- a target's `env` is wrong, or a file holds this machine's folder (the cases below);
 - a git plugin has not been fetched: run `buildl plugins fetch`;
 - `buildl.toml` is missing, does not parse, or asks for what this version cannot do.
+
+These cases name the file that is wrong: a build file with a target or a declaration number, or `buildl.toml` or an `extension.toml` with a table. Fix the file, then run `check` again:
+
+| Case | Error text | Fix |
+|---|---|---|
+| `env` written as a list, or a list mixed with marks | `build.lua: //:app: env must mark each variable "key" or "unkeyed", such as env = { HOME = "unkeyed" }` | mark each variable |
+| a mark that is not `"key"` or `"unkeyed"` | `build.lua: //:app: env HOME is marked "pass"; mark it "key" or "unkeyed"` | write `"key"` or `"unkeyed"` |
+| `env.unkeyed` lists a variable its table's `env.read` does not | `buildl.toml: ceiling env.unkeyed lists HOME, which env.read does not` | add the name to `env.read` of the same table (the user's decision), or take it out of `env.unkeyed`. When the refusal names a plugin's `extension.toml`, the manifest is the plugin author's: offer no edit to it |
+| a command word holds this machine's folder | `build.lua: //:note: the command holds this machine's path /home/alice; it would give the target another key on every machine` | use a placeholder or a relative path |
+| a `"key"` variable's value holds one | `build.lua: //:app: the variable RUSTFLAGS holds this machine's path /home/alice; mark it "unkeyed" if it only finds files` | mark it `"unkeyed"` if it only finds files, else give the variable a value without the folder |
+| a discovery target's output holds one | `build.lua: //:cargo.metadata: its output holds this machine's path /home/alice/shop` | change the discovery's command so its output is relative. The refusal repeats until the command changes |
+| a setting a command names holds one | `build.lua: //:setting: the setting prefix holds this machine's path /home/alice; it would give the target another key on every machine` | give the setting a value without the folder |
+| a variable name that is not valid | `build.lua: declaration #0: invalid env: invalid environment variable name: "A-B" — may hold only ASCII letters, digits and '_'` | write a valid name |
+
+The folders checked are the home folder, the workspace folder and the sandbox folder. Inputs and
+outputs are workspace-relative, so they are not checked. A `"key"` variable whose value holds none
+of them passes.
 
 ```text
 error: build.lua: syntax error: lua error in build.lua: syntax error: build.lua:3: '}' expected (to close '{' at line 2) near <eof>

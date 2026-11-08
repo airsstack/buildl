@@ -58,10 +58,11 @@ approver   manifest
 execution  workers 0 (one per core), timeout 10m, strategy sandbox
 remote: none
 ceiling
-  proc.run  python3
-  env.read  -
-  fs.read   .
-  fs.write  .buildl, out
+  proc.run     python3
+  env.read     -
+  env.unkeyed  -
+  fs.read      .
+  fs.write     .buildl, out
 wants            ceiling  approved
   run python3    allowed  yes
   write .buildl  allowed  yes
@@ -80,7 +81,12 @@ local function agreeing()
                 ["//:unit"] = { role = "Test", network = "Sealed" },
             },
         },
-        ceiling = { ["proc.run"] = { "go" }, ["env.read"] = { "HOME" }, ["fs.read"] = { "." } },
+        ceiling = {
+            ["proc.run"] = { "go" },
+            ["env.read"] = { "HOME" },
+            ["env.unkeyed"] = { "HOME" },
+            ["fs.read"] = { "." },
+        },
         hashes = { { old1 = "aa", old2 = "aa", new = "aa" } },
         status = { old1_build = 0, old2_build = 0, new_build = 0, old1_test = 0, new_test = 0 },
     }
@@ -191,6 +197,7 @@ return {
         local got = parity.ceiling(DOCTOR)
         assert_names(got["proc.run"], { "python3" })
         assert_names(got["env.read"], {})
+        assert_names(got["env.unkeyed"], {})
         assert_names(got["fs.read"], { "." })
         assert_names(got["fs.write"], { ".buildl", "out" })
     end,
@@ -321,6 +328,16 @@ return {
         assert_row(parity.rows(input), "6", "FAIL", "TOKEN")
     end,
 
+    a_wider_unkeyed_ceiling_fails = function()
+        local input = agreeing()
+        input.ceiling["env.unkeyed"] = { "HOME", "TOKEN" }
+        assert_row(parity.rows(input), "6", "FAIL", "TOKEN")
+    end,
+
+    an_unkeyed_ceiling_within_the_old_build_passes = function()
+        assert_row(parity.rows(agreeing()), "6", "PASS", "env.unkeyed")
+    end,
+
     an_unexpected_network_target_fails = function()
         local input = agreeing()
         input.graph.targets["//:app"].network = "Declared"
@@ -418,6 +435,14 @@ return {
         local ok, err = pcall(parity.rows, input)
         assert(not ok, "expected an error")
         assert(tostring(err):find("env.read", 1, true), tostring(err))
+    end,
+
+    a_ceiling_without_env_unkeyed_is_an_error = function()
+        local input = agreeing()
+        input.ceiling["env.unkeyed"] = nil
+        local ok, err = pcall(parity.rows, input)
+        assert(not ok, "expected an error")
+        assert(tostring(err):find("env.unkeyed", 1, true), tostring(err))
     end,
 
     a_stale_mapping_is_still_checked = function()

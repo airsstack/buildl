@@ -39,18 +39,25 @@ added for you: a workspace that builds writes them into `fs.write` itself. There
 |---|---|---|---|
 | `proc.run` | list of strings | `[]` | the programs a command may run, by bare name such as `"cc"` |
 | `env.read` | list of strings | `[]` | the environment variables a target may read |
+| `env.unkeyed` | list of strings | `[]` | the variables a target may mark `"unkeyed"`: given to the command, but only the name enters the action key and nothing goes to a remote server. Each name must also be in `env.read`, or the file is refused (exit 5) |
 | `fs.read` | list of strings | `[]` | the directories inputs may come from. `"."` is the workspace root |
 | `fs.write` | list of strings | `[]` | the directories a build may write under |
 
 ```toml
 [ceiling]
-proc.run = ["go"]
-env.read = ["HOME"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["go"]
+env.read    = ["HOME"]
+env.unkeyed = ["HOME"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 ```
 
 A program a dependency built needs no `proc.run` entry.
+
+A variable that only finds programs (`HOME`, `PATH`) belongs in `env.unkeyed` too, and the target
+marks it `"unkeyed"`: machines with different homes or `PATH`s then share cache entries. A name left
+out of `env.unkeyed` can still be read, but only marked `"key"`, and a `"key"` variable whose value
+holds this machine's folder is refused (exit 5).
 
 ## `[declaration]`
 
@@ -116,15 +123,17 @@ exactly one of `path`, `git` and `github`. What the plugin may have starts empty
 | `github` | string | none | `owner/repo`, the same as `git = "https://github.com/owner/repo"`. Needs `rev` |
 | `rev` | string | none | the tag or full commit the repository is pinned to |
 | `dir` | string | the repository root | the folder of the repository that holds the plugin, relative to its root: no `..`, no leading `/`, no empty part. Only that folder is stored and digested. Takes `git` or `github`, not `path` |
-| `proc.run` | list of strings | `[]` | the programs the plugin's targets may run. `proc.run`, `env.read` and `network` here are the workspace's cap |
+| `proc.run` | list of strings | `[]` | the programs the plugin's targets may run. `proc.run`, `env.read`, `env.unkeyed` and `network` here are the workspace's cap |
 | `env.read` | list of strings | `[]` | the environment variables the plugin's targets may read |
+| `env.unkeyed` | list of strings | `[]` | the variables the plugin's targets may mark `"unkeyed"`. Each must also be in this table's `env.read` |
 | `network` | boolean | `false` | whether the plugin's targets may reach the network |
 
 ```toml
 [plugins.gobin]
-path     = "plugins/gobin"
-proc.run = ["go"]
-env.read = ["HOME"]
+path        = "plugins/gobin"
+proc.run    = ["go"]
+env.read    = ["HOME"]
+env.unkeyed = ["HOME"]
 ```
 
 A git plugin is refused by every command that reads the workspace until `buildl plugins fetch` has pinned it. See

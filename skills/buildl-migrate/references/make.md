@@ -46,7 +46,7 @@ with a reason:
 | `$(VAR)` | a Lua `local` |
 | `$(MAKE) -C dir`, or a Makefile in another folder | `b.subdir("dir")` and a `build.lua` in that folder. Its targets are `//dir:name` in `deps` and in `parity.json` |
 | a recipe that downloads (`curl`, `wget`, `git clone`) | the same command with `network = true`, and the program in `proc.run` |
-| an environment variable the recipe reads (`$$TOKEN`) | `env = { "TOKEN" }` on the target and `env.read = ["TOKEN"]` in the ceiling |
+| an environment variable the recipe reads (`$$TOKEN`) | `env = { TOKEN = "key" }` on the target and `env.read = ["TOKEN"]` in the ceiling. A variable that only finds programs (`$$HOME`, `$$PATH`) is `"unkeyed"` instead, and is also in `env.unkeyed` |
 | `clean`, `deploy`, `release`, `tag`, `push` | the stop rule, last section |
 
 A recipe line is not a shell script. buildl runs a program with arguments and no shell. A line
@@ -80,7 +80,7 @@ local b = buildl
 
 b.target("data.json", {
   run = { "sh", "-c", 'curl -fsSL -H "Authorization: $TOKEN" https://example.com/data.json -o "$0"', "$out" },
-  env = { "TOKEN" },
+  env = { TOKEN = "key" },
   network = true,
 })
 

@@ -17,7 +17,7 @@ function module.binary(name, dir)
   buildl.target(name, {
     inputs = { "go.mod", buildl.sources(dir .. "/*.go") },
     run    = { "go", "build", "-o", "$out", "./" .. dir },
-    env    = { "HOME" },
+    env    = { HOME = "unkeyed" },
   })
 end
 
@@ -35,8 +35,9 @@ entry   = "main.lua"
 api     = 1
 
 [capabilities]
-proc.run = ["go"]
-env.read = ["HOME"]
+proc.run    = ["go"]
+env.read    = ["HOME"]
+env.unkeyed = ["HOME"]
 ```
 
 | Key | Says |
@@ -47,6 +48,7 @@ env.read = ["HOME"]
 | `api` | the plugin API version it was written for. This version supports `1` |
 | `proc.run` | the programs its targets may run |
 | `env.read` | the variables its targets may read |
+| `env.unkeyed` | the variables its targets may mark `"unkeyed"`. Each must also be in `env.read` |
 
 A manifest holding `fs.read`, `fs.write`, a module flag, `[capabilities.optional]` or `[limits]` is
 refused, naming the file. The manifest is its author's: an agent offers no edit to it.
@@ -57,19 +59,22 @@ refused, naming the file. The manifest is its author's: an agent offers no edit 
 
 ```toml
 [ceiling]
-proc.run = ["go"]
-env.read = ["HOME"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["go"]
+env.read    = ["HOME"]
+env.unkeyed = ["HOME"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 
 [plugins.gobin]
-path     = "plugins/gobin"
-proc.run = ["go"]
-env.read = ["HOME"]
+path        = "plugins/gobin"
+proc.run    = ["go"]
+env.read    = ["HOME"]
+env.unkeyed = ["HOME"]
 ```
 
 A target a plugin declares may have a program or variable only when its manifest, the workspace's
-cap and the ceiling all list it. A plugin's network use needs `network = true` in its cap. A cap
+cap and the ceiling all list it. Marking a variable `"unkeyed"` needs the name in `env.unkeyed` at
+each of the three. A plugin's network use needs `network = true` in its cap. A cap
 left out allows nothing.
 
 ## Using it
@@ -86,10 +91,11 @@ Give `git` (or `github = "owner/repo"`) and `rev`, a tag or a full commit, inste
 
 ```toml
 [plugins.gobin]
-git      = "https://example.com/plugins/gobin.git"
-rev      = "v0.1.0"
-proc.run = ["go"]
-env.read = ["HOME"]
+git         = "https://example.com/plugins/gobin.git"
+rev         = "v0.1.0"
+proc.run    = ["go"]
+env.read    = ["HOME"]
+env.unkeyed = ["HOME"]
 ```
 
 | Step | What happens |
@@ -112,6 +118,7 @@ Exit 4, with the plugin in brackets:
 
 ```text
 error: build.lua: //:bye (plugin gobin@0.1.0): environment variable HOME is outside plugin gobin@0.1.0 (env.read allows: nothing)
+error: build.lua: //:bye (plugin gobin@0.1.0): unkeyed variable HOME is outside plugin gobin@0.1.0 (env.unkeyed allows: nothing)
 error: build.lua: //:bye (plugin gobin@0.1.0): program go is outside plugin gobin@0.1.0 (proc.run allows: nothing)
 ```
 

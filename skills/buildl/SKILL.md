@@ -15,7 +15,8 @@ compatibility: Requires the buildl command on PATH.
 
 | Rule | Where it is set |
 |---|---|
-| a command sees only the environment variables its target lists in `env` | `build.lua` |
+| a command sees only the environment variables its target lists in `env`, each marked `"key"` or `"unkeyed"` | `build.lua` |
+| a variable may be marked `"unkeyed"` only if `env.unkeyed` lists it | `buildl.toml` `[ceiling]` |
 | every program a command runs must be in `proc.run`, except a program a dependency built | `buildl.toml` `[ceiling]` |
 | what a command reads and writes must lie within `fs.read` and `fs.write` | `buildl.toml` `[ceiling]` |
 | a plugin's targets are also held to the plugin's own `extension.toml` and the workspace's `[plugins.<name>]` cap | `extension.toml`, `buildl.toml` |
@@ -93,6 +94,8 @@ To allow it, buildl.toml's [ceiling] proc.run needs "sh". Should I add it?
 | a misspelt option key, `input` for `inputs` | exit 5, `unknown field 'input'`, with the line |
 | `$input` for `$in` | not a placeholder: the command gets the text `$input` unchanged |
 | a variable used but not listed in `env` | the command does not see it |
+| `env` written as a list of names | exit 5, `env must mark each variable "key" or "unkeyed"`. Write `env = { HOME = "unkeyed" }` |
+| `HOME` or `PATH` marked `"key"` | `plan` and `build` exit 5, `the variable HOME holds this machine's path …; mark it "unkeyed" if it only finds files`. Mark it `"unkeyed"` |
 | a program used but not in `proc.run` | `check` passes. `plan` and `build` exit 4 |
 | an `inputs` file that does not exist | `check` passes. `plan` and `build` exit 5, `input <file> does not exist` |
 | `print` in `build.lua` | `print` is removed. `error("text", 0)` shows a value |
@@ -134,22 +137,39 @@ out    = "out"
 config = 1
 
 [ceiling]
-proc.run = ["cat", "grep"]
-env.read = []
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["cat", "grep"]
+env.read    = []
+env.unkeyed = []
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 ```
 
-The ceiling lists every program the targets run, every variable they read, and always
-`fs.write = ["out", ".buildl"]`. Swap the target's `run` for the language:
+The ceiling lists every program the targets run, every variable they read, `env.unkeyed` for those
+that may be marked `"unkeyed"` (none here), and always `fs.write = ["out", ".buildl"]`. Swap the
+target's `run` for the language:
 
 | Language | `run`, and what else the target needs |
 |---|---|
-| Go | `{ "go", "build", "-o", "$out", "." }` with `env = { "HOME" }` |
-| Rust | `{ "cargo", "install", "--path", ".", "--root", "$out", "--target-dir", "tt", "--no-track" }` with `env = { "HOME", "PATH" }`. Without `PATH` the build stops with ``error: linker `cc` not found`` |
+| Go | `{ "go", "build", "-o", "$out", "." }` with `env = { HOME = "unkeyed" }` |
+| Rust | `{ "cargo", "install", "--path", ".", "--root", "$out", "--target-dir", "tt", "--no-track" }` with `env = { HOME = "unkeyed", PATH = "unkeyed" }`. Without `PATH` the build stops with ``error: linker `cc` not found`` |
 | Python | `{ "python3", "-m", "zipapp", "app", "-o", "$out" }` |
 
 Go, Rust and Python have one target over all their sources. Do not make one target per file.
+
+`HOME` and `PATH` are marked `"unkeyed"` above, and the ceiling must allow that. A variable that
+only helps a program find files (`HOME`, `PATH`) is `"unkeyed"`: its value reaches the command, but
+only its name enters the action key, and it is not sent to a remote server. Machines with different
+home folders or `PATH`s then share cache entries. A variable whose value changes what the command
+makes, such as `RUSTFLAGS`, is `"key"`: its value enters the key. buildl refuses a `"key"`
+variable whose value holds this machine's folder (the home, the workspace or the sandbox folder),
+exit 5, and the error offers `"unkeyed"` for a variable that only finds files. In the ceiling,
+`env.unkeyed` names the variables that may be unkeyed; each must also be in `env.read`.
+
+```toml
+[ceiling]
+env.read    = ["HOME", "PATH", "RUSTFLAGS"]
+env.unkeyed = ["HOME", "PATH"]
+```
 
 C and C++ are the exception: the `c` plugin compiles each source to its own object, so a change to
 one source or header rebuilds only the objects that read it. Do not write the `.o` targets by hand:
@@ -158,17 +178,19 @@ plugin in `buildl.toml` and run `buildl plugins fetch` once:
 
 ```toml
 [ceiling]
-proc.run = ["cc"]
-env.read = ["PATH"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["cc"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 
 [plugins.c]
-github   = "airsstack/buildl"
-rev      = "plugin-c-v0.1.0"
-dir      = "plugins/c"
-proc.run = ["cc"]
-env.read = ["PATH"]
+github      = "airsstack/buildl"
+rev         = "plugin-c-v0.1.0"
+dir         = "plugins/c"
+proc.run    = ["cc"]
+env.read    = ["PATH"]
+env.unkeyed = ["PATH"]
 ```
 
 Then one call declares the program:

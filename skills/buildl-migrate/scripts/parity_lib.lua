@@ -428,12 +428,14 @@ local function test_rows(input, out, left_to_tests)
     end
 end
 
--- Check 6: the ceiling grants no program or variable the old build lacked, and no target
+-- Check 6: the ceiling grants no program, variable or unkeyed variable the old build lacked
+-- (`old.env` is the list of variables for both `env.read` and `env.unkeyed`), and no target
 -- reaches the network unless the old build did.
 local function permission_rows(input, out)
     local pairs_checked = {
         { "proc.run", input.config.old.programs },
         { "env.read", input.config.old.env },
+        { "env.unkeyed", input.config.old.env },
     }
     for _, entry in ipairs(pairs_checked) do
         if input.ceiling[entry[1]] == nil then
@@ -468,13 +470,13 @@ local function permission_rows(input, out)
     end
 end
 
--- Returns the parity rows, each `{ check, subject, verdict, detail }`, for checks 1 to 6 and
--- 4b. `input` holds: `config` (a validated parity.json), `recipes` (the old build's recipe
--- names), `graph` (the decoded `buildl graph`), `ceiling` (from `M.ceiling`), `hashes` (per
--- `outputs` entry, `{ old1, old2, new }` with `nil` for a missing file) and `status` (exit
--- codes `old1_build`, `old2_build`, `new_build`, `old1_test`, `new_test`; `nil` for a missing
--- status file, `false` for one that holds no number). Raises when `ceiling` lacks `proc.run`
--- or `env.read`. Verdicts: `PASS`, `FAIL`, `NOT REPEATABLE`, `JUDGED BY TESTS`, `NO TESTS`.
+-- Returns the parity rows, each `{ check, subject, verdict, detail }`, for checks 1 to 6 and 4b.
+-- `input` holds: `config` (a validated parity.json), `recipes` (the old build's recipe names),
+-- `graph` (the decoded `buildl graph`), `ceiling` (from `M.ceiling`), `hashes` (per `outputs`
+-- entry, `{ old1, old2, new }` with `nil` for a missing file) and `status` (exit codes
+-- `old1_build`, `old2_build`, `new_build`, `old1_test`, `new_test`; `nil` for a missing status
+-- file, `false` for one that holds no number). Raises when `ceiling` lacks `proc.run`, `env.read`
+-- or `env.unkeyed`. Verdicts: `PASS`, `FAIL`, `NOT REPEATABLE`, `JUDGED BY TESTS`, `NO TESTS`.
 function M.rows(input)
     local out = {}
     recipe_rows(input, out)
