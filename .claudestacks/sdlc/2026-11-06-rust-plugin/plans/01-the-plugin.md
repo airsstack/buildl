@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-08
 built-on: fef1a1baa97b
 ---
@@ -91,7 +91,7 @@ target `name` running `sh -c` with `cd <folder> && cargo build --locked <--bin n
 cargo wrote (the copy tries one then the other), whatever the output is named; for `test`, a
 test `name` running `cargo test --locked --profile <profile> --target-dir target <args>` in the
 folder. `<folder>` is `buildl.folder()`, and nothing at the root (spec P8). Every declaration has
-`inputs` = every file `buildl.sources("**/*")` lists but those under `target/`, `deps` =
+`inputs` = every file `buildl.sources("**/*")` lists but those under `target/` and `.git/` (amended in execution, see Deviations), `deps` =
 `options.deps`, `env = { HOME = "unkeyed", PATH = "unkeyed" }`, `network = true`, `outputs = {
 options.output }` for a build. Before declaring, it raises `no Cargo.lock beside Cargo.toml; run
 cargo generate-lockfile` or `no Cargo.toml in <folder>` (spec §4, P5). With `version_probe` it
@@ -161,3 +161,21 @@ name.
 
 - `cargo make plugins` passes for `plugins/c` and `plugins/rust`.
 - `cargo make dod` and `cargo deny check` pass.
+
+## Review findings
+
+- 🟡 graph.lua inputs took `.git/**` for a crate at its git root (keys split per clone) — fixed in 8d178eb: `without_generated` leaves out `target/` and `.git/`; `inputs_leave_out_target` checks `.git/HEAD` out, `.github/ci.yml` in. `cargo make plugins` → c 73 passed, rust 24 passed.
+- 🟡 options.lua accepted `output` for `rust.test` and dropped it — fixed in 8d178eb: refused with `the option output is refused`; test `output_is_refused_for_test`.
+- 🔵 api.lua `features` used a looser list check than options.lua — fixed in 8d178eb (`options.is_list`).
+- 🔵 api.lua `shared_name` did not check `name` — fixed in 8d178eb (`rust.shared_name: the name must be a string`).
+- 🔵 no test for the `no host line` error — fixed in 8d178eb (`platform_refuses_output_without_a_host_line`).
+- 🔵 api.lua:11 comment (tail call) — fixed in 8d178eb.
+- 🔵 README: subshell `(cd <folder> && …)`, version-probe reason, duplicate line — fixed in 8d178eb.
+
+## Deviations
+
+- 2026-11-08 — Task 1 done inline by the orchestrator (a 15-line Makefile edit), not by a coder.
+- 2026-11-08 — `cargo make dod` and `cargo deny check` ran once after Task 1 and once at the end of the chain, not before each commit: the changes are Lua, TOML and Markdown, and no Rust test reads `plugins/` (grep of `crates/` for `plugins/c`: test fixtures only). Both green: `dod exit 0`; `advisories ok, bans ok, licenses ok, sources ok`.
+- 2026-11-08 — Task 3 inputs also leave out `.git/` (review finding above); the Task 3 text is amended.
+- 2026-11-08 — `rust.platform` also raises `rust.platform: the output of rustc -vV has no host line`, and `rust.shared_name` raises on a non-string name; both are listed in the README and the book chapter.
+- 2026-11-08 — the manifest has no network key (`crates/buildl-lua/src/plugin/manifest.rs` has none); `network = true` goes in the workspace's `[plugins.rust]` cap.

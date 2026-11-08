@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-08
 depends-on: [02]
 built-on: fef1a1baa97b
@@ -75,3 +75,16 @@ it where they name the c plugin; `CHANGELOG.md` notes it under Unreleased with i
 ## Proof
 
 - `cargo make book-build` and `cargo make skills` pass.
+
+## Review findings
+
+- 🟡 ch08-05 showed `cd <folder> && …` without the subshell — fixed.
+- 🟡 ch08-05 and ch11-09:79 blamed rustup for unseen toolchain updates; the cause is that each target runs `sh` — fixed.
+- 🟡 ch08-05 traceback captured before the plan 01 fix round (line numbers moved) — re-captured against HEAD.
+- 🔵 ch08-05 mermaid inputs node and errors table (`.git/`, `shared_name`), cross-compile reason — fixed.
+- 🔵 ch02-00:164 "same steps" — fixed. skills/buildl-migrate/SKILL.md:279 output path, skills/buildl/SKILL.md:215 `.git/` — fixed. CHANGELOG accuracy — fixed.
+- 🔵 skills/buildl/references/lua-api.md:79 shows a hand-written cargo target as an `env` example — declined: it illustrates env marks, not how to build Rust.
+
+## Deviations
+
+- 2026-11-08 — also updated, as they described the old examples: `book/src/ch02-00-first-project.md`, `ch03-04-many-directories.md`, `ch05-02-early-cutoff.md` (mermaid label and re-captured output), `ch08-00-plugins.md` (chapter list), and `examples/README.md`.
