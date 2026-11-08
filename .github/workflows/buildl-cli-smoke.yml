@@ -175,9 +175,12 @@ jobs:
 
       # `check` and `doctor` read build files and the ceiling and run no
       # action, so these pass with no compiler or language toolchain installed.
+      # Examples that load a plugin fetched from git (c, cpp, rust, rust-workspace,
+      # rust-ffi, polyglot) are left out: they need `buildl plugins fetch` at a tag
+      # published with this release. The examples job in ci.yml checks them.
       - name: Every example checks
         run: |
-          for example in go go-discovery plugins polyglot python rust remote; do
+          for example in go go-discovery plugins python remote; do
             echo "::group::examples/$example"
             (cd "examples/$example" && "$BUILDL" check)
             echo "::endgroup::"
@@ -185,7 +188,7 @@ jobs:
 
       - name: Every example's doctor passes
         run: |
-          for example in go go-discovery plugins polyglot python rust remote; do
+          for example in go go-discovery plugins python remote; do
             echo "::group::examples/$example"
             (cd "examples/$example" && "$BUILDL" doctor)
             echo "::endgroup::"
