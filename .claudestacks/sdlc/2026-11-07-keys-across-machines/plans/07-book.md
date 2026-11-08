@@ -2,7 +2,7 @@
 status: approved
 created: 2026-11-07
 depends-on: [06]
-built-on: 55ab2847b726
+built-on: f3bc0d9fa2e7
 ---
 
 # Book Implementation Plan
@@ -25,7 +25,7 @@ plans built (spec §8, intent constraint).
 ```
 book/src/appendix-02-buildl-toml.md   — env.unkeyed in [ceiling] and [plugins.<name>]
 book/src/appendix-03-lua-api.md       — the env row (:92): a table of marks
-book/src/appendix-04-exit-codes.md    — E1-E9 under 4 and 5
+book/src/appendix-04-exit-codes.md    — E1-E10 under 4 and 5
 book/src/ch01-03-what-did-it-do.md, ch02-00-first-project.md, ch03-01-targets-and-labels.md (:72),
 ch03-04-many-directories.md           — the map form in examples and tables
 book/src/ch04-01-nothing-is-ambient.md, ch04-02-the-ceiling.md, ch04-03-approvers.md — the two listing lines; env.unkeyed
@@ -47,7 +47,7 @@ book/src/ch11-09-what-it-promises.md  — the timeout row: in the remote key, no
 
 **Change:** `env.unkeyed` rows with type, default and meaning for `[ceiling]` and
 `[plugins.<name>]`; the `env` row of `target`, `test`, `discover` becomes "table from name to
-`"key"` or `"unkeyed"`", with the mark table of spec §2; E1-E9 listed under exit 4 and 5, each
+`"key"` or `"unkeyed"`", with the mark table of spec §2; E1-E10 listed under exit 4 and 5, each
 with its message captured from a run.
 
 **Proof:** `cargo make book-build` passes; `grep -n 'env.unkeyed' book/src/appendix-02-buildl-toml.md`

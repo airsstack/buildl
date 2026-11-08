@@ -83,8 +83,8 @@ fn doctor_under_interactive_reads_the_remembered_approvals() {
     );
     chain.replace_line(
         "build.lua",
-        "  env    = { \"BUILDL_FIXTURE_FLAVOR\" },",
-        "  env    = { \"BUILDL_FIXTURE_FLAVOR\", \"X\" },",
+        "  env    = { BUILDL_FIXTURE_FLAVOR = \"key\" },",
+        "  env    = { BUILDL_FIXTURE_FLAVOR = \"key\", X = \"key\" },",
     );
 
     let doctor = chain.open().doctor().unwrap().0;

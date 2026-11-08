@@ -16,11 +16,13 @@ use serde::{Serialize, Serializer};
 
 use crate::types::{EnvName, Label, PluginChain, Program, Want, WantedSet};
 
-/// What a want is called in a line of attribution.
+/// What a want is called in a line of attribution; an unkeyed variable is told from a keyed one
+/// of the same name by `(unkeyed)` after it.
 fn name_of(want: &Want) -> String {
     match want {
         Want::Program(program) => program.to_string(),
         Want::Env(name) => name.to_string(),
+        Want::Unkeyed(name) => format!("{name} (unkeyed)"),
         Want::Read(path) => path.to_string(),
         Want::Write(directory) => directory.to_string(),
         Want::Network(label) => label.to_string(),
@@ -38,9 +40,10 @@ fn declared_by(chain: &PluginChain, label: &Label) -> String {
 /// For each want, the plugin chains whose targets want it, each with the lowest-labelled such
 /// target.
 ///
-/// Only programs, environment variables and the network are ever attributed; a want that only
-/// targets written in a build file want has no entry. Held in the order of [`Want`] and then of
-/// the chain, so that nothing about it depends on the order targets were declared in.
+/// Only programs, environment variables (either mark) and the network are ever attributed; a
+/// want that only targets written in a build file want has no entry. Held in the order of
+/// [`Want`] and then of the chain, so that nothing about it depends on the order targets were
+/// declared in.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Attribution(BTreeMap<Want, BTreeMap<PluginChain, Label>>);
 
@@ -78,6 +81,7 @@ impl Attribution {
                 .filter(|(want, _)| match want {
                     Want::Program(program) => wanted.programs.contains(program),
                     Want::Env(name) => wanted.env.contains(name),
+                    Want::Unkeyed(name) => wanted.unkeyed.contains(name),
                     Want::Network(label) => wanted.network.contains(label),
                     Want::Read(_) | Want::Write(_) => false,
                 })
@@ -118,10 +122,10 @@ impl Attribution {
 /// One line for each chain of each attributed want, such as
 /// `  go: declared by plugin go@1.2.0 for //services/api:server`.
 ///
-/// Wants come in the order the wanted set shows them — programs, variables, network — and the
-/// chains of one want in chain order. A chain of several plugins reads outermost first, as in
-/// `ourgo@0.1.0 > go@1.2.0`. Each line is indented two spaces; there is no trailing newline, and
-/// an empty attribution renders as nothing.
+/// Wants come in the order the wanted set shows them — programs, variables, unkeyed variables,
+/// network — and the chains of one want in chain order. A chain of several plugins reads
+/// outermost first, as in `ourgo@0.1.0 > go@1.2.0`. Each line is indented two spaces; there is
+/// no trailing newline, and an empty attribution renders as nothing.
 impl fmt::Display for Attribution {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut first = true;
@@ -145,17 +149,18 @@ struct Site<'a> {
     target: &'a Label,
 }
 
-/// Attribution as it is written to JSON: the chains behind each program, variable and network
-/// target, each under its name. The fields are in alphabetical order, which is the order the
-/// canonical JSON writes them in.
+/// Attribution as it is written to JSON: the chains behind each program, variable, unkeyed
+/// variable and network target, each under its name. The fields are in alphabetical order, which
+/// is the order the canonical JSON writes them in.
 #[derive(Serialize)]
 struct AttributionView<'a> {
     env: BTreeMap<&'a EnvName, Vec<Site<'a>>>,
     network: BTreeMap<&'a Label, Vec<Site<'a>>>,
     programs: BTreeMap<&'a Program, Vec<Site<'a>>>,
+    unkeyed: BTreeMap<&'a EnvName, Vec<Site<'a>>>,
 }
 
-/// Written under the three kinds of want it holds, each want listing its chains in chain order.
+/// Written under the four kinds of want it holds, each want listing its chains in chain order.
 /// Read and write wants are never attributed, so they have no place in it.
 impl Serialize for Attribution {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
@@ -163,6 +168,7 @@ impl Serialize for Attribution {
             env: BTreeMap::new(),
             network: BTreeMap::new(),
             programs: BTreeMap::new(),
+            unkeyed: BTreeMap::new(),
         };
         for (want, chains) in &self.0 {
             let sites = chains
@@ -175,6 +181,9 @@ impl Serialize for Attribution {
                 }
                 Want::Env(name) => {
                     view.env.insert(name, sites);
+                }
+                Want::Unkeyed(name) => {
+                    view.unkeyed.insert(name, sites);
                 }
                 Want::Network(label) => {
                     view.network.insert(label, sites);
@@ -207,6 +216,7 @@ mod tests {
             plugins
                 .iter()
                 .map(|(name, version)| PluginRef {
+                    unkeyed: BTreeSet::new(),
                     name: PluginName::parse(*name).unwrap(),
                     version: PluginVersion::parse(*version).unwrap(),
                     run: BTreeSet::new(),
@@ -340,23 +350,63 @@ mod tests {
     }
 
     #[test]
+    fn within_holds_an_unkeyed_want_by_the_unkeyed_names() {
+        let go = chain(&[("go", "1.2.0")]);
+        let home = EnvName::parse("HOME").unwrap();
+        let mut attribution = Attribution::default();
+        attribution.record(Want::Unkeyed(home.clone()), &go, &label("//:a"));
+        let unkeyed = WantedSet {
+            unkeyed: BTreeSet::from([home.clone()]),
+            ..WantedSet::default()
+        };
+        let keyed = WantedSet {
+            env: BTreeSet::from([home]),
+            ..WantedSet::default()
+        };
+
+        assert_eq!(attribution.within(&unkeyed), attribution);
+        assert!(attribution.within(&keyed).is_empty());
+    }
+
+    #[test]
+    fn a_key_mark_and_an_unkeyed_mark_read_differently() {
+        let go = chain(&[("go", "1.2.0")]);
+        let mut attribution = Attribution::default();
+        attribution.record(env("HOME"), &go, &label("//:a"));
+        attribution.record(
+            Want::Unkeyed(EnvName::parse("HOME").unwrap()),
+            &go,
+            &label("//:a"),
+        );
+        assert_eq!(
+            attribution.to_string(),
+            "  HOME: declared by plugin go@1.2.0 for //:a\n  \
+             HOME (unkeyed): declared by plugin go@1.2.0 for //:a"
+        );
+    }
+
+    #[test]
     fn it_is_written_under_the_kind_of_want() {
         let go = chain(&[("go", "1.2.0")]);
         let mut attribution = Attribution::default();
         attribution.record(program("go"), &go, &label("//:a"));
         attribution.record(env("GOPATH"), &go, &label("//:a"));
+        attribution.record(
+            Want::Unkeyed(EnvName::parse("HOME").unwrap()),
+            &go,
+            &label("//:a"),
+        );
         attribution.record(Want::Network(label("//:a")), &go, &label("//:a"));
-        let one =
-            r#"[{"chain":[{"env":[],"name":"go","run":[],"version":"1.2.0"}],"target":"//:a"}]"#;
+        let one = r#"[{"chain":[{"env":[],"name":"go","run":[],"unkeyed":[],"version":"1.2.0"}],"target":"//:a"}]"#;
         assert_eq!(
             canonical::to_string(&attribution).unwrap(),
             format!(
-                r#"{{"env":{{"GOPATH":{one}}},"network":{{"//:a":{one}}},"programs":{{"go":{one}}}}}"#
+                r#"{{"env":{{"GOPATH":{one}}},"network":{{"//:a":{one}}},"programs":{{"go":{one}}},"unkeyed":{{"HOME":{one}}}}}"#
             )
         );
         assert_eq!(
             canonical::to_string(&Attribution::default()).unwrap(),
-            r#"{"env":{},"network":{},"programs":{}}"#
+            r#"{"env":{},"network":{},"programs":{},"unkeyed":{}}"#
         );
     }
 }

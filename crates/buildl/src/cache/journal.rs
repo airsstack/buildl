@@ -143,7 +143,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::fs::{self, File};
 
     use buildl_core::{
@@ -157,8 +157,8 @@ mod tests {
     const LINE_A: &str = concat!(
         r#"{"label":"//:a","row":{"key":{"components":{"deps":[],"own":{"command":["cc"],"#,
         r#""env":{},"inputs":[],"network":"Sealed","output_source":"Command","outputs":["a"],"platform":"linux/x86_64","#,
-        r#""settings":{},"tool":null}},"#,
-        r#""digest":"06ff22740d6f5f789d0a8f80e0ff1cc7a5177a3747ab772ac1cb4a409b6db82f"},"#,
+        r#""settings":{},"tool":null,"unkeyed":[]}},"#,
+        r#""digest":"3bb83b33a8d1aac2e129d733d4daf4a8e828b95cf0979b399dc77fd44cb5799f"},"#,
         r#""outputs":["ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb"],"#,
         r#""stderr":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855","#,
         r#""stdout":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}}"#,
@@ -174,6 +174,7 @@ mod tests {
                 inputs: Vec::new(),
                 outputs: vec![OutputName::parse(name).unwrap()],
                 env: BTreeMap::new(),
+                unkeyed: BTreeSet::new(),
                 tool: None,
                 settings: BTreeMap::new(),
                 network: NetworkAccess::Sealed,

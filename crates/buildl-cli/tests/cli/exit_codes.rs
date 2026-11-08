@@ -658,7 +658,7 @@ fn a_pinned_variable_exits_5() {
         ("buildl.toml", &manifest("")),
         (
             "build.lua",
-            "buildl.target(\"app\", { inputs = { \"a.txt\" }, env = { \"TZ\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+            "buildl.target(\"app\", { inputs = { \"a.txt\" }, env = { TZ = \"key\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
         ),
         ("a.txt", "a\n"),
     ]);
@@ -679,6 +679,256 @@ fn a_pinned_variable_exits_5() {
     assert_eq!(code(&run(&root, &["plan"], &[])), 0);
 }
 
+/// What `plan` ends with for a workspace whose one target is declared with `env`.
+fn plan_with_env(env: &str) -> (i32, String) {
+    let build = format!(
+        "buildl.target(\"app\", {{ inputs = {{ \"a.txt\" }}, env = {env}, run = {{ \"cp\", \"$in\", \"$out\" }} }})\n"
+    );
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        ("build.lua", &build),
+        ("a.txt", "a\n"),
+    ]);
+    failed(&root, &["plan"])
+}
+
+#[test]
+fn env_list_exits_5() {
+    assert_eq!(
+        plan_with_env("{ \"HOME\" }"),
+        (
+            5,
+            "error: build.lua: //:app: env must mark each variable \"key\" or \"unkeyed\", such as env = { HOME = \"unkeyed\" }\n"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn env_bad_mark_exits_5() {
+    assert_eq!(
+        plan_with_env("{ HOME = \"pass\" }"),
+        (
+            5,
+            "error: build.lua: //:app: env HOME is marked \"pass\"; mark it \"key\" or \"unkeyed\"\n"
+                .to_owned()
+        )
+    );
+    assert_eq!(
+        plan_with_env("{ HOME = true }"),
+        (
+            5,
+            "error: build.lua: //:app: env HOME is marked true; mark it \"key\" or \"unkeyed\"\n"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn env_bad_name_exits_5() {
+    let (code, message) = plan_with_env("{ [\"A-B\"] = \"key\" }");
+    assert_eq!(code, 5);
+    assert!(
+        message.starts_with("error: build.lua: declaration #0: invalid env:")
+            && message.contains("\"A-B\""),
+        "{message}"
+    );
+}
+
+#[test]
+fn unkeyed_outside_read_exits_5() {
+    let (_dir, root) = workspace(&[
+        (
+            "buildl.toml",
+            "[ceiling]\nenv.read = [\"PATH\"]\nenv.unkeyed = [\"HOME\"]\n",
+        ),
+        ("build.lua", ""),
+    ]);
+    assert_eq!(
+        failed(&root, &["check"]),
+        (
+            5,
+            "error: buildl.toml: ceiling env.unkeyed lists HOME, which env.read does not\n"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn unkeyed_outside_the_ceiling_exits_4() {
+    let (_dir, root) = workspace(&[
+        (
+            "buildl.toml",
+            "[ceiling]\nproc.run = [\"cp\"]\nenv.read = [\"HOME\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nstrategy = \"bare\"\n",
+        ),
+        (
+            "build.lua",
+            "buildl.target(\"app\", { inputs = { \"a.txt\" }, env = { HOME = \"unkeyed\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+        ),
+        ("a.txt", "a\n"),
+    ]);
+    assert_eq!(
+        failed(&root, &["plan"]),
+        (
+            4,
+            "error: build.lua: //:app: unkeyed variable HOME is outside the ceiling (env.unkeyed allows: nothing)\n"
+                .to_owned()
+        )
+    );
+}
+
+#[test]
+fn machine_path_in_command_exits_5() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["sh"])),
+        (
+            "build.lua",
+            "buildl.target(\"note\", { run = { \"sh\", \"-c\", \"echo /home/alice/x > $out\" } })\n",
+        ),
+    ]);
+    let output = run(&root, &["check"], &[("HOME", OsStr::new("/home/alice"))]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 5);
+    assert_eq!(
+        stderr(&output),
+        "error: build.lua: //:note: the command holds this machine's path /home/alice; it would give the target another key on every machine\n"
+    );
+    assert_eq!(code(&run(&root, &["check"], &[])), 0, "no HOME, no refusal");
+}
+
+/// Runs `command` in a workspace whose one target runs a command holding the home folder, and
+/// asserts it exits 5 with the refusal.
+fn assert_refuses_machine_path(command: &[&str]) {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["sh"])),
+        (
+            "build.lua",
+            "buildl.target(\"note\", { run = { \"sh\", \"-c\", \"echo /home/alice/x > $out\" } })\n",
+        ),
+    ]);
+    let output = run(&root, command, &[("HOME", OsStr::new("/home/alice"))]);
+    assert_eq!(code(&output), 5, "{command:?}");
+    assert_eq!(
+        stderr(&output),
+        "error: build.lua: //:note: the command holds this machine's path /home/alice; it would give the target another key on every machine\n",
+        "{command:?}"
+    );
+}
+
+#[test]
+fn machine_path_in_command_exits_5_for_graph() {
+    assert_refuses_machine_path(&["graph"]);
+}
+
+#[test]
+fn machine_path_in_command_exits_5_for_query() {
+    assert_refuses_machine_path(&["query", "deps(//:note)"]);
+}
+
+#[test]
+fn machine_path_in_command_exits_5_for_doctor() {
+    assert_refuses_machine_path(&["doctor"]);
+}
+
+#[test]
+fn machine_path_in_command_exits_5_for_gc() {
+    assert_refuses_machine_path(&["gc"]);
+}
+
+#[test]
+fn machine_path_in_variable_exits_5() {
+    let (_dir, root) = workspace(&[
+        (
+            "buildl.toml",
+            "[ceiling]\nproc.run = [\"cp\"]\nenv.read = [\"RUSTFLAGS\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nstrategy = \"bare\"\n",
+        ),
+        (
+            "build.lua",
+            "buildl.target(\"app\", { inputs = { \"a.txt\" }, env = { RUSTFLAGS = \"key\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+        ),
+        ("a.txt", "a\n"),
+    ]);
+    let output = run(
+        &root,
+        &["plan"],
+        &[
+            ("HOME", OsStr::new("/home/alice")),
+            ("RUSTFLAGS", OsStr::new("-L /home/alice/lib")),
+        ],
+    );
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 5);
+    assert_eq!(
+        stderr(&output),
+        "error: build.lua: //:app: the variable RUSTFLAGS holds this machine's path /home/alice; mark it \"unkeyed\" if it only finds files\n"
+    );
+}
+
+#[test]
+fn machine_path_in_setting_exits_5() {
+    let (_dir, root) = workspace(&[
+        (
+            "buildl.toml",
+            "[ceiling]\nproc.run = [\"cp\"]\nfs.read = [\".\"]\nfs.write = [\"out\", \".buildl\"]\n\n[execution]\nstrategy = \"bare\"\n",
+        ),
+        (
+            "build.lua",
+            "buildl.option(\"prefix\", { default = \"/opt\" })\nbuildl.target(\"app\", { inputs = { \"a.txt\" }, run = { \"cp\", \"$in\", \"$out\", \"$opt:prefix\" } })\n",
+        ),
+        ("a.txt", "a\n"),
+    ]);
+    let output = run(
+        &root,
+        &["plan", "--set", "prefix=/home/alice/opt"],
+        &[("HOME", OsStr::new("/home/alice"))],
+    );
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 5);
+    assert_eq!(
+        stderr(&output),
+        "error: build.lua: //:app: the setting prefix holds this machine's path /home/alice; it would give the target another key on every machine\n"
+    );
+}
+
+#[test]
+fn machine_path_after_a_joined_flag_exits_5() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["sh"])),
+        (
+            "build.lua",
+            "buildl.target(\"note\", { run = { \"sh\", \"-I/home/alice/include\" } })\n",
+        ),
+    ]);
+    let output = run(&root, &["check"], &[("HOME", OsStr::new("/home/alice"))]);
+    assert_eq!(stdout(&output), "");
+    assert_eq!(code(&output), 5);
+    assert_eq!(
+        stderr(&output),
+        "error: build.lua: //:note: the command holds this machine's path /home/alice; it would give the target another key on every machine\n"
+    );
+}
+
+#[test]
+fn machine_path_in_discovery_exits_5() {
+    let (_dir, root) = workspace(&[
+        ("buildl.toml", &manifest(&["cp"])),
+        (
+            "build.lua",
+            "buildl.discover(\"pkgs\", { inputs = { \"list\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+        ),
+    ]);
+    write(&root, "list", &format!("{}/src\n", root.display()));
+    let output = run(&root, &["build"], &[]);
+    assert_eq!(code(&output), 5);
+    assert_eq!(
+        stderr(&output),
+        format!(
+            "1 built\nerror: build.lua: //:pkgs: its output holds this machine's path {}\n",
+            root.display()
+        )
+    );
+}
+
 #[test]
 fn a_value_that_is_not_unicode_fails_the_plan() {
     let (_dir, root) = workspace(&[
@@ -688,7 +938,7 @@ fn a_value_that_is_not_unicode_fails_the_plan() {
         ),
         (
             "build.lua",
-            "buildl.target(\"flavor\", { inputs = { \"a.txt\" }, env = { \"BUILDL_FIXTURE_FLAVOR\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+            "buildl.target(\"flavor\", { inputs = { \"a.txt\" }, env = { BUILDL_FIXTURE_FLAVOR = \"key\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
         ),
         ("a.txt", "a\n"),
     ]);

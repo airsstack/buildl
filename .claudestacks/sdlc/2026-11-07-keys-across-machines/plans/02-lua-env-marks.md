@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-07
 depends-on: [01]
 built-on: 55ab2847b726
@@ -9,8 +9,9 @@ built-on: 55ab2847b726
 
 **Goal:** A build file declares every variable with an explicit `key` or `unkeyed` mark.
 
-**Architecture:** As names are today, marks are staged by Lua and checked by the core, so every
-refusal carries the core's `build.lua: //:app:` prefix (`crates/buildl-core/src/load/traversal.rs:276-278`)
+**Architecture:** As names are today, marks are staged by Lua and checked by the core, so E1 and E2
+carry the core's `build.lua: //:app:` prefix (`crates/buildl-core/src/load/traversal.rs:276-278`),
+and E9 keeps the existing name refusal's `build.lua: declaration #0: invalid env:` form,
 rather than a Lua-side `line 1: buildl.target 'app':` one
 (`crates/buildl-lua/tests/flows/failures.rs:130-131`). `buildl-lua` reads `env` on `target`,
 `test` and `discover` (`crates/buildl-lua/src/primitives.rs:24-34`, today `:77`) into staged entries:
@@ -84,3 +85,17 @@ their value), so the gate is green at the commit.
 
 - `cargo make dod` and `cargo deny check` pass.
 - `git grep -n -E "env *= *\{ *(\\\\?[\"']|\[)" -- crates` prints nothing (the list form in Lua files and in Rust strings, `"`, `\"` or `'`).
+
+## Review findings
+
+One reviewer pass (`09-reviewer-p02`), one fix round (`10-coder-p02-fix`):
+
+- 🟡 list entries in `env` counted 0 bytes against the staging budget — fixed: each entry holding no text is charged a fixed record size; `staging::tests::charges_every_env_entry_that_holds_no_text` and flow `failures::an_env_list_shared_by_many_targets_reaches_the_staging_limit` red, then green.
+- 🟡 a non-UTF-8 `env` key was refused as "must be a string" — fixed: `StagedEnv::NotUtf8Name`, refused as "must be valid UTF-8"; core and Lua tests.
+- 🔵 "an userdata" → "a userdata"; the name-order test uses 26 names; the one-helper `flows/staged_env.rs` folded into `flows/common.rs` — fixed.
+- 🟡 the Architecture premise that every refusal carries the `//:app:` prefix — amended in this plan (E9 keeps the existing `declaration #0: invalid env:` form).
+
+## Deviations
+
+- 2026-11-07 — files beyond the list: `crates/buildl-cli/src/exit.rs` (E1, E2 → exit 5), `buildl-core/tests/flows/{discovery,doctor,plan,main}.rs`, `buildl-lua/src/{staging,values}.rs`.
+- 2026-11-07 — Lua stages entries sorted (marked names in name order, then list entries, then non-name keys), so the first refusal does not hang on `pairs` order.

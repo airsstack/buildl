@@ -39,6 +39,8 @@ a machine reaches a key. The remote timeout stays in the remote key, and the boo
 | P18 | The commands that load the build files | `crates/buildl-cli/src/main.rs:13-20` (the command table: `check`, `graph`, `query`, `plan`, `build`, `test`, `verify`, `watch`, `doctor`) |
 | P19 | Today's discovery outputs and build files hold no machine folder | probe 2026-11-07: `cc -MM -MT obj -Iinclude lib/util.c` in `examples/c` prints `obj: lib/util.c include/util.h` (the c plugin passes the relative path, `plugins/c/graph.lua:150-155`); `cc -dumpmachine` prints `arm64-apple-darwin25.3.0` (`plugins/c/api.lua:90`); `go list -json=ImportPath ./...` in `examples/go-discovery` prints `{"ImportPath": "example.com/discovery/greet"}` and `…/mathx`; a search of `examples/*.lua` and `plugins/*.lua` (tests left out) for `"/Users`, `"/home`, `"/tmp`, `"/private`, `"/var` finds nothing (exit 1), while the same search for `"sh"` in `plugins/c/graph.lua` finds 2 |
 | P20 | A result is stored before its cache row, and failures are never cached | `CLAUDE.md`, "Core architecture": "cas first, cache row after, log always — failures are never cached" |
+| P22 | A folder joined to a flag, and a folder in a setting, pass the check as first built | probe 2026-11-08, this chain's binary after plans 01-04, `HOME=/Users/hiraq`: `run = { "echo", "-I", "$HOME/include" }` gives `error: build.lua: //:split: the command holds this machine's path /Users/hiraq; …`, exit 5; `run = { "echo", "-I$HOME/include" }` gives `ok: 3 declarations in 1 build file`, exit 0; `run = { "echo", "$opt:prefix" }` with `buildl plan --set prefix=$HOME/opt` gives `2 to run, 0 conditional, 0 clean`, exit 0 |
+| P23 | The settings a command names are in its key, with their values | `crates/buildl-core/src/plan/components.rs:136` (`settings: referenced(&node.run, &gathered.settings)`); a setting's default comes from `buildl.option` and `--set` overrides it for one run (`book/src/ch03-05-build-settings.md:7-26`) |
 | P21 | The test port stub cannot model two machines | `crates/buildl-core/src/ports/port_set.rs:156` is a `#[cfg(test)]` stub whose `env` returns `None` for every name; `Host` has only `platform` and `env` (`crates/buildl-core/src/ports/host.rs:29`) |
 
 ## 2. Declaring a variable
@@ -169,6 +171,7 @@ buildl refuses a target, and a discovery output, that holds one of this machine'
 |---|---|
 | each word of a command, placeholders unexpanded | by every command that loads the build files (P18), before anything runs |
 | the value of each `key` variable | when the key is gathered |
+| the value of each setting a command names, its default or its `--set` value (P23) | when the key is gathered |
 | each discovery target's output | when the second pass reads it, whether it was just run, served from the local cache or fetched |
 
 - Inputs and outputs are not checked: they are workspace-relative by type (P12). An `unkeyed`
@@ -182,8 +185,9 @@ buildl refuses a target, and a discovery output, that holds one of this machine'
 - Today's examples and the `c` plugin pass the check: their build files hold no such path and their
   discovery outputs are relative (P19).
 
-**The match.** A folder matches where it starts the text or follows a character that cannot be part
-of a path (anything but a letter, a digit, `.`, `_`, `-`, `/`), and where it ends the text or is
+**The match.** A folder matches where it starts the text, follows a character that cannot be part
+of a path (anything but a letter, a digit, `.`, `_`, `-`, `/`), or follows a flag: a `-` and one or
+more letters that start the text or follow such a character (`-I`, `-L`, `-isystem`, P22); and where it ends the text or is
 followed by a character that cannot continue its last name (anything but a letter, a digit, `.`,
 `_`, `-`). Checked against texts like the real ones, with `HOME=/home/al`:
 
@@ -198,6 +202,15 @@ followed by a character that cannot continue its last name (anything but a lette
 | `/data/home/al/x` | no | after `a`, inside another path |
 | `cd shop && make` | no | not there |
 | `/usr/bin/env` with `HOME=/` | no | a home of `/` is not checked |
+| `-I/home/al/include` | yes | after the flag `-I`, followed by `/` |
+| `-isystem/home/al/x`, `cc -L/home/al/lib` | yes | after a flag at the text's start, or after a space |
+| `--prefix=/home/al` | yes | after `=` |
+| `-I/home/alice/x` | no | followed by `i` |
+| `/opt/x-y/home/al` | no | `-y` follows `x`, so it is no flag |
+| `-I./home/al` | no | after `.`, inside another path |
+
+The same rule reads a setting's value: `prefix = "/home/al/opt"` and `flags = "-O2 -I/home/al/inc"`
+are refused, `jobs = "8"` and `prefix = "/opt/tools"` pass and are keyed as today.
 
 ## 7. Errors
 
@@ -215,6 +228,7 @@ Messages start with the build file, as errors do today (`build.lua: //:app: …`
 | E7 | a discovery output holds one | when the second pass reads it | 5 | `build.lua: //:cargo.metadata: its output holds this machine's path /home/alice/shop` |
 | E8 | a pinned name, either mark | plan | 5 | as today (`crates/buildl-core/src/error.rs:1563-1569`) |
 | E9 | a bad variable name | load | 5 | as today, the `EnvName` refusal |
+| E10 | a setting a command names holds one | when the key is gathered | 5 | `build.lua: //:setting: the setting prefix holds this machine's path /Users/hiraq; it would give the target another key on every machine` |
 
 ## 8. What else changes
 
@@ -227,7 +241,7 @@ The files that declare `env`, list `env.read` or print `read variables` were fou
 | `plugins/c` | `graph.lua:191,201` (`env = { PATH = "unkeyed" }`), `extension.toml` (`env.unkeyed = ["PATH"]`), `README.md:191,197`, its tests |
 | examples | `go`, `go-discovery`, `plugins` (with `gobin/main.lua`, `gobin/extension.toml`): `HOME`; `polyglot`: `HOME` and `PATH`; `rust`: `HOME`, `PATH`; `c`, `cpp`: `PATH`; the `buildl.toml` of each, and of `python` and `remote`; `c/README.md`, `cpp/README.md` |
 | skills | `skills/buildl/SKILL.md`, `references/lua-api.md`, `plugins.md`, `buildl-toml.md`, `exit-codes.md`; `skills/buildl-migrate/SKILL.md`, `references/make.md`, `npm.md`, `just.md`, `shell.md`, `scripts/parity_lib.lua`; `skills/tests/parity_test.lua`, `snippets.lua`, `fixtures/compare/**` |
-| book | `appendix-02-buildl-toml.md`, `appendix-03-lua-api.md:92`, `appendix-04-exit-codes.md` (E1-E9 under 4 and 5), `ch01-03`, `ch02-00`, `ch03-01:72`, `ch03-04`, `ch04-01`, `ch04-02`, `ch04-03`, `ch05-01:150`, `ch05-02`, `ch05-03`, `ch06-00:200`, `ch07-00`, `ch08-01`, `ch08-02`, `ch08-03`, `ch08-04`, `ch09-00` ("Who should upload": users share only through `unkeyed`; the server's own environment under execution; the timeout is in the remote key), `ch11-05`, `ch11-09` (the timeout: in the remote key, not the local one); every captured example that shows `env` or a listing is captured again from a real run |
+| book | `appendix-02-buildl-toml.md`, `appendix-03-lua-api.md:92`, `appendix-04-exit-codes.md` (E1-E10 under 4 and 5), `ch01-03`, `ch02-00`, `ch03-01:72`, `ch03-04`, `ch04-01`, `ch04-02`, `ch04-03`, `ch05-01:150`, `ch05-02`, `ch05-03`, `ch06-00:200`, `ch07-00`, `ch08-01`, `ch08-02`, `ch08-03`, `ch08-04`, `ch09-00` ("Who should upload": users share only through `unkeyed`; the server's own environment under execution; the timeout is in the remote key), `ch11-05`, `ch11-09` (the timeout: in the remote key, not the local one); every captured example that shows `env` or a listing is captured again from a real run |
 | crates | the fixtures and golden texts the search lists under `crates/*/tests/`, and the in-file tests of the files named in §2-§4 |
 
 `README.md` shows no `env` declaration (its one mention is prose, `README.md:9`) and does not change.
@@ -240,7 +254,7 @@ The files that declare `env`, list `env.read` or print `read variables` were fou
 | remote | the same two machines through `crates/buildl/src/remote/encode.rs` | the same `Command` and `Action` digests; `unkeyed` names absent from `environment_variables`; a different timeout gives a different `Action` digest |
 | binary | `crates/buildl-cli/tests`: one workspace copied to two folders, run with two `TMPDIR` values and two `HOME` and `PATH` values, its targets marking `HOME` and `PATH` `unkeyed` | `buildl plan --json` gives the same key for every target |
 | CI end-to-end | a new step in `examples/remote/assert.sh`, run by the job "Remote example on NativeLink" (`.github/workflows/ci.yml`, job `examples-remote`); the example's target marks `HOME` and `PATH` `unkeyed`: build with `--remote-upload` in one folder, then build a copy in another folder with another `TMPDIR`, another `HOME` and a `PATH` with one more folder in front | the copy prints `1 fetched` |
-| units | E1-E9 each, and every row of the match table in §6 | the refusal, its exit code and message |
+| units | E1-E10 each, and every row of the match table in §6 | the refusal, its exit code and message |
 
 ## 10. Non-goals
 
@@ -249,5 +263,5 @@ The files that declare `env`, list `env.read` or print `read variables` were fou
 - Sharing between different operating systems or processors.
 - Identifying programs a command starts by itself (cargo's `rustc`, a compiler's linker); a plugin
   covers them with a version check (`plugins/c`'s `version_probe`; the planned `rust` plugin's).
-- Checking `unkeyed` values, build settings (`$opt:`), or anything already relative by type.
+- Checking `unkeyed` values, or anything already relative by type.
 - The `rust` plugin (`2026-11-06-rust-plugin`).

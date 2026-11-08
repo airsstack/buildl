@@ -8,7 +8,7 @@
     reason = "fixtures unwrap known-valid text; a panic is the intended failure signal"
 )]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use crate::execute::perform::Kept;
@@ -85,6 +85,7 @@ pub(crate) fn own(names: &[&str]) -> OwnComponents {
         inputs: Vec::new(),
         outputs: outputs(names),
         env: BTreeMap::new(),
+        unkeyed: BTreeSet::new(),
         tool: None,
         settings: BTreeMap::new(),
         network: NetworkAccess::Sealed,
@@ -167,7 +168,7 @@ pub(crate) fn node(raw: &str, change: impl FnOnce(&mut Node)) -> Node {
         description: None,
         inputs: Vec::new(),
         outputs: outputs(&[label.name().as_str()]),
-        env: Vec::new(),
+        env: BTreeMap::new(),
         network: NetworkAccess::Sealed,
         output_source: OutputSource::Command,
         freshness: Freshness::Cached,

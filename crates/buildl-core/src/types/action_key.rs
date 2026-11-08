@@ -12,7 +12,7 @@
 //! Non-responsibilities: gathering the components, and comparing two keys. Both belong to the
 //! phase that plans; this file only says what a key is.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -84,8 +84,11 @@ pub struct OwnComponents {
     pub inputs: Vec<InputDigest>,
     /// The names of the outputs it produces, each a file or a directory, in written order.
     pub outputs: Vec<OutputName>,
-    /// Each environment variable it reads, with its value; `None` when the variable is unset.
+    /// Each environment variable it reads marked `key`, with its value; `None` when the variable
+    /// is unset.
     pub env: BTreeMap<EnvName, Option<EnvValue>>,
+    /// The names of the variables it reads marked `unkeyed`: the key holds no value for them.
+    pub unkeyed: BTreeSet<EnvName>,
     /// The program the command names, and its fingerprint; `None` when it names none.
     pub tool: Option<ToolIdentity>,
     /// Each build setting the command refers to, with the value in effect.
@@ -119,7 +122,7 @@ pub struct KeyComponents {
 /// # Examples
 ///
 /// ```
-/// use std::collections::BTreeMap;
+/// use std::collections::{BTreeMap, BTreeSet};
 ///
 /// use buildl_core::{
 ///     ActionKey, Argument, Command, KeyComponents, NetworkAccess, OutputName, OutputSource,
@@ -132,6 +135,7 @@ pub struct KeyComponents {
 ///         inputs: Vec::new(),
 ///         outputs: vec![OutputName::parse("app")?],
 ///         env: BTreeMap::new(),
+///         unkeyed: BTreeSet::new(),
 ///         tool: None,
 ///         settings: BTreeMap::new(),
 ///         network: NetworkAccess::Sealed,
@@ -209,7 +213,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use serde_json::{Map, Value};
 
@@ -259,6 +263,13 @@ mod tests {
             .collect()
     }
 
+    fn unkeyed(names: &[&str]) -> BTreeSet<EnvName> {
+        names
+            .iter()
+            .map(|name| EnvName::parse(*name).unwrap())
+            .collect()
+    }
+
     fn settings(pairs: &[(&str, &str)]) -> BTreeMap<SettingName, SettingValue> {
         pairs
             .iter()
@@ -285,6 +296,7 @@ mod tests {
                     OutputName::parse("app.map").unwrap(),
                 ],
                 env: env(&[("PATH", Some("/bin")), ("HOME", None)]),
+                unkeyed: unkeyed(&["TERM"]),
                 tool: Some(ToolIdentity {
                     program: Program::parse("cc").unwrap(),
                     fingerprint: Digest::of(b"cc 14.2"),
@@ -317,7 +329,7 @@ mod tests {
             r#""platform":"linux/x86_64","settings":{"test_filter":"TestLogin"},"#,
             r#""tool":{"fingerprint":""#,
             &Digest::of(b"cc 14.2").to_string(),
-            r#"","program":"cc"}}}"#,
+            r#"","program":"cc"},"unkeyed":["TERM"]}}"#,
         ]
         .concat();
         assert_eq!(json, expected);
@@ -330,7 +342,10 @@ mod tests {
         components.deps.clear();
         let json = canonical::to_string(&components).unwrap();
         assert!(json.starts_with(r#"{"deps":[],"own":{"#), "{json}");
-        assert!(json.ends_with(r#""tool":null}}"#), "{json}");
+        assert!(
+            json.ends_with(r#""tool":null,"unkeyed":["TERM"]}}"#),
+            "{json}"
+        );
     }
 
     #[test]
@@ -374,7 +389,7 @@ mod tests {
 
     #[test]
     fn changing_any_one_component_changes_the_key() {
-        let cases: [(&str, Change); 13] = [
+        let cases: [(&str, Change); 16] = [
             ("command", |c| c.own.command = command(&["cc", "$in"])),
             ("input digest", |c| {
                 c.own.inputs = vec![input("src/z.c", "z2"), input("src/a.c", "a")];
@@ -388,6 +403,14 @@ mod tests {
             }),
             ("env unset or empty", |c| {
                 c.own.env = env(&[("PATH", Some("/bin")), ("HOME", Some(""))]);
+            }),
+            ("unkeyed name added", |c| {
+                c.own.unkeyed.insert(EnvName::parse("LANG").unwrap());
+            }),
+            ("unkeyed name removed", |c| c.own.unkeyed.clear()),
+            ("a key variable now unkeyed", |c| {
+                c.own.env.remove(&EnvName::parse("PATH").unwrap());
+                c.own.unkeyed.insert(EnvName::parse("PATH").unwrap());
             }),
             ("tool", |c| {
                 c.own.tool = Some(ToolIdentity {
@@ -491,6 +514,7 @@ mod tests {
         components.own.inputs.clear();
         components.own.outputs.clear();
         components.own.env.clear();
+        components.own.unkeyed.clear();
         components.own.settings.clear();
         components.deps.clear();
         let key = ActionKey::new(components).unwrap();
@@ -516,6 +540,7 @@ mod tests {
             ("/components/own/inputs/0/digest", other.clone()),
             ("/components/own/outputs/1", Value::from("app.sym")),
             ("/components/own/env/HOME", Value::from("/root")),
+            ("/components/own/unkeyed/0", Value::from("LANG")),
             ("/components/own/tool", Value::Null),
             ("/components/own/tool/fingerprint", other.clone()),
             ("/components/own/settings/opt-level", Value::from("0")),
@@ -583,6 +608,11 @@ mod tests {
                 "/components/deps/0/outputs/0/name",
                 "\"\"",
                 "invalid output name",
+            ),
+            (
+                "/components/own/unkeyed/0",
+                "\"1PATH\"",
+                "invalid environment variable name",
             ),
             ("/components/own/inputs", "{}", "invalid type: map"),
             ("/components/own/env", "[]", "invalid type: sequence"),

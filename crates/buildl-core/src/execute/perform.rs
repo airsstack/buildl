@@ -1048,7 +1048,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Mutex;
 
     use core::num::NonZeroUsize;
@@ -1290,6 +1290,7 @@ mod tests {
                 command: command(&["cc"]),
                 description: None,
                 env: BTreeMap::new(),
+                unkeyed: BTreeSet::new(),
                 inputs: Vec::new(),
                 deps: Vec::new(),
                 outputs: vec![output_path("//:app", "app")],
@@ -1585,6 +1586,7 @@ mod tests {
                 command: command(&["cc"]),
                 description: None,
                 env: BTreeMap::new(),
+                unkeyed: BTreeSet::new(),
                 inputs: Vec::new(),
                 deps: vec![output_path("//:lib", "lib")],
                 outputs: vec![output_path("//:app", "app")],
@@ -2101,6 +2103,7 @@ mod tests {
             command: command(&["cc", "-o", "out/app"]),
             description: None,
             env: BTreeMap::new(),
+            unkeyed: BTreeSet::new(),
             inputs: Vec::new(),
             deps: Vec::new(),
             outputs: vec![output_path("//:app", "app")],

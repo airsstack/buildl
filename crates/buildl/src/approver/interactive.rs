@@ -133,6 +133,7 @@ mod tests {
                 .map(|&p| Program::parse(p).unwrap())
                 .collect(),
             env: env.iter().map(|&e| EnvName::parse(e).unwrap()).collect(),
+            unkeyed: BTreeSet::new(),
             write: write
                 .iter()
                 .map(|&d| Directory::parse(d).unwrap())
@@ -164,6 +165,7 @@ mod tests {
     /// Attribution saying `//:server` of plugin `go@1.2.0` wants each of `programs`.
     fn by_go(programs: &[&str]) -> Attribution {
         let chain = PluginChain::new(vec![PluginRef {
+            unkeyed: BTreeSet::new(),
             name: PluginName::parse("go").unwrap(),
             version: PluginVersion::parse("1.2.0").unwrap(),
             run: BTreeSet::new(),
@@ -279,6 +281,35 @@ mod tests {
             approval,
             denied(wants(&[], &["HOME"], &["out"]), "not approved")
         );
+    }
+
+    #[test]
+    fn remembered_read_does_not_cover_unkeyed() {
+        let data = tempfile::tempdir().unwrap();
+        Approvals::new(data.path(), Path::new(ROOT))
+            .write(&wants(&[], &["HOME"], &[]))
+            .unwrap();
+        let unkeyed_home = WantedSet {
+            unkeyed: BTreeSet::from([EnvName::parse("HOME").unwrap()]),
+            ..WantedSet::default()
+        };
+        let both = wants(&[], &["HOME"], &[]).union(&unkeyed_home);
+        let mut console = Scripted::answering(&["y"]);
+
+        let first = approver(&mut console, data.path())
+            .approve(&both, &none())
+            .unwrap();
+        let second = approver(&mut console, data.path())
+            .approve(&both, &none())
+            .unwrap();
+
+        assert_eq!(first, Approval::Granted);
+        assert_eq!(second, Approval::Granted);
+        assert_eq!(
+            console.prompts,
+            ["this build wants to\n  unkeyed variables: HOME\nallow? [y/N] "]
+        );
+        assert_eq!(remembered(data.path()), both);
     }
 
     #[test]

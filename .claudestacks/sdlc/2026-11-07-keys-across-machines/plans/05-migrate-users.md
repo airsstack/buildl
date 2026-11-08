@@ -1,8 +1,8 @@
 ---
 status: approved
 created: 2026-11-07
-depends-on: [02, 03, 04]
-built-on: 55ab2847b726
+depends-on: [02, 03, 04, 08]
+built-on: f3bc0d9fa2e7
 ---
 
 # Migrate Users Implementation Plan
@@ -71,7 +71,7 @@ example building and testing as before.
 
 **Change:** every `env = { … }` in the skills' text and tables uses the map form; the `buildl`
 skill says a variable that only finds programs (`HOME`, `PATH`) is `unkeyed`, allowed by
-`env.unkeyed`, and why (sharing the cache between machines); `exit-codes.md` lists E1-E9;
+`env.unkeyed`, and why (sharing the cache between machines); `exit-codes.md` lists E1-E10;
 `buildl-migrate`'s references map a recipe's variables to `key` and its parity script reads
 `env.unkeyed` beside `env.read`, with its fixtures and tests.
 

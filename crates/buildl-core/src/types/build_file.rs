@@ -5,7 +5,8 @@
 //! validation and every decision about it happens on this side of the port.
 //!
 //! Responsibilities: [`BuildFile`], [`Evaluated`], [`StagedFile`], [`StagedSubdir`],
-//! [`StagedDeclaration`], [`StagedItem`] and its four kinds, and [`DeclarationOrder`].
+//! [`StagedDeclaration`], [`StagedItem`] and its four kinds, [`StagedEnv`] with its [`StagedMark`],
+//! and [`DeclarationOrder`].
 //!
 //! Non-responsibilities: validation. A staged value is recorded, not checked; Load turns it into a
 //! [`Declaration`](crate::types::Declaration).
@@ -14,9 +15,9 @@ use core::fmt;
 use std::path::Path;
 
 use crate::types::{
-    Argument, Description, Directory, EnvName, Freshness, Label, NetworkAccess, Origin, OutputName,
-    OutputSource, Provenance, SettingName, SettingValue, SourcePath, TargetName, TargetRole,
-    Written,
+    Argument, Description, Directory, EnvMark, EnvName, Freshness, Label, NetworkAccess, Origin,
+    OutputName, OutputSource, Provenance, SettingName, SettingValue, SourcePath, TargetName,
+    TargetRole, Written,
 };
 
 /// The position of a call among the calls one build file made, counting from zero.
@@ -144,14 +145,50 @@ pub struct StagedTarget {
     pub deps: Vec<Written<Label>>,
     /// The `outputs` field, if given.
     pub outputs: Option<Vec<Written<OutputName>>>,
-    /// The `env` field.
-    pub env: Vec<Written<EnvName>>,
+    /// The entries of the `env` field, in a fixed order.
+    pub env: Vec<StagedEnv>,
     /// The `network` field.
     pub network: NetworkAccess,
     /// The `stdout` field.
     pub output_source: OutputSource,
     /// The `always` field.
     pub freshness: Freshness,
+}
+
+/// One entry of a target's `env` table, as the build file wrote it.
+///
+/// Only an entry that is a written name with a written mark is valid; the other kinds are
+/// recorded so that Load refuses them with the target's name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StagedEnv {
+    /// A variable written with a mark: `HOME = "unkeyed"`.
+    Marked {
+        /// The variable's name.
+        name: Written<EnvName>,
+        /// What the build file wrote after it.
+        mark: StagedMark,
+    },
+    /// An entry with no name, which is what a list writes: `{ "HOME" }` or `{ [1] = "key" }`.
+    ListEntry,
+    /// A string key that is not valid UTF-8, so no name can be read from it.
+    NotUtf8Name,
+    /// A key that is neither a string nor a list position.
+    NotAName {
+        /// What the key was, as a word such as `boolean`.
+        found: String,
+    },
+}
+
+/// What a build file wrote as the mark of a variable.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StagedMark {
+    /// A string, which may or may not be a mark.
+    Word(Written<EnvMark>),
+    /// A value that is not a string.
+    NotAString {
+        /// The value as a refusal shows it, such as `true` or `a table`.
+        found: String,
+    },
 }
 
 /// A `b.rule` call.

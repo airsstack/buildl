@@ -5,7 +5,7 @@ b.alias("text", "//lib:words")
 
 b.target("greet", {                       -- executable output
   inputs = { "greet.sh" },
-  env    = { "BUILDL_FIXTURE_FLAVOR" },
+  env    = { BUILDL_FIXTURE_FLAVOR = "key" },
   run    = { "cp", "$in", "$out" },
 })
 b.target("greeting", {                    -- runs what greet built, through the alias

@@ -81,6 +81,7 @@ mod tests {
         WantedSet {
             programs: BTreeSet::from([program("cc")]),
             env: BTreeSet::new(),
+            unkeyed: BTreeSet::new(),
             write: BTreeSet::new(),
             network: BTreeSet::new(),
         }
@@ -100,6 +101,7 @@ mod tests {
     fn the_attribution_reaches_the_approver() {
         let wanted = wanting_cc();
         let chain = PluginChain::new(vec![PluginRef {
+            unkeyed: BTreeSet::new(),
             name: PluginName::parse("cc").unwrap(),
             version: PluginVersion::parse("1.0.0").unwrap(),
             run: BTreeSet::new(),

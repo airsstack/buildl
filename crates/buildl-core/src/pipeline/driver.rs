@@ -18,7 +18,7 @@ use core::fmt;
 use core::ops::ControlFlow;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::discovery::{discovery_labels, load_twice, results, second_pass};
+use crate::discovery::{discovery_labels, first_pass, load_twice, results, second_pass};
 use crate::error::{Error, PortName, Result};
 use crate::execute::assembly::ensure_sandboxed_remote;
 use crate::execute::execute;
@@ -26,14 +26,15 @@ use crate::grants::negotiate;
 use crate::load::{declaration_order, load};
 use crate::plan::plan;
 use crate::ports::{
-    ContentStore, DeclarationSource, Dispatcher, GraphRecord, Manifest, PortSet, Ports, RunHistory,
+    ContentStore, DeclarationSource, Dispatcher, GraphRecord, Host, Manifest, PortSet, Ports,
+    RunHistory,
 };
 use crate::resolve::{narrow, reach, resolve};
 use crate::types::{
     ActionOutcome, Built, Declaration, Diagnostic, Discovered, EntryName, Label, LiveOutput,
-    Loaded, NodeId, OnFailure, Plan, Purpose, Query, RemotePolicy, RemoteSwitch, Rerun, RunChoices,
-    Sample, Scope, SettingName, SettingValue, TargetGraph, TargetRole, Verdict, Verification,
-    Watched,
+    Loaded, MachineFolders, NodeId, OnFailure, Plan, Purpose, Query, RemotePolicy, RemoteSwitch,
+    Rerun, RunChoices, Sample, Scope, SettingName, SettingValue, TargetGraph, TargetRole, Verdict,
+    Verification, Watched,
 };
 use crate::verify::verify;
 use crate::watch::watched_inputs;
@@ -112,10 +113,12 @@ impl<P: Ports> Pipeline<P> {
     /// declare different things, and [`Error::DiscoveryChanged`] when reading discovery results
     /// changes which discovery targets are declared.
     pub fn check(&mut self, entry: &EntryName) -> Result<Vec<Declaration>> {
+        let folders = self.ports.host.machine_folders();
         check(
             &self.ports.source,
             &mut self.ports.dispatcher,
             entry,
+            &folders,
             &self.ports.log,
             &self.ports.cas,
         )
@@ -135,10 +138,12 @@ impl<P: Ports> Pipeline<P> {
     /// returns: a name declared more than once, a reference that names nothing or the wrong kind
     /// of thing, or a dependency cycle.
     pub fn graph(&mut self, entry: &EntryName) -> Result<TargetGraph> {
+        let folders = self.ports.host.machine_folders();
         graph(
             &self.ports.source,
             &mut self.ports.dispatcher,
             entry,
+            &folders,
             &self.ports.log,
             &self.ports.cas,
         )
@@ -153,10 +158,12 @@ impl<P: Ports> Pipeline<P> {
     /// Returns whatever [`Pipeline::graph`] returns, and [`Error::UnknownTarget`] when the target
     /// `asked` names is neither a target nor an alias.
     pub fn query(&mut self, entry: &EntryName, asked: &Query) -> Result<BTreeSet<Label>> {
+        let folders = self.ports.host.machine_folders();
         query(
             &self.ports.source,
             &mut self.ports.dispatcher,
             entry,
+            &folders,
             &self.ports.log,
             &self.ports.cas,
             asked,
@@ -207,9 +214,11 @@ impl<P: Ports> Pipeline<P> {
             dispatcher,
             log,
             cas,
+            host,
             ..
         } = &mut self.ports;
-        load_twice(source, dispatcher, entry, |labels| {
+        let folders = host.machine_folders();
+        load_twice(source, dispatcher, entry, &folders, |labels| {
             results(log, cas, labels)
         })
     }
@@ -260,11 +269,12 @@ impl<P: Ports> Pipeline<P> {
         choices: RunChoices,
         remote_off: &RemoteSwitch,
     ) -> Result<ControlFlow<Vec<ActionOutcome>, Prepared>> {
-        let pass_one = load(
+        let folders = self.ports.host.machine_folders();
+        let pass_one = first_pass(
             &self.ports.source,
             &mut self.ports.dispatcher,
             entry,
-            &Discovered::empty(),
+            &folders,
         )?;
         let labels = discovery_labels(&pass_one);
         if labels.is_empty() {
@@ -300,6 +310,7 @@ impl<P: Ports> Pipeline<P> {
             entry,
             &pass_one,
             &discovered,
+            &folders,
         )?;
         let whole = resolve(declarations)?;
         self.ports.graph.record(&whole)?;
@@ -600,13 +611,16 @@ impl<P: Ports> Pipeline<P> {
 ///
 /// # Errors
 ///
-/// Returns whatever any load returns, [`Error::Nondeterministic`] when two loads declare
-/// different things, and [`Error::DiscoveryChanged`] when the loads with results declare
-/// different discovery targets than the load without.
+/// Returns whatever any load returns, [`Error::MachinePathInCommand`] for a command that holds
+/// one of `folders` and [`Error::MachinePathInDiscovery`] for a discovery result that does,
+/// [`Error::Nondeterministic`] when two loads declare different things, and
+/// [`Error::DiscoveryChanged`] when the loads with results declare different discovery targets
+/// than the load without.
 pub fn check<S, D, H, C>(
     source: &S,
     dispatcher: &mut D,
     entry: &EntryName,
+    folders: &MachineFolders,
     history: &H,
     cas: &C,
 ) -> Result<Loaded>
@@ -616,7 +630,7 @@ where
     H: RunHistory,
     C: ContentStore,
 {
-    let first = load(source, dispatcher, entry, &Discovered::empty())?;
+    let first = first_pass(source, dispatcher, entry, folders)?;
     let labels = discovery_labels(&first);
     if labels.is_empty() {
         let second = load(source, dispatcher, entry, &Discovered::empty())?;
@@ -629,7 +643,7 @@ where
         );
     }
     let (discovered, missing) = results(history, cas, &labels);
-    let second = second_pass(source, dispatcher, entry, &first, &discovered)?;
+    let second = second_pass(source, dispatcher, entry, &first, &discovered, folders)?;
     let third = load(source, dispatcher, entry, &discovered)?;
     first_difference(&second, &third).map_or(
         Ok(Loaded {
@@ -650,12 +664,15 @@ where
 ///
 /// # Errors
 ///
-/// Returns whatever the load returns, [`Error::DiscoveryChanged`] when the second load declares
-/// different discovery targets than the first, and otherwise whatever [`resolve`] returns.
+/// Returns whatever the load returns, [`Error::MachinePathInCommand`] and
+/// [`Error::MachinePathInDiscovery`] for what holds one of `folders`,
+/// [`Error::DiscoveryChanged`] when the second load declares different discovery targets than the
+/// first, and otherwise whatever [`resolve`] returns.
 pub fn graph<S, D, H, C>(
     source: &S,
     dispatcher: &mut D,
     entry: &EntryName,
+    folders: &MachineFolders,
     history: &H,
     cas: &C,
 ) -> Result<(TargetGraph, Vec<Label>)>
@@ -665,7 +682,7 @@ where
     H: RunHistory,
     C: ContentStore,
 {
-    let loaded = load_twice(source, dispatcher, entry, |labels| {
+    let loaded = load_twice(source, dispatcher, entry, folders, |labels| {
         results(history, cas, labels)
     })?;
     Ok((resolve(loaded.declarations)?, loaded.missing))
@@ -685,6 +702,7 @@ pub fn query<S, D, H, C>(
     source: &S,
     dispatcher: &mut D,
     entry: &EntryName,
+    folders: &MachineFolders,
     history: &H,
     cas: &C,
     asked: &Query,
@@ -695,7 +713,7 @@ where
     H: RunHistory,
     C: ContentStore,
 {
-    let (graph, missing) = graph(source, dispatcher, entry, history, cas)?;
+    let (graph, missing) = graph(source, dispatcher, entry, folders, history, cas)?;
     Ok((reach(&graph, asked)?, missing))
 }
 

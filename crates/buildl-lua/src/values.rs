@@ -180,7 +180,7 @@ fn wrong(field: &str, wanted: &str, found: &str) -> Refusal {
     )
 }
 
-fn runtime(error: &mlua::Error) -> Refusal {
+pub(crate) fn runtime(error: &mlua::Error) -> Refusal {
     Refusal::new(EvaluationFailure::Runtime, error.to_string())
 }
 

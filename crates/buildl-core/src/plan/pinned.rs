@@ -15,7 +15,8 @@ use crate::error::{DeclarationSite, Error, Result};
 use crate::grants::wanted::Sites;
 use crate::types::Workspace;
 
-/// Refuses the first variable `workspace`'s strategy pins that a target declares.
+/// Refuses the first variable `workspace`'s strategy pins that a target declares, whichever mark
+/// it gives it.
 ///
 /// The variables are tried in name order, and the target named is the lowest-labelled one
 /// declaring the variable. Under a strategy that pins nothing, every declaration passes.
@@ -25,7 +26,11 @@ use crate::types::Workspace;
 /// Returns [`Error::PinnedEnv`] for a pinned variable a target declares.
 pub(super) fn pinned(sites: &Sites<'_>, workspace: &Workspace) -> Result<()> {
     for (name, value) in workspace.execution.strategy.pinned() {
-        if let Some(node) = sites.env.get(&name) {
+        let declaring = [sites.env.get(&name), sites.unkeyed.get(&name)]
+            .into_iter()
+            .flatten()
+            .min_by(|a, b| a.label.cmp(&b.label));
+        if let Some(node) = declaring {
             return Err(Error::PinnedEnv {
                 name,
                 value,
@@ -47,16 +52,19 @@ mod tests {
 
     use super::pinned;
     use crate::error::{Error, Result};
-    use crate::grants::fixtures::{dir, env_name, graph, node};
+    use crate::grants::fixtures::{dir, env_name, graph, keyed, node};
     use crate::grants::wanted::sites;
     use crate::placement::layout::Layout;
-    use crate::types::{ApproverMode, Ceiling, Execution, Isolation, TargetGraph, Workspace};
+    use crate::types::{
+        ApproverMode, Ceiling, EnvMark, Execution, Isolation, TargetGraph, Workspace,
+    };
 
     fn workspace(strategy: Isolation) -> Workspace {
         Workspace {
             out: dir("out"),
             state: dir(".buildl"),
             ceiling: Ceiling {
+                unkeyed: BTreeSet::new(),
                 run: BTreeSet::new(),
                 env: BTreeSet::new(),
                 read: BTreeSet::new(),
@@ -78,7 +86,7 @@ mod tests {
             .iter()
             .map(|(label, names)| {
                 node(label, |node| {
-                    node.env = names.iter().map(|name| env_name(name)).collect();
+                    node.env = keyed(names);
                 })
             })
             .collect::<Vec<_>>();
@@ -104,6 +112,26 @@ mod tests {
                 assert_eq!(site.label.to_string(), "//a:y");
             }
             other => unreachable!("expected PinnedEnv, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_pinned_name_is_refused_with_either_mark() {
+        for mark in [EnvMark::Key, EnvMark::Unkeyed] {
+            let graph = graph(
+                vec![node("//a:y", |node| {
+                    node.env = BTreeMap::from([(env_name("TZ"), mark)]);
+                })],
+                &[&[]],
+            );
+            match pinned_in(&graph, Isolation::Sandbox).unwrap_err() {
+                Error::PinnedEnv { name, value, site } => {
+                    assert_eq!(name.as_str(), "TZ", "{mark}");
+                    assert_eq!(value.as_str(), "UTC", "{mark}");
+                    assert_eq!(site.label.to_string(), "//a:y", "{mark}");
+                }
+                other => unreachable!("expected PinnedEnv, got {other:?}"),
+            }
         }
     }
 

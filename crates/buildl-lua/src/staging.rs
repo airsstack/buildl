@@ -14,7 +14,7 @@ use core::mem::size_of;
 
 use buildl_core::{
     DeclarationOrder, Diagnostic, Directory, EvaluationFailure, Origin, StagedDeclaration,
-    StagedFile, StagedItem, StagedSubdir, Written,
+    StagedEnv, StagedFile, StagedItem, StagedMark, StagedSubdir, Written,
 };
 
 /// Why the buffer refused a record.
@@ -132,6 +132,24 @@ fn all_bytes<T>(texts: &[Written<T>]) -> u64 {
         .fold(0, |sum, text| sum.saturating_add(bytes(text.as_written())))
 }
 
+/// The bytes of every string the entries of an `env` table hold, and the size of each entry that
+/// holds none, so a long list is charged for the entries it makes.
+fn env_bytes(entries: &[StagedEnv]) -> u64 {
+    entries.iter().fold(0, |sum, entry| {
+        let held = match entry {
+            StagedEnv::Marked { name, mark } => {
+                bytes(name.as_written()).saturating_add(match mark {
+                    StagedMark::Word(word) => bytes(word.as_written()),
+                    StagedMark::NotAString { found } => bytes(found),
+                })
+            }
+            StagedEnv::ListEntry | StagedEnv::NotUtf8Name => record_size::<StagedEnv>(),
+            StagedEnv::NotAName { found } => bytes(found),
+        };
+        sum.saturating_add(held)
+    })
+}
+
 /// The bytes of every string `item` holds.
 fn item_bytes(item: &StagedItem) -> u64 {
     match item {
@@ -145,7 +163,7 @@ fn item_bytes(item: &StagedItem) -> u64 {
             all_bytes(&target.inputs),
             all_bytes(&target.deps),
             target.outputs.as_deref().map_or(0, all_bytes),
-            all_bytes(&target.env),
+            env_bytes(&target.env),
         ]
         .into_iter()
         .fold(0, u64::saturating_add),
@@ -176,8 +194,9 @@ mod tests {
 
     use buildl_core::{
         DeclarationOrder, Diagnostic, EvaluationFailure, EvaluationLimit, Freshness, NetworkAccess,
-        Origin, OutputSource, PluginName, PluginRef, PluginVersion, StagedAlias, StagedItem,
-        StagedRule, StagedSetting, StagedSubdir, StagedTarget, TargetRole, Written,
+        Origin, OutputSource, PluginName, PluginRef, PluginVersion, StagedAlias, StagedEnv,
+        StagedItem, StagedMark, StagedRule, StagedSetting, StagedSubdir, StagedTarget, TargetRole,
+        Written,
     };
 
     use super::{Exceeded, Staging, item_bytes, record_size};
@@ -224,6 +243,7 @@ mod tests {
     #[test]
     fn records_the_origin_each_declaration_is_staged_with() {
         let plugin = Origin::plugins(vec![PluginRef {
+            unkeyed: BTreeSet::new(),
             name: PluginName::parse("go").unwrap(),
             version: PluginVersion::parse("1.0.0").unwrap(),
             run: BTreeSet::new(),
@@ -280,9 +300,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn charges_every_string_a_target_holds() {
-        let target = StagedItem::Target(StagedTarget {
+    fn target_with_env(env: Vec<StagedEnv>) -> StagedItem {
+        StagedItem::Target(StagedTarget {
             name: Written::new("app"),
             role: TargetRole::Build,
             rule: Some(Written::new("cc")),
@@ -290,12 +309,31 @@ mod tests {
             inputs: vec![Written::new("a.c")],
             deps: vec![Written::new("//lib:text")],
             outputs: Some(vec![Written::new("app")]),
-            env: vec![Written::new("HOME")],
+            env,
             network: NetworkAccess::Sealed,
             output_source: OutputSource::Command,
             freshness: Freshness::Cached,
-        });
-        assert_eq!(item_bytes(&target), 3 + 2 + 2 + 2 + 3 + 10 + 3 + 4);
+        })
+    }
+
+    #[test]
+    fn charges_every_env_entry_that_holds_no_text() {
+        let without = item_bytes(&target_with_env(Vec::new()));
+        let with = item_bytes(&target_with_env(vec![
+            StagedEnv::ListEntry,
+            StagedEnv::ListEntry,
+            StagedEnv::NotUtf8Name,
+        ]));
+        assert_eq!(with - without, 3 * record_size::<StagedEnv>());
+    }
+
+    #[test]
+    fn charges_every_string_a_target_holds() {
+        let target = target_with_env(vec![StagedEnv::Marked {
+            name: Written::new("HOME"),
+            mark: StagedMark::Word(Written::new("unkeyed")),
+        }]);
+        assert_eq!(item_bytes(&target), 3 + 2 + 2 + 2 + 3 + 10 + 3 + 4 + 7);
     }
 
     #[test]

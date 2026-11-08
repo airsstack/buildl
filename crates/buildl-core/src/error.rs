@@ -314,6 +314,87 @@ pub enum Error {
         /// The program.
         program: Program,
     },
+    /// A target's `env` is a list, or holds a list entry, where each variable needs a mark.
+    #[error(
+        "{}: env must mark each variable \"key\" or \"unkeyed\", such as env = {{ HOME = \"unkeyed\" }}",
+        .site
+    )]
+    EnvNotMarked {
+        /// The target, and its build file.
+        site: Box<DeclarationSite>,
+    },
+    /// A target marks a variable with something other than `"key"` or `"unkeyed"`.
+    #[error(
+        "{}: env {name} is marked {found}; mark it \"key\" or \"unkeyed\"",
+        .site
+    )]
+    EnvBadMark {
+        /// The target, and its build file.
+        site: Box<DeclarationSite>,
+        /// The variable.
+        name: EnvName,
+        /// The mark as a refusal shows it: the written word in quotes, or the kind of value.
+        found: String,
+    },
+    /// A command holds one of this machine's folders, which would give its target another key on
+    /// every machine.
+    #[error(
+        "{}: the command holds this machine's path {folder}; it would give the target another \
+         key on every machine",
+        .site
+    )]
+    MachinePathInCommand {
+        /// The target or rule whose command holds it, and its build file.
+        site: Box<DeclarationSite>,
+        /// The longest of this machine's folders the command holds.
+        folder: String,
+    },
+    /// The value of a variable a target marks `key` holds one of this machine's folders.
+    #[error(
+        "{}: the variable {name} holds this machine's path {folder}; mark it \"unkeyed\" if it \
+         only finds files",
+        .site
+    )]
+    MachinePathInVariable {
+        /// The first target, in graph order, that marks the variable `key`, and its build file.
+        site: Box<DeclarationSite>,
+        /// The variable.
+        name: EnvName,
+        /// The longest of this machine's folders the value holds.
+        folder: String,
+    },
+    /// The value of a setting a target's command names holds one of this machine's folders.
+    #[error(
+        "{}: the setting {name} holds this machine's path {folder}; it would give the target \
+         another key on every machine",
+        .site
+    )]
+    MachinePathInSetting {
+        /// The first target, in graph order, whose command names the setting, and its build file.
+        site: Box<DeclarationSite>,
+        /// The setting.
+        name: SettingName,
+        /// The longest of this machine's folders the value holds.
+        folder: String,
+    },
+    /// The output of a discovery target holds one of this machine's folders.
+    #[error("{}: its output holds this machine's path {folder}", .site)]
+    MachinePathInDiscovery {
+        /// The discovery target, and its build file.
+        site: Box<DeclarationSite>,
+        /// The longest of this machine's folders the output holds.
+        folder: String,
+    },
+    /// An `env.unkeyed` list names a variable the same table's `env.read` does not.
+    #[error("{file}: {table} env.unkeyed lists {name}, which env.read does not")]
+    UnkeyedNotRead {
+        /// The file the list is in, as the diagnostic names it.
+        file: String,
+        /// The table holding the list, as the diagnostic names it.
+        table: String,
+        /// The variable.
+        name: EnvName,
+    },
     /// A target declares an environment variable the workspace's execution strategy sets itself.
     #[error(
         "{}: env {name} is set to {value} by the sandbox and cannot be declared",
@@ -667,6 +748,11 @@ fn refusal(want: &Want, site: Option<&DeclarationSite>, ceiling: &Ceiling) -> St
             format!("environment variable {name}"),
             "env.read",
             allowed_list(&ceiling.env),
+        ),
+        Want::Unkeyed(name) => (
+            format!("unkeyed variable {name}"),
+            "env.unkeyed",
+            allowed_list(&ceiling.unkeyed),
         ),
         Want::Read(path) => (
             format!("input {path}"),
@@ -1152,6 +1238,8 @@ pub enum NameKind {
     Approver,
     /// The path of a file inside a directory an action left as an output.
     TreePath,
+    /// How a declared environment variable takes part in an action key.
+    EnvMark,
     /// The name of a plugin.
     PluginName,
     /// The version text a plugin's manifest states.
@@ -1207,6 +1295,7 @@ impl fmt::Display for NameKind {
             Self::Isolation => "execution strategy",
             Self::Approver => "approver mode",
             Self::TreePath => "tree path",
+            Self::EnvMark => "environment variable mark",
             Self::PluginName => "plugin name",
             Self::PluginVersion => "plugin version",
             Self::PluginChain => "plugin chain",
@@ -1256,7 +1345,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::num::NonZeroUsize;
     use std::path::PathBuf;
 
@@ -1481,7 +1570,7 @@ mod tests {
             description: None,
             inputs: Vec::new(),
             outputs: vec![OutputName::parse("text").unwrap()],
-            env: Vec::new(),
+            env: BTreeMap::new(),
             network: NetworkAccess::Sealed,
             output_source: OutputSource::Command,
             freshness: Freshness::Cached,
@@ -1499,6 +1588,7 @@ mod tests {
     /// A plugin chain `ourgo@0.1.0 > go@1.2.0`.
     fn ourgo_chain() -> Origin {
         let plugin = |name: &str, version: &str| PluginRef {
+            unkeyed: BTreeSet::new(),
             name: PluginName::parse(name).unwrap(),
             version: PluginVersion::parse(version).unwrap(),
             run: BTreeSet::new(),
@@ -1610,6 +1700,7 @@ mod tests {
     /// A ceiling allowing `cc` and `ld`, `HOME` and `PATH`, reads under `src`, and no write.
     fn ceiling() -> Ceiling {
         Ceiling {
+            unkeyed: BTreeSet::new(),
             run: ["cc", "ld"]
                 .into_iter()
                 .map(|raw| Program::parse(raw).unwrap())
@@ -1629,6 +1720,7 @@ mod tests {
             unapproved: Box::new(WantedSet {
                 programs: BTreeSet::from([Program::parse("protoc").unwrap()]),
                 env: BTreeSet::new(),
+                unkeyed: BTreeSet::new(),
                 write: BTreeSet::from([Directory::parse("out").unwrap()]),
                 network: BTreeSet::new(),
             }),
@@ -1646,6 +1738,7 @@ mod tests {
             unapproved: Box::new(WantedSet {
                 programs: BTreeSet::new(),
                 env: BTreeSet::new(),
+                unkeyed: BTreeSet::new(),
                 write: BTreeSet::new(),
                 network: BTreeSet::new(),
             }),
@@ -1671,6 +1764,7 @@ mod tests {
     /// `allowed` listed.
     fn violation(want: Want, allowed: &[&str]) -> Error {
         let plugin = |name: &str, version: &str| PluginRef {
+            unkeyed: BTreeSet::new(),
             name: PluginName::parse(name).unwrap(),
             version: PluginVersion::parse(version).unwrap(),
             run: BTreeSet::new(),
@@ -1761,12 +1855,100 @@ mod tests {
     }
 
     #[test]
+    fn a_plugin_refused_unkeyed_variable_names_env_unkeyed() {
+        let err = violation(Want::Unkeyed(EnvName::parse("HOME").unwrap()), &["PATH"]);
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app (plugin ourgo@0.1.0 > go@1.3.0): unkeyed variable HOME is outside \
+             plugin go@1.3.0 (env.unkeyed allows: PATH)"
+        );
+    }
+
+    #[test]
     fn a_plugin_refused_network_says_the_network_is_not_allowed() {
         let err = violation(Want::Network(label("//:app")), &[]);
         assert_eq!(
             err.to_string(),
             "build.lua: //:app (plugin ourgo@0.1.0 > go@1.3.0): network is outside plugin \
              go@1.3.0 (network not allowed)"
+        );
+    }
+
+    #[test]
+    fn an_unmarked_env_names_the_target_and_shows_the_form() {
+        let err = Error::EnvNotMarked {
+            site: Box::new(root_site("//:app")),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app: env must mark each variable \"key\" or \"unkeyed\", such as \
+             env = { HOME = \"unkeyed\" }"
+        );
+    }
+
+    #[test]
+    fn a_machine_path_in_a_command_names_the_target_and_the_folder() {
+        let err = Error::MachinePathInCommand {
+            site: Box::new(root_site("//:note")),
+            folder: "/home/alice".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:note: the command holds this machine's path /home/alice; it would \
+             give the target another key on every machine"
+        );
+    }
+
+    #[test]
+    fn a_machine_path_in_a_variable_names_the_variable_and_offers_unkeyed() {
+        let err = Error::MachinePathInVariable {
+            site: Box::new(root_site("//:app")),
+            name: EnvName::parse("RUSTFLAGS").unwrap(),
+            folder: "/home/alice".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app: the variable RUSTFLAGS holds this machine's path /home/alice; \
+             mark it \"unkeyed\" if it only finds files"
+        );
+    }
+
+    #[test]
+    fn a_machine_path_in_a_setting_names_the_setting_and_the_folder() {
+        let err = Error::MachinePathInSetting {
+            site: Box::new(root_site("//:setting")),
+            name: SettingName::parse("prefix").unwrap(),
+            folder: "/home/alice".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:setting: the setting prefix holds this machine's path /home/alice; it \
+             would give the target another key on every machine"
+        );
+    }
+
+    #[test]
+    fn a_machine_path_in_a_discovery_output_names_the_target_and_the_folder() {
+        let err = Error::MachinePathInDiscovery {
+            site: Box::new(root_site("//:cargo.metadata")),
+            folder: "/home/alice/shop".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:cargo.metadata: its output holds this machine's path /home/alice/shop"
+        );
+    }
+
+    #[test]
+    fn a_bad_mark_names_the_target_the_variable_and_the_mark() {
+        let err = Error::EnvBadMark {
+            site: Box::new(root_site("//:app")),
+            name: EnvName::parse("HOME").unwrap(),
+            found: "\"pass\"".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "build.lua: //:app: env HOME is marked \"pass\"; mark it \"key\" or \"unkeyed\""
         );
     }
 
@@ -2184,6 +2366,7 @@ mod tests {
             want: Want::Program(Program::parse("out/app").unwrap()),
             site: Some(Box::new(root_site("//:app_test"))),
             ceiling: Box::new(Ceiling {
+                unkeyed: BTreeSet::new(),
                 run: BTreeSet::from([Program::parse("cc").unwrap()]),
                 env: BTreeSet::new(),
                 read: BTreeSet::new(),
@@ -2290,6 +2473,7 @@ mod tests {
         assert_eq!(NameKind::Isolation.to_string(), "execution strategy");
         assert_eq!(NameKind::Approver.to_string(), "approver mode");
         assert_eq!(NameKind::TreePath.to_string(), "tree path");
+        assert_eq!(NameKind::EnvMark.to_string(), "environment variable mark");
         assert_eq!(NameKind::PluginName.to_string(), "plugin name");
         assert_eq!(NameKind::PluginVersion.to_string(), "plugin version");
         assert_eq!(NameKind::PluginChain.to_string(), "plugin chain");

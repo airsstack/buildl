@@ -1,22 +1,25 @@
 //! A plugin's `extension.toml`, read with airsl and turned into a [`PluginRef`].
 //!
 //! Its own file because the manifest is the one place a plugin states what it asks for, and
-//! buildl reads only part of airsl's grammar: `proc.run` and `env.read`. Everything else airsl
-//! accepts (`fs.read`, `fs.write`, module flags, an optional block, `[limits]`) is a request
-//! buildl would otherwise ignore, and a request silently ignored reads as one granted, so each
-//! is refused instead. airsl's own checks (the shape, the `api`, the entry file) are passed on as
-//! refusals too.
+//! buildl reads only part of airsl's grammar: `proc.run` and `env.read`. It adds one key of its
+//! own, `env.unkeyed`, which airsl's parser refuses as unknown, so it is read from the text and
+//! left out of what airsl is given. Everything else airsl accepts (`fs.read`, `fs.write`, module
+//! flags, an optional block, `[limits]`) is a request buildl would otherwise ignore, and a
+//! request silently ignored reads as one granted, so each is refused instead. airsl's own checks
+//! (the shape, the `api`, the entry file) are passed on as refusals too.
 //!
 //! Responsibilities: [`read_manifest`].
 //!
 //! Non-responsibilities: running the entry file, and deciding which directory a plugin name maps
 //! to. The caller does both and hands the directory in.
 
+use std::collections::BTreeSet;
 use std::fmt::Display;
+use std::fs;
 use std::path::{Path, PathBuf};
 
-use airsl::extension::{MANIFEST_FILE, Manifest, Variables};
-use buildl_core::{Diagnostic, EnvName, PluginName, PluginRef, PluginVersion, Program};
+use airsl::extension::{MANIFEST_FILE, Manifest, RawManifest, Variables};
+use buildl_core::{Diagnostic, EnvName, Error, PluginName, PluginRef, PluginVersion, Program};
 
 /// Reads `<dir>/extension.toml` and checks it describes the plugin `expected`.
 ///
@@ -24,14 +27,16 @@ use buildl_core::{Diagnostic, EnvName, PluginName, PluginRef, PluginVersion, Pro
 /// `<label>/extension.toml`, so they read the same on every machine.
 ///
 /// Returns what the manifest asks for, as a [`PluginRef`], and the entry file relative to `dir`.
+/// `[capabilities] env.unkeyed` is the variables its targets may leave out of their keys.
 ///
 /// # Errors
 ///
 /// Returns a diagnostic naming `<label>/extension.toml` and the reason when airsl refuses the
 /// manifest (unreadable, malformed, an unknown key, an unsupported `api`, an entry that is not a
 /// file inside `dir`), when its `name` is not `expected`, when it holds a name or version buildl
-/// cannot use, or when it requests anything but `proc.run` and `env.read`: `fs.read`, `fs.write`,
-/// a module flag, a `[capabilities.optional]` entry, or a `[limits]` value.
+/// cannot use, when `env.unkeyed` is not a list of variable names or lists one `env.read` does
+/// not, or when it requests anything but `proc.run`, `env.read` and `env.unkeyed`: `fs.read`,
+/// `fs.write`, a module flag, a `[capabilities.optional]` entry, or a `[limits]` value.
 pub(crate) fn read_manifest(
     dir: &Path,
     label: &str,
@@ -43,13 +48,7 @@ pub(crate) fn read_manifest(
         format!("{label}/{MANIFEST_FILE}")
     };
 
-    let manifest = Manifest::from_dir(dir, &Variables::default()).map_err(|error| match error {
-        // These two already name the manifest's path; the diagnostic leads with it, so only the
-        // reason is kept.
-        airsl::Error::ManifestParse { reason, .. } => refuse(&named, reason),
-        airsl::Error::ManifestRead { source, .. } => refuse(&named, source),
-        other => refuse(&named, other),
-    })?;
+    let (manifest, unkeyed) = load(dir, &named)?;
 
     let name =
         PluginName::parse(manifest.name().as_str()).map_err(|error| refuse(&named, error))?;
@@ -100,13 +99,87 @@ pub(crate) fn read_manifest(
         .map(|variable| EnvName::parse(variable).map_err(|error| refuse(&named, error)))
         .collect::<Result<_, _>>()?;
 
+    let unkeyed = unkeyed
+        .iter()
+        .map(|variable| EnvName::parse(variable).map_err(|error| refuse(&named, error)))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    if let Some(name) = unkeyed.difference(&env).next() {
+        return Err(Diagnostic::new(
+            Error::UnkeyedNotRead {
+                file: named,
+                table: "[capabilities]".to_owned(),
+                name: name.clone(),
+            }
+            .to_string(),
+        ));
+    }
+
     let plugin = PluginRef {
         name,
         version,
         run,
         env,
+        unkeyed,
     };
     Ok((plugin, manifest.entry().to_path_buf()))
+}
+
+/// The manifest in `dir`, validated by airsl, and the names its `[capabilities] env.unkeyed`
+/// lists, as written.
+///
+/// airsl refuses `env.unkeyed` as an unknown key, so the key is taken out of the parsed text
+/// before airsl reads what is left. A file that does not parse as TOML, or has no such key, goes
+/// to airsl as it is and is refused, or read, in airsl's words.
+fn load(dir: &Path, named: &str) -> Result<(Manifest, Vec<String>), Diagnostic> {
+    let variables = Variables::default();
+    let from_dir =
+        || Manifest::from_dir(dir, &variables).map_err(|error| airsl_refusal(named, error));
+
+    let Ok(text) = fs::read_to_string(dir.join(MANIFEST_FILE)) else {
+        return Ok((from_dir()?, Vec::new()));
+    };
+    let Ok(mut table) = text.parse::<toml::Table>() else {
+        return Ok((from_dir()?, Vec::new()));
+    };
+    let Some(listed) = take_unkeyed(&mut table) else {
+        return Ok((from_dir()?, Vec::new()));
+    };
+    let unkeyed = listed.map_err(|reason| refuse(named, reason))?;
+    let raw = toml::Value::Table(table)
+        .try_into::<RawManifest>()
+        .map_err(|error| refuse(named, error))?;
+    let manifest =
+        Manifest::validate(raw, dir, &variables).map_err(|error| airsl_refusal(named, error))?;
+    Ok((manifest, unkeyed))
+}
+
+/// Takes `capabilities.env.unkeyed` out of `table`: `None` when it is not there, the names it
+/// lists, or why it is not a list of names.
+fn take_unkeyed(table: &mut toml::Table) -> Option<Result<Vec<String>, &'static str>> {
+    let listed = table
+        .get_mut("capabilities")?
+        .as_table_mut()?
+        .get_mut("env")?
+        .as_table_mut()?
+        .remove("unkeyed")?;
+    let names = listed.as_array().and_then(|entries| {
+        entries
+            .iter()
+            .map(|entry| entry.as_str().map(str::to_owned))
+            .collect::<Option<Vec<_>>>()
+    });
+    Some(names.ok_or("env.unkeyed must be a list of variable names"))
+}
+
+/// A diagnostic for airsl's refusal `error` of the manifest `named`.
+fn airsl_refusal(named: &str, error: airsl::Error) -> Diagnostic {
+    match error {
+        // These two already name the manifest's path; the diagnostic leads with it, so only the
+        // reason is kept.
+        airsl::Error::ManifestParse { reason, .. } => refuse(named, reason),
+        airsl::Error::ManifestRead { source, .. } => refuse(named, source),
+        other => refuse(named, other),
+    }
 }
 
 /// A diagnostic leading with the manifest `named` and then the `reason`.
@@ -198,6 +271,103 @@ mod tests {
             .into()
         );
         assert_eq!(entry, Path::new("main.lua"));
+    }
+
+    #[test]
+    fn extension_reads_env_unkeyed() {
+        let dir = plugin_dir(&manifest(
+            "[capabilities]\nenv.read = [\"HOME\", \"PATH\"]\nenv.unkeyed = [\"PATH\"]\n",
+        ));
+        let (plugin, _) = read_manifest(dir.path(), LABEL, &go()).unwrap();
+        assert_eq!(
+            plugin.env,
+            [
+                EnvName::parse("HOME").unwrap(),
+                EnvName::parse("PATH").unwrap()
+            ]
+            .into()
+        );
+        assert_eq!(plugin.unkeyed, [EnvName::parse("PATH").unwrap()].into());
+    }
+
+    #[test]
+    fn extension_env_unkeyed_left_out_is_empty() {
+        let dir = plugin_dir(&manifest("[capabilities]\nenv.read = [\"HOME\"]\n"));
+        let (plugin, _) = read_manifest(dir.path(), LABEL, &go()).unwrap();
+        assert!(plugin.unkeyed.is_empty());
+    }
+
+    #[test]
+    fn extension_unkeyed_outside_read_is_refused() {
+        let said = refusal(&manifest(
+            "[capabilities]\nenv.read = [\"PATH\"]\nenv.unkeyed = [\"HOME\"]\n",
+        ));
+        assert_eq!(
+            said,
+            "plugins/go/extension.toml: [capabilities] env.unkeyed lists HOME, which env.read does not"
+        );
+    }
+
+    #[test]
+    fn extension_unkeyed_that_is_not_a_list_of_names_is_refused() {
+        let said = refusal(&manifest("[capabilities]\nenv.unkeyed = \"PATH\"\n"));
+        assert_eq!(
+            said,
+            "plugins/go/extension.toml: env.unkeyed must be a list of variable names"
+        );
+    }
+
+    /// A manifest with `env.unkeyed` in it, followed by `rest`.
+    fn with_unkeyed(rest: &str) -> String {
+        manifest(&format!(
+            "[capabilities]\nenv.read = [\"PATH\"]\nenv.unkeyed = [\"PATH\"]\n{rest}"
+        ))
+    }
+
+    #[test]
+    fn with_env_unkeyed_an_unknown_key_is_still_refused() {
+        let said = refusal(&with_unkeyed("").replace("api = 1", "api = 1\nbogus = true"));
+        assert!(said.contains("unknown field `bogus`"), "{said}");
+    }
+
+    #[test]
+    fn with_env_unkeyed_an_unknown_table_is_still_refused() {
+        let said = refusal(&format!("{}[bogus]\nx = 1\n", with_unkeyed("")));
+        assert!(said.contains("unknown field `bogus`"), "{said}");
+    }
+
+    #[test]
+    fn with_env_unkeyed_fs_read_is_still_refused() {
+        let said = refusal(&with_unkeyed("fs.read = [\"/tmp\"]\n"));
+        assert!(said.contains("fs.read"), "{said}");
+    }
+
+    #[test]
+    fn with_env_unkeyed_a_module_flag_is_still_refused() {
+        let said = refusal(&with_unkeyed("regex = true\n"));
+        assert!(said.contains("regex"), "{said}");
+    }
+
+    #[test]
+    fn with_env_unkeyed_a_bad_limit_is_still_refused() {
+        let said = refusal(&format!(
+            "{}[limits]\nmemory = \"64MB\"\n",
+            with_unkeyed("")
+        ));
+        assert!(said.contains("limits.memory"), "{said}");
+        let said = refusal(&format!(
+            "{}[limits]\nmemory = \"lots\"\n",
+            with_unkeyed("")
+        ));
+        assert!(said.contains("memory"), "{said}");
+    }
+
+    #[test]
+    fn with_env_unkeyed_the_api_and_the_name_are_still_checked() {
+        let said = refusal(&with_unkeyed("").replace("api = 1", "api = 2"));
+        assert!(said.contains("api 2"), "{said}");
+        let said = refusal(&with_unkeyed("").replace("\"go\"", "\"rust\""));
+        assert!(said.contains("rust"), "{said}");
     }
 
     #[test]

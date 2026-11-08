@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-07
 depends-on: [01]
 built-on: 55ab2847b726
@@ -12,7 +12,10 @@ built-on: 55ab2847b726
 **Architecture:** `env.unkeyed` beside each `env.read`: the ceiling and the plugin table in
 `buildl.toml` (`crates/buildl/src/manifest/schema.rs:111,237`, `interpret.rs:311-313,118-120`) and
 a plugin's `extension.toml` (`crates/buildl-lua/src/plugin/manifest.rs:98-107`), each refused when
-it names a variable its own `env.read` does not (E4). The wanted set gains `unkeyed` and
+it names a variable its own `env.read` does not (E4). airsl 0.1.4's manifest parser refuses
+`env.unkeyed` as an unknown key, so `buildl-lua` parses `extension.toml` with `toml`, takes
+`capabilities.env.unkeyed` out, and hands the rest to airsl's `RawManifest` and
+`Manifest::validate` (`deny.toml` and `crates/expected-edges.txt` allow `toml` in `buildl-lua`). The wanted set gains `unkeyed` and
 `Want::Unkeyed`, checked against the ceiling and, for a plugin's target, the plugin table and the
 manifest, as `env.read` is today (E3). `plan`, the approvers and `doctor` list `unkeyed variables:`
 apart (spec §3, §4).
@@ -102,7 +105,8 @@ expected texts in `crates/buildl/tests/e2e/approver.rs`, `doctor.rs`,
 variables:` for the rest. The interactive approver names them in its prompt; since it asks only for
 wants it has not remembered (`interactive.rs:71-72`), a remembered yes for reading `HOME` does not
 cover `HOME` unkeyed. The manifest approver is unchanged. `doctor` prints `env.unkeyed` for the
-ceiling and each plugin.
+ceiling; it prints no table per plugin, so a plugin's `unkeyed` wants show as `read X unkeyed`
+want rows with their `declared by plugin` line.
 
 **Proof:** written first, seen failing, then passing —
 - `listing_prints_unkeyed_variables_apart` — `read variables: RUSTFLAGS` and `unkeyed variables: HOME, PATH`.
@@ -123,3 +127,23 @@ ceiling and each plugin.
 ## Proof
 
 - `cargo make dod` and `cargo deny check` pass.
+
+## Review findings
+
+One reviewer pass over Tasks 1-3 (`14-reviewer-p03`), one fix round (`16-coder-p03-fix`):
+
+- 🟡 `book/src/ch11-03-four-crates.md:191` — the `buildl-lua` row had no `toml` — fixed: row and the reasons paragraph name it.
+- 🟡 `types/attribution.rs` `within`'s `Want::Unkeyed` arm untested — fixed: `within_holds_an_unkeyed_want_by_the_unkeyed_names`.
+- 🟡 `buildl-lua/src/plugin/manifest.rs` split path untested — fixed: 6 tests (unknown `[extension]` key, unknown table, `fs.read`, a module flag, `[limits] memory`, `api`/name mismatch), each still refused with `env.unkeyed` present; no code change needed.
+- 🔵 the two `HOME:` attribution lines looked alike for both marks — fixed: an unkeyed want renders `HOME (unkeyed)` (`a_key_mark_and_an_unkeyed_mark_read_differently` red, then green); doc-line wraps, the `Attribution` Display order list and a weak `contains` assertion — fixed.
+- 🔵 strong-typing `table: String` in `UnkeyedNotRead` — declined: the other `Error` variants carry strings; not local.
+- 🟡 plan text not amended for the airsl premise and the doctor rows — fixed in this plan's Architecture and Task 3.
+- Gate after the fixes: `cargo make dod` exit 0, `cargo deny check` ok.
+
+## Deviations
+
+- 2026-11-07 — airsl 0.1.4 refuses `env.unkeyed` in `extension.toml` (`deny_unknown_fields` on `[capabilities.env]`); `buildl-lua` gained a `toml` dependency to take the key out, and `deny.toml`'s `toml` ban gained `buildl-lua` as a wrapper. The spec does not say how the manifest is parsed, so no spec claim is disproven.
+- 2026-11-07 — `doctor` has no per-plugin table; plugin `unkeyed` wants show as want rows (Task 3 text amended).
+- 2026-11-07 — `plan/pinned.rs` changed in Task 2: `Sites.env` no longer holds unkeyed names, so E8 reads both maps. The attribution JSON gained an `unkeyed` map; `WantedSet` serializes `unkeyed`, so the goldens `types/plan.rs`, `flows/golden/plan.json`, `buildl-cli/tests/cli/output.rs` changed.
+- 2026-11-07 — `crates/buildl/tests/e2e/{approver,doctor}.rs` needed no edit.
+- 2026-11-07 — the author kept this split (buildl takes `env.unkeyed` out, airsl reads the rest) over buildl owning the `extension.toml` reader; airsl's `entry` and `api` checks stay airsl's.

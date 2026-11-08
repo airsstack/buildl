@@ -126,7 +126,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use super::CacheRow;
     use crate::error::Error;
@@ -147,6 +147,7 @@ mod tests {
                     .map(|name| OutputName::parse(*name).unwrap())
                     .collect(),
                 env: BTreeMap::new(),
+                unkeyed: BTreeSet::new(),
                 tool: None,
                 settings: BTreeMap::new(),
                 network: NetworkAccess::Sealed,
@@ -274,6 +275,7 @@ mod tests {
                     ),
                     (EnvName::parse("HOME").unwrap(), None),
                 ]),
+                unkeyed: BTreeSet::new(),
                 tool: Some(ToolIdentity {
                     program: Program::parse("cc").unwrap(),
                     fingerprint: Digest::of(b"cc 14.2"),

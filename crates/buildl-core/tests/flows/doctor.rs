@@ -9,13 +9,13 @@
 use std::collections::BTreeSet;
 
 use buildl_core::{
-    Checkup, Directory, EntryName, EnvName, Error, NetworkAccess, Origin, Result, StagedItem,
-    StagedSetting, TargetRole, Want, Written, doctor,
+    Checkup, Directory, EntryName, EnvName, Error, MachineFolders, NetworkAccess, Origin, Result,
+    StagedItem, StagedSetting, TargetRole, Want, Written, doctor,
 };
 
 use crate::common::{
-    FakeCas, FakeDispatcher, FakeHistory, FakeManifest, FakeSource, dir, file, file_by, label,
-    open_workspace, plugin, program, target, target_with, workspace,
+    FakeCas, FakeDispatcher, FakeHistory, FakeManifest, FakeSource, dir, file, file_by, keyed,
+    label, open_workspace, plugin, program, target, target_with, workspace,
 };
 
 fn entry() -> EntryName {
@@ -38,6 +38,7 @@ fn checked_by(source: &FakeSource, manifest: &FakeManifest) -> Result<Checkup> {
         &mut FakeDispatcher::default(),
         manifest,
         &entry(),
+        &MachineFolders::default(),
         &FakeHistory::default(),
         &FakeCas::default(),
     )
@@ -54,7 +55,7 @@ fn doctor_reports_wants_outside_the_ceiling_without_refusing() {
         target("app", &[]),
         target_with("link", |target| {
             target.run = Some(vec![Written::new("ld")]);
-            target.env = vec![Written::new("HOME")];
+            target.env = keyed(&["HOME"]);
         }),
         target_with("fetch", |target| target.network = NetworkAccess::Declared),
     ])
@@ -168,7 +169,7 @@ fn doctor_reports_every_plugin_violation_and_refuses_nothing() {
         file_by(
             &origin,
             vec![
-                target_with("app", |target| target.env = vec![Written::new("HOME")]),
+                target_with("app", |target| target.env = keyed(&["HOME"])),
                 target_with("fetch", |target| target.network = NetworkAccess::Declared),
             ],
             &[],

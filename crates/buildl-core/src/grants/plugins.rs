@@ -15,19 +15,20 @@ use crate::error::DeclarationSite;
 use crate::grants::wanted::program_of;
 use crate::placement::layout::Layout;
 use crate::types::{
-    NetworkAccess, NodeId, PluginCap, PluginNetwork, PluginViolation, SettingName, SettingValue,
-    TargetGraph, Want, Workspace,
+    EnvMark, NetworkAccess, NodeId, PluginCap, PluginNetwork, PluginViolation, SettingName,
+    SettingValue, TargetGraph, Want, Workspace,
 };
 
 /// Every want of a plugin's target that one plugin holding it does not allow.
 ///
 /// A target is held by each plugin in its `narrowing`: the chain that declared it, and the
 /// chain of the rule it names. Its wants are the program its command runs, each environment
-/// variable it reads, and the network when it declares it. A program one of its dependencies
-/// builds is no want, as in the ceiling check. A want is allowed by a plugin only when the
-/// plugin's manifest lists it and the workspace's cap for that plugin lists it too; a plugin
-/// with no cap in `workspace` allows nothing, and the network is allowed only by a cap that
-/// allows it. A target with an empty `narrowing` is held by no plugin.
+/// variable it reads, and the network when it declares it. A variable marked `key` is held to
+/// the `env` lists and one marked `unkeyed` to the `unkeyed` lists. A program one of its
+/// dependencies builds is no want, as in the ceiling check. A want is allowed by a plugin only
+/// when the plugin's manifest lists it and the workspace's cap for that plugin lists it too; a
+/// plugin with no cap in `workspace` allows nothing, and the network is allowed only by a cap
+/// that allows it. A target with an empty `narrowing` is held by no plugin.
 ///
 /// The violations come in label order, then chain order, then program, variables in written
 /// order, and network. Each names the plugin that does not allow the want, and what that plugin
@@ -61,9 +62,15 @@ pub(crate) fn plugin_violations(
             {
                 violation(Want::Program(program.clone()), both(&member.run, &cap.run));
             }
-            for name in &node.env {
-                if !(member.env.contains(name) && cap.env.contains(name)) {
-                    violation(Want::Env(name.clone()), both(&member.env, &cap.env));
+            for (name, mark) in &node.env {
+                let (want, manifest_list, cap_list) = match mark {
+                    EnvMark::Key => (Want::Env(name.clone()), &member.env, &cap.env),
+                    EnvMark::Unkeyed => {
+                        (Want::Unkeyed(name.clone()), &member.unkeyed, &cap.unkeyed)
+                    }
+                };
+                if !(manifest_list.contains(name) && cap_list.contains(name)) {
+                    violation(want, both(manifest_list, cap_list));
                 }
             }
             if node.network == NetworkAccess::Declared && cap.network != PluginNetwork::Allowed {
@@ -92,16 +99,18 @@ mod tests {
     use std::collections::{BTreeMap, BTreeSet};
 
     use super::plugin_violations;
-    use crate::grants::fixtures::{command, dir, env_name, graph, node, program};
+    use crate::grants::fixtures::{command, dir, env_name, graph, keyed, marked, node, program};
     use crate::placement::layout::Layout;
     use crate::types::{
-        ApproverMode, Ceiling, Execution, NetworkAccess, Node, Origin, PluginCap, PluginName,
-        PluginNetwork, PluginRef, PluginVersion, PluginViolation, TargetGraph, Want, Workspace,
+        ApproverMode, Ceiling, EnvMark, Execution, NetworkAccess, Node, Origin, PluginCap,
+        PluginName, PluginNetwork, PluginRef, PluginVersion, PluginViolation, TargetGraph, Want,
+        Workspace,
     };
 
     /// The plugin `name` at version 1.3.0, whose manifest lists `run` and `env`.
     fn plugin(name: &str, run: &[&str], env: &[&str]) -> PluginRef {
         PluginRef {
+            unkeyed: BTreeSet::new(),
             name: PluginName::parse(name).unwrap(),
             version: PluginVersion::parse("1.3.0").unwrap(),
             run: run.iter().map(|text| program(text)).collect(),
@@ -112,6 +121,7 @@ mod tests {
     /// The cap letting a plugin run `run` and read `env`, with the network as `network`.
     fn cap(run: &[&str], env: &[&str], network: PluginNetwork) -> PluginCap {
         PluginCap {
+            unkeyed: BTreeSet::new(),
             run: run.iter().map(|text| program(text)).collect(),
             env: env.iter().map(|text| env_name(text)).collect(),
             network,
@@ -124,6 +134,7 @@ mod tests {
             out: dir("out"),
             state: dir(".buildl"),
             ceiling: Ceiling {
+                unkeyed: BTreeSet::new(),
                 run: BTreeSet::new(),
                 env: BTreeSet::new(),
                 read: BTreeSet::new(),
@@ -308,7 +319,7 @@ mod tests {
         let go = plugin("go", &["go"], &["GOPATH", "HOME"]);
         let graph = graph(
             vec![by("//:app", &["go"], &[go], |node| {
-                node.env = vec![env_name("GOPATH"), env_name("HOME"), env_name("PATH")];
+                node.env = keyed(&["GOPATH", "HOME", "PATH"]);
             })],
             &[&[]],
         );
@@ -334,6 +345,56 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn plugin_unkeyed_needs_table_and_manifest() {
+        let violations_with = |manifest: &[&str], table: &[&str]| {
+            let mut go = plugin("go", &["go"], &["HOME"]);
+            go.unkeyed = manifest.iter().map(|text| env_name(text)).collect();
+            let graph = graph(
+                vec![by("//:app", &["go"], &[go], |node| {
+                    node.env = marked(&[("HOME", EnvMark::Unkeyed)]);
+                })],
+                &[&[]],
+            );
+            let mut table_cap = cap(&["go"], &["HOME"], PluginNetwork::Sealed);
+            table_cap.unkeyed = table.iter().map(|text| env_name(text)).collect();
+            violations(&graph, &workspace(vec![("go", table_cap)]))
+        };
+
+        assert_eq!(violations_with(&["HOME"], &["HOME"]), Vec::new());
+        for (manifest, table) in [(&[][..], &["HOME"][..]), (&["HOME"], &[]), (&[], &[])] {
+            let found = violations_with(manifest, table);
+            assert_eq!(
+                found.iter().map(summary).collect::<Vec<_>>(),
+                [(
+                    Want::Unkeyed(env_name("HOME")),
+                    "//:app".to_owned(),
+                    "go".to_owned(),
+                    texts(
+                        &manifest
+                            .iter()
+                            .copied()
+                            .filter(|name| table.contains(name))
+                            .collect::<Vec<_>>()
+                    )
+                )]
+            );
+        }
+    }
+
+    #[test]
+    fn a_key_mark_is_held_to_env_read_alone() {
+        let go = plugin("go", &["go"], &["HOME"]);
+        let graph = graph(
+            vec![by("//:app", &["go"], &[go], |node| {
+                node.env = keyed(&["HOME"]);
+            })],
+            &[&[]],
+        );
+        let workspace = workspace(vec![("go", cap(&["go"], &["HOME"], PluginNetwork::Sealed))]);
+        assert_eq!(violations(&graph, &workspace), Vec::new());
     }
 
     #[test]
@@ -379,7 +440,7 @@ mod tests {
         let graph = graph(
             vec![node("//:app", |node| {
                 node.run = command(&["curl"]);
-                node.env = vec![env_name("HOME")];
+                node.env = keyed(&["HOME"]);
                 node.network = NetworkAccess::Declared;
             })],
             &[&[]],

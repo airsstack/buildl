@@ -11,8 +11,8 @@ use std::path::Path;
 use buildl_core::{
     Declaration, DeclarationField, Declared, Diagnostic, Direction, Directory, Discovered,
     Dispatcher, EntryName, Error, EvaluationFailure, EvaluationLimit, Freshness, Label, LiveOutput,
-    OnFailure, Origin, OutputName, Pipeline, PortName, Query, Scope, TargetRole, Turn, Written,
-    json, load, pipeline,
+    MachineFolders, OnFailure, Origin, OutputName, Pipeline, PortName, Query, Scope, TargetRole,
+    Turn, Written, json, load, pipeline,
 };
 
 use crate::common::{
@@ -485,13 +485,22 @@ fn check_graph_query_and_gc_load_in_any_order() {
         &source(),
         &mut FakeDispatcher::default(),
         &entry(),
+        &MachineFolders::default(),
         &history,
         &cas,
     )
     .unwrap();
     assert_eq!(
         checked,
-        pipeline::check(&source(), &mut jumbled, &entry(), &history, &cas).unwrap()
+        pipeline::check(
+            &source(),
+            &mut jumbled,
+            &entry(),
+            &MachineFolders::default(),
+            &history,
+            &cas
+        )
+        .unwrap()
     );
 
     let canonical = |(graph, _)| json::canonical::to_vec(&graph).unwrap();
@@ -499,13 +508,24 @@ fn check_graph_query_and_gc_load_in_any_order() {
         &source(),
         &mut FakeDispatcher::default(),
         &entry(),
+        &MachineFolders::default(),
         &history,
         &cas,
     )
     .unwrap();
     assert_eq!(
         canonical(graphed),
-        canonical(pipeline::graph(&source(), &mut jumbled, &entry(), &history, &cas).unwrap())
+        canonical(
+            pipeline::graph(
+                &source(),
+                &mut jumbled,
+                &entry(),
+                &MachineFolders::default(),
+                &history,
+                &cas
+            )
+            .unwrap()
+        )
     );
 
     let question = Query::new(Direction::Rdeps, Label::parse("//lib/core:base").unwrap());
@@ -513,6 +533,7 @@ fn check_graph_query_and_gc_load_in_any_order() {
         &source(),
         &mut FakeDispatcher::default(),
         &entry(),
+        &MachineFolders::default(),
         &history,
         &cas,
         &question,
@@ -521,9 +542,17 @@ fn check_graph_query_and_gc_load_in_any_order() {
     assert!(!queried.is_empty());
     assert_eq!(
         queried,
-        pipeline::query(&source(), &mut jumbled, &entry(), &history, &cas, &question)
-            .unwrap()
-            .0
+        pipeline::query(
+            &source(),
+            &mut jumbled,
+            &entry(),
+            &MachineFolders::default(),
+            &history,
+            &cas,
+            &question
+        )
+        .unwrap()
+        .0
     );
 
     let collected = |dispatcher: &mut FakeDispatcher| {
@@ -533,6 +562,7 @@ fn check_graph_query_and_gc_load_in_any_order() {
             &source(),
             dispatcher,
             &entry(),
+            &MachineFolders::default(),
             &mut ports.cache,
             &ports.cas,
             &ports.cas,

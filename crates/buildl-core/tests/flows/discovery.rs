@@ -10,15 +10,15 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
     ActionOutcome, Argument, Command, ContentStore, Digest, Discovered, EntryName, Error, FileMode,
-    Label, LiveOutput, LogLine, LoggedRun, OnFailure, OutcomeClass, OutputManifest, OutputName,
-    Pipeline, PortName, Produced, Rerun, Sample, Scope, StagedItem, StoredFile, Summary, Tally,
-    TargetGraph, TargetRole, Timestamp, Written, json, pipeline,
+    Label, LiveOutput, LogLine, LoggedRun, MachineFolders, OnFailure, OutcomeClass, OutputManifest,
+    OutputName, Pipeline, PortName, Produced, Rerun, Sample, Scope, StagedItem, StoredFile,
+    Summary, Tally, TargetGraph, TargetRole, Timestamp, Written, json, pipeline,
 };
 
 use crate::common::{
     Answer, Ends, FakeApprover, FakeCas, FakeDispatcher, FakeFile, FakeHistory, FakeManifest,
-    FakePorts, FakeSource, Reported, classes, ending, expected, file, label, open_workspace, ports,
-    program, script, target, target_with, workspace,
+    FakePorts, FakeSource, Reported, classes, ending, expected, file, keyed, label, open_workspace,
+    ports, program, script, target, target_with, workspace,
 };
 
 fn entry() -> EntryName {
@@ -117,6 +117,7 @@ fn graph_of(
         source,
         &mut FakeDispatcher::default(),
         &entry(),
+        &MachineFolders::default(),
         history,
         cas,
     )
@@ -131,6 +132,7 @@ fn checked_with(
         source,
         &mut FakeDispatcher::default(),
         &entry(),
+        &MachineFolders::default(),
         history,
         cas,
     )
@@ -235,7 +237,7 @@ fn a_discovery_changed_in_pass_two_is_refused() {
     let (history, cas) = with_a_result();
     let changed = root(vec![target_with("pkgs", |target| {
         target.role = TargetRole::Discovery;
-        target.env = vec![Written::new("HOME")];
+        target.env = keyed(&["HOME"]);
     })]);
     let source = FakeSource::declaring_from_results(before(), changed);
 
@@ -280,6 +282,7 @@ fn gc_keeps_rows_of_targets_declared_from_discovery() {
         &declaring(),
         &mut FakeDispatcher::default(),
         &entry(),
+        &MachineFolders::default(),
         &mut ports.cache,
         &ports.cas,
         &ports.cas,
@@ -340,7 +343,7 @@ fn plan_lists_the_discovery_target_and_not_what_it_depends_on() {
 fn doctor_wants_include_discovered_targets() {
     let declares_env = root(vec![
         discovery(),
-        target_with("a", |target| target.env = vec![Written::new("HOME")]),
+        target_with("a", |target| target.env = keyed(&["HOME"])),
     ]);
     let source = || FakeSource::declaring_from_results(before(), declares_env.clone());
     let manifest = FakeManifest {
@@ -352,6 +355,7 @@ fn doctor_wants_include_discovered_targets() {
             &mut FakeDispatcher::default(),
             &manifest,
             &entry(),
+            &MachineFolders::default(),
             history,
             cas,
         )

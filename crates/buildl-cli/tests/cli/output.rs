@@ -299,7 +299,7 @@ fn plan_json_is_one_canonical_line() {
     let text = stdout(&first);
     assert!(
         text.starts_with(concat!(
-            "{\"attribution\":{\"env\":{},\"network\":{},\"programs\":{}},",
+            "{\"attribution\":{\"env\":{},\"network\":{},\"programs\":{},\"unkeyed\":{}},",
             "\"settings\":{\"mode\":\"debug\"},\"stale_discovery\":[],",
             "\"targets\":{\"//:app\":{"
         )),
@@ -723,10 +723,11 @@ fn doctor_prints_the_workspace_authority() {
                 "execution  workers 1, timeout 10m, strategy bare\n",
                 "remote: none\n",
                 "ceiling\n",
-                "  proc.run  cp\n",
-                "  env.read  -\n",
-                "  fs.read   .\n",
-                "  fs.write  .buildl, out\n",
+                "  proc.run     cp\n",
+                "  env.read     -\n",
+                "  env.unkeyed  -\n",
+                "  fs.read      .\n",
+                "  fs.write     .buildl, out\n",
                 "wants               ceiling  approved\n",
                 "  run cp            allowed  no\n",
                 "  run curl          REFUSED  -\n",

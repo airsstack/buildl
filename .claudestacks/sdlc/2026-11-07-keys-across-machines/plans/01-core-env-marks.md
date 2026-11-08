@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-07
 built-on: 55ab2847b726
 ---
@@ -142,3 +142,21 @@ the pinned three. The serialized `Plan` holds no `unkeyed` value. `encode::comma
 
 - `cargo make dod` and `cargo deny check` pass.
 - `cargo test -p buildl-core two_machines` passes.
+
+## Review findings
+
+One reviewer pass over Tasks 1-3 (`07-reviewer-p01`), one fix round:
+
+- 🟡 `book/src/ch03-05-build-settings.md:73`, `ch07-00-discovery-targets.md:87` showed the graph JSON `env` as a list — fixed: now the name → mark map (`"env":{}`, `"env":{"HOME":"unkeyed"}`).
+- 🟡 `execute` and `verify` `# Errors` lists left out the host port's failure for an `unkeyed` value — fixed in both docs.
+- 🔵 four doc nits (`remote_action.rs`, `components.rs`, `difference.rs`, `ready_action.rs` comment vs code) — fixed.
+- 🔵 the pinned test does not re-check exit 5 — accepted: `crates/buildl-cli/src/exit.rs` maps `PinnedEnv` to 5 and its test covers it.
+- Gate after the fixes: `cargo make dod` exit 0 (run by the plan 02 coder over the whole tree), `cargo deny check` ok.
+
+## Deviations
+
+- 2026-11-07 — `plan/pinned.rs`, `plan/authority.rs` needed no source change in Task 1 (they read `sites.env`, built in `grants/wanted.rs`); only their tests changed. `tests/flows/plan.rs` needed no change.
+- 2026-11-07 — the graph JSON `buildl graph` prints shows `env` as a name → mark map (the node type changed); goldens `buildl-core/tests/flows/golden/graph.json`, `buildl/tests/e2e/golden/chain.graph.json` and the inline JSON in `buildl/src/workspace.rs` updated.
+- 2026-11-07 — `Difference` lives in `types/plan.rs` (not listed); the four variants were added there.
+- 2026-11-07 — `ready()` and `prepared()` take the `Host`, so `verify/assembly.rs` changed too; `verify`'s re-runs also get `unkeyed` values. An unset `unkeyed` variable is named in `ReadyAction.unkeyed` and absent from `env`.
+- 2026-11-07 — reviewed once per plan rather than once per batch; tasks ran one at a time (shared files), checkpointed in the git index, not committed.

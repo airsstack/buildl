@@ -29,7 +29,7 @@ use crate::execute::schedule::{Finish, Schedule};
 use crate::execute::settle::{Settled, settle};
 use crate::placement::expand::{Lists, expand, expand_description};
 use crate::placement::layout::Layout;
-use crate::ports::{Dispatcher, Manifest, PortSet, Ports, Reporter};
+use crate::ports::{Dispatcher, Host, Manifest, PortSet, Ports, Reporter};
 use crate::types::{
     ActionOutcome, Captured, Ceiling, Command, EnvName, EnvValue, ExpandedDescription, Forcing,
     Isolation, Label, LiveOutput, Node, NodeId, OutcomeEvent, OutputPath, OwnComponents, Plan,
@@ -139,9 +139,11 @@ pub fn ensure_sandboxed_remote(remote: RemotePolicy, strategy: Isolation) -> Res
 /// 3. [`Error::UploadUnsandboxed`] when `choices.remote` writes to the remote or has it run
 ///    actions, and the workspace's actions run bare;
 /// 4. [`Error::OutputConflict`] when two outputs of `whole` would be written to one place;
-/// 5. for the first target, in id order, whose expanded command cannot run:
-///    [`Error::NoProgram`] when it names no program, and [`Error::Refused`] when the program
-///    is outside the workspace's ceiling.
+/// 5. for the first target, in id order, whose expanded command cannot run or whose
+///    environment cannot be read: [`Error::NoProgram`] when it names no program,
+///    [`Error::Refused`] when the program is outside the workspace's ceiling, and whatever the
+///    host port returns when it cannot report the value of a variable the target marks
+///    `unkeyed`.
 ///
 /// Once the build is under way, returns the first of: [`Error::Adapter`], naming the remote
 /// cache and the call, for a failed call under
@@ -178,7 +180,7 @@ pub fn execute<P: Ports>(
     ensure_sandboxed_remote(remote, workspace.execution.strategy)?;
     Layout::of(whole, &workspace.out)?;
     let layout = Layout::of(graph, &workspace.out)?;
-    let targets = prepared(graph, plan, &layout, &workspace.ceiling)?;
+    let targets = prepared(graph, plan, &layout, &workspace.ceiling, &ports.host)?;
 
     let PortSet {
         cache,
@@ -272,31 +274,44 @@ const fn own_of(verdict: &Verdict) -> &OwnComponents {
 /// and `deps` where its dependencies' do.
 ///
 /// The environment holds each variable the target reads that has a value; one that is not set
-/// is left out, as it is absent where the action runs.
-fn ready(
+/// is left out, as it is absent where the action runs. A `key` variable's value is the one the
+/// key holds; an `unkeyed` variable's is what `host` reports now, since no key holds it, and
+/// `unkeyed` names those variables.
+///
+/// # Errors
+///
+/// Returns whatever `host` returns for the first `unkeyed` variable it cannot report.
+pub(crate) fn ready<H: Host>(
     node: &Node,
     own: &OwnComponents,
+    host: &H,
     command: Command,
     description: Option<ExpandedDescription>,
     outputs: &[OutputPath],
     deps: Vec<OutputPath>,
-) -> ReadyAction {
-    let env: BTreeMap<EnvName, EnvValue> = own
+) -> Result<ReadyAction> {
+    let mut env: BTreeMap<EnvName, EnvValue> = own
         .env
         .iter()
         .filter_map(|(name, value)| Some((name.clone(), value.clone()?)))
         .collect();
-    ReadyAction {
+    for name in &own.unkeyed {
+        if let Some(value) = host.env(name)? {
+            env.insert(name.clone(), value);
+        }
+    }
+    Ok(ReadyAction {
         label: node.label.clone(),
         command,
         description,
         env,
+        unkeyed: own.unkeyed.clone(),
         inputs: node.inputs.clone(),
         deps,
         outputs: outputs.to_vec(),
         network: node.network,
         output_source: node.output_source,
-    }
+    })
 }
 
 /// One target, with everything about it that is settled before anything runs.
@@ -318,15 +333,20 @@ pub(crate) struct Prepared<'a> {
 /// command does not, which its key does not hold, so it is expanded with the settings `plan`
 /// holds: the value of every setting.
 ///
+/// The value of each `unkeyed` variable a target reads is asked of `host` as its action is made
+/// ready: no plan holds it.
+///
 /// # Errors
 ///
 /// Returns [`Error::NoProgram`] or [`Error::Refused`] for the first target, in id order, whose
-/// expanded command cannot run under `ceiling`.
-pub(crate) fn prepared<'a>(
+/// expanded command cannot run under `ceiling`, and whatever `host` returns for an `unkeyed`
+/// variable it cannot report.
+pub(crate) fn prepared<'a, H: Host>(
     graph: &'a TargetGraph,
     plan: &'a Plan,
     layout: &Layout,
     ceiling: &Ceiling,
+    host: &H,
 ) -> Result<Vec<Prepared<'a>>> {
     graph
         .nodes()
@@ -363,7 +383,7 @@ pub(crate) fn prepared<'a>(
                 node,
                 own,
                 deps,
-                action: ready(node, own, command, description, outputs, dep_paths),
+                action: ready(node, own, host, command, description, outputs, dep_paths)?,
             })
         })
         .collect()
@@ -710,6 +730,7 @@ mod tests {
     use crate::execute::fixtures::{
         command, graph, key, label, node, output_path, own, path, settings,
     };
+    use crate::ports::two_machines::TwoMachines;
     use crate::types::{
         Attribution, DirtyReason, EnvName, EnvValue, ExpandedDescription, NetworkAccess, NodeId,
         Plan, PlannedKey, TargetGraph, Unfinished, Verdict, WantedSet,
@@ -725,6 +746,7 @@ mod tests {
         let wanted = WantedSet {
             programs: BTreeSet::new(),
             env: BTreeSet::new(),
+            unkeyed: BTreeSet::new(),
             write: BTreeSet::new(),
             network: BTreeSet::new(),
         };
@@ -867,11 +889,13 @@ mod tests {
         let action = ready(
             &node,
             &own,
+            &TwoMachines::first(),
             command(&["cc", "-o", "out/app"]),
             Some(ExpandedDescription::new("compile z.c a.c")),
             &outputs,
             deps.clone(),
-        );
+        )
+        .unwrap();
 
         assert_eq!(action.label, label("//:app"));
         assert_eq!(action.command, command(&["cc", "-o", "out/app"]));
@@ -887,5 +911,45 @@ mod tests {
         assert_eq!(action.deps, deps);
         assert_eq!(action.outputs, outputs);
         assert_eq!(action.network, NetworkAccess::Declared);
+        assert!(action.unkeyed.is_empty());
+    }
+
+    #[test]
+    fn ready_action_holds_unkeyed_values() {
+        let node = node("//:app", |_| {});
+        let mut own = own(&["app"]);
+        own.env = BTreeMap::from([(
+            EnvName::parse("RUSTFLAGS").unwrap(),
+            Some(EnvValue::parse("-Cdebuginfo=0").unwrap()),
+        )]);
+        own.unkeyed = BTreeSet::from([
+            EnvName::parse("HOME").unwrap(),
+            EnvName::parse("PATH").unwrap(),
+            EnvName::parse("LANG").unwrap(),
+        ]);
+        let outputs = [output_path("//:app", "app")];
+
+        let action = ready(
+            &node,
+            &own,
+            &TwoMachines::first(),
+            command(&["cc"]),
+            None,
+            &outputs,
+            Vec::new(),
+        )
+        .unwrap();
+
+        let value = |text: &str| EnvValue::parse(text).unwrap();
+        assert_eq!(
+            action.env,
+            BTreeMap::from([
+                (EnvName::parse("HOME").unwrap(), value("/home/alice")),
+                (EnvName::parse("PATH").unwrap(), value("/usr/bin")),
+                (EnvName::parse("RUSTFLAGS").unwrap(), value("-Cdebuginfo=0")),
+            ]),
+            "an unset unkeyed variable (LANG) is left out as an unset key one is"
+        );
+        assert_eq!(action.unkeyed, own.unkeyed);
     }
 }

@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-07
 depends-on: [01, 02]
 built-on: 55ab2847b726
@@ -142,3 +142,22 @@ searched. All exit 5; under `watch` they are reported like any load error and th
 ## Proof
 
 - `cargo make dod` and `cargo deny check` pass.
+
+## Review findings
+
+One reviewer pass over Tasks 1-3 (`15-reviewer-p04`), one fix round (`17-coder-p04-fix`):
+
+- 🟡 the pass-two command check was unguarded — fixed: flow test `a_command_declared_only_after_discovery_is_refused`, seen failing with the check removed.
+- 🟡 the workspace's written form never reached `MachineFolders` (the root comes canonical from `current_dir()`) — fixed: `PWD` is read once and injected; `written_root(pwd, current, root)` gives the written root when `PWD` canonicalizes to the current folder; one `LocalHost` serves `assemble` and `machine_folders()`. Tests `the_written_root_is_pwd_less_the_names_below_the_root`, `there_is_no_written_root_without_a_matching_pwd`, `local_host_reports_the_workspace_as_written`, `the_machine_folders_hold_the_root_as_the_shell_writes_it`.
+- 🟡 the folder wiring of `graph`, `query`, `doctor`, `gc` was unguarded — fixed: `machine_path_in_command_exits_5_for_{graph,query,doctor,gc}` in `crates/buildl-cli/tests/cli/exit_codes.rs`.
+- 🔵 doctest line length, split `std` imports, `reading_rustflags(&str)` → `EnvMark` — fixed. `MachineFolders::new` taking three `&[&str]`, `folder: String` in E5-E7, `gc`'s eight arguments, `match_indices` missing self-overlapping repeats — declined: redesigns outside the plan, or not reachable by real paths.
+- ❓ a folder joined to a flag (`-I/home/al/include`, `-L/home/al/lib`) is not matched: the letter before `/` blocks it, as spec §6's rule says. Open for the author (spec §6).
+- ❓ a setting value holding a folder (`${prefix}` = `/home/al/opt`, or `--set`) reaches the key through the settings and is not searched: commands are searched with placeholders unexpanded, as the plan says. Open for the author (spec §6).
+- Gate after the fixes: `cargo make dod` exit 0, `cargo deny check` ok.
+
+## Deviations
+
+- 2026-11-07 — E7 is checked in `second_pass` (a new `first_pass` checks pass-one commands, so E5 fires before any discovery target runs); `results` does not take `&MachineFolders`. Rules' commands and pass-two commands are searched too.
+- 2026-11-07 — trailing-`/` removal and dropping an empty or root form apply to all three folders, not only home; a form given twice is dropped. `MachineFolders::new` takes slices; an empty slice leaves that folder out.
+- 2026-11-07 — `LocalHost::new` takes the root, the sandbox folder and the written root; `Wiring` reads `PWD` once beside `HOME`.
+- 2026-11-07 — `gc` carries `#[expect(clippy::too_many_arguments)]` with a reason, as `plugins/fetch.rs` `bring_in` does.

@@ -15,7 +15,8 @@ use crate::types::{WantedSet, Workspace};
 /// The part of `wanted` that `workspace`'s ceiling does not allow.
 ///
 /// A program is outside when the ceiling does not name it to run, a variable when the ceiling
-/// does not name it to read, and a directory when no directory the ceiling allows writing to
+/// does not name it to read, an unkeyed variable when the ceiling does not name it in
+/// `env.unkeyed`, and a directory when no directory the ceiling allows writing to
 /// holds it. The network is never outside: a ceiling has no entry for it.
 pub(crate) fn outside(wanted: &WantedSet, workspace: &Workspace) -> WantedSet {
     let ceiling = &workspace.ceiling;
@@ -30,6 +31,12 @@ pub(crate) fn outside(wanted: &WantedSet, workspace: &Workspace) -> WantedSet {
             .env
             .iter()
             .filter(|name| !ceiling.env.contains(*name))
+            .cloned()
+            .collect(),
+        unkeyed: wanted
+            .unkeyed
+            .iter()
+            .filter(|name| !ceiling.unkeyed.contains(*name))
             .cloned()
             .collect(),
         write: wanted
@@ -62,6 +69,7 @@ mod tests {
             out: dir("out"),
             state: dir(".buildl"),
             ceiling: Ceiling {
+                unkeyed: BTreeSet::new(),
                 run: BTreeSet::from([program("cc")]),
                 env: BTreeSet::from([env_name("PATH")]),
                 read: BTreeSet::from([dir("src")]),
@@ -79,6 +87,7 @@ mod tests {
         WantedSet {
             programs: BTreeSet::from([program("cc")]),
             env: BTreeSet::from([env_name("PATH")]),
+            unkeyed: BTreeSet::new(),
             write: BTreeSet::from([dir("out"), dir(".buildl")]),
             network: BTreeSet::new(),
         }
@@ -100,6 +109,19 @@ mod tests {
         wanted.env.insert(env_name("HOME"));
         assert_eq!(
             outside(&wanted, &workspace()).env,
+            BTreeSet::from([env_name("HOME")])
+        );
+    }
+
+    #[test]
+    fn an_unkeyed_variable_outside_env_unkeyed_is_outside() {
+        let mut workspace = workspace();
+        workspace.ceiling.unkeyed.insert(env_name("PATH"));
+        let mut wanted = inside();
+        wanted.unkeyed.insert(env_name("PATH"));
+        wanted.unkeyed.insert(env_name("HOME"));
+        assert_eq!(
+            outside(&wanted, &workspace).unkeyed,
             BTreeSet::from([env_name("HOME")])
         );
     }

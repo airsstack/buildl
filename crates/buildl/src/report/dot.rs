@@ -59,6 +59,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     use buildl_core::{
@@ -91,7 +92,7 @@ mod tests {
                 inputs: Vec::new(),
                 deps: deps.iter().map(|dep| Label::parse(dep).unwrap()).collect(),
                 outputs: Vec::new(),
-                env: Vec::new(),
+                env: BTreeMap::new(),
                 network: NetworkAccess::Sealed,
                 output_source: OutputSource::Command,
                 freshness: Freshness::Cached,

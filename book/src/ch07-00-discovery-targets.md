@@ -84,7 +84,7 @@ Commands that run nothing say so:
 ```console
 $ buildl graph
 //:pkgs has not run; run buildl build
-{"aliases":{},"settings":{},"targets":{"//:pkgs":{"deps":[],"description":null,"env":["HOME"],"freshness":"Cached","inputs":["go.mod","greet/greet.go","greet/greet_test.go","mathx/mathx.go","mathx/mathx_test.go","text/words/words.go","text/words/words_test.go"],"network":"Sealed","origin":"BuildFile","output_source":"Stdout","outputs":["pkgs.json"],"provenance":{"directory":"","file":"build.lua"},"role":"Discovery","run":["go","list","-json=ImportPath","./..."]}}}
+{"aliases":{},"settings":{},"targets":{"//:pkgs":{"deps":[],"description":null,"env":{"HOME":"unkeyed"},"freshness":"Cached","inputs":["go.mod","greet/greet.go","greet/greet_test.go","mathx/mathx.go","mathx/mathx_test.go","text/words/words.go","text/words/words_test.go"],"network":"Sealed","origin":"BuildFile","output_source":"Stdout","outputs":["pkgs.json"],"provenance":{"directory":"","file":"build.lua"},"role":"Discovery","run":["go","list","-json=ImportPath","./..."]}}}
 $ buildl plan
   write into: .buildl, out
 //:pkgs is not up to date; targets declared from it may change

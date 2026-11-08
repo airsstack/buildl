@@ -26,6 +26,9 @@ pub struct Ceiling {
     pub run: BTreeSet<Program>,
     /// The environment variables a target may read.
     pub env: BTreeSet<EnvName>,
+    /// The environment variables a target may read and leave out of its key; each is also in
+    /// `env`.
+    pub unkeyed: BTreeSet<EnvName>,
     /// The directories a target's inputs may lie in.
     pub read: BTreeSet<Directory>,
     /// The directories a build may write into.
@@ -41,8 +44,11 @@ pub struct Ceiling {
 pub struct WantedSet {
     /// Every program a command names.
     pub programs: BTreeSet<Program>,
-    /// Every environment variable a target reads.
+    /// Every environment variable a target reads and marks `key`.
     pub env: BTreeSet<EnvName>,
+    /// Every environment variable a target reads and marks `unkeyed`; a name two targets mark
+    /// differently is in both this set and `env`.
+    pub unkeyed: BTreeSet<EnvName>,
     /// Every directory the build writes into.
     pub write: BTreeSet<Directory>,
     /// Every target that declared it reaches the network.
@@ -57,6 +63,7 @@ impl WantedSet {
     pub fn covers(&self, other: &Self) -> bool {
         other.programs.is_subset(&self.programs)
             && other.env.is_subset(&self.env)
+            && other.unkeyed.is_subset(&self.unkeyed)
             && other.write.is_subset(&self.write)
             && other.network.is_subset(&self.network)
     }
@@ -67,6 +74,7 @@ impl WantedSet {
         Self {
             programs: self.programs.difference(&other.programs).cloned().collect(),
             env: self.env.difference(&other.env).cloned().collect(),
+            unkeyed: self.unkeyed.difference(&other.unkeyed).cloned().collect(),
             write: self.write.difference(&other.write).cloned().collect(),
             network: self.network.difference(&other.network).cloned().collect(),
         }
@@ -78,6 +86,7 @@ impl WantedSet {
         Self {
             programs: self.programs.union(&other.programs).cloned().collect(),
             env: self.env.union(&other.env).cloned().collect(),
+            unkeyed: self.unkeyed.union(&other.unkeyed).cloned().collect(),
             write: self.write.union(&other.write).cloned().collect(),
             network: self.network.union(&other.network).cloned().collect(),
         }
@@ -88,6 +97,7 @@ impl WantedSet {
     pub fn is_empty(&self) -> bool {
         self.programs.is_empty()
             && self.env.is_empty()
+            && self.unkeyed.is_empty()
             && self.write.is_empty()
             && self.network.is_empty()
     }
@@ -108,6 +118,9 @@ impl WantedSet {
         if !self.env.is_empty() {
             lines.push(("read variables:", joined(&self.env)));
         }
+        if !self.unkeyed.is_empty() {
+            lines.push(("unkeyed variables:", joined(&self.unkeyed)));
+        }
         if !self.write.is_empty() {
             lines.push(("write into:", joined(&self.write)));
         }
@@ -120,10 +133,10 @@ impl WantedSet {
 
 /// The set as the approval prompt and a refusal show it.
 ///
-/// One line for each kind that holds a member, in the order programs, variables, directories,
-/// network. Each line is indented two spaces; its label is padded so the members line up one
-/// space past the longest label shown. Members are joined by `, ` in the set's own order. There is
-/// no trailing newline, and an empty set renders as nothing.
+/// One line for each kind that holds a member, in the order programs, variables, unkeyed
+/// variables, directories, network. Each line is indented two spaces; its label is padded so the
+/// members line up one space past the longest label shown. Members are joined by `, ` in the
+/// set's own order. There is no trailing newline, and an empty set renders as nothing.
 impl fmt::Display for WantedSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let lines = self.lines();
@@ -145,13 +158,16 @@ impl fmt::Display for WantedSet {
 
 /// One thing a build wants that a ceiling is asked about.
 ///
-/// Ordered by kind — program, variable, input, directory, network — and then by value.
+/// Ordered by kind — program, variable, unkeyed variable, input, directory, network — and then
+/// by value.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Want {
     /// To run a program.
     Program(Program),
-    /// To read an environment variable.
+    /// To read an environment variable and fold its value into the key.
     Env(EnvName),
+    /// To read an environment variable and leave its value out of the key.
+    Unkeyed(EnvName),
     /// To read a workspace file as an input.
     Read(SourcePath),
     /// To write into a directory.
@@ -167,6 +183,8 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::BTreeSet;
+
     use super::WantedSet;
     use crate::json::canonical;
     use crate::types::{Directory, EnvName, Label, Program};
@@ -178,6 +196,7 @@ mod tests {
                 .map(|p| Program::parse(*p).unwrap())
                 .collect(),
             env: env.iter().map(|e| EnvName::parse(*e).unwrap()).collect(),
+            unkeyed: BTreeSet::new(),
             write: write
                 .iter()
                 .map(|w| Directory::parse(*w).unwrap())
@@ -242,6 +261,36 @@ mod tests {
         assert!(both.covers(&b));
     }
 
+    /// A set whose only members are the `unkeyed` variables `names`.
+    fn unkeyed(names: &[&str]) -> WantedSet {
+        WantedSet {
+            unkeyed: names.iter().map(|e| EnvName::parse(*e).unwrap()).collect(),
+            ..WantedSet::default()
+        }
+    }
+
+    #[test]
+    fn unkeyed_variables_take_part_in_every_set_operation() {
+        let whole = unkeyed(&["HOME", "PATH"]);
+        let part = unkeyed(&["PATH"]);
+        assert!(whole.covers(&part));
+        assert!(!part.covers(&whole));
+        assert_eq!(whole.minus(&part), unkeyed(&["HOME"]));
+        assert_eq!(part.union(&unkeyed(&["HOME"])), whole);
+        assert!(!whole.is_empty());
+    }
+
+    #[test]
+    fn a_name_read_both_ways_is_two_wants() {
+        let both = WantedSet {
+            env: BTreeSet::from([EnvName::parse("HOME").unwrap()]),
+            ..unkeyed(&["HOME"])
+        };
+        assert!(!wanted(&[], &["HOME"], &[], &[]).covers(&both));
+        assert!(!unkeyed(&["HOME"]).covers(&both));
+        assert!(both.covers(&unkeyed(&["HOME"])));
+    }
+
     #[test]
     fn a_set_round_trips_through_canonical_json() {
         let set = wanted(&["go", "protoc"], &["HOME"], &["out"], &["//:fetch"]);
@@ -263,6 +312,19 @@ mod tests {
             "  run programs:      go, protoc\n  read variables:    HOME, PATH\n  \
              write into:        .buildl, out\n  reach the network: //:fetch"
         );
+    }
+
+    #[test]
+    fn listing_prints_unkeyed_variables_apart() {
+        let set = WantedSet {
+            env: BTreeSet::from([EnvName::parse("RUSTFLAGS").unwrap()]),
+            ..unkeyed(&["PATH", "HOME"])
+        };
+        assert_eq!(
+            set.to_string(),
+            "  read variables:    RUSTFLAGS\n  unkeyed variables: HOME, PATH"
+        );
+        assert_eq!(unkeyed(&["HOME"]).to_string(), "  unkeyed variables: HOME");
     }
 
     #[test]

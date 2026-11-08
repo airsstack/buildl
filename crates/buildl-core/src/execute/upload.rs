@@ -165,7 +165,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Mutex;
 
     use super::{Sent, StoredBlobs, upload, upload_of};
@@ -283,6 +283,7 @@ mod tests {
                 command: command(&["cc"]),
                 description: None,
                 env: BTreeMap::new(),
+                unkeyed: BTreeSet::new(),
                 inputs: Vec::new(),
                 deps: Vec::new(),
                 outputs: names.iter().map(|name| output_path(TARGET, name)).collect(),

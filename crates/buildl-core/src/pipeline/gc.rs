@@ -20,7 +20,7 @@ use crate::error::Result;
 use crate::history::logged_outputs;
 use crate::ports::{ActionCache, ContentStore, DeclarationSource, Dispatcher, RunHistory, Sweep};
 use crate::resolve::resolve;
-use crate::types::{CacheRow, Digest, EntryName, Label, OutputManifest};
+use crate::types::{CacheRow, Digest, EntryName, Label, MachineFolders, OutputManifest};
 
 /// What a [`gc`](fn@gc) removed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,15 +53,23 @@ pub struct Collected {
 ///
 /// # Errors
 ///
-/// Returns whatever the load returns, [`Error::DiscoveryChanged`](crate::Error::DiscoveryChanged)
-/// when reading discovery results changes which discovery targets are declared, then whatever
+/// Returns whatever the load returns,
+/// [`Error::MachinePathInCommand`](crate::Error::MachinePathInCommand) and
+/// [`Error::MachinePathInDiscovery`](crate::Error::MachinePathInDiscovery) for what holds one of
+/// `folders`, [`Error::DiscoveryChanged`](crate::Error::DiscoveryChanged) when reading discovery
+/// results changes which discovery targets are declared, then whatever
 /// [`resolve`](fn@crate::resolve) returns, then
 /// the first port failure of steps 2 and 3, then a failure of `sweep.held()` in step 4, all
 /// before any blob is removed. A failure while removing returns at once; what was already removed stays removed.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is a distinct part of one collection; grouping them would only rename them"
+)]
 pub fn gc<S, D, A, C, W, H>(
     source: &S,
     dispatcher: &mut D,
     entry: &EntryName,
+    folders: &MachineFolders,
     cache: &mut A,
     store: &C,
     sweep: &W,
@@ -75,7 +83,7 @@ where
     W: Sweep,
     H: RunHistory,
 {
-    let loaded = load_twice(source, dispatcher, entry, |labels| {
+    let loaded = load_twice(source, dispatcher, entry, folders, |labels| {
         results(history, store, labels)
     })?;
     let graph = resolve(loaded.declarations)?;
@@ -152,10 +160,10 @@ mod tests {
     use crate::types::{
         ActionKey, Argument, BuildFile, CacheRow, Command, DeclarationOrder, Diagnostic, Digest,
         Discovered, EntryName, Evaluated, FileMode, Freshness, KeyComponents, Label, LogLine,
-        LoggedRun, NetworkAccess, Origin, OutcomeClass, OutputManifest, OutputName, OutputPath,
-        OutputSource, OwnComponents, Platform, Provenance, StagedDeclaration, StagedFile,
-        StagedItem, StagedTarget, StoredFile, TargetName, TargetRole, Timestamp, Tree, TreeEntry,
-        TreePath, Turn, Written,
+        LoggedRun, MachineFolders, NetworkAccess, Origin, OutcomeClass, OutputManifest, OutputName,
+        OutputPath, OutputSource, OwnComponents, Platform, Provenance, StagedDeclaration,
+        StagedFile, StagedItem, StagedTarget, StoredFile, TargetName, TargetRole, Timestamp, Tree,
+        TreeEntry, TreePath, Turn, Written,
     };
 
     /// The calls the cache and the sweep received, in order, shared by both.
@@ -368,6 +376,7 @@ mod tests {
                 inputs: Vec::new(),
                 outputs: names,
                 env: BTreeMap::new(),
+                unkeyed: BTreeSet::new(),
                 tool: None,
                 settings: BTreeMap::new(),
                 network: NetworkAccess::Sealed,
@@ -433,6 +442,7 @@ mod tests {
                 &self.source,
                 &mut Inline,
                 &EntryName::parse("build.lua").unwrap(),
+                &MachineFolders::default(),
                 &mut self.cache,
                 &self.store,
                 &self.sweep,

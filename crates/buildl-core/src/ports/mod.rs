@@ -63,6 +63,8 @@ pub mod run_history;
 pub mod stat_cache;
 pub mod sweep;
 pub mod tool_resolver;
+#[cfg(test)]
+pub(crate) mod two_machines;
 pub mod watch_report;
 
 pub use action_cache::ActionCache;

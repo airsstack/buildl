@@ -75,6 +75,7 @@ mod tests {
         let wanted = WantedSet {
             programs: BTreeSet::new(),
             env: BTreeSet::new(),
+            unkeyed: BTreeSet::new(),
             write: BTreeSet::new(),
             network: BTreeSet::new(),
         };

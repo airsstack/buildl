@@ -46,6 +46,7 @@
 //! | `plugin` | `buildl.use`: a plugin's manifest, environment, `require` and instances |
 //! | `decode_all` | `buildl.decode_all`: a stream of JSON values as a list |
 //! | `primitives` | each primitive's argument shape |
+//! | `env_marks` | a target's `env` table: each name beside its written mark |
 //! | `values` | the Lua value readers every primitive shares |
 //! | `refusal` | why a primitive call was refused |
 //! | `results` | the discovery results `buildl.discovered` reads |
@@ -61,6 +62,7 @@ mod classify;
 mod curated;
 mod decode_all;
 mod engine;
+mod env_marks;
 mod limits;
 mod module;
 mod plugin;

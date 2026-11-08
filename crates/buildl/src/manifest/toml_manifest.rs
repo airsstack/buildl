@@ -674,6 +674,7 @@ path = "plugins/ourgo"
                 (
                     plugin("go"),
                     PluginCap {
+                        unkeyed: BTreeSet::new(),
                         run: ["go", "gofmt"]
                             .into_iter()
                             .map(|program| Program::parse(program).unwrap())
@@ -835,6 +836,70 @@ path = "plugins/ourgo"
 
         assert_eq!(TomlManifest::parse(headers).unwrap(), expected);
         assert_eq!(TomlManifest::parse(inline).unwrap(), expected);
+    }
+
+    fn names(list: &[&str]) -> BTreeSet<EnvName> {
+        list.iter()
+            .copied()
+            .map(|name| EnvName::parse(name).unwrap())
+            .collect()
+    }
+
+    #[test]
+    fn ceiling_reads_env_unkeyed() {
+        let manifest = TomlManifest::parse(
+            "[ceiling]\nenv.read = [\"HOME\", \"PATH\"]\nenv.unkeyed = [\"HOME\", \"PATH\"]\n",
+        )
+        .unwrap();
+        let workspace = manifest.workspace().unwrap();
+        assert_eq!(workspace.ceiling.unkeyed, names(&["HOME", "PATH"]));
+        assert_eq!(workspace.ceiling.env, names(&["HOME", "PATH"]));
+    }
+
+    #[test]
+    fn plugin_table_reads_env_unkeyed() {
+        let manifest = TomlManifest::parse(
+            "[plugins.c]\npath = \"plugins/c\"\nenv.read = [\"PATH\", \"HOME\"]\nenv.unkeyed = [\"PATH\"]\n",
+        )
+        .unwrap();
+        let workspace = manifest.workspace().unwrap();
+        assert_eq!(workspace.plugins[&plugin("c")].unkeyed, names(&["PATH"]));
+    }
+
+    #[test]
+    fn env_unkeyed_left_out_is_empty() {
+        let manifest = TomlManifest::parse(
+            "[ceiling]\nenv.read = [\"HOME\"]\n[plugins.c]\npath = \"plugins/c\"\nenv.read = [\"PATH\"]\n",
+        )
+        .unwrap();
+        let workspace = manifest.workspace().unwrap();
+        assert!(workspace.ceiling.unkeyed.is_empty());
+        assert!(workspace.plugins[&plugin("c")].unkeyed.is_empty());
+    }
+
+    #[test]
+    fn ceiling_unkeyed_outside_read_is_refused() {
+        let error =
+            TomlManifest::parse("[ceiling]\nenv.read = [\"PATH\"]\nenv.unkeyed = [\"HOME\"]\n")
+                .unwrap_err();
+        assert!(matches!(error, Error::UnkeyedNotRead { .. }), "{error:?}");
+        assert_eq!(
+            error.to_string(),
+            "buildl.toml: ceiling env.unkeyed lists HOME, which env.read does not"
+        );
+    }
+
+    #[test]
+    fn plugin_table_unkeyed_outside_read_is_refused() {
+        let error = TomlManifest::parse(
+            "[plugins.c]\npath = \"plugins/c\"\nenv.read = [\"PATH\"]\nenv.unkeyed = [\"HOME\"]\n",
+        )
+        .unwrap_err();
+        assert!(matches!(error, Error::UnkeyedNotRead { .. }), "{error:?}");
+        assert_eq!(
+            error.to_string(),
+            "buildl.toml: [plugins.c] env.unkeyed lists HOME, which env.read does not"
+        );
     }
 
     #[test]

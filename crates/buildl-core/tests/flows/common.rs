@@ -14,9 +14,9 @@ use buildl_core::{
     ExecStrategy, Exit, FileStat, Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest,
     NetworkAccess, Origin, OutcomeEvent, OutputPath, OutputSource, Platform, PluginName, PluginRef,
     PluginVersion, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory,
-    SourcePath, StagedAlias, StagedDeclaration, StagedFile, StagedItem, StagedRule, StagedSetting,
-    StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver,
-    WantedSet, Workspace, Written,
+    SourcePath, StagedAlias, StagedDeclaration, StagedEnv, StagedFile, StagedItem, StagedMark,
+    StagedRule, StagedSetting, StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole,
+    Timestamp, ToolResolver, WantedSet, Workspace, Written,
 };
 use buildl_core::{
     ActionOutcome, Blob, BlobSource, DecodedTree, Executed, Pipeline, RemoteAction, RemoteCache,
@@ -27,7 +27,7 @@ use buildl_core::{
     Captured, Channel, DenialReason, GraphRecord, LiveSink, OutcomeClass, Reporter, Summary,
     TargetGraph, Turn, json,
 };
-use buildl_core::{FileMode, Found, FoundEntry, FoundKind, StoredFile};
+use buildl_core::{FileMode, Found, FoundEntry, FoundKind, MachineFolders, StoredFile};
 
 /// What the fake holds for one directory.
 #[derive(Debug, Clone)]
@@ -177,6 +177,8 @@ pub struct FakeHost {
     pub variables: BTreeMap<EnvName, EnvValue>,
     /// The variables whose value it fails to report.
     pub unreportable: BTreeSet<EnvName>,
+    /// The folders it reports as its own.
+    pub folders: MachineFolders,
 }
 
 impl Host for FakeHost {
@@ -192,6 +194,10 @@ impl Host for FakeHost {
             });
         }
         Ok(self.variables.get(name).cloned())
+    }
+
+    fn machine_folders(&self) -> MachineFolders {
+        self.folders.clone()
     }
 }
 
@@ -1525,6 +1531,7 @@ pub fn open_workspace() -> Workspace {
         out: dir("out"),
         state: dir(".buildl"),
         ceiling: Ceiling {
+            unkeyed: BTreeSet::new(),
             run: BTreeSet::from([program("cc")]),
             env: BTreeSet::new(),
             read: BTreeSet::from([Directory::root()]),
@@ -1556,6 +1563,7 @@ pub fn ports(source: FakeSource) -> PortSet<FakePorts> {
                 .unwrap_or_else(|error| unreachable!("fixture platform: {error}")),
             variables: BTreeMap::new(),
             unreportable: BTreeSet::new(),
+            folders: MachineFolders::default(),
         },
         digester: FakeDigester::default(),
         stat_cache: FakeStatCache::default(),
@@ -1591,6 +1599,7 @@ pub fn program(raw: &str) -> Program {
 #[must_use]
 pub fn plugin(name: &str, version: &str) -> PluginRef {
     PluginRef {
+        unkeyed: BTreeSet::new(),
         name: PluginName::parse(name).unwrap_or_else(|error| unreachable!("fixture name: {error}")),
         version: PluginVersion::parse(version)
             .unwrap_or_else(|error| unreachable!("fixture version: {error}")),
@@ -1676,6 +1685,18 @@ pub fn target_with(name: &str, change: impl FnOnce(&mut StagedTarget)) -> Staged
     };
     change(&mut target);
     StagedItem::Target(target)
+}
+
+/// Staged `env` entries marking each of `names` `key`, in the order given.
+#[must_use]
+pub fn keyed(names: &[&str]) -> Vec<StagedEnv> {
+    names
+        .iter()
+        .map(|name| StagedEnv::Marked {
+            name: Written::new(*name),
+            mark: StagedMark::Word(Written::new("key")),
+        })
+        .collect()
 }
 
 /// A `b.rule(name, { run = run, desc = description })` call.
@@ -1858,6 +1879,7 @@ mod tests {
             command: Command::new(vec![Argument::parse("cc").unwrap()]).unwrap(),
             description: None,
             env: BTreeMap::new(),
+            unkeyed: BTreeSet::new(),
             inputs: inputs.iter().map(|input| path(input)).collect(),
             deps: Vec::new(),
             outputs: outputs.iter().map(|name| out_path(raw, name)).collect(),
@@ -1908,6 +1930,7 @@ mod tests {
                 inputs: Vec::new(),
                 outputs: vec![OutputName::parse("app").unwrap()],
                 env: BTreeMap::new(),
+                unkeyed: BTreeSet::new(),
                 tool: None,
                 settings: BTreeMap::new(),
                 network: NetworkAccess::Sealed,

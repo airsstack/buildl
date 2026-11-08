@@ -164,7 +164,7 @@ fn node(
         description: description.cloned(),
         inputs: without_repeats(&target.inputs),
         outputs: without_repeats(&target.outputs),
-        env: without_repeats(&target.env),
+        env: target.env.clone(),
         network: target.network,
         output_source: target.output_source,
         freshness: target.freshness,
@@ -205,6 +205,7 @@ mod tests {
         reason = "tests unwrap known-valid fixtures; a panic is the intended failure signal"
     )]
 
+    use std::collections::BTreeMap;
     use std::path::Path;
 
     use super::{node_id, resolve, without_repeats};
@@ -214,8 +215,8 @@ mod tests {
         target_item, target_with,
     };
     use crate::types::{
-        Action, Declaration, Declared, Description, EnvName, NodeId, Origin, OutputName, Rule,
-        SourcePath, TargetGraph,
+        Action, Declaration, Declared, Description, EnvMark, EnvName, NodeId, Origin, OutputName,
+        Rule, SourcePath, TargetGraph,
     };
 
     fn id(index: u32) -> NodeId {
@@ -375,18 +376,38 @@ mod tests {
             target.outputs = ["out.b", "out.a", "out.b"]
                 .map(|name| OutputName::parse(name).unwrap())
                 .to_vec();
-            target.env = ["PATH", "HOME", "PATH"]
-                .map(|name| EnvName::parse(name).unwrap())
-                .to_vec();
         })])
         .unwrap();
         let node = &graph.nodes()[0];
         let inputs: Vec<&str> = node.inputs.iter().map(SourcePath::as_str).collect();
         let outputs: Vec<&str> = node.outputs.iter().map(OutputName::as_str).collect();
-        let env: Vec<&str> = node.env.iter().map(EnvName::as_str).collect();
         assert_eq!(inputs, ["z.c", "a.c"]);
         assert_eq!(outputs, ["out.b", "out.a"]);
-        assert_eq!(env, ["PATH", "HOME"]);
+    }
+
+    #[test]
+    fn resolve_keeps_each_mark() {
+        let graph = resolve(vec![target_with("//:app", |target| {
+            target.env = BTreeMap::from([
+                (EnvName::parse("PATH").unwrap(), EnvMark::Unkeyed),
+                (EnvName::parse("HOME").unwrap(), EnvMark::Unkeyed),
+                (EnvName::parse("RUSTFLAGS").unwrap(), EnvMark::Key),
+            ]);
+        })])
+        .unwrap();
+        let env: Vec<(&str, EnvMark)> = graph.nodes()[0]
+            .env
+            .iter()
+            .map(|(name, mark)| (name.as_str(), *mark))
+            .collect();
+        assert_eq!(
+            env,
+            [
+                ("HOME", EnvMark::Unkeyed),
+                ("PATH", EnvMark::Unkeyed),
+                ("RUSTFLAGS", EnvMark::Key),
+            ]
+        );
     }
 
     #[test]

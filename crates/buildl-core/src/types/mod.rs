@@ -17,8 +17,9 @@
 //! - [`NodeId`] — a target's handle inside the graph's arenas.
 //! - [`Provenance`] — the build file and directory a declaration came from.
 //! - [`Timestamp`] — an instant on the host wall clock.
-//! - [`SourcePath`], [`OutputName`], [`EnvName`], [`Argument`], [`Command`], [`Description`],
-//!   [`SettingName`], [`SettingValue`] — the validated values a declaration's fields hold;
+//! - [`SourcePath`], [`OutputName`], [`EnvName`], [`EnvMark`], [`Argument`], [`Command`],
+//!   [`Description`], [`SettingName`], [`SettingValue`] — the validated values a declaration's
+//!   fields hold;
 //!   [`ExpandedDescription`] — a description once its placeholders are expanded.
 //! - [`EntryName`] — the file name every build file has; [`FieldName`] — the name of a field in
 //!   a declaration's option table.
@@ -41,6 +42,8 @@
 //! - [`Approval`] and [`DenialReason`] — an approver's answer about what a build wants;
 //!   [`ApproverMode`] — which approver a workspace names.
 //! - [`Checkup`] — what a workspace allows and wants, as `doctor` reports it.
+//! - [`MachineFolders`] — this machine's home, workspace and sandbox folders, and the search for
+//!   one of them in a text.
 //! - [`Workspace`] — what a workspace's manifest tells the pipeline.
 //! - [`Blob`] — a digest with the size of what it digests; [`RootPath`] — a file of the input
 //!   root a remote action is given.
@@ -133,6 +136,7 @@ pub mod digest;
 pub mod directory;
 pub mod discovered;
 pub mod entry_name;
+pub mod env_mark;
 pub mod env_name;
 pub mod env_value;
 pub mod executed;
@@ -148,6 +152,7 @@ pub mod live_sink;
 pub mod loaded;
 pub mod log_line;
 pub mod logged_run;
+pub mod machine_folders;
 pub mod node_id;
 pub mod on_failure;
 pub mod outcome;
@@ -205,8 +210,8 @@ pub use attribution::Attribution;
 pub use authority::{Ceiling, Want, WantedSet};
 pub use blob::Blob;
 pub use build_file::{
-    BuildFile, DeclarationOrder, Evaluated, StagedAlias, StagedDeclaration, StagedFile, StagedItem,
-    StagedRule, StagedSetting, StagedSubdir, StagedTarget,
+    BuildFile, DeclarationOrder, Evaluated, StagedAlias, StagedDeclaration, StagedEnv, StagedFile,
+    StagedItem, StagedMark, StagedRule, StagedSetting, StagedSubdir, StagedTarget,
 };
 pub use cache_row::CacheRow;
 pub use captured::Captured;
@@ -226,6 +231,7 @@ pub use digest::{Digest, Hasher};
 pub use directory::Directory;
 pub use discovered::Discovered;
 pub use entry_name::EntryName;
+pub use env_mark::EnvMark;
 pub use env_name::EnvName;
 pub use env_value::EnvValue;
 pub use executed::Executed;
@@ -241,6 +247,7 @@ pub use live_sink::LiveSink;
 pub use loaded::Loaded;
 pub use log_line::LogLine;
 pub use logged_run::LoggedRun;
+pub use machine_folders::MachineFolders;
 pub use node_id::NodeId;
 pub use on_failure::OnFailure;
 pub use outcome::{ActionOutcome, InfraKind, OutcomeClass, OutputRefusal, Summary, Tally};

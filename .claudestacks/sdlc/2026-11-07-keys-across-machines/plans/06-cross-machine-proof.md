@@ -2,7 +2,7 @@
 status: approved
 created: 2026-11-07
 depends-on: [05]
-built-on: 55ab2847b726
+built-on: f3bc0d9fa2e7
 ---
 
 # Cross Machine Proof Implementation Plan
