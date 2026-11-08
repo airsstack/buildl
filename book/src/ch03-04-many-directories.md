@@ -74,7 +74,7 @@ b.target("service", {
   inputs = { "go.mod", b.sources("*.go") },
   deps = { "//schema:gen" },
   run = { "go", "build", "-C", "go", "-o", "../$out", "." },
-  env = { "HOME" },
+  env = { HOME = "unkeyed" },
 })
 ```
 

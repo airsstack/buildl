@@ -44,9 +44,9 @@ maybe  //go:service: runs only if //schema:gen produces something else
 maybe  //python:tool.pyz: runs only if //schema:gen produces something else
 maybe  //rust:cli: runs only if //schema:gen produces something else
 run    //schema:gen: input schema/schema.json changed
-  run programs:   cargo, go, python3
-  read variables: HOME, PATH
-  write into:     .buildl, out
+  run programs:      cargo, go, python3
+  unkeyed variables: HOME, PATH
+  write into:        .buildl, out
 1 to run, 3 conditional, 0 clean
 ```
 
@@ -73,9 +73,9 @@ clean  //go:service
 clean  //python:tool.pyz
 clean  //rust:cli
 clean  //schema:gen
-  run programs:   cargo, go, python3
-  read variables: HOME, PATH
-  write into:     .buildl, out
+  run programs:      cargo, go, python3
+  unkeyed variables: HOME, PATH
+  write into:        .buildl, out
 0 to run, 0 conditional, 4 clean
 ```
 
@@ -98,9 +98,9 @@ maybe  //go:service: runs only if //schema:gen produces something else
 maybe  //python:tool.pyz: runs only if //schema:gen produces something else
 maybe  //rust:cli: runs only if //schema:gen produces something else
 run    //schema:gen: input schema/schema.json changed
-  run programs:   cargo, go, python3
-  read variables: HOME, PATH
-  write into:     .buildl, out
+  run programs:      cargo, go, python3
+  unkeyed variables: HOME, PATH
+  write into:        .buildl, out
 1 to run, 3 conditional, 0 clean
 $ buildl build
 --- //rust:cli

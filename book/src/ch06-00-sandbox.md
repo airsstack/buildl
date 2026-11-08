@@ -25,7 +25,8 @@ says nothing.
 Each action runs in a directory of its own, outside the workspace, made fresh for it. Into it
 `buildl` copies the action's declared inputs and the outputs of its dependencies, each at its path
 in the workspace, and makes the folders its outputs go in. Nothing else of the workspace is there.
-The environment holds the variables the target declared and three that the sandbox sets itself:
+The environment holds the variables the target declared, each with its value, marked `"key"` or
+`"unkeyed"` alike, and three that the sandbox sets itself:
 
 | Variable | Value | Why |
 |---|---|---|
@@ -197,7 +198,11 @@ __CF_USER_TEXT_ENCODING=0x1F5:0x0:0x0
 Only its one input and the folder for its output, and the three pinned variables. `LC_CTYPE` and
 `__CF_USER_TEXT_ENCODING` are not from `buildl`: Python and macOS set them as the process starts,
 and on Linux you will not see the second. Neither run got anything of your own environment, not
-even `PATH` or `HOME`, because the target declared no variables.
+even `PATH` or `HOME`, because the target declared no variables. Had it declared `HOME`, marked
+`"key"` or `"unkeyed"`, the command would have been given `HOME` with its value either way: the mark
+only decides whether the value is in the [action key](ch05-01-action-key.md) and whether it is sent
+to a remote server. A variable marked `"unkeyed"` that is not set is not given to the command at
+all.
 
 ## Tiers that are not built yet
 

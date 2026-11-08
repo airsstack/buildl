@@ -43,16 +43,18 @@ file's format, and must be `1`.
 
 ```toml
 [ceiling]
-proc.run = ["go"]
-env.read = ["HOME"]
-fs.read  = ["."]
-fs.write = ["out", ".buildl"]
+proc.run    = ["go"]
+env.read    = ["HOME"]
+env.unkeyed = ["HOME"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 ```
 
 | Key | Lists |
 |---|---|
 | `proc.run` | the programs from your machine a command may run |
 | `env.read` | the environment variables a target may name in `env` |
+| `env.unkeyed` | the ones among them a target may mark `"unkeyed"`, so that only the name, not the value, is in its action key |
 | `fs.read` | the directories inputs may come from; `"."` is the whole workspace |
 | `fs.write` | the directories a build may write into |
 
@@ -76,6 +78,31 @@ error: build.lua: //:greeting: input hello.txt is outside the ceiling (fs.read a
 
 There is no network list. A target that reaches the network says so with `network = true`, and
 the approver and `buildl doctor` show it.
+
+### Unkeyed variables
+
+A target marks each variable it reads, `"key"` or `"unkeyed"` (see [Targets and
+Labels](ch03-01-targets-and-labels.md)). A `"key"` variable is held to `env.read`. An `"unkeyed"` one
+must be in `env.unkeyed` as well, and `env.unkeyed` only narrows `env.read`: it holds names that
+`env.read` already holds. A list left out is empty, so a variable may be unkeyed only when
+`env.unkeyed` names it. Here a target marks `HOME` `"unkeyed"` under a ceiling with `env.read` and no
+`env.unkeyed`:
+
+```console
+$ buildl plan
+error: build.lua: //:hello: unkeyed variable HOME is outside the ceiling (env.unkeyed allows: nothing)
+```
+
+That is a refusal, exit code 4, as for any want outside the ceiling. A name in `env.unkeyed` that
+`env.read` does not hold is a fault in the file instead, found when `buildl` reads it, exit code 5:
+
+```console
+$ buildl check
+error: buildl.toml: ceiling env.unkeyed lists HOME, which env.read does not
+```
+
+The same pair of keys, with the same rule, is in each plugin's table and manifest
+([How buildl Decides](ch08-03-how-buildl-decides.md)).
 
 ## `[declaration]`
 
@@ -123,14 +150,16 @@ Who has the last word once a build fits under the ceiling: `manifest`, `interact
 
 ```toml
 [plugins.gobin]
-path     = "plugins/gobin"
-proc.run = ["go"]
-env.read = ["HOME"]
+path        = "plugins/gobin"
+proc.run    = ["go"]
+env.read    = ["HOME"]
+env.unkeyed = ["HOME"]
 ```
 
 One table per plugin: where its files come from (`path` in the workspace, or `git` or `github` with
-a `rev`), and the most its targets may want. A plugin's targets are held to its own lists first,
-then to the ceiling, so these lists can narrow what a plugin gets but never widen it.
+a `rev`), and the most its targets may want, `env.unkeyed` included. A plugin's targets are held to
+its own lists first, then to the ceiling, so these lists can narrow what a plugin gets but never
+widen it.
 [Plugins](ch08-00-plugins.md) covers them.
 
 ## `[remote]`
@@ -174,15 +203,17 @@ remote
   --remote-upload and --remote-strict turn either on for one run
   --remote-execute and --no-remote-execute change execute, and --remote-jobs changes jobs, for one run
 ceiling
-  proc.run  go
-  env.read  HOME
-  fs.read   .
-  fs.write  .buildl, out
-wants            ceiling  approved
-  run go         allowed  yes
-  read HOME      allowed  yes
-  write .buildl  allowed  yes
-  write out      allowed  yes
+  proc.run     go
+  env.read     HOME
+  env.unkeyed  HOME
+  fs.read      .
+  fs.write     .buildl, out
+wants                ceiling  approved
+  run go             allowed  yes
+  read HOME unkeyed  allowed  yes
+  write .buildl      allowed  yes
+  write out          allowed  yes
 ```
 
-The last part, the wants, is the subject of the next page.
+The last part, the wants, is the subject of the next page. A variable a target marks `"key"` has the
+row `read HOME`, and one marked `"unkeyed"` the row `read HOME unkeyed`.

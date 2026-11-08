@@ -14,7 +14,7 @@ its outputs go. After reading the build files, buildl collects all of that into 
 | Want | Comes from |
 |---|---|
 | programs | the first argument of every command, after `$opt:`, `$in`, `$out` and `$deps` are put in |
-| variables | every name in an `env` list |
+| variables | every name in an `env` table, the `"key"` ones and the `"unkeyed"` ones apart |
 | reads | every declared input |
 | writes | the output directory (`out` unless `[workspace] out` names another) and `.buildl`, where outputs and buildl's own state go |
 | network | every target with `network = true` |
@@ -25,17 +25,18 @@ its outputs go. After reading the build files, buildl collects all of that into 
 $ buildl plan
 run    //:report: never built
 run    //tools:hello: never built
-  run programs:   go
-  read variables: HOME
-  write into:     .buildl, out
+  run programs:      go
+  unkeyed variables: HOME
+  write into:        .buildl, out
 2 to run, 0 conditional, 0 clean
 ```
 
 The plan lists every want but the reads, which stay with the targets that declare them; each
-input is still checked. Then buildl holds each want against the workspace's ceiling, the lists
-in `buildl.toml`. Anything
-outside the ceiling stops the build before anything runs. Anything inside goes to the approver,
-which can only say yes or no:
+input is still checked. A variable marked `"key"` is listed as `read variables:`, one marked
+`"unkeyed"` as `unkeyed variables:`, and the ceiling holds the two apart too: `env.read` and
+`env.unkeyed` ([the ceiling](ch04-02-the-ceiling.md)). Then buildl holds each want against the
+workspace's ceiling, the lists in `buildl.toml`. Anything outside the ceiling stops the build before
+anything runs. Anything inside goes to the approver, which can only say yes or no:
 
 ```mermaid
 %% Grant negotiation
@@ -67,7 +68,7 @@ local b = buildl
 b.target("hello", {
   inputs = { "go.mod", "main.go" },
   run    = { "go", "build", "-C", "tools", "-o", "../$out", "." },
-  env    = { "HOME" },
+  env    = { HOME = "unkeyed" },
 })
 ```
 
