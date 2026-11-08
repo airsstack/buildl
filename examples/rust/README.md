@@ -1,47 +1,75 @@
-# Rust starter
+# Rust
 
-A Rust binary and its test, built and run by buildl.
+A Rust binary and its test, built with the [`rust` plugin](../../plugins/rust/README.md).
 
-| Target | What it does |
+```text
+Cargo.toml
+Cargo.lock ─────► src/main.rs ──► rust.binary //:hello   (out/hello)
+
+Cargo.toml
+Cargo.lock ─────► src/main.rs ──► rust.test //:unit
+```
+
+## What it uses
+
+| Piece | Why |
 |---|---|
-| `//:hello` | `cargo install --path . --root $out --target-dir tt --no-track`, giving `out/hello/bin/hello` |
-| `//:unit` | `cargo test --target-dir tt`, a test target |
+| `rust.binary("hello", { profile = "release" })` | runs `cargo build --locked --profile release --bin hello` and copies the file cargo wrote to `out/hello` |
+| `rust.test("unit")` | runs `cargo test --locked`, a test target |
+| `profile = "release"` | the default profile, `dev`, keeps the absolute path of the folder it was built in as debug info, and `buildl verify` runs the action in a folder of its own, so it would find the binary differing; `release` holds no path |
+| `Cargo.lock` | both targets use `--locked`, and the plugin refuses a folder with a `Cargo.toml` and no `Cargo.lock` |
 
-Both actions read `HOME`, where cargo keeps its registry and toolchains, and `PATH`, where it finds
-the linker: without `PATH` the build stops with ``error: linker `cc` not found``. Both are
-`unkeyed`, since a value that is a folder on this machine would split the cache between machines:
-the command gets the value, only the name enters the key, and `env.unkeyed` in `buildl.toml` allows
-it.
+Both targets take every file in the folder, except `target/`, as inputs, so an edit to
+`src/main.rs` runs both. `Cargo.toml` holds an empty `[workspace]` table so cargo treats the
+example as a workspace of its own, wherever it is copied.
 
-## Why `cargo install --root $out`
+## The `buildl.toml`
 
-buildl keeps a target's output under `out/`, at the path `$out` names. Of the ways to build a
-Rust binary, this one alone puts it there:
+```toml
+[ceiling]
+proc.run    = ["sh", "rustc"]
+env.read    = ["HOME", "PATH"]
+env.unkeyed = ["HOME", "PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
 
-| Form | Result |
-|---|---|
-| `cargo install --path . --root $out --no-track` | `out/hello/bin/hello`, a directory holding regular files only |
-| `cargo build --release` with `outputs = { "target/release/hello" }` | `declared output target/release/hello was not produced`: cargo writes under `target/`, and an output is looked for under `out/` |
-| `cargo build --target-dir $out` | refused: cargo's build directory holds empty directories, and a directory output holds regular files only |
+[plugins.rust]
+github      = "airsstack/buildl"
+rev         = "plugin-rust-v0.1.0"
+dir         = "plugins/rust"
+proc.run    = ["sh", "rustc"]
+env.read    = ["HOME", "PATH"]
+env.unkeyed = ["HOME", "PATH"]
+network     = true
+```
 
-`--target-dir tt` keeps cargo's build directory inside the action's sandbox, and `--no-track`
-stops cargo writing its install records into `$out`. `Cargo.toml` holds an empty `[workspace]`
-table so cargo treats the example as a workspace of its own, wherever it is copied. `Cargo.lock`
-is committed and is an input of both targets.
+`sh` runs cargo: each target is `sh -c 'cargo …'`, so `cargo` needs no entry of its own, and for the
+binary the same script copies the file cargo wrote to `$out`. `rustc` is the program the plugin's
+extension allows beside `sh`. Allowing `sh` lets a target run any program through `sh -c`, so the
+ceiling's program list limits less.
+
+`HOME` is where cargo keeps its registry and toolchains, and `PATH` is where it finds the linker:
+without `PATH` the build stops with ``error: linker `cc` not found``. Both are `unkeyed`, since a
+value that is a folder on this machine would split the cache between machines: the command gets
+the value, only the name enters the key, and `env.unkeyed` allows it in the ceiling and the plugin
+table.
+
+`network = true` is the plugin's cap on reaching the network, which cargo needs to download crates.
 
 ## Run it
 
-Needs the `buildl` binary and a Rust toolchain.
+Needs the `buildl` binary, a Rust toolchain and `git`. With the published tag:
 
 ```sh
-buildl build                  # builds out/hello/bin/hello
-./out/hello/bin/hello         # hello from rust
-buildl test                   # runs //:unit
-echo "// edit" >> src/main.rs
-buildl plan                   # run    //:hello: input src/main.rs changed
-buildl test                   # runs //:unit again: src/main.rs is one of its inputs
-buildl test                   # tests: 1 passed (1 cached)
-buildl log //:unit            # what cargo test printed when it last ran
+buildl plugins fetch     # clones the repository at plugin-rust-v0.1.0, keeps plugins/rust, writes buildl.lock
+buildl build             # builds out/hello
+./out/hello              # hello from rust
+buildl test              # tests: 1 passed
 ```
 
-From `examples/`, `sh check.sh rust` runs these steps on a copy and checks each result (`assert.sh`).
+From `examples/`, `sh check.sh rust` runs the shared checks on a copy. The published tag is the
+normal route; to run the plugin as this checkout holds it instead, as CI does, the copy first runs
+`prepare.sh`: it commits this checkout's `plugins/rust` to a temporary git repository, tags it
+`plugin-rust-v0.1.0`, points the copy's `buildl.toml` at that repository with `git = "file://…"`
+instead of `github`, and fetches. Then `assert.sh` checks the program's output, that `buildl plan`
+after an edit to `src/main.rs` runs `//:hello` and `//:unit`, and that the test passes.

@@ -1,5 +1,5 @@
 #!/bin/sh
-# The Rust starter's own checks. ../check.sh runs them in a fresh copy, after a
+# The Rust example's own checks. ../check.sh runs them in a fresh copy, after a
 # build and a test; BUILDL names the buildl binary.
 
 set -eu
@@ -17,13 +17,14 @@ expect() {
     printf '%s\n' "$3" | grep -q -e "$2" || fail "$1" "$3"
 }
 
-expect "out/hello/bin/hello prints its greeting" "^hello from rust$" "$(./out/hello/bin/hello)"
+expect "out/hello prints its greeting" "^hello from rust$" "$(./out/hello)"
 
+# An edit to a source is an input of both targets, so the plan runs the binary and the test;
+# plan leaves tests out unless they are named.
 echo "// an edit" >> src/main.rs
-expect "plan names the edited input" "input src/main.rs changed" "$("${BUILDL}" plan 2>&1)"
+planned="$("${BUILDL}" plan //:hello //:unit 2>&1)" || fail "plan after the edit exits 0" "${planned}"
+expect "plan runs //:hello" "^run    //:hello: " "${planned}"
+expect "plan runs //:unit" "^run    //:unit: " "${planned}"
 
-"${BUILDL}" build
-expect "the first test after the edit runs" "^tests: 1 passed$" "$("${BUILDL}" test 2>&1)"
-expect "the second test is served from the cache" "^tests: 1 passed (1 cached)$" "$("${BUILDL}" test 2>&1)"
-shown="$("${BUILDL}" log //:unit 2>&1)" || fail "log exits 0" "${shown}"
-expect "log shows what cargo test printed" "^test result: ok" "${shown}"
+tested="$("${BUILDL}" test 2>&1)" || fail "the test passes" "${tested}"
+expect "the test passes" "^tests: 1 passed" "${tested}"

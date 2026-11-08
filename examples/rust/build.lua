@@ -1,18 +1,6 @@
-local b = buildl
+local rust = buildl.use("rust")
 
-local sources = { "Cargo.toml", "Cargo.lock", b.sources("src/*.rs") }
-
--- cargo reads HOME for its registry and toolchain, and PATH to find the linker.
--- `cargo install --root $out` puts the binary at out/hello/bin/hello; cargo's own
--- build directory, tt, stays inside the action's sandbox. See README.md.
-b.target("hello", {
-  inputs = sources,
-  run = { "cargo", "install", "--path", ".", "--root", "$out", "--target-dir", "tt", "--no-track" },
-  env = { HOME = "unkeyed", PATH = "unkeyed" },
-})
-
-b.test("unit", {
-  inputs = sources,
-  run = { "cargo", "test", "--target-dir", "tt" },
-  env = { HOME = "unkeyed", PATH = "unkeyed" },
-})
+-- The default profile, dev, keeps the absolute path of the folder it was built in as debug
+-- info, so `buildl verify` would find the binary differing each time. release holds no path.
+rust.binary("hello", { profile = "release" })
+rust.test("unit")
