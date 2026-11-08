@@ -52,6 +52,11 @@ return {
         refuses("test", { kind = "staticlib" }, "rust.test(app): the option kind is refused")
     end,
 
+    output_is_refused_for_test = function()
+        refuses("test", { output = "x" }, "rust.test(app): the option output is refused")
+        assert(options.check("test", "app", nil).output == nil)
+    end,
+
     library_needs_a_kind = function()
         refuses("library", {}, 'rust.library(app): kind must be "staticlib" or "cdylib"')
         refuses("library", nil, 'kind must be "staticlib" or "cdylib"')

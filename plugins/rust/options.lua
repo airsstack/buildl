@@ -1,4 +1,5 @@
--- Checks and fills the options of one call of the plugin.
+-- Checks and fills the options of one call of the plugin, and holds the list check the helpers
+-- of the public table share.
 -- Pure: it uses no `buildl`.
 local M = {}
 
@@ -29,7 +30,8 @@ local function fail(kind, name, message)
     error(string.format("rust.%s(%s): %s", kind, name, message), 3)
 end
 
--- Returns whether `value` is a table whose keys are 1 to n and whose items are strings.
+-- Returns whether `value` is a table whose keys are 1 to n and whose items are strings. Also
+-- exported as `is_list`, so the helpers of the public table check lists the same way.
 local function is_list(value)
     if type(value) ~= "table" then
         return false
@@ -44,6 +46,8 @@ local function is_list(value)
     return count == #value
 end
 
+M.is_list = is_list
+
 -- Returns the copy of the list `value`.
 local function copy(value)
     local out = {}
@@ -57,8 +61,8 @@ end
 -- and `deps` are lists, `profile` defaults to "dev", `profile_dir` is the folder under
 -- `target/` that profile writes to, `version_probe` is a boolean, `kind` is set for a library
 -- only, and `output` is set except for a test. `options` may be nil. Raises, naming the
--- option, for one that is unknown, of the wrong type or refused by the kind, and for a
--- library whose `kind` is not "staticlib" or "cdylib".
+-- option, for one that is unknown, of the wrong type or refused by the kind (`kind` outside a
+-- library, `output` for a test), and for a library whose `kind` is not "staticlib" or "cdylib".
 function M.check(kind, name, options)
     if kind ~= "binary" and kind ~= "library" and kind ~= "test" then
         error(
@@ -86,6 +90,10 @@ function M.check(kind, name, options)
 
     if kind ~= "library" and options.kind ~= nil then
         fail(kind, name, "the option kind is refused")
+    end
+
+    if kind == "test" and options.output ~= nil then
+        fail(kind, name, "the option output is refused")
     end
 
     for _, key in ipairs(NAMES) do

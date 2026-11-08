@@ -55,7 +55,7 @@ know is refused, and the message names it.
 | `rust.library(name, o)` | a target that runs `cargo build --locked --lib` and copies the library to the output |
 | `rust.test(name, o)` | a test target `name` that runs `cargo test --locked` |
 
-Each runs `sh -c`, in the build file's folder (`cd <folder> && …`, no `cd` at the workspace root):
+Each runs `sh -c`. Cargo runs in the build file's folder, in a subshell, `(cd <folder> && cargo …)`, with no `cd` at the workspace root. The subshell ends at cargo, so the copy that follows runs from the workspace root, where `$out` and the paths `<folder>/target/…` resolve:
 
 ```text
 cargo <build or test> --locked … --profile <profile> --target-dir target <args>
@@ -73,13 +73,13 @@ then, for `rust.binary` and `rust.library`, copies the file cargo wrote under
 | `kind` | string | `rust.library` only, required: `"staticlib"` or `"cdylib"` | none |
 | `version_probe` | boolean | see below | `false` |
 
-`rust.test` has no `output`. `kind` given to `rust.binary` or `rust.test` is refused.
+`rust.test` has no `output`: it is refused there. `kind` given to `rust.binary` or `rust.test` is refused.
 
 What the plugin fills in on every target, so you write none of it:
 
 | Setting | Value |
 |---|---|
-| inputs | every file below the build file's folder (`buildl.sources("**/*")`), except a `target/` folder a plain `cargo build` left there: sources, manifests, `build.rs`, toolchain files, and files read by `include_str!` or a build script |
+| inputs | every file below the build file's folder (`buildl.sources("**/*")`), except a `target/` folder a plain `cargo build` left there and the `.git/` folder (git keeps different files in each clone, which would split the keys): sources, manifests, `build.rs`, toolchain files, and files read by `include_str!` or a build script |
 | env | `{ HOME = "unkeyed", PATH = "unkeyed" }`: cargo finds its crates and toolchain through `HOME` and the linker through `PATH`; only the names are in the key |
 | network | `network = true` |
 
@@ -166,10 +166,11 @@ passes a build file is declared in.
 
 ## The version probe
 
-`rustc` and `cargo` on `PATH` are links to the `rustup` launcher, and a key records the program
-file, so a toolchain change would not change the key. With `version_probe = true` the call
-declares `<name>.version` (`rustc -vV`), an always-run target, and the target depends on it, so a
-new toolchain rebuilds it.
+The command a target runs is `sh`, so a key fingerprints neither `cargo` nor `rustc`, and a
+toolchain update would not change it. With `version_probe = true` the call declares
+`<name>.version` (`rustc -vV`), an always-run target, and the target depends on it. The probe's
+output, which names the toolchain's version, is then in the key, so a new toolchain rebuilds the
+target.
 
 The cost is in `buildl plan`: an always-run target leaves every target that depends on it listed
 as conditional, even right after a full build, because `plan` never runs the probe. A build still
@@ -182,14 +183,15 @@ the `c` plugin, so it is not on the list; `rustc` is for `version_probe` and `ru
 program outside the list is refused even when the workspace allows it, and the workspace's cap and
 ceiling narrow the list further.
 
-Programs cargo starts itself (rustc, the linker, build scripts) are not seen by the ceiling.
-
 ## Limits
 
 - Each build runs in a fresh sandbox, so cargo compiles the dependencies again whenever an input
   changes. Plain `cargo` keeps its own `target/` and is faster for an edit loop on one crate.
 - Crates live in cargo's cache under `HOME` (`~/.cargo`), outside buildl's store.
-- Programs cargo starts are not seen by the ceiling.
+- Programs cargo starts (rustc, the linker, build scripts) are not seen by the ceiling.
+- The `dev` profile keeps the absolute path of the build folder in the debug info, so
+  `buildl verify`, which builds again in another folder, reports a `dev` binary as differing. Use
+  `profile = "release"` where `verify` must match, as the examples do.
 
 ## Errors
 
@@ -203,11 +205,13 @@ known`, and carries the file and line of your call. Each stops the load with exi
 | options that are not a table | `rust.binary(hello): the options must be a table` |
 | an unknown option | `rust.binary(hello): the option bogus is not known` |
 | `kind` given to `rust.binary` or `rust.test` | `rust.binary(hello): the option kind is refused` |
+| `output` given to `rust.test` | `rust.test(unit): the option output is refused` |
 | a wrong type | `rust.binary(hello): the option args must be a list of strings` |
 | `rust.library` without `kind`, or another value | `rust.library(mylib): kind must be "staticlib" or "cdylib"` |
 | `rust.platform` on a host that is neither | `rust.platform: the target triple <triple> is neither macos nor linux` |
 | `rustc -vV` without a `host:` line | `rust.platform: the output of rustc -vV has no host line` |
 | `rust.package` without a string | `rust.package: the name must be a string` |
+| `rust.shared_name` without a string `name` | `rust.shared_name: the name must be a string` |
 | `rust.features` without a list of strings | `rust.features: the features must be a list of strings` |
 
 What cargo itself refuses (a bad `Cargo.toml`, a path dependency outside the folder, a failed

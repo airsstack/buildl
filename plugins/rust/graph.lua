@@ -41,11 +41,12 @@ local function from_root(folder, path)
     return folder .. "/" .. path
 end
 
--- Returns the files `listed` that are not under a `target/` folder.
-local function without_target(listed)
+-- Returns the files `listed` that are not under a `target/` or a `.git/` folder: what cargo
+-- wrote, and what git keeps, which differs per clone.
+local function without_generated(listed)
     local kept = {}
     for _, file in ipairs(listed) do
-        if file:sub(1, 7) ~= "target/" then
+        if file:sub(1, 7) ~= "target/" and file:sub(1, 5) ~= ".git/" then
             kept[#kept + 1] = file
         end
     end
@@ -115,7 +116,7 @@ function M.declare(buildl, kind, name, options)
     end
 
     local declaration = {
-        inputs = without_target(listed),
+        inputs = without_generated(listed),
         deps = deps,
         env = { HOME = "unkeyed", PATH = "unkeyed" },
         network = true,

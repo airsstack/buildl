@@ -154,6 +154,8 @@ return {
             "src/a/b.rs",
             "target/debug/x.rs",
             "target/CACHEDIR.TAG",
+            ".git/HEAD",
+            ".git/objects/ab/cdef",
         }
         local want = { "Cargo.toml", "Cargo.lock", "build.rs", "data.txt", "src/a/b.rs" }
         local binary = declare("binary", "hello", nil, "", files)
@@ -161,7 +163,7 @@ return {
         same(binary.patterns, { "**/*" }, "patterns")
         same(get(declare("test", "unit", nil, "rust", files), "unit").options.inputs, want, "test inputs")
 
-        local near = { "Cargo.toml", "Cargo.lock", "targets/x.rs", "target.txt" }
+        local near = { "Cargo.toml", "Cargo.lock", "targets/x.rs", "target.txt", ".github/ci.yml", ".gitignore" }
         same(get(declare("binary", "hello", nil, "", near), "hello").options.inputs, near, "near")
     end,
 

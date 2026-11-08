@@ -103,6 +103,9 @@ return {
         refuses(function()
             rust.features({ "tls", 7 })
         end, { "rust.features: the features must be a list of strings" })
+        refuses(function()
+            rust.features({ "tls", extra = "json" })
+        end, { "rust.features: the features must be a list of strings" })
     end,
 
     platform_is_nil_then_known = function()
@@ -132,8 +135,21 @@ return {
         })
     end,
 
+    platform_refuses_output_without_a_host_line = function()
+        local rust = plugin({ [":rust.platform"] = "rustc 1.99.0\nrelease: 1.99.0\n" })
+        refuses(function()
+            rust.platform()
+        end, { "rust.platform: the output of rustc -vV has no host line" })
+    end,
+
     shared_name_by_platform = function()
         local rust = plugin()
+        refuses(function()
+            rust.shared_name(nil, "linux")
+        end, { "rust.shared_name: the name must be a string" })
+        refuses(function()
+            rust.shared_name(7, nil)
+        end, { "rust.shared_name: the name must be a string" })
         assert(rust.shared_name("ffi", "linux") == "libffi.so")
         assert(rust.shared_name("ffi", "macos") == "libffi.dylib")
         assert(rust.shared_name("ffi", nil) == nil)

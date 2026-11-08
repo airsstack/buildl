@@ -8,7 +8,8 @@ local M = {}
 -- called `relocate`, with the plugin's own location taken off, so that the location is the
 -- build file's call. `prefix` is the start of the message the plugin's modules write, such as
 -- "rust.binary(". An error that does not hold it, such as one of `buildl`'s own, goes on as it
--- was. Only the public functions call it, and not as their last call.
+-- was. Only the public functions call it, and never as a tail call (`return relocate(...)`),
+-- which would drop the frame the error level counts.
 local function relocate(prefix, work)
     local ok, err = pcall(work)
     if ok then
@@ -20,19 +21,6 @@ local function relocate(prefix, work)
         error(err, 0)
     end
     error(err:sub(start), 3)
-end
-
--- Returns whether `list` is a table whose items are all strings.
-local function strings(list)
-    if type(list) ~= "table" then
-        return false
-    end
-    for _, item in ipairs(list) do
-        if type(item) ~= "string" then
-            return false
-        end
-    end
-    return true
 end
 
 -- Returns "macos" for a target triple holding `apple-darwin` and "linux" for one holding
@@ -76,7 +64,7 @@ function M.new(buildl)
     -- Returns `{ "--features", "<list joined with commas>" }`, or `{}` for an empty list.
     -- Raises, naming `rust.features`, at the caller for anything but a list of strings.
     function rust.features(list)
-        if not strings(list) then
+        if not options.is_list(list) then
             error("rust.features: the features must be a list of strings", 2)
         end
         if #list == 0 then
@@ -85,8 +73,12 @@ function M.new(buildl)
         return { "--features", table.concat(list, ",") }
     end
 
-    -- Returns `lib<name>.so` for "linux", `lib<name>.dylib` for "macos", nil for nil.
+    -- Returns `lib<name>.so` for "linux", `lib<name>.dylib` for "macos", nil for nil. Raises,
+    -- naming `rust.shared_name`, at the caller for a `name` that is not a string.
     function rust.shared_name(name, platform)
+        if type(name) ~= "string" then
+            error("rust.shared_name: the name must be a string", 2)
+        end
         if platform == "linux" then
             return "lib" .. name .. ".so"
         elseif platform == "macos" then
