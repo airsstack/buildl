@@ -129,9 +129,12 @@ needs, below the end marker.
 | `lib` (rlib), `dylib`, `proc-macro`, `example`, `test`, `bench`, `custom-build`, and a `bin` with `required-features` | no call: cargo builds them itself, or a plain `cargo build` skips them |
 
 Packages are sorted by name; within a package the library comes first, then the binaries sorted by
-name, then the test. No `profile` is written, so the plugin's default, `dev`, applies. Add
-`profile = "release"` in a target of your own when [`buildl verify`](ch05-04-clean-gc-verify.md)
-must match, as the [rust plugin page](ch08-05-the-rust-plugin.md#profiles) explains.
+name, then the test. No `profile` is written, so the plugin's default, `dev`, applies, and
+[`buildl verify`](ch05-04-clean-gc-verify.md) reports a `dev` build as differing
+([rust plugin page](ch08-05-the-rust-plugin.md#profiles)). `sync` rewrites the generated lines, so
+change the build where you own it: turn `debug` and `incremental` off under `[profile.dev]` in
+`Cargo.toml`, as `examples/cargo-buildl` does, or declare a target of your own, under another
+name, with `profile = "release"`.
 
 A target name outside buildl's rule (1 to 256 ASCII letters, digits, `.`, `-` and `_`, and neither
 `.` nor `..`), or two generated targets with the same name, is refused with exit code 5. The
