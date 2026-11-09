@@ -3,7 +3,7 @@
 use std::ffi::OsString;
 
 use buildl::cli::{Color, Command};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 /// Returns `args` without its second item when that item is exactly `buildl`.
 ///
@@ -44,6 +44,17 @@ pub(crate) enum CargoCommand {
     /// A command of the `buildl` binary.
     #[command(flatten)]
     Buildl(Command),
+
+    /// Bring the generated part of build.lua in line with Cargo.toml
+    Sync(SyncArgs),
+}
+
+/// The flags of `cargo buildl sync`.
+#[derive(Debug, Args)]
+pub(crate) struct SyncArgs {
+    /// Write nothing; exit 5 when build.lua is out of date with Cargo.toml
+    #[arg(long)]
+    pub(crate) check: bool,
 }
 
 #[cfg(test)]
@@ -92,6 +103,21 @@ mod tests {
             panic!("expected test");
         };
         assert!(test.stop);
+    }
+
+    #[test]
+    fn sync_parses_with_and_without_check() {
+        let cli = CargoCli::try_parse_from(os(&["cargo-buildl", "sync"])).unwrap();
+        let CargoCommand::Sync(sync) = cli.command else {
+            panic!("expected sync");
+        };
+        assert!(!sync.check);
+
+        let cli = CargoCli::try_parse_from(os(&["cargo-buildl", "sync", "--check"])).unwrap();
+        let CargoCommand::Sync(sync) = cli.command else {
+            panic!("expected sync");
+        };
+        assert!(sync.check);
     }
 
     #[test]
