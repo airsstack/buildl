@@ -11,6 +11,8 @@
 
 mod args;
 #[cfg_attr(not(test), expect(dead_code, reason = "used by cargo buildl sync"))]
+mod generate;
+#[cfg_attr(not(test), expect(dead_code, reason = "used by cargo buildl sync"))]
 mod metadata;
 
 use std::env;
