@@ -3,9 +3,11 @@
 //! Each function renders one file from what `init` knows, so the same input always gives the
 //! same bytes and none of them touches the disk.
 
+use std::fmt::Write;
+
 use crate::section;
 
-/// The tag of the `rust` plugin this release of `cargo-buildl` was tested with.
+/// The tag of the `rust` plugin that `init` pins in `buildl.toml`.
 pub(crate) const RUST_PLUGIN_TAG: &str = "plugin-rust-v0.2.0";
 
 /// The `.gitignore` lines `init` makes sure are there.
@@ -17,10 +19,11 @@ const OWN_TARGETS_LINE: &str =
 
 /// The text of `buildl.toml` for a workspace called `name`.
 ///
-/// `name` is written as a TOML basic string, with `"` and `\` escaped. The `rust` plugin is
-/// pinned to [`RUST_PLUGIN_TAG`].
+/// `name` is written as a TOML basic string: `"` and `\` are escaped, and so is every control
+/// character (U+0000 to U+001F except tab, and U+007F) as `\uXXXX`. The `rust` plugin is pinned
+/// to [`RUST_PLUGIN_TAG`].
 pub(crate) fn buildl_toml(name: &str) -> String {
-    let name = name.replace('\\', "\\\\").replace('"', "\\\"");
+    let name = escape_basic(name);
     format!(
         r#"[workspace]
 name   = "{name}"
@@ -45,6 +48,23 @@ env.unkeyed = ["HOME", "PATH"]
 network     = true
 "#
     )
+}
+
+/// `text` as the inside of a TOML basic string.
+fn escape_basic(text: &str) -> String {
+    let mut escaped = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            '\t' => escaped.push('\t'),
+            '\u{0}'..='\u{1f}' | '\u{7f}' => {
+                let _ = write!(escaped, "\\u{:04X}", u32::from(c));
+            }
+            c => escaped.push(c),
+        }
+    }
+    escaped
 }
 
 /// The text of `.gitignore` once `/out/` and `/.buildl/` are in it.
@@ -95,7 +115,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn buildl_toml_matches_the_spec() {
+    fn buildl_toml_is_the_pinned_text() {
         let expected = "\
 [workspace]
 name   = \"demo\"
@@ -125,11 +145,19 @@ network     = true
     }
 
     #[test]
-    fn a_name_with_a_quote_or_backslash_is_escaped() {
+    fn a_name_with_a_quote_backslash_or_control_character_is_escaped() {
         let toml = buildl_toml(r#"a"b\c"#);
 
         assert!(
             toml.lines().any(|line| line == r#"name   = "a\"b\\c""#),
+            "{toml}"
+        );
+
+        let toml = buildl_toml("a\nb\tc\u{7f}\u{1}");
+
+        assert!(
+            toml.lines()
+                .any(|line| line == "name   = \"a\\u000Ab\tc\\u007F\\u0001\""),
             "{toml}"
         );
     }

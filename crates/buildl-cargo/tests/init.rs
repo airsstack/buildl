@@ -94,21 +94,52 @@ fn init_writes_the_three_files_then_fails_the_fetch_with_3() {
     assert!(stderr.contains("cargo buildl plugins fetch"), "{stderr}");
 
     let name = dir.path().file_name().unwrap().to_string_lossy();
-    let toml = fs::read_to_string(dir.path().join("buildl.toml")).unwrap();
-    assert!(
-        toml.starts_with(&format!(
-            "[workspace]\nname   = \"{name}\"\nentry  = \"build.lua\"\n"
-        )),
-        "{toml}"
+    let expected_toml = format!(
+        "\
+[workspace]
+name   = \"{name}\"
+entry  = \"build.lua\"
+out    = \"out\"
+config = 1
+
+[ceiling]
+proc.run    = [\"sh\", \"rustc\"]
+env.read    = [\"HOME\", \"PATH\"]
+env.unkeyed = [\"HOME\", \"PATH\"]
+fs.read     = [\".\"]
+fs.write    = [\"out\", \".buildl\"]
+
+[plugins.rust]
+github      = \"airsstack/buildl\"
+rev         = \"plugin-rust-v0.2.0\"
+dir         = \"plugins/rust\"
+proc.run    = [\"sh\", \"rustc\"]
+env.read    = [\"HOME\", \"PATH\"]
+env.unkeyed = [\"HOME\", \"PATH\"]
+network     = true
+"
     );
-    assert!(
-        toml.contains("rev         = \"plugin-rust-v0.2.0\"\n"),
-        "{toml}"
+    assert_eq!(
+        fs::read_to_string(dir.path().join("buildl.toml")).unwrap(),
+        expected_toml
     );
-    let lua = fs::read_to_string(dir.path().join("build.lua")).unwrap();
-    assert!(lua.starts_with(&format!("{BEGIN}\n")), "{lua}");
-    assert!(lua.contains("fixture-app"), "{lua}");
-    assert!(lua.ends_with(&format!("{END}\n\n{OWN_TARGETS}\n")), "{lua}");
+    let expected_lua = format!(
+        "{BEGIN}
+local rust = buildl.use(\"rust\")
+
+rust.binary(\"fixture-app\", {{ args = rust.package(\"fixture-app\") }})
+rust.test(\"fixture-app-test\", {{ args = rust.package(\"fixture-app\") }})
+rust.library(\"fixture_lib\", {{ kind = {{ \"staticlib\" }}, args = rust.package(\"fixture-lib\") }})
+rust.test(\"fixture-lib-test\", {{ args = rust.package(\"fixture-lib\") }})
+{END}
+
+{OWN_TARGETS}
+"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join("build.lua")).unwrap(),
+        expected_lua
+    );
     assert_eq!(
         fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
         "/out/\n/.buildl/\n"
@@ -169,7 +200,7 @@ fn a_failed_write_leaves_the_folder_as_it_was() {
 
     assert_eq!(output.status.code(), Some(3), "{}", stderr(&output));
     assert!(
-        stderr(&output).starts_with("error: "),
+        stderr(&output).starts_with("error: cannot read .gitignore: "),
         "{}",
         stderr(&output)
     );

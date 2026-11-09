@@ -6,7 +6,7 @@
 //! command the caller hands in, so that command's output and exit status are the run's own.
 
 use std::ffi::OsStr;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
@@ -26,12 +26,30 @@ struct Files<'a> {
     buildl_toml: &'a str,
 }
 
+/// Why [`write_files`] stopped: the file, whether it was being read or written, and the I/O error.
+#[derive(Debug)]
+struct WriteError {
+    /// `"read"` or `"write"`.
+    action: &'static str,
+    /// The file the step was on, by name in the workspace root.
+    file: &'static str,
+    /// What the operating system said.
+    source: io::Error,
+}
+
+impl std::fmt::Display for WriteError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "cannot {} {}: {}", self.action, self.file, self.source)
+    }
+}
+
 /// Writes `build.lua`, then `buildl.toml`, then `.gitignore` in `root`.
 ///
-/// The `.gitignore` written is the one there with the missing lines added, or a new one. When a
-/// step fails, the files this call created are removed and the error is returned; a `.gitignore`
-/// that was there before is never removed.
-fn write_files(root: &Path, files: &Files<'_>) -> io::Result<()> {
+/// `build.lua` and `buildl.toml` are created new, so one that is already there fails the step and
+/// is left alone. The `.gitignore` written is the one there with the missing lines added, or a new
+/// one. When a step fails, the files this call created are removed and the error is returned; a
+/// file that was there before is never removed.
+fn write_files(root: &Path, files: &Files<'_>) -> Result<(), WriteError> {
     let mut created: Vec<PathBuf> = Vec::new();
     let result = write_in_order(root, files, &mut created);
     if result.is_err() {
@@ -42,26 +60,57 @@ fn write_files(root: &Path, files: &Files<'_>) -> io::Result<()> {
     result
 }
 
-/// The steps of [`write_files`]; `created` receives each file as soon as it may exist.
-fn write_in_order(root: &Path, files: &Files<'_>, created: &mut Vec<PathBuf>) -> io::Result<()> {
-    let build_lua = root.join("build.lua");
-    created.push(build_lua.clone());
-    fs::write(&build_lua, files.build_lua)?;
+/// Creates `file` in `root` holding `text`; once it exists, it is added to `created`.
+fn create_new(
+    root: &Path,
+    file: &'static str,
+    text: &str,
+    created: &mut Vec<PathBuf>,
+) -> Result<(), WriteError> {
+    let path = root.join(file);
+    let write_error = |source| WriteError {
+        action: "write",
+        file,
+        source,
+    };
+    let mut handle = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .map_err(write_error)?;
+    created.push(path);
+    handle.write_all(text.as_bytes()).map_err(write_error)
+}
 
-    let buildl_toml = root.join("buildl.toml");
-    created.push(buildl_toml.clone());
-    fs::write(&buildl_toml, files.buildl_toml)?;
+/// The steps of [`write_files`]; `created` receives each file this call has created.
+fn write_in_order(
+    root: &Path,
+    files: &Files<'_>,
+    created: &mut Vec<PathBuf>,
+) -> Result<(), WriteError> {
+    create_new(root, "build.lua", files.build_lua, created)?;
+    create_new(root, "buildl.toml", files.buildl_toml, created)?;
 
     let gitignore = root.join(".gitignore");
     let existing = match fs::read_to_string(&gitignore) {
         Ok(text) => Some(text),
         Err(error) if error.kind() == io::ErrorKind::NotFound => None,
-        Err(error) => return Err(error),
+        Err(source) => {
+            return Err(WriteError {
+                action: "read",
+                file: ".gitignore",
+                source,
+            });
+        }
     };
     if existing.is_none() {
         created.push(gitignore.clone());
     }
-    fs::write(&gitignore, scaffold::gitignore(existing.as_deref()))
+    fs::write(&gitignore, scaffold::gitignore(existing.as_deref())).map_err(|source| WriteError {
+        action: "write",
+        file: ".gitignore",
+        source,
+    })
 }
 
 /// Writes `message` as a line of `stderr`. A failed write cannot be reported anywhere else.
@@ -88,7 +137,7 @@ fn existing_file(root: &Path) -> Option<&'static str> {
 /// |---|---|
 /// | files written and `fetch` succeeded | [`Exit::Success`] |
 /// | `buildl.toml` or `build.lua` there already; no `Cargo.lock`; cargo refused the project; a name refused or claimed twice | [`Exit::Definition`] |
-/// | the current directory cannot be read; cargo cannot be run or read; a file cannot be written | [`Exit::Infrastructure`] |
+/// | the current directory cannot be read; cargo cannot be run or read; a file cannot be written, or `.gitignore` cannot be read | [`Exit::Infrastructure`] |
 /// | `fetch` failed | the status of `fetch`; the files stay |
 pub(crate) fn init<E, F>(
     cargo: &OsStr,
@@ -152,7 +201,7 @@ where
         buildl_toml: &buildl_toml,
     };
     if let Err(error) = write_files(root, &files) {
-        say(stderr, &format!("error: cannot write the files: {error}"));
+        say(stderr, &format!("error: {error}"));
         return Exit::Infrastructure;
     }
     say(stderr, "init: wrote build.lua, buildl.toml, .gitignore");
@@ -200,6 +249,40 @@ mod tests {
         assert!(!dir.path().join("build.lua").exists());
         assert!(!dir.path().join("buildl.toml").exists());
         assert!(dir.path().join(".gitignore").is_dir());
+    }
+
+    #[test]
+    fn a_failure_after_two_files_leaves_an_existing_gitignore_as_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(".gitignore"), "target\n").unwrap();
+        fs::create_dir(dir.path().join("buildl.toml")).unwrap();
+
+        assert!(write_files(dir.path(), &FILES).is_err());
+
+        assert_eq!(
+            fs::read_to_string(dir.path().join(".gitignore")).unwrap(),
+            "target\n"
+        );
+        assert!(!dir.path().join("build.lua").exists());
+    }
+
+    #[test]
+    fn a_failure_names_the_file_and_whether_it_was_a_read_or_a_write() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join(".gitignore")).unwrap();
+        let error = write_files(dir.path(), &FILES).unwrap_err();
+        assert!(
+            error.to_string().starts_with("cannot read .gitignore: "),
+            "{error}"
+        );
+
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("buildl.toml")).unwrap();
+        let error = write_files(dir.path(), &FILES).unwrap_err();
+        assert!(
+            error.to_string().starts_with("cannot write buildl.toml: "),
+            "{error}"
+        );
     }
 
     #[test]
