@@ -92,7 +92,7 @@ book/src/ch11-06-decision-records.md       — modify: a record "The command lin
 - 🟡 `Makefile.toml` guard-adapter-isolation message named only `local_ports and workspace` — fixed in `440ff9a`; `cargo make guard-adapter-isolation` → `Build Done`.
 - 🔵 `execute`'s `#[expect(too_many_arguments)]` reason was inaccurate for `color` and `command` — fixed in `440ff9a`.
 - 🔵 `Streams` is public though only a `pub(crate)` method produces it — kept; the plan lists it.
-- 🔵 `CLAUDE.md` still calls `buildl-cli` a "thin clap shell" — plan 05 rewrites CLAUDE.md's workspace shape.
+- 🔵 `CLAUDE.md` still calls `buildl-cli` a "thin clap shell" — fixed in plan 05 (`7e780fa`): `buildl-cli` is "only `main`, which calls `buildl::cli::run`".
 - 🔵 Task 2's commit landed before Task 1's — history only.
 
 ## Deviations
