@@ -13,11 +13,9 @@ const BEGIN_PREFIX: &str = "-- cargo-buildl: begin generated";
 const END_PREFIX: &str = "-- cargo-buildl: end generated";
 
 /// The begin marker line as `cargo buildl init` writes it.
-#[cfg_attr(not(test), expect(dead_code, reason = "written by cargo buildl init"))]
 pub(crate) const BEGIN_LINE: &str =
     "-- cargo-buildl: begin generated. `cargo buildl sync` rewrites this part from Cargo.toml.";
 /// The end marker line as `cargo buildl init` writes it.
-#[cfg_attr(not(test), expect(dead_code, reason = "written by cargo buildl init"))]
 pub(crate) const END_LINE: &str = "-- cargo-buildl: end generated";
 
 /// Why the generated section could not be found, with the exit status that tells it.

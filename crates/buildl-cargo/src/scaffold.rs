@@ -6,15 +6,12 @@
 use crate::section;
 
 /// The tag of the `rust` plugin this release of `cargo-buildl` was tested with.
-#[cfg_attr(not(test), expect(dead_code, reason = "written by cargo buildl init"))]
 pub(crate) const RUST_PLUGIN_TAG: &str = "plugin-rust-v0.2.0";
 
 /// The `.gitignore` lines `init` makes sure are there.
-#[cfg_attr(not(test), expect(dead_code, reason = "written by cargo buildl init"))]
 const IGNORED: [&str; 2] = ["/out/", "/.buildl/"];
 
 /// The line that opens the part of `build.lua` that belongs to the engineer.
-#[cfg_attr(not(test), expect(dead_code, reason = "written by cargo buildl init"))]
 const OWN_TARGETS_LINE: &str =
     "-- Your own targets go below. `cargo buildl sync` never changes them.";
 
@@ -22,7 +19,6 @@ const OWN_TARGETS_LINE: &str =
 ///
 /// `name` is written as a TOML basic string, with `"` and `\` escaped. The `rust` plugin is
 /// pinned to [`RUST_PLUGIN_TAG`].
-#[cfg_attr(not(test), expect(dead_code, reason = "written by cargo buildl init"))]
 pub(crate) fn buildl_toml(name: &str) -> String {
     let name = name.replace('\\', "\\\\").replace('"', "\\\"");
     format!(
@@ -55,7 +51,6 @@ network     = true
 ///
 /// `existing` is the file as it is now, or `None` when there is none. A line is added only when
 /// no line of the file is exactly that; every byte already there is kept.
-#[cfg_attr(not(test), expect(dead_code, reason = "written by cargo buildl init"))]
 pub(crate) fn gitignore(existing: Option<&str>) -> String {
     let mut text = existing.unwrap_or_default().to_owned();
     for wanted in IGNORED {
@@ -75,7 +70,6 @@ pub(crate) fn gitignore(existing: Option<&str>) -> String {
 /// line and a line telling the engineer where their own targets go.
 ///
 /// Each line of `section` is written with a `\n` ending.
-#[cfg_attr(not(test), expect(dead_code, reason = "written by cargo buildl init"))]
 pub(crate) fn build_lua(section: &str) -> String {
     let mut text = String::with_capacity(section.len() + 256);
     text.push_str(section::BEGIN_LINE);

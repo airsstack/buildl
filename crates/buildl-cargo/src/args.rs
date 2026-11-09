@@ -47,6 +47,9 @@ pub(crate) enum CargoCommand {
     #[command(flatten)]
     Buildl(Command),
 
+    /// Set this Cargo project up for buildl: write build.lua, buildl.toml and .gitignore, then fetch the rust plugin
+    Init,
+
     /// Bring the generated part of build.lua in line with Cargo.toml
     Sync(SyncArgs),
 }
@@ -111,6 +114,12 @@ mod tests {
             panic!("expected test");
         };
         assert!(test.stop);
+    }
+
+    #[test]
+    fn init_parses_without_arguments() {
+        let cli = CargoCli::try_parse_from(os(&["cargo-buildl", "init"])).unwrap();
+        assert!(matches!(cli.command, CargoCommand::Init));
     }
 
     #[test]
