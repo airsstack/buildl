@@ -12,7 +12,7 @@ graph BT
     ADP["buildl adapters<br/>each module alone: a temp directory, system tools run by argv"]
     LUA["buildl-lua<br/>real airsl: build.lua fixtures to exact declarations"]
     E2E["buildl/tests/e2e<br/>real adapters through the Workspace facade:<br/>a fixture workspace built twice, byte-identical"]
-    CLIT["buildl-cli<br/>argument parsing and exit mapping in process,<br/>then the built binary"]
+    CLIT["buildl::cli and buildl-cli<br/>argument parsing and exit mapping in process,<br/>then the built binary"]
     CORE --> ADP --> LUA --> E2E --> CLIT
 ```
 
@@ -24,7 +24,7 @@ The widest coverage is at the bottom, where tests are fastest and need nothing.
 | Lua | `crates/buildl-lua/tests/flows`, with fixtures in `crates/buildl-lua/tests/fixtures`, and unit tests beside the code | real airsl; fixture build files, or files written into a temp workspace, turned into exact `StagedFile`s | anything of `buildl` |
 | Adapter unit | `crates/buildl/src/<module>/`, beside the code | its own module, `state`, `search_path`, `buildl-core`, one temp directory; `exec` starts system tools | another adapter module; the process's current directory; setting an environment variable |
 | End to end | `crates/buildl/tests/e2e`, with fixtures in `crates/buildl/tests/fixtures` | `buildl`'s public API; a temp copy of a fixture | a private item; a path outside the package |
-| CLI unit | `crates/buildl-cli/src`, beside the code | argument parsing, the exit mapping, terminal detection, a command's flow over byte buffers and a temp workspace | a process; a terminal |
+| CLI unit | `crates/buildl/src/cli`, beside the code | argument parsing, the exit mapping, terminal detection, a command's flow over byte buffers and a temp workspace | a process; a terminal |
 | CLI binary | `crates/buildl-cli/tests/cli` | the built binary, with a chosen working directory and environment, its output piped | `buildl` internals; a terminal |
 
 `buildl-core` forbids threads even in its tests: `crates/buildl-core/clippy.toml` bans
