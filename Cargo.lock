@@ -148,7 +148,7 @@ dependencies = [
 
 [[package]]
 name = "buildl"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "buildl-core",
  "buildl-lua",
@@ -170,7 +170,7 @@ dependencies = [
 
 [[package]]
 name = "buildl-cargo"
-version = "0.2.0"
+version = "0.1.0"
 dependencies = [
  "buildl",
  "clap",
@@ -181,7 +181,7 @@ dependencies = [
 
 [[package]]
 name = "buildl-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "buildl",
  "tempfile",
