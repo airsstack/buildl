@@ -90,9 +90,9 @@ deny = [
         book/src/ch11-03-four-crates.md dependency rules 1 and 4: buildl-core depends on no buildl crate, and buildl-cli reaches \
         core types only through buildl's re-exports, so buildl alone may name the adapter \
         directly""" },
-    { crate = "buildl", wrappers = ["buildl-cli"], reason = """\
-        book/src/ch11-03-four-crates.md dependency rule 2: buildl-lua never imports buildl, so only buildl-cli may depend on it \
-        directly""" },
+    { crate = "buildl", wrappers = ["buildl-cli", "buildl-cargo"], reason = """\
+        book/src/ch11-03-four-crates.md dependency rule 2: buildl-lua never imports buildl, so only the two binary crates, \
+        buildl-cli and buildl-cargo, may depend on it directly""" },
     { crate = "mlua", wrappers = ["airsl"], reason = """\
         the Lua runtime is airsl's implementation detail; no buildl crate names it directly""" },
     { crate = "toml", wrappers = ["airsl", "buildl-lua", "buildl"], reason = """\
@@ -103,16 +103,17 @@ deny = [
         book/src/ch11-03-four-crates.md: buildl-core does no filesystem traversal; buildl-lua walks the declaring \
         directory for b.sources(); notify walks a directory to watch it, inside the watch \
         adapter of buildl""" },
-    { crate = "tempfile", wrappers = ["airsl", "buildl-lua", "buildl", "buildl-cli"], reason = """\
+    { crate = "tempfile", wrappers = ["airsl", "buildl-lua", "buildl", "buildl-cli", "buildl-cargo"], reason = """\
         book/src/ch11-03-four-crates.md: temp-file-then-rename is a storage concern of buildl's shared state module; \
-        buildl-lua, buildl and buildl-cli also use it for the temp workspaces of their tests""" },
+        buildl-lua, buildl, buildl-cli and buildl-cargo also use it for the temp workspaces of their tests""" },
     { crate = "globset", wrappers = ["airsl", "buildl-lua"], reason = """\
         book/src/ch11-03-four-crates.md: b.sources() globbing is a filesystem read, not core logic; buildl-lua \
         matches it host-side""" },
     { crate = "rayon", wrappers = ["buildl"], reason = """\
         book/src/ch11-06-decision-records.md: rayon is confined to the Digester adapter inside buildl""" },
-    { crate = "clap", wrappers = ["buildl"], reason = """\
-        book/src/ch11-03-four-crates.md: the argument surface is the command line's alone, and the command line lives in buildl""" },
+    { crate = "clap", wrappers = ["buildl", "buildl-cargo"], reason = """\
+        book/src/ch11-03-four-crates.md: the argument surface is the command line's alone; the command line lives in buildl, \
+        and buildl-cargo flattens its commands into the parser of `cargo buildl`""" },
     { crate = "tonic", wrappers = ["buildl", "tonic-prost"], reason = """\
         the gRPC client is the remote adapter's inside buildl; tonic-prost is tonic's own codec \
         crate""" },

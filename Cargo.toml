@@ -5,6 +5,7 @@ members  = [
     "crates/buildl-lua",
     "crates/buildl",
     "crates/buildl-cli",
+    "crates/buildl-cargo",
 ]
 # The REAPI code generator is a package of its own: its build tools (protox,
 # prost-build) must not enter the workspace's dependency graph or `cargo deny` run.

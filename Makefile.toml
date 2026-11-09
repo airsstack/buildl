@@ -139,7 +139,7 @@ expected="crates/expected-edges.txt"
 actual="$(mktemp)"
 trap 'rm -f "${actual}"' EXIT
 
-for member in buildl-core buildl-lua buildl buildl-cli; do
+for member in buildl-core buildl-lua buildl buildl-cli buildl-cargo; do
     echo "# ${member}" >> "${actual}"
     cargo tree --color never -p "${member}" --depth 1 --edges normal,dev --prefix none --format '{lib}' \
         | tail -n +2 >> "${actual}"

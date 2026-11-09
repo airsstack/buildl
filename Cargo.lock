@@ -169,6 +169,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "buildl-cargo"
+version = "0.2.0"
+dependencies = [
+ "buildl",
+ "clap",
+ "tempfile",
+]
+
+[[package]]
 name = "buildl-cli"
 version = "0.2.0"
 dependencies = [
