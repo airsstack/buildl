@@ -5,6 +5,8 @@ use std::ffi::OsString;
 use buildl::cli::{Color, Command};
 use clap::{Args, Parser, Subcommand};
 
+use crate::sync::Mode;
+
 /// Returns `args` without its second item when that item is exactly `buildl`.
 ///
 /// Cargo runs `cargo buildl build` as `cargo-buildl buildl build`, so the second item is the
@@ -55,6 +57,12 @@ pub(crate) struct SyncArgs {
     /// Write nothing; exit 5 when build.lua is out of date with Cargo.toml
     #[arg(long)]
     pub(crate) check: bool,
+}
+
+impl From<&SyncArgs> for Mode {
+    fn from(args: &SyncArgs) -> Self {
+        if args.check { Self::Check } else { Self::Write }
+    }
 }
 
 #[cfg(test)]
@@ -112,12 +120,14 @@ mod tests {
             panic!("expected sync");
         };
         assert!(!sync.check);
+        assert_eq!(Mode::from(&sync), Mode::Write);
 
         let cli = CargoCli::try_parse_from(os(&["cargo-buildl", "sync", "--check"])).unwrap();
         let CargoCommand::Sync(sync) = cli.command else {
             panic!("expected sync");
         };
         assert!(sync.check);
+        assert_eq!(Mode::from(&sync), Mode::Check);
     }
 
     #[test]

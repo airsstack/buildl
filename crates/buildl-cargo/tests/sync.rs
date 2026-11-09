@@ -181,3 +181,24 @@ fn missing_markers_is_5() {
         "sync: build.lua must hold one begin line and, after it, one end line\n"
     );
 }
+
+#[test]
+fn a_cargo_that_cannot_run_is_3_with_an_error_line() {
+    let dir = workspace();
+    fs::write(build_lua(&dir), build_file()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_cargo-buildl"))
+        .args(["buildl", "sync"])
+        .env("CARGO", dir.path().join("no-such-cargo"))
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+
+    assert_eq!(output.status.code(), Some(3), "{}", stderr(&output));
+    assert!(
+        stderr(&output).starts_with("error: "),
+        "{}",
+        stderr(&output)
+    );
+    assert_eq!(fs::read_to_string(build_lua(&dir)).unwrap(), build_file());
+}

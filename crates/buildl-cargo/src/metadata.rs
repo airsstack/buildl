@@ -81,7 +81,7 @@ pub(crate) fn program(cargo_var: Option<OsString>) -> OsString {
 /// Runs `cargo metadata --format-version 1 --no-deps` with `cargo` in `dir` and reads the result.
 ///
 /// A cargo that cannot be started, and output that is not metadata, end with
-/// [`Exit::Infrastructure`]. A cargo that exits non-zero, such as one that refuses the manifest,
+/// [`Exit::Infrastructure`], each with an `error: <what>: <detail>` message. A cargo that exits non-zero, such as one that refuses the manifest,
 /// ends with [`Exit::Definition`] and its own stderr as the message.
 pub(crate) fn read(cargo: &OsStr, dir: &Path) -> Result<CargoProject, MetadataError> {
     let output = Command::new(cargo)
@@ -90,7 +90,7 @@ pub(crate) fn read(cargo: &OsStr, dir: &Path) -> Result<CargoProject, MetadataEr
         .output()
         .map_err(|error| MetadataError {
             exit: Exit::Infrastructure,
-            message: format!("cannot run {}: {error}", cargo.to_string_lossy()),
+            message: format!("error: cannot run {}: {error}", cargo.to_string_lossy()),
         })?;
     if !output.status.success() {
         return Err(MetadataError {
@@ -109,7 +109,7 @@ pub(crate) fn read(cargo: &OsStr, dir: &Path) -> Result<CargoProject, MetadataEr
 pub(crate) fn parse(json: &[u8]) -> Result<CargoProject, MetadataError> {
     serde_json::from_slice(json).map_err(|error| MetadataError {
         exit: Exit::Infrastructure,
-        message: format!("cannot read the output of cargo metadata: {error}"),
+        message: format!("error: cannot read the output of cargo metadata: {error}"),
     })
 }
 
@@ -232,7 +232,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .starts_with("cannot read the output of cargo metadata"),
+                .starts_with("error: cannot read the output of cargo metadata: "),
             "{error}"
         );
     }
@@ -251,7 +251,12 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let error = read(OsStr::new("/nonexistent/cargo"), dir.path()).unwrap_err();
         assert_eq!(error.exit(), Exit::Infrastructure);
-        assert!(error.to_string().contains("/nonexistent/cargo"), "{error}");
+        assert!(
+            error
+                .to_string()
+                .starts_with("error: cannot run /nonexistent/cargo: "),
+            "{error}"
+        );
     }
 
     #[test]

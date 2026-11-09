@@ -12,7 +12,7 @@ use buildl::cli::Exit;
 
 use crate::metadata::{CargoProject, Package, Target};
 
-/// A name the generated section cannot carry.
+/// A name the generated section cannot carry, worded as `error: <what>: <detail>`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Refusal {
     message: String,
@@ -138,7 +138,7 @@ fn claim<'a>(
     if let Err(error) = TargetName::parse(name) {
         return Err(Refusal {
             message: format!(
-                "target \"{name}\" of package \"{package}\" cannot be declared: {error}"
+                "error: target \"{name}\" of package \"{package}\" cannot be declared: {error}"
             ),
         });
     }
@@ -149,7 +149,9 @@ fn claim<'a>(
             format!("packages \"{first}\" and \"{package}\"")
         };
         return Err(Refusal {
-            message: format!("target \"{name}\" would be declared by {packages}"),
+            message: format!(
+                "error: target \"{name}\" cannot be declared: it would be declared by {packages}"
+            ),
         });
     }
     Ok(())
@@ -243,7 +245,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(Refusal::EXIT, Exit::Definition);
         let message = refusal.to_string();
-        assert!(message.contains("target \"café\""), "{message}");
+        assert!(message.starts_with("error: target \"café\""), "{message}");
         assert!(message.contains("package \"café\""), "{message}");
     }
 
@@ -254,7 +256,10 @@ mod tests {
         )))
         .unwrap_err();
         let message = refusal.to_string();
-        assert!(message.contains("\"tool\""), "{message}");
+        assert!(
+            message.starts_with("error: target \"tool\" cannot be declared: "),
+            "{message}"
+        );
         assert!(message.contains("\"one\""), "{message}");
         assert!(message.contains("\"two\""), "{message}");
     }

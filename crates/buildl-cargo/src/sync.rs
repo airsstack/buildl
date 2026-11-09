@@ -1,17 +1,26 @@
 //! `cargo buildl sync`: bring the generated section of `build.lua` in line with `Cargo.toml`.
 //!
 //! [`sync`] reads the Cargo project, generates the section, and either rewrites the lines
-//! between the markers of the `build.lua` at the workspace root or, with `check`, only says
+//! between the markers of the `build.lua` at the workspace root or, in [`Mode::Check`], only says
 //! whether they are current. Nothing but that one file is ever written.
 
 use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, Write};
-use std::path::Path;
+use std::path::PathBuf;
 
 use buildl::cli::Exit;
 
 use crate::{generate, metadata, section};
+
+/// Whether `sync` may write `build.lua`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Mode {
+    /// Rewrite the generated section when it differs.
+    Write,
+    /// Write nothing; report a differing section as [`Exit::Definition`].
+    Check,
+}
 
 /// What `sync` found in `build.lua` and what it does about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,10 +35,10 @@ struct Decision {
 
 /// Decides what to do about `text`, the current `build.lua`, given the `generated` section.
 ///
-/// Without `check`, a differing section is written and a current one is left alone. With
-/// `check`, nothing is written and a differing section is [`Exit::Definition`]. Broken markers
-/// are [`Exit::Definition`] either way.
-fn decide(text: &str, generated: &str, check: bool) -> Decision {
+/// In [`Mode::Write`], a differing section is written and a current one is left alone. In
+/// [`Mode::Check`], nothing is written and a differing section is [`Exit::Definition`]. Broken
+/// markers are [`Exit::Definition`] either way.
+fn decide(text: &str, generated: &str, mode: Mode) -> Decision {
     let replacement = match section::replace(text, generated) {
         Ok(replacement) => replacement,
         Err(error) => {
@@ -40,19 +49,19 @@ fn decide(text: &str, generated: &str, check: bool) -> Decision {
             };
         }
     };
-    match (replacement.changed, check) {
+    match (replacement.changed, mode) {
         (false, _) => Decision {
             exit: Exit::Success,
             message: "sync: build.lua is up to date".to_owned(),
             write: None,
         },
-        (true, true) => Decision {
+        (true, Mode::Check) => Decision {
             exit: Exit::Definition,
             message: "sync: build.lua is out of date with Cargo.toml; run cargo buildl sync"
                 .to_owned(),
             write: None,
         },
-        (true, false) => Decision {
+        (true, Mode::Write) => Decision {
             exit: Exit::Success,
             message: "sync: build.lua updated".to_owned(),
             write: Some(replacement.text),
@@ -66,7 +75,8 @@ fn say<E: Write>(stderr: &mut E, message: &str) {
 }
 
 /// Runs `cargo buildl sync`, with `cargo` as the program that describes the project and `start`
-/// as the folder it describes it from.
+/// as the folder it describes it from; a `start` that could not be read is
+/// [`Exit::Infrastructure`].
 ///
 /// The `build.lua` read and written is the one in the workspace root, wherever `start` lies in
 /// the workspace. Every message goes to `stderr`.
@@ -74,10 +84,25 @@ fn say<E: Write>(stderr: &mut E, message: &str) {
 /// | Outcome | Exit |
 /// |---|---|
 /// | up to date, or updated | [`Exit::Success`] |
-/// | out of date with `check`; no `build.lua`; broken markers; cargo refused the project | [`Exit::Definition`] |
-/// | cargo cannot be run or read; `build.lua` cannot be read or written | [`Exit::Infrastructure`] |
-pub(crate) fn sync<E: Write>(cargo: &OsStr, start: &Path, check: bool, stderr: &mut E) -> Exit {
-    let project = match metadata::read(cargo, start) {
+/// | out of date in [`Mode::Check`]; no `build.lua`; broken markers; cargo refused the project | [`Exit::Definition`] |
+/// | the current directory cannot be read; cargo cannot be run or read; `build.lua` cannot be read or written | [`Exit::Infrastructure`] |
+pub(crate) fn sync<E: Write>(
+    cargo: &OsStr,
+    start: io::Result<PathBuf>,
+    mode: Mode,
+    stderr: &mut E,
+) -> Exit {
+    let start = match start {
+        Ok(start) => start,
+        Err(error) => {
+            say(
+                stderr,
+                &format!("error: the current directory cannot be read: {error}"),
+            );
+            return Exit::Infrastructure;
+        }
+    };
+    let project = match metadata::read(cargo, &start) {
         Ok(project) => project,
         Err(error) => {
             say(stderr, &error.to_string());
@@ -103,7 +128,7 @@ pub(crate) fn sync<E: Write>(cargo: &OsStr, start: &Path, check: bool, stderr: &
             return Exit::Infrastructure;
         }
     };
-    let decision = decide(&text, &generated, check);
+    let decision = decide(&text, &generated, mode);
     if let Some(new_text) = &decision.write
         && let Err(error) = fs::write(&path, new_text)
     {
@@ -127,8 +152,8 @@ mod tests {
 
     #[test]
     fn a_current_section_is_left_alone() {
-        for check in [false, true] {
-            let decision = decide(&file("local a = 1\n"), "local a = 1\n", check);
+        for mode in [Mode::Write, Mode::Check] {
+            let decision = decide(&file("local a = 1\n"), "local a = 1\n", mode);
             assert_eq!(decision.exit, Exit::Success);
             assert_eq!(decision.message, "sync: build.lua is up to date");
             assert_eq!(decision.write, None);
@@ -137,7 +162,7 @@ mod tests {
 
     #[test]
     fn a_stale_section_is_written_without_check() {
-        let decision = decide(&file("old\n"), "new\n", false);
+        let decision = decide(&file("old\n"), "new\n", Mode::Write);
         assert_eq!(decision.exit, Exit::Success);
         assert_eq!(decision.message, "sync: build.lua updated");
         assert_eq!(decision.write, Some(file("new\n")));
@@ -145,7 +170,7 @@ mod tests {
 
     #[test]
     fn a_stale_section_is_5_and_unwritten_with_check() {
-        let decision = decide(&file("old\n"), "new\n", true);
+        let decision = decide(&file("old\n"), "new\n", Mode::Check);
         assert_eq!(decision.exit, Exit::Definition);
         assert_eq!(
             decision.message,
@@ -156,8 +181,8 @@ mod tests {
 
     #[test]
     fn broken_markers_are_5_with_or_without_check() {
-        for check in [false, true] {
-            let decision = decide("-- no markers\n", "new\n", check);
+        for mode in [Mode::Write, Mode::Check] {
+            let decision = decide("-- no markers\n", "new\n", mode);
             assert_eq!(decision.exit, Exit::Definition);
             assert!(
                 decision
@@ -166,12 +191,29 @@ mod tests {
             );
             assert_eq!(decision.write, None);
 
-            let decision = decide(&format!("{END}\n{BEGIN}\n"), "new\n", check);
+            let decision = decide(&format!("{END}\n{BEGIN}\n"), "new\n", mode);
             assert_eq!(decision.exit, Exit::Definition);
             assert_eq!(
                 decision.message,
                 "sync: build.lua must hold one begin line and, after it, one end line"
             );
         }
+    }
+
+    #[test]
+    fn an_unreadable_current_directory_is_3() {
+        let mut stderr = Vec::new();
+        let exit = sync(
+            OsStr::new("cargo"),
+            Err(io::Error::from(io::ErrorKind::NotFound)),
+            Mode::Write,
+            &mut stderr,
+        );
+        assert_eq!(exit, Exit::Infrastructure);
+        let stderr = String::from_utf8_lossy(&stderr);
+        assert!(
+            stderr.starts_with("error: the current directory cannot be read: "),
+            "{stderr}"
+        );
     }
 }

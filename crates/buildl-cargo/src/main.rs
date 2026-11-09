@@ -7,7 +7,8 @@
 //! A command line that is wrong ends with 2, with what the parser has to say about it.
 //!
 //! This file holds `main`, which decides nothing, so it carries no logic to unit-test; the
-//! argument rule is tested in `args`, the sync rules in `sync`.
+//! argument rule is tested in `args`, the sync rules, the unreadable current directory among
+//! them, in `sync`.
 
 mod args;
 mod generate;
@@ -16,13 +17,14 @@ mod section;
 mod sync;
 
 use std::env;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
-use buildl::cli::{Exit, RemoteSwitches, StdConsole, Terminal};
+use buildl::cli::{RemoteSwitches, StdConsole, Terminal};
 use clap::Parser;
 
 use args::{CargoCli, CargoCommand};
+use sync::Mode;
 
 fn main() -> ExitCode {
     let cli = match CargoCli::try_parse_from(args::arguments(env::args_os())) {
@@ -32,21 +34,12 @@ fn main() -> ExitCode {
     let command = match cli.command {
         CargoCommand::Buildl(command) => command,
         CargoCommand::Sync(sync) => {
-            let exit = match env::current_dir() {
-                Ok(start) => sync::sync(
-                    &metadata::program(env::var_os("CARGO")),
-                    &start,
-                    sync.check,
-                    &mut io::stderr(),
-                ),
-                Err(error) => {
-                    let _ = writeln!(
-                        io::stderr(),
-                        "error: cannot read the current directory: {error}"
-                    );
-                    Exit::Infrastructure
-                }
-            };
+            let exit = sync::sync(
+                &metadata::program(env::var_os("CARGO")),
+                env::current_dir(),
+                Mode::from(&sync),
+                &mut io::stderr(),
+            );
             return ExitCode::from(exit as u8);
         }
     };
