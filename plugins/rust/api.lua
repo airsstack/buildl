@@ -39,11 +39,27 @@ end
 function M.new(buildl)
     local rust = {}
 
-    -- Returns the function that declares the targets of `rust.<kind>(name, options)`.
+    -- Returns whether `given` names a library whose `kind` lists "cdylib": the file cargo writes
+    -- for it is named after the platform.
+    local function shared(kind, given)
+        if kind ~= "library" or type(given) ~= "table" or type(given.kind) ~= "table" then
+            return false
+        end
+        for _, item in pairs(given.kind) do
+            if item == "cdylib" then
+                return true
+            end
+        end
+        return false
+    end
+
+    -- Returns the function that declares the targets of `rust.<kind>(name, options)`. A library
+    -- holding a cdylib asks `rust.platform` first, so its file is named as cargo names it.
     local function declarer(kind)
         return function(name, given)
+            local platform = shared(kind, given) and rust.platform() or nil
             relocate("rust." .. kind .. "(", function()
-                graph.declare(buildl, kind, name, options.check(kind, name, given))
+                graph.declare(buildl, kind, name, options.check(kind, name, given, platform))
             end)
         end
     end
@@ -79,12 +95,7 @@ function M.new(buildl)
         if type(name) ~= "string" then
             error("rust.shared_name: the name must be a string", 2)
         end
-        if platform == "linux" then
-            return "lib" .. name .. ".so"
-        elseif platform == "macos" then
-            return "lib" .. name .. ".dylib"
-        end
-        return nil
+        return options.shared_name(name, platform)
     end
 
     local declared = false

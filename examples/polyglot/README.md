@@ -45,7 +45,7 @@ Needs the `buildl` binary, Go 1.22, a Rust toolchain and Python 3.
 from git, so run `buildl plugins fetch` once before the first build.
 
 ```sh
-buildl plugins fetch                  # clones the plugin at plugin-rust-v0.1.0, writes buildl.lock
+buildl plugins fetch                  # clones the plugin at plugin-rust-v0.2.0, writes buildl.lock
 buildl build                          # 4 built
 ./out/go/service                      # go service 1.0: hello from the schema
 ./out/rust/cli                        # rust cli 1.0: hello from the schema

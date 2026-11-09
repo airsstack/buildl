@@ -9,9 +9,12 @@ local TYPES = {
     deps = "list",
     profile = "string",
     output = "string",
-    kind = "string",
+    kind = "list",
     version_probe = "boolean",
 }
+
+-- The crate types `rust.library` copies, as Cargo.toml's `crate-type` names them.
+local LIBRARY_KINDS = { staticlib = true, cdylib = true }
 
 -- The option names in order, so the type check names the same option on every run.
 local NAMES = {}
@@ -57,13 +60,43 @@ local function copy(value)
     return out
 end
 
+-- Returns `lib<name>.so` for "linux", `lib<name>.dylib` for "macos", nil for any other
+-- `platform`, nil included: the file cargo writes for a `cdylib`.
+function M.shared_name(name, platform)
+    if platform == "linux" then
+        return "lib" .. name .. ".so"
+    elseif platform == "macos" then
+        return "lib" .. name .. ".dylib"
+    end
+    return nil
+end
+
+-- Returns the files of a library, one `{ kind, output }` per item of `kinds`, in its order:
+-- `lib<name>.a` for a staticlib, and for a cdylib the file cargo writes on `platform`, or
+-- `name` while `platform` is nil.
+local function library_files(name, kinds, platform)
+    local files = {}
+    for i, kind in ipairs(kinds) do
+        local output
+        if kind == "staticlib" then
+            output = "lib" .. name .. ".a"
+        else
+            output = M.shared_name(name, platform) or name
+        end
+        files[i] = { kind = kind, output = output }
+    end
+    return files
+end
+
 -- Returns the options of a call to `rust.<kind>(name, options)`, checked and filled: `args`
 -- and `deps` are lists, `profile` defaults to "dev", `profile_dir` is the folder under
--- `target/` that profile writes to, `version_probe` is a boolean, `kind` is set for a library
--- only, and `output` is set except for a test. `options` may be nil. Raises, naming the
--- option, for one that is unknown, of the wrong type or refused by the kind (`kind` outside a
--- library, `output` for a test), and for a library whose `kind` is not "staticlib" or "cdylib".
-function M.check(kind, name, options)
+-- `target/` that profile writes to, `version_probe` is a boolean, `output` is set for a binary
+-- only, and `libraries` for a library only: one `{ kind, output }` per crate type of `kind`,
+-- named as cargo names the file on `platform` (see `library_files`). `options` and `platform`
+-- may be nil. Raises, naming the option, for one that is unknown, of the wrong type or refused
+-- by the kind (`kind` outside a library, `output` for a library or a test), and for a library
+-- whose `kind` is not a list of "staticlib" and "cdylib", each at most once.
+function M.check(kind, name, options, platform)
     if kind ~= "binary" and kind ~= "library" and kind ~= "test" then
         error(
             string.format("rust.%s(%s): the kind is not binary, library or test", tostring(kind), tostring(name)),
@@ -92,7 +125,7 @@ function M.check(kind, name, options)
         fail(kind, name, "the option kind is refused")
     end
 
-    if kind == "test" and options.output ~= nil then
+    if kind ~= "binary" and options.output ~= nil then
         fail(kind, name, "the option output is refused")
     end
 
@@ -113,24 +146,33 @@ function M.check(kind, name, options)
         end
     end
 
-    if kind == "library" and options.kind ~= "staticlib" and options.kind ~= "cdylib" then
-        fail(kind, name, 'kind must be "staticlib" or "cdylib"')
+    local libraries
+    if kind == "library" then
+        local kinds = options.kind
+        if kinds == nil or #kinds == 0 then
+            fail(kind, name, 'kind must list "staticlib", "cdylib" or both')
+        end
+        local seen = {}
+        for _, item in ipairs(kinds) do
+            if not LIBRARY_KINDS[item] then
+                fail(kind, name, 'kind must list "staticlib", "cdylib" or both')
+            end
+            if seen[item] then
+                fail(kind, name, string.format("kind lists %s twice", item))
+            end
+            seen[item] = true
+        end
+        libraries = library_files(name, kinds, platform)
     end
 
     local profile = options.profile or "dev"
-    local output
-    if kind == "binary" then
-        output = options.output or name
-    elseif kind == "library" then
-        output = options.output or (options.kind == "staticlib" and "lib" .. name .. ".a" or name)
-    end
     return {
         args = copy(options.args or {}),
         deps = copy(options.deps or {}),
         profile = profile,
         profile_dir = PROFILE_DIRS[profile] or profile,
-        output = output,
-        kind = kind == "library" and options.kind or nil,
+        output = kind == "binary" and (options.output or name) or nil,
+        libraries = libraries,
         version_probe = options.version_probe or false,
     }
 end

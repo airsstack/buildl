@@ -21,7 +21,7 @@ fs.write    = ["out", ".buildl"]
 # `network = true`.
 [plugins.rust]
 github      = "airsstack/buildl"
-rev         = "plugin-rust-v0.1.0"
+rev         = "plugin-rust-v0.2.0"
 dir         = "plugins/rust"
 proc.run    = ["sh", "rustc"]
 env.read    = ["HOME", "PATH"]

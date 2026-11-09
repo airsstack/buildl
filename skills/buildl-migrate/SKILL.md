@@ -268,8 +268,8 @@ setting. Do not write a `cargo` target by hand.
    `sh` and `rustc` in `old.programs`, `HOME` and `PATH` in `old.env`, and `old.network` as `true`,
    so check 6 passes: the plugin runs `cargo` through `sh`.
 2. Put the build file in the crate's folder, beside `Cargo.toml` and `Cargo.lock`. One call per
-   artifact: `rust.binary` for each `--bin`, `rust.library` (with `kind`) for a `staticlib` or
-   `cdylib`, `rust.test` for each `cargo test`. The old build's other cargo arguments go in `args`.
+   artifact: `rust.binary` for each `--bin`, `rust.library` (with `kind`, the `crate-type` list) for a
+   `staticlib` or `cdylib`, `rust.test` for each `cargo test`. The old build's other cargo arguments go in `args`.
 3. For a workspace member, use `args = rust.package("name")`, with the build file at the workspace
    root. Cargo still reads `Cargo.toml` for members, features and profile settings.
 4. Set `profile = "release"` when the old build's output must match: the default, `dev`, keeps the

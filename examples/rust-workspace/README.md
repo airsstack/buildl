@@ -40,7 +40,7 @@ fs.write    = ["out", ".buildl"]
 
 [plugins.rust]
 github      = "airsstack/buildl"
-rev         = "plugin-rust-v0.1.0"
+rev         = "plugin-rust-v0.2.0"
 dir         = "plugins/rust"
 proc.run    = ["sh", "rustc"]
 env.read    = ["HOME", "PATH"]
@@ -65,7 +65,7 @@ buildl log //:unit       # cargo's test output, the rlib's and the proc-macro's 
 
 From `examples/`, `sh check.sh rust-workspace` runs the shared checks on a copy. The copy first runs
 `prepare.sh`: it commits this checkout's `plugins/rust` to a temporary git repository, tags it
-`plugin-rust-v0.1.0`, points the copy's `buildl.toml` at it with `git = "file://…"`, and fetches.
+`plugin-rust-v0.2.0`, points the copy's `buildl.toml` at it with `git = "file://…"`, and fetches.
 Then `assert.sh` checks what `out/cli` prints, that `out/` holds the binary alone, that an edit to
 `greeting/src/lib.rs` runs all three targets, and that both tests pass and tested the rlib and the
 proc-macro.

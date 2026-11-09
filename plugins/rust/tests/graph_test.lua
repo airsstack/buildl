@@ -11,7 +11,7 @@ local function filled(kind, name, given)
         deps = {},
         profile = "dev",
         profile_dir = "debug",
-        output = kind ~= "test" and name or nil,
+        output = kind == "binary" and name or nil,
         version_probe = false,
     }
     for key, value in pairs(given or {}) do
@@ -73,6 +73,19 @@ local function builds(target, script, args)
     same(rest, args or {}, "args")
 end
 
+-- Asserts the command of a library `target` is `sh -c <script> sh $out`, then `args`.
+local function builds_library(target, script, args)
+    local run = target.options.run
+    assert(run[1] == "sh" and run[2] == "-c", "run starts " .. tostring(run[1]) .. " " .. tostring(run[2]))
+    assert(run[3] == script, "script is\n" .. tostring(run[3]) .. "\nwant\n" .. script)
+    assert(run[4] == "sh" and run[5] == "$out", "$0 and $1 are " .. tostring(run[4]) .. " " .. tostring(run[5]))
+    local rest = {}
+    for i = 6, #run do
+        rest[#rest + 1] = run[i]
+    end
+    same(rest, args or {}, "args")
+end
+
 return {
     binary_runs_cargo_build_in_the_folder = function()
         local root = get(declare("binary", "hello"), "hello")
@@ -91,24 +104,34 @@ return {
         same(sub.options.outputs, { "tool" }, "outputs")
     end,
 
-    library_copies_the_named_file = function()
-        local static = get(declare("library", "mylib", { kind = "staticlib", output = "libmylib.a" }), "mylib")
-        builds(
+    library_copies_every_file_cargo_wrote = function()
+        local static = get(declare("library", "mylib", {
+            libraries = { { kind = "staticlib", output = "libmylib.a" } },
+        }), "mylib")
+        builds_library(
             static,
-            [[cargo build --locked --lib --profile dev --target-dir target "$@" && cp target/debug/libmylib.a "$0"]]
+            [[o1="$1"; shift 1; cargo build --locked --lib --profile dev --target-dir target "$@" && ]]
+                .. [[cp target/debug/libmylib.a "$o1"]]
         )
         same(static.options.outputs, { "libmylib.a" }, "outputs")
 
-        local script = [[cargo build --locked --lib --profile dev --target-dir target "$@" && ]]
-            .. [[if [ -f target/debug/libffi.so ]; then cp target/debug/libffi.so "$0"; ]]
-            .. [[else cp target/debug/libffi.dylib "$0"; fi]]
-        local named = get(declare("library", "ffi", { kind = "cdylib", output = "libffi.dylib" }), "ffi")
-        builds(named, script)
-        same(named.options.outputs, { "libffi.dylib" }, "outputs")
-
-        local default = get(declare("library", "ffi", { kind = "cdylib", output = "ffi" }), "ffi")
-        builds(default, script)
-        same(default.options.outputs, { "ffi" }, "default outputs")
+        local both = get(declare("library", "ffi", {
+            libraries = {
+                { kind = "cdylib", output = "libffi.dylib" },
+                { kind = "staticlib", output = "libffi.a" },
+            },
+            args = { "-p", "ffi" },
+        }, "rust"), "ffi")
+        builds_library(
+            both,
+            [[o1="$1"; o2="$2"; shift 2; ]]
+                .. [[(cd rust && cargo build --locked --lib --profile dev --target-dir target "$@") && ]]
+                .. [[if [ -f rust/target/debug/libffi.so ]; then cp rust/target/debug/libffi.so "$o1"; ]]
+                .. [[else cp rust/target/debug/libffi.dylib "$o1"; fi && ]]
+                .. [[cp rust/target/debug/libffi.a "$o2"]],
+            { "-p", "ffi" }
+        )
+        same(both.options.outputs, { "libffi.dylib", "libffi.a" }, "outputs")
     end,
 
     test_runs_cargo_test = function()
@@ -169,7 +192,7 @@ return {
 
     env_and_network = function()
         for _, kind in ipairs({ "binary", "library", "test" }) do
-            local given = kind == "library" and { kind = "staticlib", output = "libx.a" } or nil
+            local given = kind == "library" and { libraries = { { kind = "staticlib", output = "libx.a" } } } or nil
             local target = get(declare(kind, "x", given), "x").options
             same({ target.env.HOME, target.env.PATH }, { "unkeyed", "unkeyed" }, kind .. " env")
             local count = 0
@@ -194,7 +217,7 @@ return {
             return declare("test", "unit", nil, "rust", { "Cargo.lock", "src/main.rs" })
         end, { "rust.test(unit): no Cargo.toml in rust" })
         refuses(function()
-            return declare("library", "lib", { kind = "staticlib" }, "", {})
+            return declare("library", "lib", { libraries = { { kind = "staticlib", output = "liblib.a" } } }, "", {})
         end, { "rust.library(lib): no Cargo.toml in ." })
 
         local fake = fake_buildl.new("", nil, { "Cargo.toml" })

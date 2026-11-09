@@ -61,7 +61,7 @@ return {
     a_function_returns_nothing = function()
         local rust, fake = plugin()
         assert(rust.binary("app") == nil)
-        assert(rust.library("lib", { kind = "staticlib" }) == nil)
+        assert(rust.library("lib", { kind = { "staticlib" } }) == nil)
         assert(rust.test("unit") == nil)
         assert(fake.find("app").kind == "target")
         assert(fake.find("lib").kind == "target")
@@ -76,7 +76,7 @@ return {
         assert(err:find(":%d+:"), "no location in " .. err)
         refuses(function()
             rust.library("lib")
-        end, { "rust.library(lib)", 'kind must be "staticlib" or "cdylib"' })
+        end, { "rust.library(lib)", 'kind must list "staticlib", "cdylib" or both' })
 
         -- An error of the graph, not of the options.
         local bare = api.new(fake_buildl.new("", nil, { "Cargo.toml" }))
@@ -133,6 +133,22 @@ return {
         end, {
             "rust.platform: the target triple x86_64-pc-windows-msvc is neither macos nor linux",
         })
+    end,
+
+    a_cdylib_is_named_as_cargo_names_it = function()
+        local output = "rustc 1.99.0 (abc 2026-01-01)\nbinary: rustc\nhost: aarch64-apple-darwin\n"
+        local rust, fake = plugin({ [":rust.platform"] = output })
+        rust.library("ffi", { kind = { "cdylib", "staticlib" } })
+        assert(count(fake, "rust.platform") == 1, "a cdylib does not declare rust.platform once")
+        same(fake.find("ffi").options.outputs, { "libffi.dylib", "libffi.a" }, "outputs")
+
+        local first, first_fake = plugin()
+        first.library("ffi", { kind = { "cdylib" } })
+        same(first_fake.find("ffi").options.outputs, { "ffi" }, "outputs before discovery")
+
+        local static, static_fake = plugin()
+        static.library("lib", { kind = { "staticlib" } })
+        assert(count(static_fake, "rust.platform") == 0, "a staticlib declares rust.platform")
     end,
 
     platform_refuses_output_without_a_host_line = function()

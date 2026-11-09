@@ -25,8 +25,8 @@ Rust calls C
 | Piece | Why |
 |---|---|
 | `buildl.subdir("rust")`, `buildl.subdir("c")` | the rust plugin takes every file of its folder as an input; with the C sources in a folder of their own, a C edit leaves cargo alone |
-| `rust.library("mathlib", { kind = "staticlib", args = rust.package("mathlib") })` | `cargo build --lib -p mathlib`, then `libmathlib.a` copied to `out/rust/`; the call's name is the crate's, so the plugin knows the file |
-| `rust.library("greeter", { kind = "cdylib", output = rust.shared_name("greeter", platform) })` | the shared library, `libgreeter.so` on Linux and `libgreeter.dylib` on macOS |
+| `rust.library("mathlib", { kind = { "staticlib" }, args = rust.package("mathlib") })` | `cargo build --lib -p mathlib`, then `libmathlib.a` copied to `out/rust/`; the call's name is the crate's, so the plugin knows the file |
+| `rust.library("greeter", { kind = { "cdylib" } })` | the shared library, `libgreeter.so` on Linux and `libgreeter.dylib` on macOS, as cargo names it |
 | `rust.platform()` | nil on the first pass, so `rust/build.lua` declares the shared library on the second |
 | `profile = "release"` | dev debug info keeps the absolute folder cargo ran in, and `buildl verify` would find the bytes differ |
 | `rust/greeter/build.rs` | names the library `libgreeter.so` (soname) or `@rpath/libgreeter.dylib` (install name); left alone, it is named by the sandbox path it was linked in, and the binary would not start |
@@ -51,7 +51,7 @@ fs.write    = ["out", ".buildl"]
 
 [plugins.rust]
 github      = "airsstack/buildl"
-rev         = "plugin-rust-v0.1.0"
+rev         = "plugin-rust-v0.2.0"
 dir         = "plugins/rust"
 proc.run    = ["sh", "rustc"]
 env.read    = ["HOME", "PATH"]
@@ -87,7 +87,7 @@ buildl test              # tests: 2 passed
 
 From `examples/`, `sh check.sh rust-ffi` runs the shared checks on a copy. The copy first runs
 `prepare.sh`: it commits this checkout's `plugins/rust` and `plugins/c` to one temporary git
-repository, tags it `plugin-rust-v0.1.0` and `plugin-c-v0.2.0`, points both plugins in the copy's
+repository, tags it `plugin-rust-v0.2.0` and `plugin-c-v0.2.0`, points both plugins in the copy's
 `buildl.toml` at it with `git = "file://…"`, and fetches. Then `assert.sh` checks what both programs
 print, that a comment added to `c/include/clamp.h` reruns the object of `clamp.c` and leaves
 `//rust:calc` cached (the object comes out the same bytes), that a comment added to

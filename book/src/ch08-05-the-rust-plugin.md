@@ -35,7 +35,7 @@ fs.write    = ["out", ".buildl"]
 
 [plugins.rust]
 github      = "airsstack/buildl"
-rev         = "plugin-rust-v0.1.0"
+rev         = "plugin-rust-v0.2.0"
 dir         = "plugins/rust"
 proc.run    = ["sh", "rustc"]
 env.read    = ["HOME", "PATH"]
@@ -169,15 +169,16 @@ the root:
 cargo <build or test> --locked … --profile <profile> --target-dir target <args>
 ```
 
-For `rust.binary` and `rust.library`, the same script then copies the file cargo wrote under
-`<folder>/target/<profile folder>/` to the output. The `cd` sits in the subshell so that the copy,
+For `rust.binary`, the same script then copies the binary cargo wrote under
+`<folder>/target/<profile folder>/` to the output, and for `rust.library` every file cargo wrote
+for the crate types `kind` lists, under the names cargo gave them. The `cd` sits in the subshell so that the copy,
 which comes after it, still reads the path from the root. `rust.test` copies nothing. `--locked` is why a
 folder with a `Cargo.toml` and no `Cargo.lock` is refused.
 
 | Function | Declares |
 |---|---|
 | `rust.binary(name, o)` | a target that runs `cargo build --locked --bin <name>` and copies the binary to the output |
-| `rust.library(name, o)` | a target that runs `cargo build --locked --lib` and copies the library to the output |
+| `rust.library(name, o)` | a target that runs `cargo build --locked --lib` and copies each file it wrote for `kind` to the outputs |
 | `rust.test(name, o)` | a test target `name` that runs `cargo test --locked` |
 
 What every target gets, so a build file writes none of it:
@@ -198,11 +199,12 @@ does not know is refused, and the message names it.
 | `args` | list of strings | arguments to `cargo`, after the plugin's own, as written on its command line | `{}` |
 | `profile` | string | `--profile`; it also names the folder the output is copied from: `debug` for `dev` and `test`, `release` for `release` and `bench`, else the profile's own name | `"dev"` |
 | `deps` | list of labels | targets whose outputs the build reads, such as a generated file | `{}` |
-| `output` | string | the file the step writes | `rust.binary`: `name`; `rust.library`: `lib<name>.a` for a `staticlib`, `name` for a `cdylib` |
-| `kind` | string | `rust.library` only, required: `"staticlib"` or `"cdylib"` | none |
+| `output` | string | `rust.binary` only: the file the step writes | `name` |
+| `kind` | list of strings | `rust.library` only, required: the crate types to copy, as `crate-type` in `Cargo.toml` lists them: `"staticlib"`, `"cdylib"` or both | none |
 | `version_probe` | boolean | see [below](#the-toolchain-and-its-version) | `false` |
 
-`rust.test` has no `output`, and `kind` given to `rust.binary` or `rust.test` is refused. `args` go
+`output` given to `rust.library` or `rust.test` is refused, and so is `kind` given to `rust.binary`
+or `rust.test`. `args` go
 where you would write them on the command line, so a flag cargo takes is passed as it is:
 `args = { "--no-default-features" }`. A library's `name` is the name of the file cargo writes, so
 it is the crate's library name: `my-lib` becomes `my_lib`.
@@ -268,7 +270,7 @@ local rust = buildl.use("rust")
 
 rust.binary("server", { args = rust.package("server"), profile = "release" })
 rust.binary("cli",    { args = rust.package("cli") })
-rust.library("codec", { kind = "staticlib", args = rust.package("codec") })
+rust.library("codec", { kind = { "staticlib" }, args = rust.package("codec") })
 
 rust.test("server-test", { args = rust.package("server") })
 rust.test("codec-test",  { args = rust.package("codec") })
@@ -299,21 +301,22 @@ triple `rustc` reports, as `c.platform` does from the compiler's:
 
 ```lua
 local rust = buildl.use("rust")
-local platform = rust.platform() -- nil on the first pass
 
-rust.library("ffi", {
-  kind   = "cdylib",
-  output = rust.shared_name("ffi", platform),
-})
+rust.library("ffi", { kind = { "cdylib", "staticlib" } })
 ```
+
+`kind` is the `crate-type` list of `Cargo.toml`. One `cargo build --lib` builds every crate type
+it lists, as it does without buildl, and the target copies each file under the name cargo gave it:
+`libffi.so` or `libffi.dylib`, and `libffi.a`. A library whose `kind` lists `cdylib` calls
+`rust.platform()` itself for the shared library's name.
 
 The first `rust.platform()` call declares a discovery target, `:rust.platform`, which runs `rustc
 -vV`; later calls return the same value and declare nothing. The `host:` line of its output holds
 the triple, and a triple holding `apple-darwin` gives `"macos"` and one holding `linux` gives
 `"linux"`. A call returns `nil` until the discovery has run, which is on the first of the two passes
-a build file is declared in (see [Discovery Targets](ch07-00-discovery-targets.md)). So is
-`rust.shared_name("ffi", platform)`: `output` is `nil` there and the library's default, `ffi`,
-applies; the second pass has `libffi.dylib` or `libffi.so`. The plugin copies a `cdylib` from
+a build file is declared in (see [Discovery Targets](ch07-00-discovery-targets.md)). So the
+shared library's name waits too: on the first pass its output is named `ffi`, and the second pass has
+`libffi.dylib` or `libffi.so`. The plugin copies a `cdylib` from
 `lib<name>.so` when cargo wrote that file, else from `lib<name>.dylib`.
 
 The discovery target is the same on both passes, because `rust.platform()` takes no option, so
@@ -427,7 +430,9 @@ The other messages:
 | `kind` given to `rust.binary` or `rust.test` | `rust.binary(hello): the option kind is refused` |
 | `output` given to `rust.test` | `rust.test(unit): the option output is refused` |
 | a wrong type | `rust.binary(hello): the option args must be a list of strings` |
-| `rust.library` without `kind`, or another value | `rust.library(mylib): kind must be "staticlib" or "cdylib"` |
+| `rust.library` without `kind`, or a `kind` listing another value | `rust.library(mylib): kind must list "staticlib", "cdylib" or both` |
+| a `kind` listing a crate type twice | `rust.library(mylib): kind lists cdylib twice` |
+| `output` given to `rust.library` | `rust.library(mylib): the option output is refused` |
 | `rust.platform` on a host that is neither | `rust.platform: the target triple <triple> is neither macos nor linux` |
 | `rustc -vV` without a `host:` line | `rust.platform: the output of rustc -vV has no host line` |
 | `rust.package` without a string | `rust.package: the name must be a string` |
@@ -460,5 +465,5 @@ buildl repository are the builds above, each with a README. From `examples/`, `s
 (or `rust-workspace`, `rust-ffi`, `polyglot`) runs `check`, `build`,
 `test`, `verify` and the example's own assertions on a copy. The copy first runs `prepare.sh`,
 which commits this checkout's `plugins/rust` to a temporary git repository, tags it
-`plugin-rust-v0.1.0` and points the copy's `buildl.toml` at it, so the check runs the plugin as the
+`plugin-rust-v0.2.0` and points the copy's `buildl.toml` at it, so the check runs the plugin as the
 checkout holds it instead of the published tag.
