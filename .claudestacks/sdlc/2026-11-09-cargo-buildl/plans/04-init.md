@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-09
 depends-on: [03]
 built-on: 072796d9b51f
@@ -77,3 +77,22 @@ crates/buildl-cargo/tests/init.rs     — create: runs the binary on a temp copy
 
 - `cargo make dod` and `cargo deny check` are green.
 - Every step and message of spec §7 has a named test above.
+
+## Review findings
+
+- 🟡 a failed write printed `error: cannot write the files: …`, naming no file and calling a `.gitignore` read a write — fixed in `a693b57`: `error: cannot read .gitignore: …` / `error: cannot write buildl.toml: …`; `cargo test -p buildl-cargo --all-targets` → 57 passed.
+- 🟡 nothing guarded "`.gitignore` written last" — fixed: `a_failure_after_two_files_leaves_an_existing_gitignore_as_it_was`.
+- 🔵 `build.lua` and `buildl.toml` were truncating writes, so "files this call created" held only through the earlier check — fixed: created with `create_new`, listed for rollback once opened.
+- 🔵 `RUST_PLUGIN_TAG` doc said "tested with" — fixed: "the tag of the `rust` plugin that `init` pins".
+- 🔵 a folder name with a control character gave an invalid `buildl.toml` — fixed: written `\uXXXX`.
+- 🔵 test name `buildl_toml_matches_the_spec` — fixed: `buildl_toml_is_the_pinned_text`.
+- 🔵 the init test compared prefixes of the written files — fixed: full text.
+- 🔵 a `workspace_root` with no last component is named `workspace` — kept; recorded under Deviations.
+- Final: `cargo make dod` → `Build Done`; `cargo deny check` → `advisories ok, bans ok, licenses ok, sources ok`.
+
+## Deviations
+
+- 2026-11-09 — `init` takes the fetch as a closure, so `main` hands it `buildl::cli::execute` and `init` stays under clippy's argument limit.
+- 2026-11-09 — a `workspace_root` with no last component (`/`) is named `workspace` in `buildl.toml`.
+- 2026-11-09 — the fetch-failure line reads `init: the files are written but the plugin is not fetched; run cargo buildl plugins fetch`.
+- 2026-11-09 — plan 05 ran in parallel with this plan (files disjoint).

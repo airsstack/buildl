@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-09
 depends-on: [04]
 built-on: 072796d9b51f
@@ -57,3 +57,21 @@ book/src/appendix-05-references.md   — modify: an entry for The Cargo Book, "E
 
 - `cargo make book-build` and `cargo make skills` are green.
 - `grep -rn 'cargo buildl init' README.md book/src skills` finds the page and each pointer.
+
+## Review findings
+
+- 🟡 `CLAUDE.md` said ch11-06 records five crates while its Crate cut and Structure rows said four — fixed: both rows name five, `buildl-cargo` the fifth.
+- 🟡 `ch08-05` and `skills/buildl/SKILL.md` said `init` writes the `build.lua` shown there (it has `profile = "release"`) — fixed: `init` writes a `build.lua` with one call per artifact; the skill paragraph moved to the end of the Rust part.
+- 🟡 `skills/buildl-migrate/SKILL.md` said `init` covers steps 1 to 3 — fixed: `init` writes the files and fetches the plugin; the `old.*` entries and the cargo `args` stay the agent's.
+- 🔵 install written with and without `--locked` — fixed: `cargo install --locked buildl-cargo` everywhere (ch11-03 included); `grep -rn 'cargo install buildl-cargo' README.md CHANGELOG.md book/src skills` → nothing.
+- 🔵 the fetch could read as starting the `buildl` program — fixed: it runs inside `cargo-buildl`.
+- 🔵 `config` called a default — fixed: "`entry` and `out` are the defaults, and `config = 1`".
+- 🔵 exit-3 row missed an unreadable current directory and an unreadable `build.lua` — fixed.
+- 🔵 "`init` writes both back" for the example — fixed: it writes new ones.
+- 🔵 `ch08-00-plugins.md` and the CHANGELOG "Changed" entry were outside the file list — kept; recorded under Deviations.
+- After the fixes: `cargo make book-build` → green; `cargo make skills` → green.
+
+## Deviations
+
+- 2026-11-09 — ran in parallel with plan 04 (files disjoint); committed after it.
+- 2026-11-09 — also changed: `book/src/ch08-00-plugins.md` (the chapter's page list gains the new page), `book/src/ch11-06-decision-records.md` (Crate cut and Structure rows count five crates), `book/src/ch11-03-four-crates.md` (install line with `--locked`); `CHANGELOG.md` also gets a Changed entry: the command line moved into the `buildl` library.
