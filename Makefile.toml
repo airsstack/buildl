@@ -282,7 +282,7 @@ done < "${edges}"
 
 if [ "${status}" -ne 0 ]; then
     echo "       an adapter module may name state and search_path and no other module of the crate;" >&2
-    echo "       state and search_path name none; adapters meet only in local_ports and workspace" >&2
+    echo "       state and search_path name none; adapters meet only in local_ports, workspace and cli" >&2
     echo "       (book/src/ch11-03-four-crates.md dependency rule 2)" >&2
     exit 1
 fi

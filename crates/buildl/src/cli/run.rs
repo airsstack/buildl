@@ -122,7 +122,7 @@ where
 /// the command writes and asks.
 #[expect(
     clippy::too_many_arguments,
-    reason = "each argument is a fact only the process knows, handed in so a test drives a command without one"
+    reason = "the parsed command and each fact the process knows are handed in, so a test drives a command without a process"
 )]
 pub fn execute<O, E, C>(
     color: Color,
