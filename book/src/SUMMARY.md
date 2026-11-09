@@ -38,6 +38,7 @@
     - [How buildl Decides](ch08-03-how-buildl-decides.md)
     - [The C and C++ Plugin](ch08-04-the-c-plugin.md)
     - [The Rust Plugin](ch08-05-the-rust-plugin.md)
+    - [cargo buildl](ch08-06-cargo-buildl.md)
 
 - [Remote Cache and Execution](ch09-00-remote.md)
 
@@ -46,7 +47,7 @@
 - [Under the Hood](ch11-00-under-the-hood.md)
     - [Declare, Then Execute](ch11-01-declare-then-execute.md)
     - [Crash Safety and the Store](ch11-02-crash-safety.md)
-    - [Four Crates, Ports and Adapters](ch11-03-four-crates.md)
+    - [Five Crates, Ports and Adapters](ch11-03-four-crates.md)
     - [Errors](ch11-04-errors.md)
     - [Determinism Rules](ch11-05-determinism-rules.md)
     - [Decision Records](ch11-06-decision-records.md)

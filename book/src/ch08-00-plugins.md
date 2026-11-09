@@ -21,3 +21,5 @@ This chapter covers:
   compiling one object per source with each object declaring the headers it read
 - **[The Rust Plugin](ch08-05-the-rust-plugin.md)**: the `rust` plugin kept in this repository,
   running plain `cargo` for a binary, a library or a test
+- **[cargo buildl](ch08-06-cargo-buildl.md)**: the cargo subcommand that sets a Cargo project up
+  for the `rust` plugin and keeps its `build.lua` in line with `Cargo.toml`

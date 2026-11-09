@@ -1,0 +1,100 @@
+{
+  "packages": [
+    {
+      "name": "one",
+      "version": "0.1.0",
+      "id": "path+file:///work/same-bin-name/one#0.1.0",
+      "license": null,
+      "license_file": null,
+      "description": null,
+      "source": null,
+      "dependencies": [],
+      "targets": [
+        {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "tool",
+          "src_path": "/work/same-bin-name/one/src/main.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        }
+      ],
+      "features": {},
+      "manifest_path": "/work/same-bin-name/one/Cargo.toml",
+      "metadata": null,
+      "publish": null,
+      "authors": [],
+      "categories": [],
+      "keywords": [],
+      "readme": null,
+      "repository": null,
+      "homepage": null,
+      "documentation": null,
+      "edition": "2021",
+      "links": null,
+      "default_run": null,
+      "rust_version": null
+    },
+    {
+      "name": "two",
+      "version": "0.1.0",
+      "id": "path+file:///work/same-bin-name/two#0.1.0",
+      "license": null,
+      "license_file": null,
+      "description": null,
+      "source": null,
+      "dependencies": [],
+      "targets": [
+        {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "tool",
+          "src_path": "/work/same-bin-name/two/src/main.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        }
+      ],
+      "features": {},
+      "manifest_path": "/work/same-bin-name/two/Cargo.toml",
+      "metadata": null,
+      "publish": null,
+      "authors": [],
+      "categories": [],
+      "keywords": [],
+      "readme": null,
+      "repository": null,
+      "homepage": null,
+      "documentation": null,
+      "edition": "2021",
+      "links": null,
+      "default_run": null,
+      "rust_version": null
+    }
+  ],
+  "workspace_members": [
+    "path+file:///work/same-bin-name/one#0.1.0",
+    "path+file:///work/same-bin-name/two#0.1.0"
+  ],
+  "workspace_default_members": [
+    "path+file:///work/same-bin-name/one#0.1.0",
+    "path+file:///work/same-bin-name/two#0.1.0"
+  ],
+  "resolve": null,
+  "target_directory": "/work/same-bin-name/target",
+  "build_directory": "/work/same-bin-name/target",
+  "version": 1,
+  "workspace_root": "/work/same-bin-name",
+  "metadata": null
+}

@@ -7,6 +7,24 @@ the slot Cargo treats as breaking, so a compatible change ships as a `z` bump.
 
 ## Unreleased
 
+### Added
+
+- **`buildl-cargo`**, a fifth crate that ships `cargo-buildl`, run as `cargo buildl`.
+  `cargo buildl init` writes `buildl.toml`, `build.lua` and `.gitignore` for a Cargo project and
+  fetches the `rust` plugin; `cargo buildl sync` rewrites the generated section of `build.lua` from
+  `Cargo.toml`, and `sync --check` exits 5 when it is out of date. Every buildl command also runs as
+  `cargo buildl <command>`. Install it with `cargo install --locked buildl-cargo`.
+
+### Changed
+
+- **The command line moved into the `buildl` library** (`buildl::cli`), so `buildl-cli` is only
+  `main`; the `buildl` program behaves as before.
+- **The `rust` plugin is 0.2.0**, tagged `plugin-rust-v0.2.0` at release. `rust.library` copies
+  what `cargo build --lib` builds, as `Cargo.toml`'s `crate-type` lists it: `kind` is a list,
+  `{ "staticlib" }`, `{ "cdylib" }` or both, and one target copies every file under the name cargo
+  gives it (`lib<name>.a`, `lib<name>.so` or `lib<name>.dylib`). A library listing `cdylib` asks
+  `rust.platform()` itself. `kind` as a string and `output` on `rust.library` are refused.
+
 ## 0.2.0 — 2026-11-08
 
 A breaking release. It publishes the four crates at 0.2.0, and tags the `c` plugin as

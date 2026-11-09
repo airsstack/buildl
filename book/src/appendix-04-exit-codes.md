@@ -1,7 +1,7 @@
 # D. Exit Codes
 
 `buildl` ends with one of eight codes, so a script, a CI job or an editor can tell whose fault a
-failure is without reading the message. They are defined in `crates/buildl-cli/src/exit.rs`.
+failure is without reading the message. They are defined in `crates/buildl/src/cli/exit.rs`.
 
 | Code | Name | Whose fault | Running again may help? |
 |---|---|---|---|

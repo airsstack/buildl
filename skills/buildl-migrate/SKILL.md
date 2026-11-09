@@ -262,14 +262,21 @@ The old build runs `cargo build` or `cargo test`. Move it to the `rust` plugin, 
 the same `cargo`: one call per artifact, and it fills in the inputs, `HOME`, `PATH` and the network
 setting. Do not write a `cargo` target by hand.
 
+When `cargo-buildl` is installed (`cargo install --locked buildl-cargo`) and the crate or workspace has a
+`Cargo.lock`, start with `cargo buildl init`: it writes the `buildl.toml`, `build.lua` and
+`.gitignore` and fetches the plugin, which covers the files and the fetch of steps 1 to 3 below.
+You still list `cargo`, `sh`, `rustc`, `HOME`, `PATH` and the network in `old.*` (step 1), and move
+the old build's cargo arguments and `profile = "release"` into `args` of targets of your own below
+the generated section (step 2). Run `cargo buildl sync` after `Cargo.toml` changes.
+
 1. Add the plugin to `buildl.toml` and run `buildl plugins fetch`. The `buildl` skill shows the
    `[plugins.rust]` table. The ceiling and the table list `sh` and `rustc` in `proc.run`, `HOME`
    and `PATH` in `env.read` and `env.unkeyed`, and the table says `network = true`. List `cargo`,
    `sh` and `rustc` in `old.programs`, `HOME` and `PATH` in `old.env`, and `old.network` as `true`,
    so check 6 passes: the plugin runs `cargo` through `sh`.
 2. Put the build file in the crate's folder, beside `Cargo.toml` and `Cargo.lock`. One call per
-   artifact: `rust.binary` for each `--bin`, `rust.library` (with `kind`) for a `staticlib` or
-   `cdylib`, `rust.test` for each `cargo test`. The old build's other cargo arguments go in `args`.
+   artifact: `rust.binary` for each `--bin`, `rust.library` (with `kind`, the `crate-type` list) for a
+   `staticlib` or `cdylib`, `rust.test` for each `cargo test`. The old build's other cargo arguments go in `args`.
 3. For a workspace member, use `args = rust.package("name")`, with the build file at the workspace
    root. Cargo still reads `Cargo.toml` for members, features and profile settings.
 4. Set `profile = "release"` when the old build's output must match: the default, `dev`, keeps the

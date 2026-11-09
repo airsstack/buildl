@@ -1,0 +1,12 @@
+[package]
+name = "ffi"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# A static library C links in: cargo writes libffi.a.
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+greet = { path = "../greet" }

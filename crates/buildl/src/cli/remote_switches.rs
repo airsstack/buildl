@@ -15,12 +15,12 @@ use core::fmt;
 use core::num::NonZeroUsize;
 use std::ffi::OsString;
 
-use buildl::buildl_core::{
+use buildl_core::{
     Error, RemoteExecution, RemoteFailure, RemoteFlagConflict, RemotePolicy, RemoteSettings,
     RemoteUse, RemoteVariable,
 };
 
-use crate::cli::RemoteArgs;
+use crate::cli::args::RemoteArgs;
 
 /// The workspace's `[remote]` table in `buildl.toml`, when it has one.
 #[derive(Debug, Clone, Copy)]
@@ -70,7 +70,7 @@ impl fmt::Display for Switch {
 
 /// What this machine's variables say about the remote cache, as the process read them.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct RemoteSwitches {
+pub struct RemoteSwitches {
     /// The value of `BUILDL_REMOTE_UPLOAD`, when it is set.
     pub upload: Option<OsString>,
     /// The value of `BUILDL_REMOTE_STRICT`, when it is set.
@@ -201,13 +201,13 @@ mod tests {
     use core::num::NonZeroUsize;
     use std::ffi::OsString;
 
-    use buildl::buildl_core::{
+    use buildl_core::{
         Error, RemoteExecution, RemoteFailure, RemoteFlagConflict, RemoteJobs, RemotePolicy,
         RemoteSettings, RemoteUrl, RemoteUse, RemoteVariable,
     };
 
     use super::{RemoteSwitches, RemoteTable, Switch};
-    use crate::cli::RemoteArgs;
+    use crate::cli::args::RemoteArgs;
 
     /// Variables as a machine sets them: `None` is unset.
     fn machine(upload: Option<&str>, strict: Option<&str>) -> RemoteSwitches {

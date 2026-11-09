@@ -14,12 +14,10 @@
 use core::fmt::Display;
 use std::collections::BTreeSet;
 
-use buildl::Doctor;
-use buildl::buildl_core::{
-    Attribution, Directory, Execution, RemoteSettings, Want, WantedSet, Workers,
-};
+use crate::workspace::Doctor;
+use buildl_core::{Attribution, Directory, Execution, RemoteSettings, Want, WantedSet, Workers};
 
-use crate::remote_switches::Switch;
+use crate::cli::remote_switches::Switch;
 
 /// The spaces after the longest cell of a column.
 const GAP: usize = 2;
@@ -336,8 +334,8 @@ mod tests {
     use std::num::NonZeroUsize;
     use std::path::PathBuf;
 
-    use buildl::Doctor;
-    use buildl::buildl_core::{
+    use crate::workspace::Doctor;
+    use buildl_core::{
         ApproverMode, Attribution, Ceiling, Checkup, DeclarationSite, Directory, EnvName,
         Execution, HeaderName, HostPath, InstanceName, Isolation, Label, Origin,
         PlatformProperties, PlatformPropertyName, PluginChain, PluginName, PluginRef,
@@ -346,7 +344,7 @@ mod tests {
     };
 
     use super::{RemoteReport, TokenState, doctor_text};
-    use crate::remote_switches::Switch;
+    use crate::cli::remote_switches::Switch;
 
     fn programs(names: &[&str]) -> BTreeSet<Program> {
         names

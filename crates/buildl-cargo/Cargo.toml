@@ -1,0 +1,39 @@
+[package]
+name         = "buildl-cargo"
+version      = "0.2.0"
+description  = "The `cargo-buildl` binary — runs every buildl command as `cargo buildl <command>`."
+readme       = "README.md"
+edition.workspace      = true
+rust-version.workspace = true
+license.workspace      = true
+repository.workspace   = true
+homepage.workspace     = true
+authors.workspace      = true
+
+[[bin]]
+name = "cargo-buildl"
+path = "src/main.rs"
+# The binary has no public API to document.
+doc  = false
+
+[dependencies]
+# The command line and all build logic. Core types reach this crate through `buildl`, never
+# directly (book/src/ch11-03-four-crates.md).
+buildl     = { workspace = true }
+# The parser of `cargo buildl`, which flattens buildl's commands into its own.
+clap       = { workspace = true }
+# The derive of `Deserialize` for the project `cargo metadata` describes.
+serde      = { workspace = true }
+# The reader of `cargo metadata`'s output.
+serde_json = { workspace = true }
+
+[dev-dependencies]
+# The temporary workspaces the binary tests run the commands in.
+tempfile = { workspace = true }
+
+# `cargo-buildl` is installed with `cargo install`; the release workflow ships `buildl` alone.
+[package.metadata.dist]
+dist = false
+
+[lints]
+workspace = true

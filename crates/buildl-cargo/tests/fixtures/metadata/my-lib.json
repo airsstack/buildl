@@ -1,0 +1,131 @@
+{
+  "packages": [
+    {
+      "name": "my-lib",
+      "version": "0.1.0",
+      "id": "path+file:///work/my-lib#0.1.0",
+      "license": null,
+      "license_file": null,
+      "description": null,
+      "source": null,
+      "dependencies": [],
+      "targets": [
+        {
+          "kind": [
+            "cdylib",
+            "staticlib",
+            "rlib"
+          ],
+          "crate_types": [
+            "cdylib",
+            "staticlib",
+            "rlib"
+          ],
+          "name": "my_lib",
+          "src_path": "/work/my-lib/src/lib.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": true,
+          "test": true
+        },
+        {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "extra",
+          "src_path": "/work/my-lib/src/bin/extra.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "tool-a",
+          "src_path": "/work/my-lib/src/main.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        {
+          "kind": [
+            "example"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "ex",
+          "src_path": "/work/my-lib/examples/ex.rs",
+          "edition": "2021",
+          "doc": false,
+          "doctest": false,
+          "test": false
+        },
+        {
+          "kind": [
+            "test"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "it",
+          "src_path": "/work/my-lib/tests/it.rs",
+          "edition": "2021",
+          "doc": false,
+          "doctest": false,
+          "test": true
+        },
+        {
+          "kind": [
+            "custom-build"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "build-script-build",
+          "src_path": "/work/my-lib/build.rs",
+          "edition": "2021",
+          "doc": false,
+          "doctest": false,
+          "test": false
+        }
+      ],
+      "features": {},
+      "manifest_path": "/work/my-lib/Cargo.toml",
+      "metadata": null,
+      "publish": null,
+      "authors": [],
+      "categories": [],
+      "keywords": [],
+      "readme": null,
+      "repository": null,
+      "homepage": null,
+      "documentation": null,
+      "edition": "2021",
+      "links": null,
+      "default_run": null,
+      "rust_version": null
+    }
+  ],
+  "workspace_members": [
+    "path+file:///work/my-lib#0.1.0"
+  ],
+  "workspace_default_members": [
+    "path+file:///work/my-lib#0.1.0"
+  ],
+  "resolve": null,
+  "target_directory": "/work/my-lib/target",
+  "build_directory": "/work/my-lib/target",
+  "version": 1,
+  "workspace_root": "/work/my-lib",
+  "metadata": null
+}

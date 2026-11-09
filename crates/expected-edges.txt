@@ -15,6 +15,7 @@ tempfile
 # buildl
 buildl_core
 buildl_lua
+clap
 notify
 prost
 prost_types
@@ -30,6 +31,11 @@ tonic_prost
 uuid
 # buildl-cli
 buildl
-clap
 buildl (*)
+tempfile
+# buildl-cargo
+buildl
+clap
+serde
+serde_json
 tempfile

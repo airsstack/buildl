@@ -1,0 +1,172 @@
+{
+  "packages": [
+    {
+      "name": "greeting",
+      "version": "0.1.0",
+      "id": "path+file:///work/rust-workspace/greeting#0.1.0",
+      "license": null,
+      "license_file": null,
+      "description": null,
+      "source": null,
+      "dependencies": [],
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "crate_types": [
+            "lib"
+          ],
+          "name": "greeting",
+          "src_path": "/work/rust-workspace/greeting/src/lib.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": true,
+          "test": true
+        }
+      ],
+      "features": {
+        "shout": []
+      },
+      "manifest_path": "/work/rust-workspace/greeting/Cargo.toml",
+      "metadata": null,
+      "publish": [],
+      "authors": [],
+      "categories": [],
+      "keywords": [],
+      "readme": null,
+      "repository": null,
+      "homepage": null,
+      "documentation": null,
+      "edition": "2021",
+      "links": null,
+      "default_run": null,
+      "rust_version": null
+    },
+    {
+      "name": "answer",
+      "version": "0.1.0",
+      "id": "path+file:///work/rust-workspace/answer#0.1.0",
+      "license": null,
+      "license_file": null,
+      "description": null,
+      "source": null,
+      "dependencies": [],
+      "targets": [
+        {
+          "kind": [
+            "proc-macro"
+          ],
+          "crate_types": [
+            "proc-macro"
+          ],
+          "name": "answer",
+          "src_path": "/work/rust-workspace/answer/src/lib.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": true,
+          "test": true
+        }
+      ],
+      "features": {},
+      "manifest_path": "/work/rust-workspace/answer/Cargo.toml",
+      "metadata": null,
+      "publish": [],
+      "authors": [],
+      "categories": [],
+      "keywords": [],
+      "readme": null,
+      "repository": null,
+      "homepage": null,
+      "documentation": null,
+      "edition": "2021",
+      "links": null,
+      "default_run": null,
+      "rust_version": null
+    },
+    {
+      "name": "cli",
+      "version": "0.1.0",
+      "id": "path+file:///work/rust-workspace/cli#0.1.0",
+      "license": null,
+      "license_file": null,
+      "description": null,
+      "source": null,
+      "dependencies": [
+        {
+          "name": "answer",
+          "source": null,
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "target": null,
+          "registry": null,
+          "path": "/work/rust-workspace/answer"
+        },
+        {
+          "name": "greeting",
+          "source": null,
+          "req": "*",
+          "kind": null,
+          "rename": null,
+          "optional": false,
+          "uses_default_features": true,
+          "features": [],
+          "target": null,
+          "registry": null,
+          "path": "/work/rust-workspace/greeting"
+        }
+      ],
+      "targets": [
+        {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "cli",
+          "src_path": "/work/rust-workspace/cli/src/main.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        }
+      ],
+      "features": {},
+      "manifest_path": "/work/rust-workspace/cli/Cargo.toml",
+      "metadata": null,
+      "publish": [],
+      "authors": [],
+      "categories": [],
+      "keywords": [],
+      "readme": null,
+      "repository": null,
+      "homepage": null,
+      "documentation": null,
+      "edition": "2021",
+      "links": null,
+      "default_run": null,
+      "rust_version": null
+    }
+  ],
+  "workspace_members": [
+    "path+file:///work/rust-workspace/greeting#0.1.0",
+    "path+file:///work/rust-workspace/answer#0.1.0",
+    "path+file:///work/rust-workspace/cli#0.1.0"
+  ],
+  "workspace_default_members": [
+    "path+file:///work/rust-workspace/greeting#0.1.0",
+    "path+file:///work/rust-workspace/answer#0.1.0",
+    "path+file:///work/rust-workspace/cli#0.1.0"
+  ],
+  "resolve": null,
+  "target_directory": "/work/rust-workspace/target",
+  "build_directory": "/work/rust-workspace/target",
+  "version": 1,
+  "workspace_root": "/work/rust-workspace",
+  "metadata": null
+}

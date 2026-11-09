@@ -1,0 +1,71 @@
+{
+  "packages": [
+    {
+      "name": "exlib",
+      "version": "0.1.0",
+      "id": "path+file:///work/example-library#0.1.0",
+      "license": null,
+      "license_file": null,
+      "description": null,
+      "source": null,
+      "dependencies": [],
+      "targets": [
+        {
+          "kind": [
+            "lib"
+          ],
+          "crate_types": [
+            "lib"
+          ],
+          "name": "exlib",
+          "src_path": "/work/example-library/src/lib.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": true,
+          "test": true
+        },
+        {
+          "kind": [
+            "example"
+          ],
+          "crate_types": [
+            "cdylib"
+          ],
+          "name": "plugin",
+          "src_path": "/work/example-library/examples/plugin.rs",
+          "edition": "2021",
+          "doc": false,
+          "doctest": false,
+          "test": false
+        }
+      ],
+      "features": {},
+      "manifest_path": "/work/example-library/Cargo.toml",
+      "metadata": null,
+      "publish": null,
+      "authors": [],
+      "categories": [],
+      "keywords": [],
+      "readme": null,
+      "repository": null,
+      "homepage": null,
+      "documentation": null,
+      "edition": "2021",
+      "links": null,
+      "default_run": null,
+      "rust_version": null
+    }
+  ],
+  "workspace_members": [
+    "path+file:///work/example-library#0.1.0"
+  ],
+  "workspace_default_members": [
+    "path+file:///work/example-library#0.1.0"
+  ],
+  "resolve": null,
+  "target_directory": "/work/example-library/target",
+  "build_directory": "/work/example-library/target",
+  "version": 1,
+  "workspace_root": "/work/example-library",
+  "metadata": null
+}

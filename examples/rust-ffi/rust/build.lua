@@ -6,14 +6,14 @@ local rust = buildl.use("rust")
 
 -- A static library C calls.
 rust.library("mathlib", {
-  kind = "staticlib",
+  kind = { "staticlib" },
   args = rust.package("mathlib"),
   profile = "release",
 })
 
--- What follows waits for the second pass. The shared library's file name depends on the
--- platform: rust.platform() declares the discovery that asks rustc and returns nil until it has
--- run. And //c:clamp is declared by the c plugin on its second pass only, once its compiler
+-- What follows waits for the second pass. rust.platform() declares the discovery that asks
+-- rustc and returns nil until it has run; the plugin names the shared library's file after it,
+-- as cargo does. And //c:clamp is declared by the c plugin on its second pass only, once its compiler
 -- discovery has run, so a target depending on it is declared then too.
 local platform = rust.platform()
 if platform == nil then
@@ -22,10 +22,9 @@ end
 
 -- A shared library C calls.
 rust.library("greeter", {
-  kind = "cdylib",
+  kind = { "cdylib" },
   args = rust.package("greeter"),
   profile = "release",
-  output = rust.shared_name("greeter", platform),
 })
 
 -- The other direction: a Rust binary calling a C library. Its target depends on //c:clamp, so

@@ -168,7 +168,7 @@ allowed or found, and where it was declared, as in the `tr` example above.
 
 ## Exit codes
 
-`buildl-cli` turns all of this into one of eight exit codes, in `crates/buildl-cli/src/exit.rs`.
+The command line, the `cli` module of `buildl`, turns all of this into one of eight exit codes, in `crates/buildl/src/cli/exit.rs`.
 Four functions pick the code: `Exit::of_class` for one outcome, `Exit::of_outcomes` for a whole
 build, `Exit::of_verification` for `verify`, and `Exit::of_error` for an error. Each one matches on
 the variant, never on text.

@@ -1,8 +1,9 @@
-# Four Crates, Ports and Adapters
+# Five Crates, Ports and Adapters
 
-`buildl` is four Rust crates, split so that the logic of a build depends only on abstractions it
+`buildl` is five Rust crates, split so that the logic of a build depends only on abstractions it
 owns. Everything that touches the outside world, the airsl engine, the filesystem, child
-processes, threads, the clock, plugs into that logic from the outside.
+processes, threads, the clock, plugs into that logic from the outside. Two of the five are
+binaries: `buildl-cli`, the `buildl` command, and `buildl-cargo`, the `cargo buildl` command.
 
 ```text
 buildl/
@@ -10,23 +11,26 @@ buildl/
   crates/
     buildl-core/    # domain data, ports (traits), pure logic of every phase: no I/O, no Lua
     buildl-lua/     # DeclarationSource over airsl: engine per file, the buildl HostModule
-    buildl/         # every other adapter + LocalPorts: the composition root
-    buildl-cli/     # the `buildl` binary: clap argument surface, exit codes
+    buildl/         # every other adapter + LocalPorts + the command line: the composition root
+    buildl-cli/     # the `buildl` binary: `main` alone, which calls buildl::cli::run
+    buildl-cargo/   # the `cargo-buildl` binary, run as `cargo buildl`: buildl's commands from cargo
 ```
 
 The workspace shares airsl's policy: `unsafe_code = "forbid"`, `unwrap_used` and `panic` denied,
 Clippy's pedantic and nursery groups at warn, and a comment in the workspace `Cargo.toml` giving
 the reason for every dependency.
 
-## The four crates
+## The five crates
 
 Every dependency points at `buildl-core`, and `buildl` is the one crate that names concrete
-adapters together:
+adapters together. The two binaries are thin: each depends on `buildl` and on nothing else of
+buildl's:
 
 ```mermaid
 %% Crate dependency graph — arrows point at the dependency
 graph TD
-    CLI["buildl-cli<br/>argument surface"] --> LIB["buildl<br/>adapters + composition root"]
+    CLI["buildl-cli<br/>main"] --> LIB["buildl<br/>adapters + command line + composition root"]
+    CARGO["buildl-cargo<br/>cargo-buildl"] --> LIB
     LIB --> LUA["buildl-lua<br/>DeclarationSource via airsl"]
     LIB --> CORE["buildl-core<br/>domain data · ports · pure logic"]
     LUA --> CORE
@@ -61,6 +65,7 @@ graph TD
     LOGIC --> PORTS["buildl-core<br/>ports — traits"]
     ADAPT --> PORTS
     ADAPT --> AIRSL["airsl"]
+    BINS["buildl-cli and buildl-cargo<br/>the two binaries"] --> ROOT
 ```
 
 The structure exists for one result: **every flow of the pipeline runs in `buildl-core`'s tests
@@ -106,9 +111,13 @@ Three different things are called `buildl`, and the crates keep them apart:
 
 | Name | What it is | Lives in |
 |---|---|---|
-| `buildl` binary | the command users run | `buildl-cli` (`[[bin]] name = "buildl"`) |
+| `buildl` binary | the command users run | `buildl-cli` (`[[bin]] name = "buildl"`), whose `main` calls `buildl::cli::run` |
 | `buildl` Lua global | the declaration framework build authors call | `buildl-lua` (the `buildl` `HostModule`) |
 | `buildl` Rust crate | the complete framework: every real adapter wired onto `buildl-core` | `crates/buildl` |
+
+The fifth crate has a name of its own. `buildl-cargo` holds the `cargo-buildl` binary, which cargo
+runs as `cargo buildl`. It runs every command through `buildl::cli::execute`, so a command given
+to `cargo buildl` takes the `buildl` binary's flags and gives its output and exit codes.
 
 ## The C4 views
 
@@ -139,18 +148,24 @@ graph TD
 ### Level 2: containers
 
 A C4 container is a separately running process or a place data is kept. The crates are not
-containers: they compile into one process, and appear at level 3.
+containers: they compile into the two binaries, `buildl` and `cargo-buildl`, which run the same
+pipeline, and appear at level 3.
 
 ```mermaid
 %% C4 level 2 — containers
 graph TD
     subgraph SYS["buildl — system boundary"]
         CLIP["[Container: Rust binary]<br/>buildl CLI process<br/>Load → Resolve → Plan → Execute → Record"]
+        CARGOP["[Container: Rust binary]<br/>cargo-buildl process<br/>the same pipeline, started as cargo buildl"]
         DEFS["[Data]<br/>Build definitions<br/>buildl.toml, buildl.lock, build.lua, plugins"]
         STATE["[Data store]<br/>.buildl/<br/>cas/, cache.json, cache.journal,<br/>log.jsonl, statcache.json,<br/>graph.json, lock, plugins/"]
         OUT["[Data store]<br/>out/<br/>hard links and copies from the cas"]
     end
     CHILD["[Container]<br/>Child processes<br/>one toolchain invocation per action"]
+    CARGOP -->|"reads"| DEFS
+    CARGOP -->|"the same state as the CLI process"| STATE
+    CARGOP -->|"links named outputs"| OUT
+    CARGOP -->|"spawns argv with granted env"| CHILD
     CLIP -->|"reads"| DEFS
     CLIP -->|"cas first, row after, log always"| STATE
     CLIP -->|"links named outputs"| OUT
@@ -160,13 +175,15 @@ graph TD
 ### Level 3: components
 
 Inside the process, every adapter depends on `buildl-core`, and the one edge between adapter
-crates is `buildl → buildl-lua`, which only the composition root may hold:
+crates is `buildl → buildl-lua`, which only the composition root may hold. `buildl-cargo` is the
+second binary and calls `buildl` as `buildl-cli` does:
 
 ```mermaid
 %% C4 level 3 — components inside the CLI process
 graph TD
-    CLI["[Component: crate] buildl-cli<br/>clap argument surface<br/>maps outcome classes and<br/>error variants to exit codes"]
-    LIB["[Component: crate] buildl — composition root<br/>adapters: manifest, host, digest, tools,<br/>cas, cache, log, statcache, graph,<br/>exec, dispatch, clock, report, approver, remote, watch<br/>no port: plugins — lock, check, fetch<br/>shared: state, search_path<br/>assembly: LocalPorts, Workspace facade"]
+    CLI["[Component: crate] buildl-cli<br/>main: reads the process,<br/>calls buildl::cli::run"]
+    CARGO["[Component: crate] buildl-cargo<br/>main: reads the process,<br/>calls buildl::cli::execute"]
+    LIB["[Component: crate] buildl — composition root<br/>command line: cli — clap argument surface,<br/>outcome classes and error variants to exit codes<br/>adapters: manifest, host, digest, tools,<br/>cas, cache, log, statcache, graph,<br/>exec, dispatch, clock, report, approver, remote, watch<br/>no port: plugins — lock, check, fetch<br/>shared: state, search_path<br/>assembly: LocalPorts, Workspace facade"]
     LUA["[Component: crate] buildl-lua<br/>implements DeclarationSource<br/>airsl Engine per build file<br/>buildl HostModule bound as a global<br/>buildl.use: one plugin instance per chain"]
     subgraph CORE["[Component: crate] buildl-core — no I/O, no Lua, no threads"]
         DATA["domain data<br/>Label, Digest, NodeId, Provenance<br/>Declaration, Origin, Discovered<br/>TargetGraph, Plan, Attribution<br/>KeyComponents, ActionKey<br/>RemoteAction, RemoteHit, RemoteUpload<br/>ChangedPath, ChangeBatch, Trigger<br/>WatchLayout, Built, Reference, Reaction<br/>Watched, Cycle<br/>ActionOutcome, OutcomeClass"]
@@ -175,6 +192,7 @@ graph TD
     end
     AIRSL["[External crate] airsl<br/>Engine, Policy, HostModule"]
     CLI -->|"calls"| LIB
+    CARGO -->|"calls"| LIB
     LIB -->|"wires"| LUA
     LIB -->|"implements"| PORTS
     LIB -->|"wires into Pipeline"| LOGIC
@@ -189,8 +207,9 @@ graph TD
 |---|---|---|---|
 | `buildl-core` | domain data, ports, the pure logic of every phase | `serde`, `serde_json`, `thiserror`, `sha2` | any buildl crate, `airsl`, any I/O API |
 | `buildl-lua` | the `DeclarationSource` adapter: evaluates one build file through airsl, and loads the plugins it uses | `buildl-core`, `airsl`, `globset`, `walkdir`, `serde`, `serde_json`, `toml` | `buildl` |
-| `buildl` | every other adapter; the `plugins` module; `LocalPorts`; the `Workspace` facade; re-exports `buildl-core` as `buildl::buildl_core` | `buildl-core`, `buildl-lua`, `toml`, `toml_edit`, `rayon`, `serde`, `thiserror`, `tempfile`, `tonic`, `tonic-prost`, `prost`, `prost-types`, `tokio`, `uuid`, `notify` | nothing: it is the composition root |
-| `buildl-cli` | argument surface and exit codes | `buildl`, `clap` | `buildl-core` and `buildl-lua` directly |
+| `buildl` | every other adapter; the `plugins` module; `LocalPorts`; the `Workspace` facade; the command line, in `cli`; re-exports `buildl-core` as `buildl::buildl_core` | `buildl-core`, `buildl-lua`, `clap`, `toml`, `toml_edit`, `rayon`, `serde`, `thiserror`, `tempfile`, `tonic`, `tonic-prost`, `prost`, `prost-types`, `tokio`, `uuid`, `notify` | nothing: it is the composition root |
+| `buildl-cli` | `main` alone: reads the process and calls `buildl::cli::run` | `buildl` | `buildl-core` and `buildl-lua` directly |
+| `buildl-cargo` | the `cargo-buildl` binary, run as `cargo buildl`: reads the process, calls `buildl::cli::execute`, and runs `cargo buildl sync` itself (reads `cargo metadata`, rewrites the generated section of `build.lua`) | `buildl`, `clap`, `serde`, `serde_json`; `tempfile` as a dev dependency only | `buildl-core` and `buildl-lua` directly: it reaches core types through `buildl`, as in `buildl::buildl_core::TargetName` |
 
 `crates/expected-edges.txt` holds that list as the gate checks it. Each adapter dependency has a
 reason: `toml` reads `buildl.toml`, and `toml_edit` points at the place in it where a `[remote]`
@@ -200,10 +219,10 @@ and nowhere else; `tempfile` gives the write-then-rename every state file and bl
 The remote cache's gRPC client is `tonic`, with `tonic-prost`, `prost` and `prost-types` for its
 messages, `tokio` for the runtime the client needs, and `uuid` to name uploads. Only the `remote`
 module names them. `notify` reports the operating system's file events to the `watch` module and
-to no other.
+to no other. In `buildl-cargo`, `serde` and `serde_json` read the output of `cargo metadata`.
 
 Inside `buildl` there is one module per adapter, plus `plugins`, which serves no port but is kept
-apart as an adapter is, two shared modules and two that put everything together:
+apart as an adapter is, two shared modules and three that put everything together:
 
 | Module | Holds | Implements |
 |---|---|---|
@@ -228,9 +247,10 @@ apart as an adapter is, two shared modules and two that put everything together:
 | `search_path` | shared: the lookup of a program name | none |
 | `local_ports` | composition: the `Ports` bundle and its wiring | none |
 | `workspace` | composition: the `Workspace` facade, and the `Cycles` of `buildl watch` | none |
+| `cli` | composition: the `buildl` command line, its argument surface through `clap`, each command's flow, and the mapping of outcome classes and errors to exit codes | none |
 
-The `DeclarationSource` adapter is `buildl_lua::LuaSource`. `buildl` and `buildl-cli` build on Unix
-only; Linux and macOS are the supported platforms, the two the CI matrix runs.
+The `DeclarationSource` adapter is `buildl_lua::LuaSource`. `buildl`, `buildl-cli` and
+`buildl-cargo` build on Unix only; Linux and macOS are the supported platforms, the two the CI matrix runs.
 
 ### Level 4: the code of `buildl-core`
 
@@ -443,7 +463,7 @@ enforce it, since `std::time` is open to every crate, so `crates/buildl-core/cli
 2. **Adapters depend on `buildl-core`.** `buildl-lua` never depends on `buildl`; inside `buildl`,
    adapter modules never import each other. What several adapters need lives in two shared
    modules, `state` and `search_path`, which implement no port and name no module of the crate;
-   adapters meet only in the two composition modules, `local_ports` and `workspace`. `plugins`,
+   adapters meet only in the three composition modules, `local_ports`, `workspace` and `cli`. `plugins`,
    which implements no port, is held to the same rule: it names `state` and `search_path`,
    `local_ports` calls its `check` and `workspace` its `fetch`, and the `manifest` adapter, which
    reads which plugins a workspace names, shares with it values in `buildl-core` and no code.
@@ -451,8 +471,11 @@ enforce it, since `std::time` is open to every crate, so `crates/buildl-core/cli
    adapter crate (`buildl-lua`), and the only code that names more than one concrete adapter,
    through `LocalPorts`. This is dependency inversion applied, not broken: the principle
    constrains the logic, and a composition root is where concrete choices are made.
-4. **`buildl-cli` reaches core types through `buildl`'s re-exports**, so the binary has one library
-   dependency.
+4. **The command line reaches core types through `buildl`, where it lives.** It is the `cli`
+   module of `buildl`, so it names core types through `buildl`'s re-exports, and both binaries
+   have `buildl` as their one buildl dependency: `buildl-cli`, which holds `main` alone, and
+   `buildl-cargo`, which names a core type as `buildl::buildl_core::TargetName`. Neither
+   depends on `buildl-core` or `buildl-lua` directly.
 5. **The remote cache's gRPC client, its protobuf messages and its async runtime are the `remote`
    module's, in `buildl`.** `tonic`, `prost` and `uuid` have `buildl` as the one crate that may
    depend on them, beside their own companion crates; `tokio` is not banned by name, and
@@ -467,18 +490,21 @@ enforce it, since `std::time` is open to every crate, so `crates/buildl-core/cli
 | the dependency half of 1, rules 4 and 5, and the cross-crate half of 2 | `deny.toml`'s `[bans]` lists, which name the only direct parents a crate may have, plus `cargo make guard-crate-edges`, which compares every member's direct dependencies with `crates/expected-edges.txt`. The compiler alone stops a crate using what its `[dependencies]` leave out, but not a dependency being added or removed |
 | the "no I/O API" half of 1 | `crates/buildl-core/clippy.toml`, the enumerated ban on the filesystem, process, thread, network, environment, standard-stream and clock APIs, checked by `cargo make guard-core-purity` |
 | no phase module of `buildl-core` names another | `crates/expected-module-edges.txt`, the committed list of `buildl-core`'s module-to-module imports, compared by `cargo make guard-module-edges`. Import forms the list cannot read, such as a grouped `crate::{…}`, are refused outright |
-| adapter isolation inside `buildl` | `cargo make guard-adapter-isolation`, which reads every file under `crates/buildl/src` but `lib.rs`, test code included: an adapter module may name `crate::state` and `crate::search_path` and no other module, the two shared modules name none, and only `local_ports` and `workspace` name any module they like |
+| adapter isolation inside `buildl` | `cargo make guard-adapter-isolation`, which reads every file under `crates/buildl/src` but `lib.rs`, test code included: an adapter module may name `crate::state` and `crate::search_path` and no other module, the two shared modules name none, and only `local_ports`, `workspace` and `cli` name any module they like |
 
 ## Publishing
 
-`buildl-cli` is published to crates.io, and crates.io takes a crate only when its dependencies are
-published too, so all four crates are published, the one depended on first:
+`buildl-cli` and `buildl-cargo` are published to crates.io, and crates.io takes a crate only when
+its dependencies are published too, so all five crates are published, the one depended on first:
 
 ```mermaid
 %% crates.io publish order
 graph LR
-    P1["1. buildl-core"] --> P2["2. buildl-lua"] --> P3["3. buildl"] --> P4["4. buildl-cli"]
+    P1["1. buildl-core"] --> P2["2. buildl-lua"] --> P3["3. buildl"] --> P4["4. buildl-cli"] --> P5["5. buildl-cargo"]
 ```
+
+Only `buildl-cli` is shipped as a prebuilt binary, through cargo-dist. `buildl-cargo` sets
+`dist = false`, so it comes through crates.io alone, with `cargo install --locked buildl-cargo`.
 
 | Requirement | Form |
 |---|---|
@@ -492,9 +518,9 @@ Four rules keep publishing possible, and every change to the workspace follows t
 1. Every dependency between members is `{ workspace = true }`, and no member depends, dev
    dependencies included, on a member later in the publish order: `cargo package` fails on one,
    and a dev dependency given by path alone is silently dropped from the packaged manifest.
-2. The workspace has no fifth member (the generator of the Remote Execution API types,
-   `tools/reapi-codegen`, sits outside it), and `buildl` gains no `[[bin]]` or `[[example]]` for
-   the sake of tests. Its one feature, `test-server`, builds the in-memory server the remote
+2. The workspace has the five members and no sixth (the generator of the Remote Execution API
+   types, `tools/reapi-codegen`, sits outside it), and `buildl` gains no `[[bin]]` or `[[example]]`
+   for the sake of tests. Its one feature, `test-server`, builds the in-memory server the remote
    cache's tests talk to. It is off by default and turned on by `buildl-cli` only as a dev
    dependency, so the shipped binary does not hold the server.
 3. Fixtures and golden files live inside the package whose tests read them, reached through

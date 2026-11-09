@@ -21,7 +21,7 @@ fs.write    = ["out", ".buildl"]
 
 [plugins.rust]
 github      = "airsstack/buildl"
-rev         = "plugin-rust-v0.1.0"
+rev         = "plugin-rust-v0.2.0"
 dir         = "plugins/rust"
 proc.run    = ["sh", "rustc"]
 env.read    = ["HOME", "PATH"]
@@ -61,19 +61,21 @@ Each runs `sh -c`. Cargo runs in the build file's folder, in a subshell, `(cd <f
 cargo <build or test> --locked … --profile <profile> --target-dir target <args>
 ```
 
-then, for `rust.binary` and `rust.library`, copies the file cargo wrote under
-`<folder>/target/<profile folder>/` to the output. `rust.test` copies nothing.
+then, for `rust.binary`, copies the binary cargo wrote under `<folder>/target/<profile folder>/`
+to the output, and for `rust.library` every file it wrote for the crate types `kind` lists.
+`rust.test` copies nothing.
 
 | Option | Type | Meaning | Default |
 |---|---|---|---|
 | `args` | list of strings | arguments to `cargo`, after the plugin's own, as written on its command line | `{}` |
 | `profile` | string | `--profile`; it also names the folder the output is copied from: `debug` for `dev` and `test`, `release` for `release` and `bench`, else the profile's own name | `"dev"` |
 | `deps` | list of labels | targets whose outputs the build reads, such as a generated file | `{}` |
-| `output` | string | the file the step writes | `rust.binary`: `name`; `rust.library`: `lib<name>.a` for a `staticlib`, `name` for a `cdylib` |
-| `kind` | string | `rust.library` only, required: `"staticlib"` or `"cdylib"` | none |
+| `output` | string | `rust.binary` only: the file the step writes | `name` |
+| `kind` | list of strings | `rust.library` only, required: the crate types to copy, as `crate-type` in `Cargo.toml` lists them: `"staticlib"`, `"cdylib"` or both | none |
 | `version_probe` | boolean | see below | `false` |
 
-`rust.test` has no `output`: it is refused there. `kind` given to `rust.binary` or `rust.test` is refused.
+`output` given to `rust.library` or `rust.test` is refused, and `kind` given to `rust.binary` or
+`rust.test`.
 
 What the plugin fills in on every target, so you write none of it:
 
@@ -84,8 +86,8 @@ What the plugin fills in on every target, so you write none of it:
 | network | `network = true` |
 
 A `cdylib` is copied from `lib<name>.so` when cargo wrote that file, else from `lib<name>.dylib`.
-Pass the platform's name as `output`, as in the example below. A library's `name` is the name of
-the file cargo writes, so it is the crate's library name: `my-lib` becomes `my_lib`.
+A library's `name` is the name of the file cargo writes, so it is the crate's library name:
+`my-lib` becomes `my_lib`.
 
 ## The helpers
 
@@ -110,21 +112,18 @@ args[#args + 1] = "--no-default-features"
 rust.binary("server", { args = args, profile = "release" })
 ```
 
-A shared library:
+A library, as `crate-type = ["cdylib", "staticlib"]` in `Cargo.toml` asks for:
 
 ```lua
 local rust = buildl.use("rust")
-local platform = rust.platform()
 
-rust.library("ffi", {
-  kind   = "cdylib",
-  output = rust.shared_name("ffi", platform),
-})
+rust.library("ffi", { kind = { "cdylib", "staticlib" } })
 ```
 
-`rust.platform()` is `nil` on the first pass (see "How `rust.platform` works"), and so is
-`rust.shared_name("ffi", platform)`. `output` is then `nil` and the library's default, `ffi`,
-applies; the second pass has the platform's name.
+One `cargo build --lib` builds both, as it does without buildl, and the target copies both files
+under the names cargo gives them: `libffi.so` or `libffi.dylib`, and `libffi.a`. A library whose
+`kind` lists `cdylib` calls `rust.platform()` for the shared library's name; on the first pass,
+before discovery has run, that output is named `ffi` (see "How `rust.platform` works").
 
 ## A Cargo workspace
 
@@ -137,7 +136,7 @@ local rust = buildl.use("rust")
 
 rust.binary("server", { args = rust.package("server"), profile = "release" })
 rust.binary("cli",    { args = rust.package("cli") })
-rust.library("codec", { kind = "staticlib", args = rust.package("codec") })
+rust.library("codec", { kind = { "staticlib" }, args = rust.package("codec") })
 
 rust.test("server-test", { args = rust.package("server") })
 rust.test("codec-test",  { args = rust.package("codec") })
@@ -205,9 +204,11 @@ known`, and carries the file and line of your call. Each stops the load with exi
 | options that are not a table | `rust.binary(hello): the options must be a table` |
 | an unknown option | `rust.binary(hello): the option bogus is not known` |
 | `kind` given to `rust.binary` or `rust.test` | `rust.binary(hello): the option kind is refused` |
+| `output` given to `rust.library` | `rust.library(mylib): the option output is refused` |
 | `output` given to `rust.test` | `rust.test(unit): the option output is refused` |
 | a wrong type | `rust.binary(hello): the option args must be a list of strings` |
-| `rust.library` without `kind`, or another value | `rust.library(mylib): kind must be "staticlib" or "cdylib"` |
+| `rust.library` without `kind`, or a `kind` listing another value | `rust.library(mylib): kind must list "staticlib", "cdylib" or both` |
+| a `kind` listing a crate type twice | `rust.library(mylib): kind lists cdylib twice` |
 | `rust.platform` on a host that is neither | `rust.platform: the target triple <triple> is neither macos nor linux` |
 | `rustc -vV` without a `host:` line | `rust.platform: the output of rustc -vV has no host line` |
 | `rust.package` without a string | `rust.package: the name must be a string` |

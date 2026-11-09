@@ -18,11 +18,9 @@ path = "src/main.rs"
 doc  = false
 
 [dependencies]
-# The binary's only library dependency. All build logic lives in the library
-# crates, and core types reach the binary through `buildl`, never directly.
+# The binary's only dependency. The command line and all build logic live in the
+# library crates, and core types reach the binary through `buildl`, never directly.
 buildl = { workspace = true }
-# The argument surface: the commands, their flags, `--help` and the usage errors.
-clap   = { workspace = true }
 
 [dev-dependencies]
 # The in-memory remote cache the binary tests run against; `test-server` is a feature the

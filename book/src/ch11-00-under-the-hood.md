@@ -10,7 +10,7 @@ You do not need any of it to use `buildl`.
 |---|---|
 | [Declare, Then Execute](ch11-01-declare-then-execute.md) | the five phases of a build, the value each hands to the next, and the scheduler |
 | [Crash Safety and the Store](ch11-02-crash-safety.md) | the life of one action, and why a build stopped half way never leaves a broken cache |
-| [Four Crates, Ports and Adapters](ch11-03-four-crates.md) | how the code is split, and the rules that keep the logic of a build testable |
+| [Five Crates, Ports and Adapters](ch11-03-four-crates.md) | how the code is split, and the rules that keep the logic of a build testable |
 | [Errors](ch11-04-errors.md) | how a failure is classified, and how that becomes an exit code |
 | [Determinism Rules](ch11-05-determinism-rules.md) | the engineering rules that keep the same inputs giving the same bytes |
 | [Decision Records](ch11-06-decision-records.md) | each choice that was settled, with its reason |

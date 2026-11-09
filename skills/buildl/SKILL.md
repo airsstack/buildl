@@ -226,7 +226,7 @@ fs.write    = ["out", ".buildl"]
 
 [plugins.rust]
 github      = "airsstack/buildl"
-rev         = "plugin-rust-v0.1.0"
+rev         = "plugin-rust-v0.2.0"
 dir         = "plugins/rust"
 proc.run    = ["sh", "rustc"]
 env.read    = ["HOME", "PATH"]
@@ -249,11 +249,20 @@ rust.test("unit")
 `out/hello`; `rust.test` runs `cargo test --locked`. Pass `profile = "release"` when
 `buildl verify` must match: the default, `dev`, keeps the absolute path of the build folder as
 debug info, and `verify` builds in another folder. In a Cargo workspace, put one build file at the
-root and one call per artifact, each with `args = rust.package("name")`. `rust.library` builds a
-`staticlib` or `cdylib` (`kind` is required). Allowing `sh` lets a target run any program through
+root and one call per artifact, each with `args = rust.package("name")`. `rust.library` builds the
+crate types `kind` lists, as `crate-type` in `Cargo.toml` does: `kind = { "staticlib" }`,
+`{ "cdylib" }` or both (`kind` is required). Allowing `sh` lets a target run any program through
 `sh -c`, so the ceiling's program list then limits less. All of the plugin's functions and options
 are in its README (`plugins/rust/README.md` in the buildl repository), and in the book chapter on
 the rust plugin.
+
+In a Cargo project with a `Cargo.lock`, `cargo install --locked buildl-cargo` then `cargo buildl init`
+writes a `buildl.toml` with the tables above, a `build.lua` with one call per artifact and a
+`.gitignore`, and fetches the plugin. `cargo buildl sync` rewrites the part of `build.lua` between
+its `-- cargo-buildl: begin generated` and `-- cargo-buildl: end generated` lines from `Cargo.toml`
+and never touches the rest, and `cargo buildl sync --check` exits 5 when that part is out of date.
+Every other buildl command runs as `cargo buildl <command>`. Add your own targets below the end
+line. See the book page "cargo buildl".
 
 ## References
 

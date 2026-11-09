@@ -22,6 +22,8 @@ tonic       = { workspace = true }
 tonic-prost = { workspace = true }
 # The runtime the remote adapter owns for its gRPC client.
 tokio       = { workspace = true }
+# The argument surface of the `cli` module: the commands, their flags, `--help` and the usage errors.
+clap        = { workspace = true }
 # The file events of `buildl watch`, named by the `watch` adapter module only.
 notify      = { workspace = true }
 # Names of ByteStream uploads.

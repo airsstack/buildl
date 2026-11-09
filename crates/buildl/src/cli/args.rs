@@ -1,7 +1,7 @@
 //! The argument surface: the commands, their flags, and how each becomes a value a build takes.
 //!
 //! Its own file because the command line is a contract of its own: the names here are what a
-//! person types and what a script depends on, and nothing else in the binary reads an argument
+//! person types and what a script depends on, and nothing else in this crate reads an argument
 //! as text.
 //!
 //! Responsibilities:
@@ -22,17 +22,15 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 use std::num::NonZeroUsize;
 
-use buildl::buildl_core::{
-    LiveOutput, OnFailure, RemoteJobs, Rerun, Sample, SettingName, SettingValue,
-};
-use buildl::report::TestBlocks;
+use crate::report::TestBlocks;
+use buildl_core::{LiveOutput, OnFailure, RemoteJobs, Rerun, Sample, SettingName, SettingValue};
 use clap::error::ErrorKind;
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 
 /// A sandboxed, deterministic build system
 #[derive(Debug, Parser)]
 #[command(name = "buildl", version, propagate_version = true)]
-pub(crate) struct Cli {
+pub struct Cli {
     /// When to colour what is printed
     #[arg(long, value_enum, value_name = "WHEN", default_value_t = Color::Auto, global = true)]
     pub color: Color,
@@ -44,7 +42,7 @@ pub(crate) struct Cli {
 
 /// When to colour what is printed, as the command line asks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub(crate) enum Color {
+pub enum Color {
     /// Colour when standard error is a terminal and `NO_COLOR` is unset
     Auto,
     /// Always colour
@@ -53,9 +51,9 @@ pub(crate) enum Color {
     Never,
 }
 
-/// One command of the binary.
+/// One command of `buildl`.
 #[derive(Debug, Subcommand)]
-pub(crate) enum Command {
+pub enum Command {
     /// Evaluate every build file twice and run nothing
     Check,
     /// Print the target graph
@@ -86,7 +84,7 @@ pub(crate) enum Command {
 
 /// The arguments of `plugins`.
 #[derive(Debug, Args)]
-pub(crate) struct PluginsArgs {
+pub struct PluginsArgs {
     /// What to do with the plugins.
     #[command(subcommand)]
     pub command: PluginsCommand,
@@ -94,14 +92,14 @@ pub(crate) struct PluginsArgs {
 
 /// One command of `plugins`.
 #[derive(Debug, Subcommand)]
-pub(crate) enum PluginsCommand {
+pub enum PluginsCommand {
     /// Pin every git plugin in buildl.lock and store its files, so a build needs no network
     Fetch,
 }
 
 /// The arguments of `graph`.
 #[derive(Debug, Args)]
-pub(crate) struct GraphArgs {
+pub struct GraphArgs {
     /// The form the graph is printed in.
     #[command(flatten)]
     pub format: GraphFormat,
@@ -110,7 +108,7 @@ pub(crate) struct GraphArgs {
 /// The form a graph is printed in: one of the two at most, and JSON when neither is named.
 #[derive(Debug, Args)]
 #[group(multiple = false)]
-pub(crate) struct GraphFormat {
+pub struct GraphFormat {
     /// Print the graph as canonical JSON, the bytes of .buildl/graph.json (the default)
     #[arg(long)]
     pub json: bool,
@@ -121,7 +119,7 @@ pub(crate) struct GraphFormat {
 
 /// The arguments of `query`.
 #[derive(Debug, Args)]
-pub(crate) struct QueryArgs {
+pub struct QueryArgs {
     /// deps(TARGET) for what TARGET needs, or rdeps(TARGET) for what needs it; TARGET as //dir:name, :name or name
     #[arg(value_name = "EXPR")]
     pub expression: String,
@@ -132,7 +130,7 @@ pub(crate) struct QueryArgs {
 
 /// What `plan`, `build` and `test` share: which targets, under which settings.
 #[derive(Debug, Args)]
-pub(crate) struct Selection {
+pub struct Selection {
     /// Targets, as //dir:name, :name or name; with none, plan and build take every target but tests, and test every test
     #[arg(value_name = "TARGET")]
     pub targets: Vec<String>,
@@ -143,7 +141,7 @@ pub(crate) struct Selection {
 
 /// The arguments of `plan`.
 #[derive(Debug, Args)]
-pub(crate) struct PlanArgs {
+pub struct PlanArgs {
     /// Which targets, under which settings.
     #[command(flatten)]
     pub selection: Selection,
@@ -154,7 +152,7 @@ pub(crate) struct PlanArgs {
 
 /// The arguments of `build` and of `watch`, which takes the flags of a build.
 #[derive(Debug, Args)]
-pub(crate) struct BuildArgs {
+pub struct BuildArgs {
     /// Which targets, under which settings.
     #[command(flatten)]
     pub selection: Selection,
@@ -175,7 +173,7 @@ pub(crate) struct BuildArgs {
     clippy::struct_excessive_bools,
     reason = "each bool is one independent flag of the command line, which clap reads as a bool"
 )]
-pub(crate) struct RemoteArgs {
+pub struct RemoteArgs {
     /// Upload what this run produced to the remote cache
     #[arg(long = "remote-upload")]
     pub upload: bool,
@@ -207,7 +205,7 @@ fn parse_remote_jobs(raw: &str) -> Result<RemoteJobs, String> {
     clippy::struct_excessive_bools,
     reason = "each bool is one independent flag of the command line, which clap reads as a bool"
 )]
-pub(crate) struct TestArgs {
+pub struct TestArgs {
     /// Which targets, under which settings.
     #[command(flatten)]
     pub selection: Selection,
@@ -230,7 +228,7 @@ pub(crate) struct TestArgs {
 
 /// The arguments of `verify`.
 #[derive(Debug, Args)]
-pub(crate) struct VerifyArgs {
+pub struct VerifyArgs {
     /// Targets, as //dir:name, :name or name; with none, every target but tests
     #[arg(value_name = "TARGET")]
     pub targets: Vec<String>,
@@ -244,7 +242,7 @@ pub(crate) struct VerifyArgs {
 
 /// The arguments of `log`.
 #[derive(Debug, Args)]
-pub(crate) struct LogArgs {
+pub struct LogArgs {
     /// The target, as //dir:name, :name or name
     #[arg(value_name = "TARGET")]
     pub target: String,
@@ -267,7 +265,7 @@ pub(crate) struct StreamFlags {
 
 /// Which of a run's streams `log` prints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Streams {
+pub enum Streams {
     /// Standard output on standard output and standard error on standard error
     Both,
     /// Only what the run wrote to standard output
@@ -355,7 +353,7 @@ impl TestArgs {
 
 /// One `--set NAME=VALUE`.
 #[derive(Debug, Clone)]
-pub(crate) struct Override {
+pub struct Override {
     /// The setting.
     pub name: SettingName,
     /// The value it is given for this run.
@@ -410,8 +408,8 @@ mod tests {
     use std::iter;
     use std::num::NonZeroUsize;
 
-    use buildl::buildl_core::{LiveOutput, OnFailure, RemoteJobs, Rerun, Sample};
-    use buildl::report::TestBlocks;
+    use crate::report::TestBlocks;
+    use buildl_core::{LiveOutput, OnFailure, RemoteJobs, Rerun, Sample};
     use clap::error::ErrorKind;
     use clap::{CommandFactory, Parser};
 

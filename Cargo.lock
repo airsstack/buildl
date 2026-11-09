@@ -152,6 +152,7 @@ version = "0.2.0"
 dependencies = [
  "buildl-core",
  "buildl-lua",
+ "clap",
  "notify",
  "prost",
  "prost-types",
@@ -168,11 +169,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "buildl-cli"
+name = "buildl-cargo"
 version = "0.2.0"
 dependencies = [
  "buildl",
  "clap",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "buildl-cli"
+version = "0.2.0"
+dependencies = [
+ "buildl",
  "tempfile",
 ]
 

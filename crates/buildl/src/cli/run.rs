@@ -1,4 +1,4 @@
-//! One run of the binary: a command line in, bytes on two streams and a status out.
+//! One run of `buildl`: a command line in, bytes on two streams and a status out.
 //!
 //! Its own file because this is the whole flow of a command, written over values: the
 //! arguments, the directory the command was started in, what is known of the terminal, the
@@ -9,39 +9,39 @@
 //! carries everything about how the command went and, for `log`, the stored standard error of
 //! the run it shows.
 //!
-//! Responsibilities: [`run`], and one function per command.
+//! Responsibilities: [`run`], [`execute`], and one function per command.
 //!
-//! Non-responsibilities: build logic and every rendering, which are `buildl`'s; the argument
-//! surface, which is `cli`'s; and which status an ending gets, which is `exit`'s.
+//! Non-responsibilities: build logic and every rendering, which are the rest of this crate's;
+//! the argument surface, which is `args`'s; and which status an ending gets, which is `exit`'s.
 
 use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use buildl::approver::Console;
-use buildl::buildl_core::json::canonical;
-use buildl::buildl_core::{Clock, Error, Scope};
-use buildl::clock::SystemClock;
-use buildl::plugins::FetchStatus;
-use buildl::remote::token_is_present;
-use buildl::report::{
+use crate::approver::Console;
+use crate::clock::SystemClock;
+use crate::plugins::FetchStatus;
+use crate::remote::token_is_present;
+use crate::report::{
     Mode, Paint, Report, TerminalReporter, check_line, clean_line, damage, error_text, gc_line,
     graph_dot, header, not_run_lines, plan_text, query_text, verify_text, watch_error_line,
 };
-use buildl::watch::NotifyChanges;
-use buildl::{RunOptions, Workspace};
+use crate::watch::NotifyChanges;
+use crate::workspace::{RunOptions, Workspace};
+use buildl_core::json::canonical;
+use buildl_core::{Clock, Error, Scope};
 use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 
-use crate::cli::{
-    BuildArgs, Cli, Command, GraphArgs, LogArgs, PlanArgs, PluginsArgs, PluginsCommand, QueryArgs,
-    Streams, TestArgs, VerifyArgs, overrides,
+use crate::cli::args::{
+    BuildArgs, Cli, Color, Command, GraphArgs, LogArgs, PlanArgs, PluginsArgs, PluginsCommand,
+    QueryArgs, Streams, TestArgs, VerifyArgs, overrides,
 };
-use crate::doctor_text::{RemoteReport, TokenState, doctor_text};
-use crate::exit::Exit;
-use crate::remote_switches::{RemoteSwitches, RemoteTable};
-use crate::terminal::Terminal;
+use crate::cli::doctor_text::{RemoteReport, TokenState, doctor_text};
+use crate::cli::exit::Exit;
+use crate::cli::remote_switches::{RemoteSwitches, RemoteTable};
+use crate::cli::terminal::Terminal;
 
 /// Why a command stopped before its end.
 #[derive(Debug)]
@@ -81,7 +81,10 @@ impl From<io::Error> for Stop {
 /// machine's variables say about the remote cache. What the command was asked for is written
 /// to `stdout`, and everything about how it went to `stderr`. `console` is where a workspace
 /// whose approver is `interactive` asks about what a build, a test run or a verify wants.
-pub(crate) fn run<A, O, E, C>(
+///
+/// Parses `args` with [`Cli`] and hands the command to [`execute`]; a command line the parser
+/// refuses is answered here, with what the parser has to say.
+pub fn run<A, O, E, C>(
     args: A,
     start: io::Result<PathBuf>,
     terminal: &Terminal,
@@ -96,11 +99,47 @@ where
     E: Write,
     C: Console,
 {
-    let cli = match Cli::try_parse_from(args) {
-        Ok(cli) => cli,
-        Err(error) => return told(&error, stdout, stderr),
-    };
-    let paint = terminal.paint(cli.color);
+    match Cli::try_parse_from(args) {
+        Ok(cli) => execute(
+            cli.color,
+            cli.command,
+            start,
+            terminal,
+            remote,
+            stdout,
+            stderr,
+            console,
+        ),
+        Err(error) => told(&error, stdout, stderr),
+    }
+}
+
+/// Runs one already-parsed `command` and returns the status the process ends with.
+///
+/// Everything but the command is as for [`run`]: `color` is what `--color` asked for, `start`
+/// the directory the command was started in, `terminal` and `remote` what the process knows of
+/// its terminal and of the remote cache's variables, and `stdout`, `stderr` and `console` where
+/// the command writes and asks.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the parsed command and each fact the process knows are handed in, so a test drives a command without a process"
+)]
+pub fn execute<O, E, C>(
+    color: Color,
+    command: Command,
+    start: io::Result<PathBuf>,
+    terminal: &Terminal,
+    remote: &RemoteSwitches,
+    stdout: &mut O,
+    stderr: &mut E,
+    console: &mut C,
+) -> Exit
+where
+    O: Write,
+    E: Write,
+    C: Console,
+{
+    let paint = terminal.paint(color);
     let start = match start {
         Ok(start) => start,
         Err(error) => {
@@ -112,7 +151,7 @@ where
             );
         }
     };
-    let ended = match cli.command {
+    let ended = match command {
         Command::Check => check(&start, stderr),
         Command::Graph(args) => graph(&start, &args, stdout, stderr),
         Command::Query(args) => query(&start, &args, stdout, stderr),
@@ -556,18 +595,18 @@ mod tests {
     use std::iter;
     use std::path::{Path, PathBuf};
 
-    use buildl::Workspace;
-    use buildl::approver::NoTerminal;
-    use buildl::buildl_core::json::canonical;
-    use buildl::buildl_core::{Diagnostic, Error, PortName, Scope};
-    use buildl::report::{Paint, error_text};
+    use crate::approver::NoTerminal;
+    use crate::report::{Paint, error_text};
+    use crate::workspace::Workspace;
+    use buildl_core::json::canonical;
+    use buildl_core::{Diagnostic, Error, PortName, Scope};
     use clap::Parser;
 
-    use super::{Stop, run, told, watch_ended};
-    use crate::cli::Cli;
-    use crate::exit::Exit;
-    use crate::remote_switches::RemoteSwitches;
-    use crate::terminal::Terminal;
+    use super::{Stop, execute, run, told, watch_ended};
+    use crate::cli::args::{Cli, Color, Command};
+    use crate::cli::exit::Exit;
+    use crate::cli::remote_switches::RemoteSwitches;
+    use crate::cli::terminal::Terminal;
 
     /// The manifest text up to the `strategy` line: allows a build to write its outputs and its
     /// state, to read every file, and to run `cp`, one action at a time.
@@ -691,6 +730,38 @@ mod tests {
             &mut NoTerminal,
         );
         (exit, String::from_utf8(stderr).unwrap())
+    }
+
+    #[test]
+    fn execute_runs_a_parsed_command() {
+        let held = || {
+            let (dir, root) = copying();
+            fs::create_dir_all(root.join("out")).unwrap();
+            fs::write(root.join("out/old"), "old\n").unwrap();
+            (dir, root)
+        };
+        let (_parsed_dir, parsed_root) = held();
+        let (_run_dir, run_root) = held();
+
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let exit = execute(
+            Color::Auto,
+            Command::Clean,
+            Ok(parsed_root.clone()),
+            &piped(),
+            &RemoteSwitches::default(),
+            &mut stdout,
+            &mut stderr,
+            &mut NoTerminal,
+        );
+        let through_run = ran(&run_root, &["clean"]);
+
+        assert_eq!(exit, Exit::Success, "{}", String::from_utf8_lossy(&stderr));
+        assert_eq!(exit, through_run.exit);
+        assert_eq!(String::from_utf8(stdout).unwrap(), through_run.stdout);
+        assert_eq!(String::from_utf8(stderr).unwrap(), through_run.stderr);
+        assert!(!parsed_root.join("out").exists(), "out was not removed");
+        assert!(!run_root.join("out").exists(), "out was not removed");
     }
 
     #[test]

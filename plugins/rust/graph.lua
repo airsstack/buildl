@@ -75,23 +75,43 @@ local function cargo(folder, verb, profile)
 end
 
 -- Returns the shell command that copies the file cargo wrote for `kind` ("binary" or the crate
--- type of a library) and `name` under `profile_dir` to "$0", the output. A cdylib is the
--- `.so` file when cargo wrote one, else the `.dylib`.
-local function copy(folder, kind, name, profile_dir)
+-- type of a library) and `name` under `profile_dir` to `dest`, a shell word naming the output,
+-- such as `"$0"`. A cdylib is the `.so` file when cargo wrote one, else the `.dylib`.
+local function copy(folder, kind, name, profile_dir, dest)
     local built = from_root(folder, "target/" .. profile_dir)
     local function file(leaf)
         return quote(built .. "/" .. leaf)
     end
     if kind == "cdylib" then
         return string.format(
-            'if [ -f %s ]; then cp %s "$0"; else cp %s "$0"; fi',
+            "if [ -f %s ]; then cp %s %s; else cp %s %s; fi",
             file("lib" .. name .. ".so"),
             file("lib" .. name .. ".so"),
-            file("lib" .. name .. ".dylib")
+            dest,
+            file("lib" .. name .. ".dylib"),
+            dest
         )
     end
     local leaf = kind == "staticlib" and "lib" .. name .. ".a" or name
-    return string.format('cp %s "$0"', file(leaf))
+    return string.format("cp %s %s", file(leaf), dest)
+end
+
+-- Returns the command of a library: `sh -c <script> sh $out <args>`. `$out` gives the script
+-- one argument per file, in the order of `libraries`; the script keeps each as `o<i>`, shifts
+-- them off so `"$@"` holds exactly the caller's arguments, runs one `cargo build --lib`, and
+-- copies every file it wrote.
+local function library_run(folder, name, options)
+    local keep, copies = {}, {}
+    for i, library in ipairs(options.libraries) do
+        keep[i] = string.format('o%d="$%d"', i, i)
+        copies[i] = copy(folder, library.kind, name, options.profile_dir, string.format('"$o%d"', i))
+    end
+    local script = table.concat(keep, "; ")
+        .. string.format("; shift %d; ", #options.libraries)
+        .. cargo(folder, "build --locked --lib", options.profile)
+        .. " && "
+        .. table.concat(copies, " && ")
+    return join({ "sh", "-c", script, "sh", "$out" }, options.args)
 end
 
 -- Declares the targets of one call. `kind` is "binary", "library" or "test", `name` the target
@@ -132,10 +152,19 @@ function M.declare(buildl, kind, name, options)
         return
     end
 
-    local verb = kind == "library" and "build --locked --lib" or "build --locked --bin " .. quote(name)
-    local script = cargo(folder, verb, options.profile)
+    if kind == "library" then
+        declaration.run = library_run(folder, name, options)
+        declaration.outputs = {}
+        for i, library in ipairs(options.libraries) do
+            declaration.outputs[i] = library.output
+        end
+        buildl.target(name, declaration)
+        return
+    end
+
+    local script = cargo(folder, "build --locked --bin " .. quote(name), options.profile)
         .. " && "
-        .. copy(folder, kind == "library" and options.kind or "binary", name, options.profile_dir)
+        .. copy(folder, "binary", name, options.profile_dir, '"$0"')
     declaration.run = join({ "sh", "-c", script, "$out" }, options.args)
     declaration.outputs = { options.output }
     buildl.target(name, declaration)
