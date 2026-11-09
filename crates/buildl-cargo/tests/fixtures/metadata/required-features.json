@@ -1,0 +1,76 @@
+{
+  "packages": [
+    {
+      "name": "feat-tool",
+      "version": "0.1.0",
+      "id": "path+file:///work/required-features#feat-tool@0.1.0",
+      "license": null,
+      "license_file": null,
+      "description": null,
+      "source": null,
+      "dependencies": [],
+      "targets": [
+        {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "feat-tool",
+          "src_path": "/work/required-features/src/main.rs",
+          "edition": "2021",
+          "required-features": [
+            "extra"
+          ],
+          "doc": true,
+          "doctest": false,
+          "test": true
+        },
+        {
+          "kind": [
+            "bin"
+          ],
+          "crate_types": [
+            "bin"
+          ],
+          "name": "plain",
+          "src_path": "/work/required-features/src/plain.rs",
+          "edition": "2021",
+          "doc": true,
+          "doctest": false,
+          "test": true
+        }
+      ],
+      "features": {
+        "extra": []
+      },
+      "manifest_path": "/work/required-features/Cargo.toml",
+      "metadata": null,
+      "publish": null,
+      "authors": [],
+      "categories": [],
+      "keywords": [],
+      "readme": null,
+      "repository": null,
+      "homepage": null,
+      "documentation": null,
+      "edition": "2021",
+      "links": null,
+      "default_run": null,
+      "rust_version": null
+    }
+  ],
+  "workspace_members": [
+    "path+file:///work/required-features#feat-tool@0.1.0"
+  ],
+  "workspace_default_members": [
+    "path+file:///work/required-features#feat-tool@0.1.0"
+  ],
+  "resolve": null,
+  "target_directory": "/work/required-features/target",
+  "build_directory": "/work/required-features/target",
+  "version": 1,
+  "workspace_root": "/work/required-features",
+  "metadata": null
+}

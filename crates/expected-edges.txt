@@ -36,4 +36,6 @@ tempfile
 # buildl-cargo
 buildl
 clap
+serde
+serde_json
 tempfile

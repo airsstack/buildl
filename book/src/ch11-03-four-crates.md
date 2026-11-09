@@ -208,7 +208,7 @@ graph TD
 | `buildl-lua` | the `DeclarationSource` adapter: evaluates one build file through airsl, and loads the plugins it uses | `buildl-core`, `airsl`, `globset`, `walkdir`, `serde`, `serde_json`, `toml` | `buildl` |
 | `buildl` | every other adapter; the `plugins` module; `LocalPorts`; the `Workspace` facade; the command line, in `cli`; re-exports `buildl-core` as `buildl::buildl_core` | `buildl-core`, `buildl-lua`, `clap`, `toml`, `toml_edit`, `rayon`, `serde`, `thiserror`, `tempfile`, `tonic`, `tonic-prost`, `prost`, `prost-types`, `tokio`, `uuid`, `notify` | nothing: it is the composition root |
 | `buildl-cli` | `main` alone: reads the process and calls `buildl::cli::run` | `buildl` | `buildl-core` and `buildl-lua` directly |
-| `buildl-cargo` | the `cargo-buildl` binary, run as `cargo buildl`: reads the process and calls `buildl::cli::execute` | `buildl`, `clap`; `tempfile` as a dev dependency only | `buildl-core` and `buildl-lua` directly: it reaches core types through `buildl`, as in `buildl::buildl_core::TargetName` |
+| `buildl-cargo` | the `cargo-buildl` binary, run as `cargo buildl`: reads the process and calls `buildl::cli::execute` | `buildl`, `clap`, `serde`, `serde_json`; `tempfile` as a dev dependency only | `buildl-core` and `buildl-lua` directly: it reaches core types through `buildl`, as in `buildl::buildl_core::TargetName` |
 
 `crates/expected-edges.txt` holds that list as the gate checks it. Each adapter dependency has a
 reason: `toml` reads `buildl.toml`, and `toml_edit` points at the place in it where a `[remote]`
@@ -218,7 +218,7 @@ and nowhere else; `tempfile` gives the write-then-rename every state file and bl
 The remote cache's gRPC client is `tonic`, with `tonic-prost`, `prost` and `prost-types` for its
 messages, `tokio` for the runtime the client needs, and `uuid` to name uploads. Only the `remote`
 module names them. `notify` reports the operating system's file events to the `watch` module and
-to no other.
+to no other. In `buildl-cargo`, `serde` and `serde_json` read the output of `cargo metadata`.
 
 Inside `buildl` there is one module per adapter, plus `plugins`, which serves no port but is kept
 apart as an adapter is, two shared modules and three that put everything together:

@@ -10,6 +10,8 @@
 //! argument rule is tested in `args`.
 
 mod args;
+#[cfg_attr(not(test), expect(dead_code, reason = "used by cargo buildl sync"))]
+mod metadata;
 
 use std::env;
 use std::io::{self, IsTerminal};
