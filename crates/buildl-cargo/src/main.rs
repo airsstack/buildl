@@ -13,6 +13,7 @@
 mod args;
 mod generate;
 mod metadata;
+mod scaffold;
 mod section;
 mod sync;
 
