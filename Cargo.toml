@@ -104,7 +104,7 @@ notify      = "8.2.1"
 # depends on crates.io.
 buildl-core = { version = "0.2.0", path = "crates/buildl-core" }
 buildl-lua  = { version = "0.2.0", path = "crates/buildl-lua" }
-buildl      = { version = "0.2.0", path = "crates/buildl" }
+buildl      = { version = "0.2.1", path = "crates/buildl" }
 
 [workspace.lints.rust]
 unsafe_code        = "forbid"

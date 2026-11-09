@@ -1,6 +1,6 @@
 [package]
 name         = "buildl-cargo"
-version      = "0.2.0"
+version      = "0.1.0"
 description  = "The `cargo-buildl` binary — runs every buildl command as `cargo buildl <command>`."
 readme       = "README.md"
 edition.workspace      = true

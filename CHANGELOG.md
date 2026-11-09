@@ -5,7 +5,12 @@ Notable changes to this workspace, newest first. The format follows
 [SemVer](https://semver.org/) — with the caveat that for a `0.1.z` version the *middle* number is
 the slot Cargo treats as breaking, so a compatible change ships as a `z` bump.
 
-## Unreleased
+## 0.2.1 — 2026-11-09
+
+It publishes `buildl` and `buildl-cli` at 0.2.1 and the new `buildl-cargo` at 0.1.0, and tags the
+`rust` plugin as `plugin-rust-v0.2.0`. `buildl-core` and `buildl-lua` are unchanged and stay at
+0.2.0. The crates change compatibly; the `rust` plugin's `rust.library` does not (see Changed).
+`cargo buildl init` pins `plugin-rust-v0.2.0`.
 
 ### Added
 
