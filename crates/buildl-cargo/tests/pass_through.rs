@@ -47,6 +47,10 @@ fn help_comes_from_cargo_buildl() {
     assert_eq!(output.status.code(), Some(0));
     let help = String::from_utf8_lossy(&output.stdout);
     assert!(help.contains("cargo buildl"), "{help}");
-    assert!(help.contains("build"), "{help}");
-    assert!(help.contains("test"), "{help}");
+    let listed = |name: &str| {
+        help.lines()
+            .any(|line| line.trim_start().starts_with(&format!("{name} ")))
+    };
+    assert!(listed("build"), "{help}");
+    assert!(listed("test"), "{help}");
 }

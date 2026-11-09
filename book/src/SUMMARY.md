@@ -46,7 +46,7 @@
 - [Under the Hood](ch11-00-under-the-hood.md)
     - [Declare, Then Execute](ch11-01-declare-then-execute.md)
     - [Crash Safety and the Store](ch11-02-crash-safety.md)
-    - [Four Crates, Ports and Adapters](ch11-03-four-crates.md)
+    - [Five Crates, Ports and Adapters](ch11-03-four-crates.md)
     - [Errors](ch11-04-errors.md)
     - [Determinism Rules](ch11-05-determinism-rules.md)
     - [Decision Records](ch11-06-decision-records.md)

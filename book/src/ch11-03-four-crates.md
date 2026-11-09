@@ -1,4 +1,4 @@
-# Four Crates, Ports and Adapters
+# Five Crates, Ports and Adapters
 
 `buildl` is five Rust crates, split so that the logic of a build depends only on abstractions it
 owns. Everything that touches the outside world, the airsl engine, the filesystem, child
@@ -164,6 +164,7 @@ graph TD
     CHILD["[Container]<br/>Child processes<br/>one toolchain invocation per action"]
     CARGOP -->|"reads"| DEFS
     CARGOP -->|"the same state as the CLI process"| STATE
+    CARGOP -->|"links named outputs"| OUT
     CARGOP -->|"spawns argv with granted env"| CHILD
     CLIP -->|"reads"| DEFS
     CLIP -->|"cas first, row after, log always"| STATE
