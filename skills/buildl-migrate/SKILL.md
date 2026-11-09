@@ -262,6 +262,13 @@ The old build runs `cargo build` or `cargo test`. Move it to the `rust` plugin, 
 the same `cargo`: one call per artifact, and it fills in the inputs, `HOME`, `PATH` and the network
 setting. Do not write a `cargo` target by hand.
 
+When `cargo-buildl` is installed (`cargo install --locked buildl-cargo`) and the crate or workspace has a
+`Cargo.lock`, start with `cargo buildl init`: it writes the `buildl.toml`, `build.lua` and
+`.gitignore` and fetches the plugin, which covers the files and the fetch of steps 1 to 3 below.
+You still list `cargo`, `sh`, `rustc`, `HOME`, `PATH` and the network in `old.*` (step 1), and move
+the old build's cargo arguments and `profile = "release"` into `args` of targets of your own below
+the generated section (step 2). Run `cargo buildl sync` after `Cargo.toml` changes.
+
 1. Add the plugin to `buildl.toml` and run `buildl plugins fetch`. The `buildl` skill shows the
    `[plugins.rust]` table. The ceiling and the table list `sh` and `rustc` in `proc.run`, `HOME`
    and `PATH` in `env.read` and `env.unkeyed`, and the table says `network = true`. List `cargo`,

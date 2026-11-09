@@ -76,3 +76,9 @@ The works the design and architecture of `buildl` draw on, each listed once.
 
 28. Agent Skills authors. _Agent Skills specification_ (the `SKILL.md` format the `buildl` and
     `buildl-migrate` skills follow). agentskills.io. <https://agentskills.io/specification>
+
+## Cargo
+
+29. The Cargo team. _The Cargo Book — External tools: Custom subcommands_ (`cargo-<name>` on
+    `PATH` runs as `cargo <name>`).
+    <https://doc.rust-lang.org/cargo/reference/external-tools.html#custom-subcommands>

@@ -256,6 +256,14 @@ crate types `kind` lists, as `crate-type` in `Cargo.toml` does: `kind = { "stati
 are in its README (`plugins/rust/README.md` in the buildl repository), and in the book chapter on
 the rust plugin.
 
+In a Cargo project with a `Cargo.lock`, `cargo install --locked buildl-cargo` then `cargo buildl init`
+writes a `buildl.toml` with the tables above, a `build.lua` with one call per artifact and a
+`.gitignore`, and fetches the plugin. `cargo buildl sync` rewrites the part of `build.lua` between
+its `-- cargo-buildl: begin generated` and `-- cargo-buildl: end generated` lines from `Cargo.toml`
+and never touches the rest, and `cargo buildl sync --check` exits 5 when that part is out of date.
+Every other buildl command runs as `cargo buildl <command>`. Add your own targets below the end
+line. See the book page "cargo buildl".
+
 ## References
 
 | File | Read it when |

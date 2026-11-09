@@ -12,6 +12,10 @@ like the one in [Writing a Plugin](ch08-01-writing-a-plugin.md): Lua, held to it
 cap, adding nothing a build file could not declare itself. It is also as thin as `c` is: it changes
 nothing about how Rust builds, and features, profiles and workspace members stay in `Cargo.toml`.
 
+In a Cargo project, `cargo buildl init` writes a `buildl.toml` with the tables below and a
+`build.lua` with one call per artifact, and `cargo buildl sync` keeps the calls in line with `Cargo.toml`: see [cargo
+buildl](ch08-06-cargo-buildl.md).
+
 Every command and output on this page was taken from a real run on macOS, in a copy of
 `examples/rust` in the buildl repository; the errors come from edited copies of it. Two things in
 the outputs are test details. The plugin was fetched from a local git repository instead of GitHub,

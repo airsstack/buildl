@@ -53,6 +53,11 @@ The first line installs a prebuilt `buildl` into `~/.local/bin`. The others buil
 
 Then `buildl build`, `buildl test` and `buildl plan` in that example.
 
+A Cargo project starts with `cargo install --locked buildl-cargo && cargo buildl init`: it writes the
+`buildl.toml`, `build.lua` and `.gitignore` for the [`rust` plugin](plugins/rust/README.md), and
+`cargo buildl sync` keeps the build file in line with `Cargo.toml`. See [cargo
+buildl](https://airsstack.github.io/buildl/ch08-06-cargo-buildl.html).
+
 To have an AI agent write and migrate build files, install buildl, airsl (a program already on your
 `PATH` is skipped) and the `buildl` and `buildl-migrate` skills in one go. `install.sh` installs the
 prebuilt `buildl` and `airsl`, so it needs no Rust unless you run it from a clone or with a `--ref`
@@ -85,6 +90,7 @@ sh install.sh --claude
 | `buildl-lua` | build-file evaluation on airsl |
 | `buildl` | the remaining adapters and the composition root: the complete framework |
 | `buildl-cli` | the `buildl` binary |
+| `buildl-cargo` | the `cargo-buildl` binary, run as `cargo buildl` |
 
 ## License
 

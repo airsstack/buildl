@@ -504,7 +504,7 @@ graph LR
 ```
 
 Only `buildl-cli` is shipped as a prebuilt binary, through cargo-dist. `buildl-cargo` sets
-`dist = false`, so it comes through crates.io alone, with `cargo install buildl-cargo`.
+`dist = false`, so it comes through crates.io alone, with `cargo install --locked buildl-cargo`.
 
 | Requirement | Form |
 |---|---|

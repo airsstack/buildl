@@ -38,6 +38,7 @@
     - [How buildl Decides](ch08-03-how-buildl-decides.md)
     - [The C and C++ Plugin](ch08-04-the-c-plugin.md)
     - [The Rust Plugin](ch08-05-the-rust-plugin.md)
+    - [cargo buildl](ch08-06-cargo-buildl.md)
 
 - [Remote Cache and Execution](ch09-00-remote.md)
 
