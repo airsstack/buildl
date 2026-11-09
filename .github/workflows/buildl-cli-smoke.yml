@@ -176,7 +176,7 @@ jobs:
       # `check` and `doctor` read build files and the ceiling and run no
       # action, so these pass with no compiler or language toolchain installed.
       # Examples that load a plugin fetched from git (c, cpp, rust, rust-workspace,
-      # rust-ffi, polyglot) are left out: they need `buildl plugins fetch` at a tag
+      # rust-ffi, cargo-buildl, polyglot) are left out: they need `buildl plugins fetch` at a tag
       # published with this release. The examples job in ci.yml checks them.
       - name: Every example checks
         run: |

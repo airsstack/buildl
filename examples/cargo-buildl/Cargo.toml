@@ -1,0 +1,16 @@
+# A Cargo workspace of three crates, set up for buildl by `cargo buildl init`:
+#   greet  an rlib, a library the other two use
+#   ffi    a static library C can link
+#   app    a binary using greet
+# A workspace of its own, so cargo run inside a checkout of the buildl repository does not take
+# them for members of buildl's workspace.
+[workspace]
+members  = ["greet", "ffi", "app"]
+resolver = "2"
+
+# The generated build.lua builds with cargo's dev profile, whose debug info keeps the absolute
+# folder cargo ran in and whose incremental state varies the objects of a static library, so
+# `buildl verify` would find different bytes in each sandbox. Neither is on here.
+[profile.dev]
+debug = false
+incremental = false

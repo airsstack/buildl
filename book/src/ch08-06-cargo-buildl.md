@@ -211,6 +211,6 @@ usage error is clap's, exit code 2, and names `cargo buildl`.
 
 ## Try it
 
-`examples/rust-workspace` in the buildl repository is the Cargo workspace above, with a build file
-of its own. Copy the folder, remove its `buildl.toml` and `build.lua`, and `cargo buildl init`
-writes new ones, with the generated `build.lua` and a `.gitignore`, not the example's hand-written files.
+`examples/cargo-buildl` in the buildl repository is a Cargo workspace of a library, a static library
+and a binary. Its `buildl.toml`, `build.lua` and `.gitignore` are what `cargo buildl init` wrote,
+and its checks add a binary and run `sync` and `sync --check`.

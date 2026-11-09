@@ -364,11 +364,12 @@ fi
 category = "Examples"
 description = "Run examples/check.sh for every example under examples/ but remote"
 # Each example needs its own toolchain beside the buildl binary, so this is not a
-# step of `dod`. `remote` is left out: it needs a remote execution server.
+# step of `dod`. `remote` is left out: it needs a remote execution server. cargo-buildl is
+# built beside buildl, where the cargo-buildl example's assert.sh looks for it.
 script_runner = "@shell"
 script = '''
 set -e
-cargo build -p buildl-cli
+cargo build -p buildl-cli -p buildl-cargo
 BUILDL="${CARGO_TARGET_DIR:-$(pwd)/target}/debug/buildl"
 export BUILDL
 

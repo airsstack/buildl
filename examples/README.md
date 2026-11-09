@@ -3,15 +3,17 @@
 Each directory here is a buildl workspace of its own: a `buildl.toml`, its build files, its
 sources, a `README.md` saying what it shows, and an `assert.sh` holding its own checks. Copy one
 anywhere and run `buildl build` in it; it needs the `buildl` binary and its language's
-toolchain. The `c`, `cpp`, `rust`, `rust-workspace`, `rust-ffi` and `polyglot` examples also need `git`: their
+toolchain. The `c`, `cpp`, `rust`, `rust-workspace`, `rust-ffi`, `cargo-buildl` and `polyglot` examples also need `git`: their
 `prepare.sh` fetches the `c` or `rust` plugin, or both, when the example is checked, from a
-temporary git repository.
+temporary git repository. The `cargo-buildl` example also needs the `cargo-buildl` binary, built
+with `cargo build -p buildl-cargo` beside `buildl`, or named by `CARGO_BUILDL`.
 
 | Example | Shows | Needs |
 |---|---|---|
 | [`go`](go/) | a Go binary and its test; `plan` naming an edited input; a second `test` served from the cache; `buildl log` | Go 1.22 |
 | [`rust`](rust/) | a Rust binary and its test through the `rust` plugin, fetched by git from a subfolder: `rust.binary`, `rust.test`; `plan` naming the targets an edit runs; the binary at `out/hello` | a Rust toolchain, `git` |
 | [`rust-workspace`](rust-workspace/) | a Cargo workspace with an rlib, a proc-macro and a binary using both: one call per artifact, none for the rlib or the proc-macro, which cargo builds on the way; `rust.package` and `rust.features` composed into `args`; `rust.test` over the whole workspace and over one crate with a feature on | a Rust toolchain, `git` |
+| [`cargo-buildl`](cargo-buildl/) | a Cargo workspace set up by `cargo buildl init`: its `buildl.toml`, `build.lua` and `.gitignore` are what `init` wrote; a call for the binary and the static library and a test per package, none for the rlib; `cargo buildl sync` and `sync --check` after a second binary is added; `cargo buildl` passing other commands to buildl | a Rust toolchain, `git`, the `cargo-buildl` binary |
 | [`python`](python/) | the same for a Python zipapp tested with `unittest`, standard library only | Python 3 |
 | [`go-discovery`](go-discovery/) | a discovery target running `go list` with `stdout = true`, read back with `buildl.decode_all`: one test target per Go package, none written by hand | Go 1.22 |
 | [`polyglot`](polyglot/) | a Go service, a Rust CLI and a Python tool built from one generated schema; labels across directories; early cutoff after a comment edit; `buildl query 'rdeps(…)'` | Go 1.22, a Rust toolchain, Python 3, `git` |
@@ -44,9 +46,9 @@ toolchain. `buildl` is `$BUILDL` when set, else the first `buildl` on `PATH`.
 
 An example that holds a `prepare.sh` has it run as step 0, inside the copy. `BUILDL_REPO` is set to
 the repository root while `prepare.sh` runs, so the script can reach files of this checkout. The
-`c`, `cpp`, `rust`, `rust-workspace`, `rust-ffi` and `polyglot` examples use it to put this checkout's plugins (`c`,
+`c`, `cpp`, `rust`, `rust-workspace`, `rust-ffi`, `cargo-buildl` and `polyglot` examples use it to put this checkout's plugins (`c`,
 `rust`, or both) in a temporary git repository and run `buildl plugins fetch` against it.
 
-From the repository root, `cargo make examples` builds `buildl` and checks every example but
+From the repository root, `cargo make examples` builds `buildl` and `cargo-buildl` and checks every example but
 `remote`, which needs its server. CI runs it on Linux and macOS, and runs `remote` in a job of
 its own on Linux.
