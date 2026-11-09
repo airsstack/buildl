@@ -11,13 +11,13 @@
 
 use std::ffi::{OsStr, OsString};
 
-use buildl::report::{Mode, Paint};
+use crate::report::{Mode, Paint};
 
-use crate::cli::Color;
+use crate::cli::args::Color;
 
 /// What the process knows about where its standard error goes.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct Terminal {
+pub struct Terminal {
     /// Whether standard error is a terminal.
     pub interactive: bool,
     /// The value of `TERM`, when it is set.
@@ -68,10 +68,10 @@ fn set(value: Option<&OsStr>) -> bool {
 mod tests {
     use std::ffi::OsString;
 
-    use buildl::report::{Mode, Paint};
+    use crate::report::{Mode, Paint};
 
     use super::Terminal;
-    use crate::cli::Color;
+    use crate::cli::args::Color;
 
     /// A process whose standard error is a terminal, with `TERM` and `NO_COLOR` as given.
     fn on_a_terminal(term: Option<&str>, no_color: Option<&str>) -> Terminal {

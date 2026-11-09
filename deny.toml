@@ -111,8 +111,8 @@ deny = [
         matches it host-side""" },
     { crate = "rayon", wrappers = ["buildl"], reason = """\
         book/src/ch11-06-decision-records.md: rayon is confined to the Digester adapter inside buildl""" },
-    { crate = "clap", wrappers = ["buildl-cli"], reason = """\
-        book/src/ch11-03-four-crates.md: the argument surface is the binary's alone""" },
+    { crate = "clap", wrappers = ["buildl"], reason = """\
+        book/src/ch11-03-four-crates.md: the argument surface is the command line's alone, and the command line lives in buildl""" },
     { crate = "tonic", wrappers = ["buildl", "tonic-prost"], reason = """\
         the gRPC client is the remote adapter's inside buildl; tonic-prost is tonic's own codec \
         crate""" },

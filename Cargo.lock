@@ -152,6 +152,7 @@ version = "0.2.0"
 dependencies = [
  "buildl-core",
  "buildl-lua",
+ "clap",
  "notify",
  "prost",
  "prost-types",
@@ -172,7 +173,6 @@ name = "buildl-cli"
 version = "0.2.0"
 dependencies = [
  "buildl",
- "clap",
  "tempfile",
 ]
 

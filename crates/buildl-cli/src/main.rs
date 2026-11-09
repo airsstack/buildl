@@ -1,9 +1,9 @@
 //! The `buildl` binary — the command-line entry point to the `buildl` library.
 //!
-//! All build logic lives in the library crates; this binary depends on the `buildl` crate
-//! alone and reaches core types through its re-export. It reads a command line, runs the
-//! command on the workspace at or above the directory it was started in, and ends with a status
-//! that says whose mistake a failure was.
+//! The command line, in `buildl::cli`, and all build logic live in the library crates; this
+//! binary depends on the `buildl` crate alone and reaches core types through its re-export. It
+//! reads a command line, runs the command on the workspace at or above the directory it was
+//! started in, and ends with a status that says whose mistake a failure was.
 //!
 //! # Commands
 //!
@@ -91,40 +91,34 @@
 //!
 //! The binary builds and is tested on Linux and macOS.
 //!
-//! This file holds the module list and `main`, which reads what only the process knows and
-//! hands it on; it decides nothing, so it carries no logic to unit-test.
+//! This file holds `main`, which reads what only the process knows and hands it to
+//! [`buildl::cli::run`]; it decides nothing, so it carries no logic to unit-test.
 
 use std::env;
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 
-mod cli;
-mod console;
-mod doctor_text;
-mod exit;
-mod remote_switches;
-mod run;
-mod terminal;
+use buildl::cli::{RemoteSwitches, StdConsole, Terminal};
 
 fn main() -> ExitCode {
-    let terminal = terminal::Terminal {
+    let terminal = Terminal {
         interactive: io::stderr().is_terminal(),
         term: env::var_os("TERM"),
         no_color: env::var_os("NO_COLOR"),
     };
-    let remote = remote_switches::RemoteSwitches {
+    let remote = RemoteSwitches {
         upload: env::var_os("BUILDL_REMOTE_UPLOAD"),
         strict: env::var_os("BUILDL_REMOTE_STRICT"),
         execute: env::var_os("BUILDL_REMOTE_EXECUTE"),
     };
-    let exit = run::run(
+    let exit = buildl::cli::run(
         env::args_os(),
         env::current_dir(),
         &terminal,
         &remote,
         &mut io::stdout(),
         &mut io::stderr(),
-        &mut console::StdConsole,
+        &mut StdConsole,
     );
     ExitCode::from(exit as u8)
 }

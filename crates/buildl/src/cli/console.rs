@@ -1,6 +1,6 @@
 //! The person at the terminal, as the approver sees them.
 //!
-//! Its own file because asking is the one place the binary reads standard input: a build asks
+//! Its own file because asking is the one place the command line reads standard input: a build asks
 //! on standard error, so the prompt never mixes into standard output, and reads the answer from
 //! standard input.
 //!
@@ -13,7 +13,7 @@
 
 use std::io::{self, IsTerminal, Write};
 
-use buildl::approver::Console;
+use crate::approver::Console;
 
 /// Whether a person can be asked: the question goes to standard error and the answer comes from
 /// standard input, so a terminal on one alone is not enough.
@@ -23,7 +23,7 @@ const fn both_terminals(stdin: bool, stderr: bool) -> bool {
 
 /// Standard error to ask on, standard input to read the answer from.
 #[derive(Debug, Clone, Copy, Default)]
-pub(crate) struct StdConsole;
+pub struct StdConsole;
 
 impl Console for StdConsole {
     /// Whether both streams are terminals: a question written where nobody reads it, or an

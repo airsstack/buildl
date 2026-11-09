@@ -144,7 +144,11 @@
 //! login, capabilities, blob transfer), the adapter over that client, and the choice between it
 //! and no remote at all, with an in-memory cache server behind the `test-server` feature.
 //!
-//! The adapters meet in two modules and nowhere else. Neither is public: what they hold is
+//! [`cli`] holds the `buildl` command line: the arguments, one run of a command over values and
+//! the exit status each ending gets. Its running of a command names several adapters, so it is
+//! a composition module like the two below.
+//!
+//! The adapters meet in [`cli`] and in two modules that are not public: what the two hold is
 //! exported from the crate root.
 //!
 //! | Module | Holds |
@@ -161,7 +165,8 @@
 //!
 //! - Pipeline logic, which lives in `buildl-core`.
 //! - Lua evaluation, which lives in `buildl-lua`.
-//! - Parsing a command line and choosing an exit code, which the `buildl-cli` crate does.
+//! - Reading the process: its arguments, environment and standard streams, which the
+//!   `buildl-cli` crate's `main` does before it calls [`cli::run`].
 //!
 //! This file holds only module declarations and re-exports, so it carries no logic to
 //! unit-test.
@@ -187,6 +192,7 @@
 pub mod approver;
 pub mod cache;
 pub mod cas;
+pub mod cli;
 pub mod clock;
 pub mod digest;
 pub mod dispatch;

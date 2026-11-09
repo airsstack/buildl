@@ -218,7 +218,7 @@ description = "Assert no adapter module of buildl names another module of the cr
 # longer be read, tested or replaced alone (book/src/ch11-03-four-crates.md
 # dependency rule 2). What several adapters need lives in the two shared modules,
 # `state` and `search_path`, which implement no port; adapters meet only in the
-# composition modules, `local_ports` and `workspace`.
+# composition modules, `local_ports`, `workspace` and `cli`.
 #
 # A rule check with no golden file: the rule is "no edge", so a committed list
 # would record nothing but the composition root's own imports.
@@ -233,7 +233,7 @@ script_runner = "@shell"
 script = '''
 src="crates/buildl/src"
 # The modules that wire adapters together, and the modules adapters may share.
-composition="local_ports workspace"
+composition="local_ports workspace cli"
 support="state search_path"
 export LC_ALL=C
 

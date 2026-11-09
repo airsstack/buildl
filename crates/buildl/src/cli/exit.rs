@@ -11,7 +11,7 @@
 //! Non-responsibilities: what a refused command line gets, which the argument parser's own
 //! verdict decides; and ending the process, which `main` does.
 
-use buildl::buildl_core::{ActionOutcome, Check, Error, OutcomeClass, PortName, Verification};
+use buildl_core::{ActionOutcome, Check, Error, OutcomeClass, PortName, Verification};
 
 /// The status the process ends with.
 ///
@@ -20,7 +20,7 @@ use buildl::buildl_core::{ActionOutcome, Check, Error, OutcomeClass, PortName, V
 /// the failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub(crate) enum Exit {
+pub enum Exit {
     /// The command did what it was asked.
     Success = 0,
     /// An action failed: the code being built is at fault.
@@ -188,8 +188,8 @@ mod tests {
     use std::path::PathBuf;
     use std::slice;
 
-    use buildl::buildl_core::json::canonical;
-    use buildl::buildl_core::{
+    use buildl_core::json::canonical;
+    use buildl_core::{
         ActionFound, ActionOutcome, Ceiling, Check, DeclarationField, DeclarationOrder,
         DeclarationSite, DeclaredKind, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
         Error, EvaluationFailure, FileChange, InfraKind, InputKind, Label, Origin, OutcomeClass,
