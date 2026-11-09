@@ -500,7 +500,7 @@ its dependencies are published too, so all five crates are published, the one de
 ```mermaid
 %% crates.io publish order
 graph LR
-    P1["1. buildl-core"] --> P2["2. buildl-lua"] --> P3["3. buildl"] --> P4["4. buildl-cli"] --> P5["5. buildl-cargo"]
+    P1["1: buildl-core"] --> P2["2: buildl-lua"] --> P3["3: buildl"] --> P4["4: buildl-cli"] --> P5["5: buildl-cargo"]
 ```
 
 Only `buildl-cli` is shipped as a prebuilt binary, through cargo-dist. `buildl-cargo` sets
