@@ -34,11 +34,11 @@ nothing. It runs every check first and writes only when all of them pass:
 ```mermaid
 %% cargo buildl init, in order
 graph TD
-    M["1. read the metadata"] --> E["2. buildl.toml or build.lua already there?"]
-    E --> L["3. a Cargo.lock beside Cargo.toml?"]
-    L --> G["4. generate build.lua"]
-    G --> W["5. write build.lua, buildl.toml, .gitignore"]
-    W --> F["6. buildl plugins fetch"]
+    M["Step 1: read the metadata"] --> E["Step 2: buildl.toml or build.lua already there?"]
+    E --> L["Step 3: a Cargo.lock beside Cargo.toml?"]
+    L --> G["Step 4: generate build.lua"]
+    G --> W["Step 5: write build.lua, buildl.toml, .gitignore"]
+    W --> F["Step 6: buildl plugins fetch"]
 ```
 
 | Step | On failure |
