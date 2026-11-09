@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-09
 built-on: 072796d9b51f
 ---
@@ -85,3 +85,18 @@ book/src/ch11-06-decision-records.md       — modify: a record "The command lin
 
 - `cargo make dod` (fmt, clippy with the four guards, doc, tests, doctests) and `cargo deny check` are green.
 - `crates/buildl-cli/tests` are unchanged and green.
+
+## Review findings
+
+- 🟡 `Cargo.toml` clap comment said "a dependency of `buildl-cli` only" — fixed in `440ff9a`; `cargo fmt --all -- --check` clean.
+- 🟡 `Makefile.toml` guard-adapter-isolation message named only `local_ports and workspace` — fixed in `440ff9a`; `cargo make guard-adapter-isolation` → `Build Done`.
+- 🔵 `execute`'s `#[expect(too_many_arguments)]` reason was inaccurate for `color` and `command` — fixed in `440ff9a`.
+- 🔵 `Streams` is public though only a `pub(crate)` method produces it — kept; the plan lists it.
+- 🔵 `CLAUDE.md` still calls `buildl-cli` a "thin clap shell" — plan 05 rewrites CLAUDE.md's workspace shape.
+- 🔵 Task 2's commit landed before Task 1's — history only.
+
+## Deviations
+
+- 2026-11-09 — Task 2 (book) ran in parallel with Task 1 and was committed first (`403648d`, then `94f315b`); the two tasks' files are disjoint.
+- 2026-11-09 — `Override` is public too: `Selection` and `VerifyArgs` hold it in public fields.
+- 2026-11-09 — `execute_runs_a_parsed_command` was written alongside `execute`, since the move and the new function landed together; no separate red run.

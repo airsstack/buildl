@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-09
 depends-on: [01]
 built-on: 072796d9b51f
@@ -90,3 +90,18 @@ book/src/ch11-03-four-crates.md     — modify: five crates — opening sentence
 
 - `cargo make dod` (the guards included) and `cargo deny check` are green.
 - `cargo run -p buildl-cargo -- buildl clean` in a buildl workspace prints buildl's `clean:` line.
+
+## Review findings
+
+- 🔵 `help_comes_from_cargo_buildl` checked `help.contains("build")`, which "cargo buildl" satisfies alone — fixed: the test now looks for a help line starting with `build ` / `test `.
+- 🔵 `Makefile.toml` `publish-dry-run` said "four crates" — fixed: five, with `buildl-cargo` last.
+- 🔵 ch11-03's H1 "Four Crates, Ports and Adapters" contradicted the five-crate page — fixed: "Five Crates, Ports and Adapters", with the link text in `SUMMARY.md`, `ch11-00` and `ch11-06`; the file name stays; `cargo make book-build` → `Build Done`.
+- 🔵 ch11-03 C4 level 2: the cargo-buildl process had no edge to `out/` — fixed: `links named outputs`.
+- 🔵 Dependency rule 4 named `buildl::buildl_core::TargetName` before any `buildl-cargo` code used it — true since plan 03's `633598f` (`crates/buildl-cargo/src/generate.rs:10`).
+- 🔵 No guard fails if `dist = false` is removed — declined: the plan names this as a risk, and no guard was planned.
+- 🔵 Usage errors raised after parsing (duplicate `--set`, `Cli::command().error` in `buildl::cli::run`) print `Usage: buildl …` under `cargo buildl`; the exit code is 2 — declined: the text comes from buildl's own command line, which this add-on does not change.
+
+## Deviations
+
+- 2026-11-09 — Task 3 (book) ran in parallel with plan 01 Task 1 and was committed before Task 1 (`1e68573`, then `4fa9d31`, `73e17ec`); the tasks' files are disjoint.
+- 2026-11-09 — `clean: out holds nothing` goes to stderr; `clean_passes_through` asserts stderr.

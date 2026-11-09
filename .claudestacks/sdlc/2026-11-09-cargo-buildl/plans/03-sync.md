@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-09
 depends-on: [02]
 built-on: 072796d9b51f
@@ -111,3 +111,22 @@ crates/buildl-cargo/tests/sync.rs                 — create: runs the binary on
 
 - `cargo make dod` and `cargo deny check` are green.
 - Every row of spec §6's table and every message of spec §8 has a named test above.
+
+## Review findings
+
+- 🟡 Failure messages were mixed: `cannot run <cargo>`, `cannot read the output of cargo metadata` and the generate refusals had no `error: ` prefix — fixed in `2f195ab`; `a_cargo_that_cannot_run_is_3_with_an_error_line` (integration, `CARGO` naming a missing file → exit 3, stderr starts `error: `) and the prefix asserts in `metadata`/`generate` tests; `cargo make dod` green.
+- 🟡 `sync`/`decide` took `check: bool` — fixed in `2f195ab`: `sync::Mode::{Write, Check}`, converted from `SyncArgs` at the edge; `sync_parses_with_and_without_check`.
+- 🔵 `main` decided exit 3 for an unreadable current directory, contradicting its doc — fixed in `2f195ab`: `sync` takes `io::Result<PathBuf>`, buildl's wording; `an_unreadable_current_directory_is_3`.
+- 🔵 Current-directory wording differed from buildl's — fixed in `2f195ab`.
+- 🔵 `a_cargo_that_cannot_start_is_3` passed the path to `read` rather than through `CARGO` — covered by the new integration test above.
+- 🔵 `dylib` and `bench` kinds have no fixture — declined: only `cdylib` and `staticlib` get a call, and the no-call rule is covered by the rlib/proc-macro/example/build-script test.
+- 🔵 ch11-03's `buildl-cargo` row did not mention `sync` — fixed in `2f195ab`; `cargo make book-build` ok.
+- `cargo deny check` after the fix round: `advisories ok, bans ok, licenses ok, sources ok`.
+
+## Deviations
+
+- 2026-11-09 — Tasks 2 and 3 ran in parallel; the orchestrator added both `mod` lines to `main.rs` first so no two coders edited one file. Each commit (`633598f`, `20b3f8d`) holds only its own `mod` line.
+- 2026-11-09 — Task 1 also updated ch11-03's `buildl-cargo` row with `serde` and `serde_json`, so the book matches the crate's dependencies within this plan.
+- 2026-11-09 — `section::BEGIN_LINE`/`END_LINE` carry `cfg_attr(not(test), expect(dead_code))` until `cargo buildl init` writes them (plan 04).
+- 2026-11-09 — `cargo package` leaves `tests/fixtures/workspace/` out of the crate (it holds nested manifests), so `tests/sync.rs` runs from the repository, not from a packaged tarball; publishing does not build tests.
+- 2026-11-09 — The duplicate-name refusal reads `error: target "n" cannot be declared: it would be declared by …`, to fit buildl's `<what>: <detail>` form.
