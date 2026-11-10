@@ -50,8 +50,8 @@ those paths were not there for declaring and watching:
 
 - `sources()` never lists an ignored path and never walks into an ignored folder, so it costs no
   `walk_entries`.
-- A build file that names an ignored file in `inputs` is refused when it loads, naming the file
-  and the `.buildlignore` that ignores it.
+- A build file that names an ignored file in `inputs`, or an ignored folder in `subdir`, is
+  refused when it loads, naming the path and the `.buildlignore` that ignores it.
 - `watch` does not start a new cycle for a change under an ignored path.
 - With `.claudestacks/`, `.claude/`, `book/`, `examples/` and `skills/` ignored at the root of
   buildl's repository, editing a file there leaves the `rust` plugin's targets clean.
@@ -65,7 +65,11 @@ Decided with the author on 2026-11-10:
   everything below it.
 - Full `.gitignore` syntax: globs, `!` negation, a leading `/` anchoring to the file's folder, a
   trailing `/` matching folders only. Ripgrep's `ignore` crate is the expected implementation.
-- An explicit `inputs` entry naming an ignored file is refused (exit code 5), not let through.
+- An explicit `inputs` entry naming an ignored file is refused (exit code 5), not let through;
+  so is a `subdir` naming an ignored folder.
+- A `.buildlignore` that cannot be used (a pattern that does not parse, text that is not UTF-8,
+  a file that cannot be read) is refused (exit code 5), never skipped.
+- A `.buildlignore` is an ordinary file: `sources` lists it unless a pattern ignores it.
 
 From the repository's rules:
 
@@ -87,4 +91,4 @@ From the repository's rules:
 - Changes to the `rust` or `c` plugin: they keep calling `sources()` and gain the filter through
   it.
 - Ignoring paths for the sandbox copy, the store, `plugins fetch`, or `clean`/`gc`: only declaring
-  (`sources`, `inputs`) and `watch` are in scope.
+  (`sources`, `inputs`, `subdir`) and `watch` are in scope.
