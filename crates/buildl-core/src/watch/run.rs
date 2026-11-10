@@ -15,7 +15,9 @@ use crate::watch::react::{kept, react};
 ///
 /// Runs a first build, told it was started by [`Trigger::Start`], then takes one batch at a time
 /// from `changes`. A batch is cut to the paths that are changes to the workspace; one with none
-/// left does nothing and says nothing. [`react`] sorts the rest against what the last cycle left
+/// left does nothing and says nothing: a path under the output directory, the state directory or
+/// `.git`, or one that the ignore rules of the last cycle that opened the workspace report ignored,
+/// is not a change. [`react`] sorts the rest against what the last cycle left
 /// behind:
 /// [`Reaction::Build`] runs a build, [`Reaction::Ignore`] does nothing and says nothing, and
 /// [`Reaction::Check`] loads the build files again. A check that fails to load, or that finds a
@@ -47,10 +49,10 @@ pub fn watch<C: Changes, Y: Cycles + WatchReport>(
             Ok(batch) => batch,
             Err(error) => return error,
         };
-        let Some(batch) = kept(&batch, &reference.layout) else {
+        let Some(batch) = kept(&batch, &reference.layout, cycles.rules()) else {
             continue;
         };
-        let build = match react(&batch, &reference) {
+        let build = match react(&batch, &reference, cycles.rules()) {
             Reaction::Build => true,
             Reaction::Ignore => false,
             Reaction::Check => cycles.graph().map_or(true, |graph| {
@@ -106,11 +108,23 @@ mod tests {
 
     use super::watch;
     use crate::error::{Error, PortName, Result};
-    use crate::ports::{Changes, Cycles, WatchReport};
+    use crate::ports::{Changes, Cycles, IgnoreRules, WatchReport};
     use crate::types::{
-        Built, ChangeBatch, ChangedPath, Cycle, Diagnostic, Directory, SettingName, SettingValue,
-        TargetGraph, Trigger, WatchLayout, Watched,
+        Built, ChangeBatch, ChangedPath, Cycle, Diagnostic, Directory, EntryKind, Ignoring,
+        SettingName, SettingValue, TargetGraph, Trigger, WatchLayout, Watched,
     };
+
+    /// Rules ignoring the paths they hold.
+    struct Rules(Vec<&'static str>);
+
+    impl IgnoreRules for Rules {
+        fn ignored(&self, path: &str, _kind: EntryKind) -> Result<Option<Ignoring>> {
+            Ok(self
+                .0
+                .contains(&path)
+                .then(|| Ignoring::new(".buildlignore", path)))
+        }
+    }
 
     #[derive(Debug, PartialEq)]
     enum Call {
@@ -143,9 +157,16 @@ mod tests {
         log: Log,
         cycles: VecDeque<Cycle>,
         graphs: VecDeque<Result<TargetGraph>>,
+        rules: Option<Rules>,
     }
 
     impl Cycles for Fake {
+        type Ignore = Rules;
+
+        fn rules(&self) -> Option<&Rules> {
+            self.rules.as_ref()
+        }
+
         fn build(&mut self) -> Cycle {
             self.log.borrow_mut().push(Call::Build);
             self.cycles.pop_front().unwrap_or_else(|| cycle(None, None))
@@ -224,6 +245,16 @@ mod tests {
         cycles: Vec<Cycle>,
         graphs: Vec<Result<TargetGraph>>,
     ) -> (Error, Vec<Call>) {
+        run_with(None, batches, cycles, graphs)
+    }
+
+    /// Like [`run`], with cycles that hand `rules` back to the loop.
+    fn run_with(
+        rules: Option<Rules>,
+        batches: Vec<ChangeBatch>,
+        cycles: Vec<Cycle>,
+        graphs: Vec<Result<TargetGraph>>,
+    ) -> (Error, Vec<Call>) {
         let log = Log::default();
         let mut changes = Scripted {
             log: Rc::clone(&log),
@@ -233,6 +264,7 @@ mod tests {
             log: Rc::clone(&log),
             cycles: cycles.into(),
             graphs: graphs.into(),
+            rules,
         };
         let error = watch(&mut changes, &mut fake, layout("out"));
         let calls = log.take();
@@ -489,5 +521,33 @@ mod tests {
             }
         ));
         assert_eq!(error.to_string(), "file watcher: no more changes");
+    }
+
+    #[test]
+    fn the_loop_filters_with_the_last_opened_rules() {
+        let first = cycle(Some(layout("out")), Some(built("a")));
+        let second = cycle(Some(layout("out")), Some(built("b")));
+        let changes = batch(&["src/a.c"]);
+        let (_, calls) = run_with(
+            Some(Rules(vec!["notes/a.md"])),
+            vec![batch(&["notes/a.md"]), changes.clone()],
+            vec![first, second],
+            vec![Ok(graph("b"))],
+        );
+        assert_eq!(
+            calls,
+            [
+                Call::Building(Trigger::Start),
+                Call::Build,
+                Call::Waiting,
+                Call::Next,
+                Call::Next,
+                Call::Graph,
+                Call::Building(Trigger::Changed(changes)),
+                Call::Build,
+                Call::Waiting,
+                Call::Next,
+            ]
+        );
     }
 }
