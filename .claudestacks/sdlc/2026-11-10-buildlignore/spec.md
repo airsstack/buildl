@@ -54,9 +54,11 @@ Two things buildl does itself, because `add_line` alone differs from git:
 - **The BOM.** A UTF-8 byte-order mark at the start of the file is dropped before the first line
   is built. The crate drops it only in `GitignoreBuilder::add` (`gitignore.rs:427-430`), which
   buildl does not call; `add_line` has no BOM handling (`gitignore.rs:463-544`).
-- **Braces.** `{` and `}` are escaped (`\{`, `\}`) before a line is built, so they are literal as in
-  git. The crate builds a `globset` glob with `backslash_escape(true)` (`gitignore.rs:531-536`), in
-  which `{a,b}` is alternation and an unclosed `{` an error. Probes:
+- **Braces.** Read left to right, a backslash escapes the character after it. Every `{` or `}` that
+  is not already escaped that way is escaped (`\{`, `\}`) before the line is built, so braces are
+  literal as in git; an already-escaped brace is left as it is. The crate builds a `globset` glob
+  with `backslash_escape(true)` (`gitignore.rs:531-536`), in which `{a,b}` is alternation and an
+  unclosed `{` an error. Probes:
 
   ```text
   git, .gitignore = "{a", file "{a":         $ git check-ignore -v '{a'
@@ -67,6 +69,20 @@ Two things buildl does itself, because `add_line` alone differs from git:
   ```
 
   Git ignores `{a` as a literal name; the crate with the brace escaped does the same.
+
+  An author's own escapes, git against the crate given buildl's rewrite (files `{a`, `\{a`, `a`):
+
+  ```text
+  git, .gitignore = "\{a"                     $ git status --porcelain --untracked-files=all
+                                              ?? .gitignore   ?? "\\{a"   ?? a        ({a ignored)
+  git, .gitignore = "\\{a"                    ?? .gitignore   ?? a        ?? {a       (\{a ignored)
+  ripgrep, .rgignore = "\{a" (left as is)     ./.rgignore  ./\{a  ./a                ({a ignored)
+  ripgrep, .rgignore = "\\\{a" (from "\\{a")  ./.rgignore  ./a  ./{a                 (\{a ignored)
+  ```
+
+  `\{a` is already escaped and is left alone; in `\\{a` the backslash pair is an escaped
+  backslash, so the `{` after it is unescaped and becomes `\{`, giving `\\\{a`. Both give git's
+  answer.
 
 ### 2.2 Where the files are read from
 
