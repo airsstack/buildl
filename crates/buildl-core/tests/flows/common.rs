@@ -1611,7 +1611,7 @@ pub fn open_workspace() -> Workspace {
 /// An [`open_workspace`]; a `linux/x86_64` machine with no variable set; no workspace file,
 /// nothing recorded, no program and no row; an empty content store and an empty log; a strategy
 /// with no script; a dispatcher taking the oldest task first, one at a time; a clock that has
-/// not been read; no graph recorded; a reporter that has received no call; and an approver that
+/// not been read; no graph recorded; a reporter that has received no call; an approver that
 /// grants every set and has been asked nothing; and ignore rules that ignore nothing.
 #[must_use]
 pub fn ports(source: FakeSource) -> PortSet<FakePorts> {

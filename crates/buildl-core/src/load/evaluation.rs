@@ -25,8 +25,9 @@ pub(crate) enum FileResult {
     Stopped,
     /// The directory holds no build file.
     Absent,
-    /// The source failed, a `subdir` request left the workspace, a declaration failed its
-    /// grammar, or an input is ignored: the first of these in the order the file is processed.
+    /// The source failed, a `subdir` request left the workspace or names an ignored directory,
+    /// a declaration failed its grammar, an input is ignored, or an ignore file cannot be used:
+    /// the first of these in the order the file is processed.
     Failed(Error),
     /// The file was evaluated and every declaration in it is valid.
     Loaded {
@@ -40,10 +41,10 @@ pub(crate) enum FileResult {
 /// Evaluates the build file of `directory` and validates what it staged.
 ///
 /// Within the file the steps run in one fixed order, so a file that fails in more than one way
-/// always fails the same way: evaluate, then resolve the `subdir` requests, asking `rules` about each,
-/// then convert each declaration in call order, asking `rules` about each input. `discovered` is handed to `source`
-/// as it is. Returns
-/// [`FileResult::Stopped`] without calling `source` when `stop` is already set.
+/// always fails the same way: evaluate, then resolve the `subdir` requests, asking `rules` about
+/// each, then convert each declaration in call order, asking `rules` about each input.
+/// `discovered` is handed to `source` as it is. Returns [`FileResult::Stopped`] without calling
+/// `source` when `stop` is already set.
 pub(crate) fn evaluate_file<S: DeclarationSource, I: IgnoreRules>(
     source: &S,
     rules: &I,

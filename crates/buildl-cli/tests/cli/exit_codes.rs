@@ -1654,9 +1654,12 @@ fn an_ignored_subdir_exits_5() {
     let (_dir, root) = ignoring_workspace(&build_file);
     write(&root, ".buildlignore", "examples/\n");
 
-    check_refuses(
-        &root,
-        "subdir: examples is ignored by .buildlignore (examples/)",
+    let (status, said) = failed(&root, &["check"]);
+
+    assert_eq!(status, 5, "{said}");
+    assert_eq!(
+        said,
+        "error: build.lua: subdir: examples is ignored by .buildlignore (examples/)\n"
     );
 }
 

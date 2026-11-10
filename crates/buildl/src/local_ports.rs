@@ -1282,6 +1282,33 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_reopened_wiring_reads_a_buildlignore_changed_since_the_first_reading() {
+        let (_dir, root) = workspace(&bare());
+        fs::create_dir(root.join("notes")).unwrap();
+        fs::write(root.join("notes/a.md"), "a\n").unwrap();
+        fs::write(
+            root.join("build.lua"),
+            "buildl.target(\"copy\", { inputs = { \"notes/a.md\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+        )
+        .unwrap();
+        let check = |wiring: &Wiring| {
+            let lock = wiring.lock().unwrap();
+            let mut pipeline: LocalPipeline<Silent, NoTerminal> = Pipeline::new(
+                wiring
+                    .ports(&lock, Silent, NoTerminal, RemotePolicy::OFF)
+                    .unwrap(),
+            );
+            pipeline.check(wiring.entry())
+        };
+        check(&Wiring::read(&root).unwrap()).unwrap();
+
+        fs::write(root.join(".buildlignore"), "notes/\n").unwrap();
+        let error = check(&Wiring::read(&root).unwrap()).unwrap_err();
+
+        assert!(matches!(error, Error::Ignored { .. }), "{error:?}");
+    }
+
     /// The files `layout` names as configuration, as text.
     fn config(layout: &buildl_core::WatchLayout) -> Vec<&str> {
         layout

@@ -7,8 +7,8 @@
 //!
 //! Responsibilities: [`load`], which hands each build file to a
 //! [`Dispatcher`] and returns what `loading` makes of the results; the per-file steps `evaluation`
-//! calls, among them asking the [`IgnoreRules`] port about each input and each requested subdirectory; and the order declarations
-//! are returned in.
+//! calls, among them asking the [`IgnoreRules`] port about each input and each requested
+//! subdirectory; and the order declarations are returned in.
 //!
 //! Non-responsibilities: evaluating a build file, which the
 //! [`DeclarationSource`] port does; deciding which paths are ignored, which the [`IgnoreRules`]
