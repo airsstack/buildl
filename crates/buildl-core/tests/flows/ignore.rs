@@ -6,8 +6,8 @@
 )]
 
 use buildl_core::{
-    DeclarationField, EntryKind, EntryName, Error, IgnoredPath, Origin, Pipeline, SourcePath,
-    StagedItem, Written,
+    DeclarationField, Directory, EntryKind, EntryName, Error, IgnoredPath, Origin, Pipeline,
+    SourcePath, StagedItem, Written,
 };
 
 use crate::common::{
@@ -139,4 +139,73 @@ fn the_root_build_file_is_read_whatever_the_rules_say() {
     let mut pipeline = pipeline(source, rules);
 
     assert_eq!(pipeline.check(&entry()).unwrap().len(), 1);
+}
+
+#[test]
+fn an_ignored_subdir_is_refused() {
+    let source = FakeSource::new(workspace(vec![
+        ("", file(vec![], &["examples"])),
+        ("examples", file(vec![reading(&[])], &[])),
+    ]));
+    let rules = FakeIgnore::ignoring(&[("examples", ".buildlignore", "examples/")]);
+    let mut pipeline = pipeline(source, rules);
+
+    let error = pipeline.check(&entry()).unwrap_err();
+
+    match &error {
+        Error::Ignored { path, ignoring, .. } => {
+            assert_eq!(
+                **path,
+                IgnoredPath::Subdir(Directory::parse("examples").unwrap())
+            );
+            assert_eq!(ignoring.file(), ".buildlignore");
+            assert_eq!(ignoring.pattern(), "examples/");
+        }
+        other => unreachable!("expected Ignored, got {other:?}"),
+    }
+    assert_eq!(
+        error.to_string(),
+        "build.lua: subdir: examples is ignored by .buildlignore (examples/)"
+    );
+    assert_eq!(pipeline.ports().source.evaluated(), [Directory::root()]);
+    assert_eq!(
+        pipeline.ports().ignore.asked(),
+        [("examples".to_owned(), EntryKind::Folder)]
+    );
+}
+
+#[test]
+fn a_subdir_that_is_not_ignored_loads() {
+    let source = FakeSource::new(workspace(vec![
+        ("", file(vec![], &["examples"])),
+        ("examples", file(vec![reading(&[])], &[])),
+    ]));
+    let mut pipeline = pipeline(source, FakeIgnore::default());
+
+    assert_eq!(pipeline.check(&entry()).unwrap().len(), 1);
+
+    let evaluated = pipeline.ports().source.evaluated();
+    assert!(evaluated.contains(&Directory::root()), "{evaluated:?}");
+    assert!(
+        evaluated.contains(&Directory::parse("examples").unwrap()),
+        "{evaluated:?}"
+    );
+}
+
+#[test]
+fn a_failing_rule_set_fails_a_subdir_question() {
+    let source = FakeSource::new(workspace(vec![
+        ("", file(vec![], &["lib"])),
+        ("lib", file(vec![], &[])),
+    ]));
+    let mut pipeline = pipeline(
+        source,
+        FakeIgnore::failing("lib/.buildlignore", "not UTF-8"),
+    );
+
+    match pipeline.check(&entry()).unwrap_err() {
+        Error::IgnoreFile { file, .. } => assert_eq!(file, "lib/.buildlignore"),
+        other => unreachable!("expected IgnoreFile, got {other:?}"),
+    }
+    assert_eq!(pipeline.ports().source.evaluated(), [Directory::root()]);
 }

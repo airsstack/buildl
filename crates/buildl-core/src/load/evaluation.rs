@@ -40,8 +40,8 @@ pub(crate) enum FileResult {
 /// Evaluates the build file of `directory` and validates what it staged.
 ///
 /// Within the file the steps run in one fixed order, so a file that fails in more than one way
-/// always fails the same way: evaluate, then resolve the `subdir` requests, then convert each
-/// declaration in call order, asking `rules` about each input. `discovered` is handed to `source`
+/// always fails the same way: evaluate, then resolve the `subdir` requests, asking `rules` about each,
+/// then convert each declaration in call order, asking `rules` about each input. `discovered` is handed to `source`
 /// as it is. Returns
 /// [`FileResult::Stopped`] without calling `source` when `stop` is already set.
 pub(crate) fn evaluate_file<S: DeclarationSource, I: IgnoreRules>(
@@ -62,7 +62,7 @@ pub(crate) fn evaluate_file<S: DeclarationSource, I: IgnoreRules>(
         Err(error) => return FileResult::Failed(error),
     };
     let provenance = file.provenance();
-    let subdirs = match resolve_subdirs(&staged.subdirs, provenance) {
+    let subdirs = match resolve_subdirs(&staged.subdirs, provenance, rules) {
         Ok(subdirs) => subdirs,
         Err(error) => return FileResult::Failed(error),
     };

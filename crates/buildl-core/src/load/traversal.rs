@@ -7,7 +7,7 @@
 //!
 //! Responsibilities: [`load`], which hands each build file to a
 //! [`Dispatcher`] and returns what `loading` makes of the results; the per-file steps `evaluation`
-//! calls, among them asking the [`IgnoreRules`] port about each input; and the order declarations
+//! calls, among them asking the [`IgnoreRules`] port about each input and each requested subdirectory; and the order declarations
 //! are returned in.
 //!
 //! Non-responsibilities: evaluating a build file, which the
@@ -37,8 +37,8 @@ use crate::types::{
 /// The walk starts at the workspace root and follows `subdir` requests, evaluating each directory
 /// once, with `dispatcher` deciding how many files are evaluated at a time. Nothing is discovered
 /// from the filesystem: the evaluated build files are exactly the root's and those a `subdir`
-/// call reaches. `discovered` is handed to every evaluation, and each `inputs` entry is asked of
-/// `rules` once it parses. The result is sorted by declaring
+/// call reaches. `discovered` is handed to every evaluation, and each `inputs` entry and each
+/// requested `subdir` is asked of `rules` once it parses. The result is sorted by declaring
 /// directory, then declared name, then the whole declaration, and the error is the one a walk in
 /// breadth-first order would meet first, so neither depends on the order anything was evaluated or
 /// declared in.
@@ -51,8 +51,8 @@ use crate::types::{
 /// - [`Error::MissingBuildFile`] when the root or a requested directory holds no build file;
 /// - [`Error::InvalidDeclaration`] when a staged value fails its grammar, including a `subdir`
 ///   that would leave the workspace, and a discovery target that names `outputs` or always runs;
-/// - [`Error::Ignored`] when `rules` report an `inputs` entry ignored;
-/// - whatever `rules` return for an entry it cannot decide, an [`Error::IgnoreFile`];
+/// - [`Error::Ignored`] when `rules` report an `inputs` entry or a requested `subdir` ignored;
+/// - whatever `rules` return for a path it cannot decide, an [`Error::IgnoreFile`];
 /// - [`Error::ActionConflict`] when a target names both or neither of `rule` and `run`;
 /// - [`Error::LostBuildFiles`] when `dispatcher` returned without evaluating a build file it was
 ///   given;
@@ -116,7 +116,7 @@ impl Site<'_> {
         }
     }
 
-    /// An `inputs` entry at this site, `path`, is ignored by `ignoring`.
+    /// An `inputs` entry or `subdir` at this site, `path`, is ignored by `ignoring`.
     fn ignored(&self, path: IgnoredPath, ignoring: Ignoring) -> Error {
         Error::Ignored {
             provenance: self.provenance.clone(),
@@ -138,12 +138,16 @@ impl Site<'_> {
     }
 }
 
-/// Resolves a file's `subdir` requests under its directory, sorted and without repeats.
+/// Resolves a file's `subdir` requests under its directory, sorted and without repeats, asking
+/// `rules` about each as a folder.
 ///
 /// Sorting here makes the breadth-first order independent of the order the requests were made in.
-pub(super) fn resolve_subdirs(
+/// A directory the grammar refuses is never asked, and one `rules` ignore is refused, so its build
+/// file is never handed to the source.
+pub(super) fn resolve_subdirs<I: IgnoreRules>(
     subdirs: &[StagedSubdir],
     provenance: &Provenance,
+    rules: &I,
 ) -> Result<Vec<Directory>> {
     let mut resolved = Vec::with_capacity(subdirs.len());
     for subdir in subdirs {
@@ -156,6 +160,9 @@ pub(super) fn resolve_subdirs(
             .path
             .under(site.directory())
             .map_err(site.invalid(DeclarationField::Subdir))?;
+        if let Some(ignoring) = rules.ignored(directory.as_str(), EntryKind::Folder)? {
+            return Err(site.ignored(IgnoredPath::Subdir(directory), ignoring));
+        }
         resolved.push(directory);
     }
     resolved.sort();
@@ -548,7 +555,7 @@ mod tests {
             path: Written::new(raw),
             order: DeclarationOrder::new(0),
         });
-        let resolved = resolve_subdirs(&subdirs, &file_in("lib")).unwrap();
+        let resolved = resolve_subdirs(&subdirs, &file_in("lib"), &NothingIgnored).unwrap();
         let rendered: Vec<&str> = resolved.iter().map(Directory::as_str).collect();
         assert_eq!(rendered, ["lib/alpha", "lib/mid", "lib/zeta"]);
     }
@@ -560,7 +567,7 @@ mod tests {
                 path: Written::new(raw),
                 order: DeclarationOrder::new(7),
             }];
-            match resolve_subdirs(&subdirs, &file_in("lib")).unwrap_err() {
+            match resolve_subdirs(&subdirs, &file_in("lib"), &NothingIgnored).unwrap_err() {
                 Error::InvalidDeclaration {
                     provenance,
                     order,
@@ -888,6 +895,46 @@ mod tests {
             *rules.asked.lock().unwrap(),
             [("app/a.md".to_owned(), EntryKind::File)]
         );
+    }
+
+    #[test]
+    fn an_ignored_subdir_is_refused_at_its_site_with_its_joined_path() {
+        let subdirs = [StagedSubdir {
+            path: Written::new("sub"),
+            order: DeclarationOrder::new(3),
+        }];
+        let rules = IgnoringOne::new("app/sub");
+        match resolve_subdirs(&subdirs, &file_in("app"), &rules).unwrap_err() {
+            Error::Ignored {
+                provenance,
+                order,
+                path,
+                ..
+            } => {
+                assert_eq!(provenance.file(), Path::new("app/build.lua"));
+                assert_eq!(order, DeclarationOrder::new(3));
+                assert_eq!(path.to_string(), "app/sub");
+            }
+            other => unreachable!("expected Ignored, got {other:?}"),
+        }
+        assert_eq!(
+            *rules.asked.lock().unwrap(),
+            [("app/sub".to_owned(), EntryKind::Folder)]
+        );
+    }
+
+    #[test]
+    fn a_subdir_that_fails_its_grammar_is_not_asked() {
+        let subdirs = [StagedSubdir {
+            path: Written::new("../x"),
+            order: DeclarationOrder::new(0),
+        }];
+        let rules = IgnoringOne::new("../x");
+        match resolve_subdirs(&subdirs, &file_in(""), &rules).unwrap_err() {
+            Error::InvalidDeclaration { field, .. } => assert_eq!(field, DeclarationField::Subdir),
+            other => unreachable!("expected InvalidDeclaration, got {other:?}"),
+        }
+        assert!(rules.asked.lock().unwrap().is_empty());
     }
 
     #[test]
