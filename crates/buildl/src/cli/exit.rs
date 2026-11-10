@@ -122,6 +122,8 @@ impl Exit {
             Error::Evaluation { .. }
             | Error::MissingBuildFile { .. }
             | Error::InvalidDeclaration { .. }
+            | Error::Ignored { .. }
+            | Error::IgnoreFile { .. }
             | Error::ActionConflict { .. }
             | Error::Nondeterministic { .. }
             | Error::DiscoveryChanged { .. }
@@ -192,11 +194,11 @@ mod tests {
     use buildl_core::{
         ActionFound, ActionOutcome, Ceiling, Check, DeclarationField, DeclarationOrder,
         DeclarationSite, DeclaredKind, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
-        Error, EvaluationFailure, FileChange, InfraKind, InputKind, Label, Origin, OutcomeClass,
-        OutputDifference, OutputName, OutputPath, OutputRefusal, PluginName, PluginRef,
-        PluginVersion, PluginViolation, PortName, Program, Provenance, RemoteFlagConflict,
-        RemoteVariable, SettingName, SourcePath, TargetRole, TokenSource, TreeFault,
-        UnsandboxedRemote, Verification, Want, WantedSet,
+        Error, EvaluationFailure, FileChange, IgnoredPath, Ignoring, InfraKind, InputKind, Label,
+        Origin, OutcomeClass, OutputDifference, OutputName, OutputPath, OutputRefusal, PluginName,
+        PluginRef, PluginVersion, PluginViolation, PortName, Program, Provenance,
+        RemoteFlagConflict, RemoteVariable, SettingName, SourcePath, TargetRole, TokenSource,
+        TreeFault, UnsandboxedRemote, Verification, Want, WantedSet,
     };
 
     use super::Exit;
@@ -373,7 +375,29 @@ mod tests {
                 second_run: None,
             },
             discovery_changed(),
+            ignored(),
+            ignore_file(),
         ]
+    }
+
+    /// An input the workspace's ignore rules cover.
+    fn ignored() -> Error {
+        Error::Ignored {
+            provenance: root_file(),
+            origin: Origin::BuildFile,
+            order: DeclarationOrder::new(1),
+            path: Box::new(IgnoredPath::Input(SourcePath::parse("notes/a.md").unwrap())),
+            ignoring: Box::new(Ignoring::new(".buildlignore", "notes/")),
+        }
+    }
+
+    /// An ignore file whose pattern does not parse.
+    fn ignore_file() -> Error {
+        Error::IgnoreFile {
+            file: "lib/.buildlignore".to_owned(),
+            line: Some(1),
+            reason: "error parsing glob '[z-a]': invalid range; 'z' > 'a'".to_owned(),
+        }
     }
 
     /// A discovery target the build files declared differently once its result was read.
@@ -736,6 +760,13 @@ mod tests {
     }
 
     #[test]
+    fn both_ignore_errors_exit_with_the_definition_code() {
+        assert_eq!(Exit::of_error(&ignored()), Exit::Definition);
+        assert_eq!(Exit::of_error(&ignore_file()), Exit::Definition);
+        assert_eq!(Exit::Definition as u8, 5);
+    }
+
+    #[test]
     fn plugin_not_fetched_exits_5_and_changed_exits_6() {
         assert_eq!(Exit::of_error(&plugin_not_fetched()), Exit::Definition);
         assert_eq!(Exit::of_error(&plugin_changed()), Exit::CorruptState);
@@ -790,12 +821,12 @@ mod tests {
             (Exit::Internal, internal_errors()),
         ];
         let counts: Vec<usize> = rows.iter().map(|(_, errors)| errors.len()).collect();
-        assert_eq!(counts, [9, 4, 3, 27, 4, 7]);
+        assert_eq!(counts, [9, 4, 3, 29, 4, 7]);
         let variants: HashSet<_> = rows
             .iter()
             .flat_map(|(_, errors)| errors.iter().map(mem::discriminant))
             .collect();
-        assert_eq!(variants.len(), 54, "a variant is listed twice");
+        assert_eq!(variants.len(), 56, "a variant is listed twice");
         for (exit, errors) in &rows {
             for error in errors {
                 assert_eq!(Exit::of_error(error), *exit, "{error:?}");

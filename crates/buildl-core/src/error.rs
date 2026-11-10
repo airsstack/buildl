@@ -34,9 +34,9 @@ use std::path::PathBuf;
 
 use crate::types::{
     Ceiling, Declaration, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName, EnvValue,
-    FieldName, InputKind, Label, Node, Origin, OutputPath, PluginName, PluginViolation, Program,
-    Provenance, RemoteUrl, SettingName, SourcePath, TargetRole, TokenSource, TreePath, Want,
-    WantedSet, Written,
+    FieldName, IgnoredPath, Ignoring, InputKind, Label, Node, Origin, OutputPath, PluginName,
+    PluginViolation, Program, Provenance, RemoteUrl, SettingName, SourcePath, TargetRole,
+    TokenSource, TreePath, Want, WantedSet, Written,
 };
 
 /// The result of any fallible call in this crate.
@@ -160,6 +160,36 @@ pub enum Error {
         /// The grammar failure.
         #[source]
         source: Box<Self>,
+    },
+    /// A path a declaration named is ignored by a `.buildlignore`.
+    #[error(
+        "{provenance}{}: {}: {path} is ignored by {} ({})",
+        plugin_suffix(.origin),
+        ignored_field(.path),
+        .ignoring.file(),
+        .ignoring.pattern()
+    )]
+    Ignored {
+        /// The build file.
+        provenance: Provenance,
+        /// Whose code made the declaration.
+        origin: Origin,
+        /// The call's position in the file.
+        order: DeclarationOrder,
+        /// The ignored path, and so the field that named it.
+        path: Box<IgnoredPath>,
+        /// The ignore file and pattern that decided.
+        ignoring: Box<Ignoring>,
+    },
+    /// A `.buildlignore` that cannot be used.
+    #[error("{file}{}: {reason}", line_suffix(.line.as_ref()))]
+    IgnoreFile {
+        /// The workspace-relative, `/`-separated path of the ignore file.
+        file: String,
+        /// The line at fault; `None` when the file as a whole is.
+        line: Option<u32>,
+        /// Why the file cannot be used.
+        reason: String,
     },
     /// A target named both or neither of `rule` and `run`.
     #[error(
@@ -693,6 +723,20 @@ fn plugin_suffix(origin: &Origin) -> String {
         Origin::BuildFile => String::new(),
         chain @ Origin::Plugins(_) => format!(" (plugin {chain})"),
     }
+}
+
+/// The field word of an ignored path: `inputs` for a file a target reads, `subdir` for a
+/// directory handed to the loader.
+const fn ignored_field(path: &IgnoredPath) -> &'static str {
+    match path {
+        IgnoredPath::Input(_) => "inputs",
+        IgnoredPath::Subdir(_) => "subdir",
+    }
+}
+
+/// `:<line>` when an ignore file's fault is on a line; nothing otherwise.
+fn line_suffix(line: Option<&u32>) -> String {
+    line.map_or_else(String::new, |line| format!(":{line}"))
 }
 
 /// The suffix offering the nearest declared name, when there is one.
@@ -1356,10 +1400,10 @@ mod tests {
     };
     use crate::types::{
         Argument, Ceiling, Command, DeclarationOrder, DenialReason, Diagnostic, Directory, EnvName,
-        EnvValue, FieldName, Freshness, HostPath, InputKind, Label, NetworkAccess, Node, Origin,
-        OutputName, OutputPath, OutputSource, PluginName, PluginRef, PluginVersion,
-        PluginViolation, Program, Provenance, RemoteUrl, SettingName, SourcePath, TargetName,
-        TargetRole, TokenSource, TreePath, Want, WantedSet, Written,
+        EnvValue, FieldName, Freshness, HostPath, IgnoredPath, Ignoring, InputKind, Label,
+        NetworkAccess, Node, Origin, OutputName, OutputPath, OutputSource, PluginName, PluginRef,
+        PluginVersion, PluginViolation, Program, Provenance, RemoteUrl, SettingName, SourcePath,
+        TargetName, TargetRole, TokenSource, TreePath, Want, WantedSet, Written,
     };
 
     fn lib_file() -> Provenance {
@@ -2672,6 +2716,65 @@ mod tests {
             std::error::Error::source(&err).unwrap().to_string(),
             source_text
         );
+    }
+
+    fn ignored(path: IgnoredPath, file: &str, pattern: &str) -> Error {
+        Error::Ignored {
+            provenance: lib_file(),
+            origin: Origin::BuildFile,
+            order: DeclarationOrder::new(2),
+            path: Box::new(path),
+            ignoring: Box::new(Ignoring::new(file, pattern)),
+        }
+    }
+
+    #[test]
+    fn an_ignored_input_names_the_path_the_file_and_the_pattern() {
+        let err = ignored(
+            IgnoredPath::Input(SourcePath::parse("notes/a.md").unwrap()),
+            ".buildlignore",
+            "notes/",
+        );
+        assert_eq!(
+            err.to_string(),
+            "lib/build.lua: inputs: notes/a.md is ignored by .buildlignore (notes/)"
+        );
+    }
+
+    #[test]
+    fn an_ignored_subdir_says_subdir() {
+        let err = ignored(
+            IgnoredPath::Subdir(Directory::parse("examples").unwrap()),
+            ".buildlignore",
+            "examples/",
+        );
+        assert_eq!(
+            err.to_string(),
+            "lib/build.lua: subdir: examples is ignored by .buildlignore (examples/)"
+        );
+    }
+
+    #[test]
+    fn an_ignore_file_error_with_a_line() {
+        let err = Error::IgnoreFile {
+            file: "lib/.buildlignore".to_owned(),
+            line: Some(1),
+            reason: "error parsing glob '[z-a]': invalid range; 'z' > 'a'".to_owned(),
+        };
+        assert_eq!(
+            err.to_string(),
+            "lib/.buildlignore:1: error parsing glob '[z-a]': invalid range; 'z' > 'a'"
+        );
+    }
+
+    #[test]
+    fn an_ignore_file_error_without_a_line() {
+        let err = Error::IgnoreFile {
+            file: "lib/.buildlignore".to_owned(),
+            line: None,
+            reason: "a symlink, not a file".to_owned(),
+        };
+        assert_eq!(err.to_string(), "lib/.buildlignore: a symlink, not a file");
     }
 
     #[test]
