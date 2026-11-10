@@ -189,7 +189,7 @@ What every target gets, so a build file writes none of it:
 
 | Setting | Value |
 |---|---|
-| inputs | every file below the build file's folder (`buildl.sources("**/*")`), except a `target/` folder a plain `cargo build` left there and a `.git/` folder: sources, manifests, `build.rs`, toolchain files, and files read by `include_str!` or a build script |
+| inputs | every file below the build file's folder (`buildl.sources("**/*")`), except a `target/` folder a plain `cargo build` left there and a `.git/` folder, and any path a `.buildlignore` leaves out: sources, manifests, `build.rs`, toolchain files, and files read by `include_str!` or a build script |
 | env | `{ HOME = "unkeyed", PATH = "unkeyed" }` |
 | network | `network = true` |
 

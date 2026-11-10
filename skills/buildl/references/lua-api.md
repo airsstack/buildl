@@ -147,7 +147,7 @@ b.target("greeting.txt", { run = { "echo", "$opt:greeting" }, stdout = true })
 
 Adds the build file of the folder `path`, relative to this one. Its targets are named from the
 workspace root, such as `//lib:name`. A path that leaves the workspace is refused, and so is a
-folder with no build file.
+folder with no build file and a folder a `.buildlignore` ignores.
 
 ```lua no-check
 -- needs lib/build.lua beside it, which the checked blocks do not have
@@ -160,7 +160,9 @@ b.subdir("lib")
 Returns the regular files below this build file's folder that match `pattern`, relative to the
 folder, sorted. `*` matches within one folder name and stops at `/`. `**/` matches any number of
 folders, none included. Links are not followed. The output directory and `.buildl` are never
-searched.
+searched. A path a `.buildlignore` ignores is not listed and an ignored folder is not entered, so
+leave documentation and notes out with that file, not with a filter in Lua. An `inputs` entry that
+names an ignored path is refused.
 
 ```lua
 local b = buildl

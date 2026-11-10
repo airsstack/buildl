@@ -137,6 +137,8 @@ what a caller needs as data. A few of the ones you are most likely to meet:
 | `CorruptState` | a state file does not hold what `buildl` writes there | the file, and the JSON error that says why |
 | `DispatcherFault` | the dispatcher answered success and left targets without an outcome | every such target, in label order |
 | `LostBuildFiles` | the dispatcher answered success and left build files unevaluated | every such directory, in directory order |
+| `Ignored` | an `inputs` entry, or a `subdir`, names a path a `.buildlignore` ignores; raised while loading, so it ends the command with exit code 5 | the build file and the declaration, the path and whether it was an input or a subdir, and the ignore file and pattern that decided |
+| `IgnoreFile` | a `.buildlignore` cannot be used: a pattern does not parse, its bytes are not UTF-8, or it cannot be read or is a symlink; exit code 5 | the file, the line when there is one, and why. When the walk of `buildl.sources` is the first to read the file, it reaches the command line as an `Evaluation` error with the same text |
 | `PluginNotFetched`, `PluginChanged`, `PluginFetch` | a plugin is not there to use, its files are not the ones `buildl.lock` pinned, or `git` could not fetch it | the plugin, and what is missing or different |
 | `UploadUnsandboxed` | uploading to the remote, or remote execution, was asked for while actions run `bare` | which of the two was asked for |
 | `RemoteToken`, `RemoteSwitch`, `RemoteFlags` | the remote token cannot be used, a `BUILDL_REMOTE_*` variable is not `1` or `0`, or the remote flags contradict each other | the token's source (never the token), the variable and its value, or the conflict |
