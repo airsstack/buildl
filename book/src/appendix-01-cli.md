@@ -36,7 +36,7 @@ These three are accepted before the command and after it, by every command and s
 |---|---|
 | `--color <WHEN>` | When to colour what is printed: `auto` (the default) colours when standard error is a terminal and `NO_COLOR` is unset, `always` always does, `never` never does |
 | `-h`, `--help` | Print help; `-h` prints a shorter summary |
-| `-V`, `--version` | Print the version, such as `buildl 0.2.1` |
+| `-V`, `--version` | Print the version, such as `buildl 0.3.0` |
 
 ## Naming targets
 

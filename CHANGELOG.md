@@ -5,6 +5,33 @@ Notable changes to this workspace, newest first. The format follows
 [SemVer](https://semver.org/) — with the caveat that for a `0.1.z` version the *middle* number is
 the slot Cargo treats as breaking, so a compatible change ships as a `z` bump.
 
+## 0.3.0 — 2026-11-10
+
+It publishes `buildl-core`, `buildl-lua`, `buildl` and `buildl-cli` at 0.3.0, and `buildl-cargo` at
+0.1.1 so `cargo buildl` runs the 0.3.0 engine. The library crates change their public types (see
+Changed). The `rust` and `c` plugins are unchanged; `cargo buildl init` still pins
+`plugin-rust-v0.2.0`.
+
+### Added
+
+- **`.buildlignore` files** leave paths out of the build. Each one applies to its folder and below,
+  like `.gitignore`, in the same syntax. An ignored path is never listed, entered or counted by
+  `buildl.sources`; an `inputs` entry or a `subdir` naming one is refused at load with exit code 5;
+  and `watch` starts no cycle for a change under one. A `.buildlignore` with a bad pattern, invalid
+  UTF-8 or a symlink in place of the file is refused with exit code 5, naming the file and line. The
+  root `build.lua` and `buildl.toml` are always read, and the output directory, the state directory
+  and `.git` stay skipped whatever the rules say. See "Leaving paths out: .buildlignore" in the
+  book's chapter 3.
+
+### Changed
+
+- **`buildl-core`**: a new port, `IgnoreRules`, with the default `NothingIgnored`; `Ports` gains
+  `type Ignore`, `Cycles` gains `type Ignore` and `rules()`, and `Error` gains `Ignored` and
+  `IgnoreFile`.
+- **`buildl-lua`**: `LuaSource` is generic over the rule set, and `LuaSource::new` takes it after
+  the skipped directories.
+- **`buildl`**: a new adapter, `ignore_rules::BuildlIgnore`, built on the `ignore` crate.
+
 ## 0.2.1 — 2026-11-09
 
 It publishes `buildl` and `buildl-cli` at 0.2.1 and the new `buildl-cargo` at 0.1.0, and tags the
