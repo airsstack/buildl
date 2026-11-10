@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-10
 depends-on: [03]
 built-on: 6643cfeb82a2
@@ -139,3 +139,25 @@ Commit `test(buildl): ignored paths stay out of the action key`.
 
 - `cargo make dod` green after each task; `cargo make guard-crate-edges` passes (`buildl-lua` gains
   no dependency); `cargo deny check -D unused-wrapper` passes.
+
+## Review findings
+
+One reviewer pass over 08afa55..08e2229: 1 marked blocking (plan amendment).
+
+- 🟡 plan Task 2 premises disproved by the build, plan not amended — amended below in Deviations.
+- 🟡 removing the post-loop `rule_error.take()` broke no test — fixed in 63ae2b0: `a_rule_error_on_the_last_entry_is_returned_with_its_text` (fails on the last entry walked) fails with that take removed, passes with it. `cargo make dod` → green.
+- 🟡 `a_rule_error_stops_the_walk_with_its_text` failed already at the declaring directory, never reaching `filter_entry` — fixed in 63ae2b0: the fake fails on one exact path; `a_rule_error_stops_the_walk_before_later_entries` fails with the in-loop take removed; `a_rule_error_on_the_declaring_directory_is_returned_with_its_text` keeps the pre-walk case.
+- 🔵 bound `IgnoreRules + Clone + Send + 'static` repeated 8 times — declined: a crate-private trait with a blanket impl is refused by `private_bounds` (an error under `-D warnings`) because `LuaSource<I>` is public; a public trait would widen the crate's API.
+- 🔵 `LuaSource::new` doc said every entry is asked — fixed in 63ae2b0: a non-UTF-8 entry path is not asked.
+- 🔵 stray blank line in the test imports — fixed in 63ae2b0.
+- 🔵 `the_skip_list_wins_over_the_rules` lacked the "re-includes" half — fixed in 63ae2b0: a second rule set answering for `out/o.c` and `.buildl/s.c`; out and `.buildl` are never listed or asked. Fails with the skip check removed.
+- 🔵 plan's file list named engine.rs, module.rs, plugin/loader.rs, plugin/environment.rs for test calls only — amended below.
+
+## Deviations
+
+- 2026-11-10 — Task 1: making `Sources` generic forced `I: IgnoreRules + Clone + Send + 'static` through `BuildlModule`, `Plugins`/`Shared`, `primitives_table`, `environment::build` and `engine::build` (module.rs, engine.rs, plugin/loader.rs, plugin/environment.rs), not only their test calls. `Send` and `'static` come from `HostModule: Send + Sync` and the mlua closures.
+- 2026-11-10 — Task 1: `LuaSource::new(root, limits, skipped, ignore, plugins)`; the plan set no order.
+- 2026-11-10 — Task 2: `a_bad_buildlignore_found_by_the_walk_exits_5` lists `buildl.sources("src/*.c")`, not `"**/*"`. With `**/*` the bad `lib/.buildlignore` is also an input, so load's input check reports the same text and the test passed with no walk filter. From the root the walk visits the whole tree for any pattern, so only the walk reads that file. Real stderr: `error: build.lua: runtime error: line 1: buildl.sources: lib/.buildlignore:1: error parsing glob '[z-a]': invalid range; 'z' > 'a'`, exit 5.
+- 2026-11-10 — Task 2: `a_nested_buildlignore_applies_below_its_folder` reads the target's inputs through `Workspace::graph()`, not `plan --json`: a finished plan entry holds only the key digest. Fixture: a copy of `twins` with `build.lua` rewritten.
+- 2026-11-10 — `book/src/ch11-06-decision-records.md:43` (arguments of `LuaSource::new`) made stale by Task 1; updated by plan 06.
+- 2026-11-10 — Tasks 1 and 2 ran in one coder with one gate run, committed separately (2cdb5f1, 08e2229).

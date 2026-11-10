@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-10
 depends-on: [03]
 built-on: 6643cfeb82a2
@@ -103,3 +103,24 @@ and `cargo deny check -D unused-wrapper` are green. Commit `feat(buildl-core): w
 
 - `cargo make dod` green after each task; `cargo make guard-module-edges` passes (`watch -> ports`
   and `watch -> types` exist, `crates/expected-module-edges.txt:57,59`).
+
+## Review findings
+
+One reviewer pass over 9c1bb64..08afa55: 4 marked blocking (R1, R2, P1, P2).
+
+- 🟡 R1 `graph()` reopened the workspace but kept the old rules, so a `.buildlignore` edit whose Check found an equal graph left stale rules — fixed in 230f632: `graph()` stores the reopened rules; `a_graph_check_hands_back_the_rules_it_read` failed before (`None` vs `Some(true)`), passes after. `cargo make dod` → green.
+- 🟡 R2 keep `layout.config` paths and `.buildlignore` files before asking the rules — declined: spec §6 settles that `watch` asks the rules for every path, a root `buildl.toml` and a `.buildlignore` included ("a change like any other unless a pattern ignores that file").
+- 🟡 P1, P2 plan premises disproved by the build — amended below in Deviations.
+- 🔵 N1 docs said "last workspace it opened" while `graph()` did not keep its rules — fixed in 230f632 (module, `Reopening` and `Cycles::rules` docs).
+- 🔵 N2 `a_cycle_hands_back_the_rules_it_read` passed with the original wiring's rules — fixed in 230f632: the original is asked before `.buildlignore` is written.
+- 🔵 N3 each changed path asked twice (loop `kept`, then `react`'s `kept`) — fixed in 230f632: the loop passes `None` to `react`; `each_changed_path_is_asked_of_the_rules_once` failed before, passes after. The Risks note (one stat per changed path) holds.
+- 🔵 N4 no loop test for a mixed batch — fixed in 230f632: `the_trigger_names_only_the_paths_the_rules_keep`.
+
+## Deviations
+
+- 2026-11-10 — Task 2 (P1): the plan's fixture cannot prove the filter. With a built graph, a change that is no input only triggers a graph Check; the Check finds an equal graph and starts no cycle, so the test passes with no filter. Built instead: the `chain` fixture with a broken `lib/build.lua`, so no graph loads and every kept change starts a build; `README.md` and `notes/a.md` replace `src/a.c` (the fixture has no `src/`). Both tests fail with the filter disabled.
+- 2026-11-10 — Task 2 (P2): `a_changed_buildlignore_takes_effect_next_cycle` starts with no `.buildlignore`, writes `notes/` and delivers `.buildlignore` (a cycle), then `notes/a.md` (no cycle). The plan's "a `.buildlignore` batch starts a cycle" holds only with no loaded graph; with one it is a Check, which is why R1 (rules refreshed by `graph()` too) was needed.
+- 2026-11-10 — Task 1: `Reopening` refreshes its rules after every successful reopen, in `build` and in `graph`; a failed reopen leaves them as they were.
+- 2026-11-10 — Task 1: buildl-core test rule sets record through `std::sync::Mutex` (`IgnoreRules: Sync`); no threads.
+- 2026-11-10 — `book/src/ch10-00-watch.md:152` shows `react(batch, reference)`; plan 06 owns that file and updates it.
+- 2026-11-10 — Tasks 1 and 2 ran in one coder with one gate run, committed separately (3b9f39a, 08afa55).

@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-10
 depends-on: [03, 04, 05]
 built-on: 6643cfeb82a2
@@ -32,6 +32,10 @@ book/src/ch11-04-errors.md                — modify: the variant table (:129-14
 plugins/rust/README.md                    — modify: inputs row (:84) and workspace note (:145) mention .buildlignore
 skills/buildl/SKILL.md                    — modify: where it describes sources (:118)
 skills/buildl/references/lua-api.md       — modify: sources (:16-25) and subdir against ignored paths
+book/src/appendix-01-cli.md               — modify (amended): the watch paragraph names ignored paths
+book/src/ch08-05-the-rust-plugin.md       — modify (amended): inputs row, as the plugin README
+book/src/ch11-06-decision-records.md      — modify (amended): LuaSource::new also takes the ignore rules
+skills/buildl/references/buildl-toml.md   — modify (amended): walk_entries does not count ignored folders
 ```
 
 ## Order of work
@@ -89,3 +93,27 @@ passes `buildl check`.
 
 - `cargo make book-build` and `cargo make skills` succeed; every console block in the new text was
   produced by the built binary.
+
+## Review findings
+
+One reviewer pass over 63ae2b0..1ea0aae: 0 blocking. All ten 🔵 fixed in b6665c6; `cargo make book-build`, `cargo make skills`, `cargo make dod`, `cargo deny check -D unused-wrapper` → green.
+
+- 🟡 four files changed outside the plan's list — amended in "Files that change".
+- 🔵 appendix-03: an ignored declaring folder is unreachable (load refuses an ignored `subdir`) — fixed.
+- 🔵 appendix-04: the `Ignored` message's ` (plugin <chain>)` suffix was missing — fixed.
+- 🔵 ch03-02: `watch` drops a change to an ignored `build.lua` or `buildl.toml` — added.
+- 🔵 ch10-00, ch11-03: when edited `.buildlignore` lines apply (read lazily per open, at the latest from the next open) — fixed.
+- 🔵 ch10-00: the loop calls `react` with no rules after `kept` filtered — diagram and prose fixed.
+- 🔵 overlong edited lines in ch10-00, ch11-03, appendix-01 — rewrapped.
+- 🔵 ch11-03: "after the milestones" → "outside any milestone" — fixed.
+- 🔵 ch11-03: `Cycles` catalog row names `type Ignore` and `rules()` — fixed.
+- 🔵 ch11-03: `NothingIgnored` named beside `NoRemote` — fixed.
+- 🔵 skills/buildl/SKILL.md: quoted message in its general form — fixed.
+- Deviation "What starts a build" table without rows: reviewer judged the requirement met (Mermaid drop node, bullet and paragraph); the table is the recorded run of one session.
+
+## Deviations
+
+- 2026-11-10 — Files outside the list, made stale by plans 04 and 05: `appendix-01-cli.md` (watch paragraph), `ch08-05-the-rust-plugin.md` (inputs row), `ch11-06-decision-records.md` (`LuaSource::new(root, limits, skipped, ignore, plugins)`), `skills/buildl/references/buildl-toml.md` (`walk_entries`). Committed with Task 1 (appendix-01) and Task 2 (the rest).
+- 2026-11-10 — ch10-00 "What starts a build": the table is a recorded watch session; no row added, since a row there would not come from a run. Ignored paths are named in the drop node, the batch bullet and a new paragraph.
+- 2026-11-10 — appendix-04 also shows the walk route of a bad pattern as its own run, since its text (`buildl.sources: …` inside an evaluation error) differs from the load route.
+- 2026-11-10 — Tasks 1 and 2 ran in one coder with one gate run, committed separately (22b2c9b, 1ea0aae).
