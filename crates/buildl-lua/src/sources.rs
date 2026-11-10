@@ -220,7 +220,6 @@ mod tests {
     use std::fs;
     use std::os::unix::fs::symlink;
     use std::path::{Path, PathBuf};
-
     use std::sync::{Arc, Mutex};
 
     use buildl_core::{
@@ -289,12 +288,12 @@ mod tests {
         }
     }
 
-    /// Rules ignoring the workspace-relative paths in `ignored`, failing every question when
-    /// `fails` is set, and remembering every question asked.
+    /// Rules ignoring the workspace-relative paths in `ignored`, failing the question about the
+    /// path in `fails_on`, and remembering every question asked.
     #[derive(Debug, Clone, Default)]
     struct Rules {
         ignored: Vec<&'static str>,
-        fails: bool,
+        fails_on: Option<&'static str>,
         asked: Arc<Mutex<Vec<(String, EntryKind)>>>,
     }
 
@@ -306,9 +305,9 @@ mod tests {
             }
         }
 
-        fn failing() -> Self {
+        fn failing_on(path: &'static str) -> Self {
             Self {
-                fails: true,
+                fails_on: Some(path),
                 ..Self::default()
             }
         }
@@ -321,7 +320,7 @@ mod tests {
     impl IgnoreRules for Rules {
         fn ignored(&self, path: &str, kind: EntryKind) -> buildl_core::Result<Option<Ignoring>> {
             self.asked.lock().unwrap().push((path.to_owned(), kind));
-            if self.fails {
+            if self.fails_on == Some(path) {
                 return Err(Error::IgnoreFile {
                     file: "lib/.buildlignore".to_owned(),
                     line: Some(1),
@@ -654,17 +653,25 @@ mod tests {
     #[test]
     fn the_skip_list_wins_over_the_rules() {
         let (_dir, root) = workspace(&["a.c", "out/o.c", ".buildl/s.c"]);
-        let rules = Rules::default();
-        let walk = with_rules(&root, "", &["out", ".buildl"], rules.clone(), unbounded());
-        assert_eq!(walk.find("**/*.c").unwrap(), ["a.c"]);
-        assert!(
-            rules
-                .asked()
-                .iter()
-                .all(|(path, _)| !path.starts_with("out") && !path.starts_with(".buildl")),
-            "{:?}",
-            rules.asked()
-        );
+        for rules in [
+            Rules::default(),
+            Rules::ignoring(&["a.c", "out/o.c", ".buildl/s.c"]),
+        ] {
+            let walk = with_rules(&root, "", &["out", ".buildl"], rules.clone(), unbounded());
+            let listed = walk.find("**/*.c").unwrap();
+            assert!(
+                listed.iter().all(|path| path == "a.c"),
+                "{listed:?} for {rules:?}"
+            );
+            assert!(
+                rules
+                    .asked()
+                    .iter()
+                    .all(|(path, _)| !path.starts_with("out") && !path.starts_with(".buildl")),
+                "{:?}",
+                rules.asked()
+            );
+        }
     }
 
     #[test]
@@ -675,9 +682,39 @@ mod tests {
     }
 
     #[test]
-    fn a_rule_error_stops_the_walk_with_its_text() {
+    fn a_rule_error_on_the_last_entry_is_returned_with_its_text() {
         let (_dir, root) = workspace(&["lib/a.c", "lib/b.c"]);
-        let walk = with_rules(&root, "lib", &[], Rules::failing(), unbounded());
+        let walk = with_rules(&root, "lib", &[], Rules::failing_on("lib/b.c"), unbounded());
+        let refusal = walk.find("*.c").unwrap_err();
+        assert_eq!(refusal.failure(), &EvaluationFailure::Runtime);
+        assert_eq!(
+            refusal.diagnostic("sources", None).as_str(),
+            "buildl.sources: lib/.buildlignore:1: unusable"
+        );
+    }
+
+    #[test]
+    fn a_rule_error_stops_the_walk_before_later_entries() {
+        let (_dir, root) = workspace(&["lib/a.c", "lib/b.c", "lib/c.c"]);
+        let rules = Rules::failing_on("lib/a.c");
+        let walk = with_rules(&root, "lib", &[], rules.clone(), unbounded());
+        let refusal = walk.find("*.c").unwrap_err();
+        assert_eq!(refusal.failure(), &EvaluationFailure::Runtime);
+        assert_eq!(
+            refusal.diagnostic("sources", None).as_str(),
+            "buildl.sources: lib/.buildlignore:1: unusable"
+        );
+        assert!(
+            rules.asked().iter().all(|(path, _)| path != "lib/c.c"),
+            "{:?}",
+            rules.asked()
+        );
+    }
+
+    #[test]
+    fn a_rule_error_on_the_declaring_directory_is_returned_with_its_text() {
+        let (_dir, root) = workspace(&["lib/a.c"]);
+        let walk = with_rules(&root, "lib", &[], Rules::failing_on("lib"), unbounded());
         let refusal = walk.find("*.c").unwrap_err();
         assert_eq!(refusal.failure(), &EvaluationFailure::Runtime);
         assert_eq!(

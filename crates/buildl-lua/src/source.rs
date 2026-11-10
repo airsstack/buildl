@@ -104,10 +104,10 @@ impl<I: IgnoreRules + Clone + Send + 'static> LuaSource<I> {
     /// skips nothing: the walk then lists the workspace's own output and state directories too.
     ///
     /// `ignore` is asked about each entry the walk meets, by its workspace-relative path and
-    /// kind, after the skipped directories are ruled out. The walk neither lists, enters nor
-    /// counts an entry it reports ignored, and a build file whose own directory is ignored gets an
-    /// empty list. An error from `ignore` stops the walk and refuses the `buildl.sources` call
-    /// with the error's text. Pass [`NothingIgnored`](buildl_core::NothingIgnored) for a workspace
+    /// kind, after the skipped directories are ruled out; an entry whose workspace-relative path
+    /// is not UTF-8 is not asked. The walk neither lists, enters nor counts an entry it reports
+    /// ignored, and a build file whose own directory is ignored gets an empty list. An error from
+    /// `ignore` stops the walk and refuses the `buildl.sources` call with the error's text. Pass [`NothingIgnored`](buildl_core::NothingIgnored) for a workspace
     /// with no ignore files.
     ///
     /// `plugins` maps each plugin name a build file may use to the directory holding its
