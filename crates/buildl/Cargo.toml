@@ -1,6 +1,6 @@
 [package]
 name         = "buildl"
-version      = "0.2.1"
+version      = "0.3.0"
 description  = "A sandboxed, deterministic build system whose build files are written in Lua and evaluated on the airsl embedded runtime."
 readme       = "README.md"
 edition.workspace      = true

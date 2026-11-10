@@ -105,9 +105,9 @@ ignore      = "0.4"
 # for publish-readiness. Members inherit these with `{ workspace = true }`. Cargo
 # strips the path and keeps the version when packaging, so a published crate
 # depends on crates.io.
-buildl-core = { version = "0.2.0", path = "crates/buildl-core" }
-buildl-lua  = { version = "0.2.0", path = "crates/buildl-lua" }
-buildl      = { version = "0.2.1", path = "crates/buildl" }
+buildl-core = { version = "0.3.0", path = "crates/buildl-core" }
+buildl-lua  = { version = "0.3.0", path = "crates/buildl-lua" }
+buildl      = { version = "0.3.0", path = "crates/buildl" }
 
 [workspace.lints.rust]
 unsafe_code        = "forbid"
