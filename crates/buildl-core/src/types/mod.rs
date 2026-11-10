@@ -21,6 +21,9 @@
 //!   [`Description`], [`SettingName`], [`SettingValue`] — the validated values a declaration's
 //!   fields hold;
 //!   [`ExpandedDescription`] — a description once its placeholders are expanded.
+//! - [`EntryKind`] — what a path is, as the one asking whether it is ignored knows it;
+//!   [`Ignoring`] — the ignore file and pattern that decided; [`IgnoredPath`] — a path a
+//!   declaration named that a pattern covers.
 //! - [`EntryName`] — the file name every build file has; [`FieldName`] — the name of a field in
 //!   a declaration's option table.
 //! - [`Program`] — the name of a program a command runs; [`EnvValue`] — an environment
@@ -135,6 +138,7 @@ pub mod diagnostic;
 pub mod digest;
 pub mod directory;
 pub mod discovered;
+pub mod entry_kind;
 pub mod entry_name;
 pub mod env_mark;
 pub mod env_name;
@@ -144,6 +148,7 @@ pub mod field_name;
 pub mod file_stat;
 pub(crate) mod forcing;
 pub mod found;
+pub mod ignoring;
 pub mod input_stat;
 pub mod isolation;
 pub mod label;
@@ -230,6 +235,7 @@ pub use diagnostic::Diagnostic;
 pub use digest::{Digest, Hasher};
 pub use directory::Directory;
 pub use discovered::Discovered;
+pub use entry_kind::EntryKind;
 pub use entry_name::EntryName;
 pub use env_mark::EnvMark;
 pub use env_name::EnvName;
@@ -239,6 +245,7 @@ pub use field_name::FieldName;
 pub use file_stat::{FileStat, StatEntry};
 pub(crate) use forcing::Forcing;
 pub use found::{Found, FoundEntry, FoundKind};
+pub use ignoring::{IgnoredPath, Ignoring};
 pub use input_stat::{InputKind, InputStat};
 pub use isolation::Isolation;
 pub use label::Label;
