@@ -150,9 +150,10 @@ files declare a different graph. It takes exactly the flags of [`build`](#buildl
 | `--no-remote-execute` | Run every action here, and keep using the remote cache, whatever the manifest and variables say |
 | `--remote-jobs <N>` | How many actions may be with the remote at once, from 1 to 1024, for this run |
 
-Changes under the output directory, under `.buildl` and under `.git` are ignored, and so are changes
-to paths a [`.buildlignore`](ch03-02-inputs-outputs-deps.md#leaving-paths-out-buildlignore) ignores. `watch` runs
-until Ctrl-C, a usage error (exit code 2) or a failure of the file watcher (exit code 3).
+Changes under the output directory, under `.buildl` and under `.git` are ignored, and so are
+changes to paths a [`.buildlignore`](ch03-02-inputs-outputs-deps.md#leaving-paths-out-buildlignore)
+ignores. `watch` runs until Ctrl-C, a usage error (exit code 2) or a failure of the file watcher
+(exit code 3).
 
 ## `buildl test`
 

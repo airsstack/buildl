@@ -193,7 +193,9 @@ from the listing, and the rules it holds still apply.
 - `out/` and `.buildl/` stay out of the build whatever the patterns say, so a `!out/` line changes
   nothing.
 - A pattern that names `build.lua` or `buildl.toml` does not stop buildl reading it. The
-  rules apply only to `inputs`, `subdir`, `sources` and `watch`.
+  rules apply only to `inputs`, `subdir`, `sources` and `watch`. Under `watch`, though, a change to
+  an ignored `build.lua` or `buildl.toml` is dropped like any other ignored path, so editing it
+  starts no cycle; the next cycle, started by something else, reads it.
 - A `.buildlignore` buildl cannot use is refused, never skipped: a pattern that does not parse, a
   file that is not UTF-8, a file that cannot be read, or one that is a symbolic link. The exit code
   is 5 and the message names the file, with the line where there is one.

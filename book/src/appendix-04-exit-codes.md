@@ -214,6 +214,9 @@ says what the files do.
 | the file is not UTF-8 | `error: <file>:<line>: not UTF-8`, the line being the first with bytes that are not |
 | the file cannot be used | `error: <file>: <why>`, with no line |
 
+When a plugin made the declaration, `<build file>` is followed by ` (plugin <chain>)`, as in
+`error: build.lua (plugin pl@0.1.0): inputs: notes/todo.txt is ignored by .buildlignore (notes/)`.
+
 An `inputs` entry under `notes/`, which the root `.buildlignore` ignores with `notes/`:
 
 ```lua

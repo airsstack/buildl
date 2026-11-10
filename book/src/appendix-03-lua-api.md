@@ -224,8 +224,7 @@ followed, and the output directory and `.buildl` are never searched. A path a
 [`.buildlignore`](ch03-02-inputs-outputs-deps.md#leaving-paths-out-buildlignore) ignores is not
 listed, and an ignored folder is not entered. Every other entry visited counts against
 `[declaration] walk_entries`; an ignored one does not. A `.buildlignore` the walk meets that cannot
-be used stops the build file with exit code 5. When the folder of the build file is itself
-ignored, the list is empty.
+be used stops the build file with exit code 5.
 
 ```lua
 local go_files = b.sources("**/*.go")

@@ -106,9 +106,10 @@ files, so a new file that a pattern now matches is built, and a comment edited i
 not.
 
 The rules are those of the workspace as it was last opened, for a build or for a check. A
-`.buildlignore` that is edited is a change like any other, unless a pattern ignores it, and its new
-lines apply from the next time `watch` opens the workspace. Before the first open has succeeded no
-path is dropped for being ignored.
+`.buildlignore` that is edited is a change like any other, unless a pattern ignores it. Each file is
+read the first time a path below its folder is asked about, and a file that was read is kept until
+the next open, so edited lines apply at the latest from the next open. Before the first open has
+succeeded no path is dropped for being ignored.
 
 `watch: <path> changed` names the first path of the batch in path order, and `and N more` counts
 the others that were kept.
@@ -158,7 +159,7 @@ graph LR
     subgraph CORE["buildl-core: watch/"]
         LOOP["watch(changes, cycles, layout)"]
         KEPT["kept(batch, layout, rules)"]
-        REACT["react(batch, reference, rules)"]
+        REACT["react(batch, reference, None)"]
         INP["watched_inputs(whole, scoped)"]
     end
     subgraph AD["buildl"]
@@ -175,10 +176,10 @@ graph LR
     WS -->|"Pipeline::build_watched"| INP
 ```
 
-`react` takes a batch, what the last build left behind (its graph and its inputs) and the ignore
-rules, and answers build, check or ignore. The loop first cuts the batch with `kept`, which drops
-the build's own paths and those the rules ignore, using the rules of the workspace the last cycle
-opened; `Reopening` keeps them and hands them back through `Cycles::rules`, refreshed after every
-successful reopen, whether for a build or for a check. File events come from the `notify` crate: FSEvents on macOS, inotify on
-Linux. Each build is a full reload of the workspace. That is fast enough that `watch` needs no
-long-lived Lua engine.
+The loop first cuts the batch with `kept`, which drops the build's own paths and those the rules
+ignore, using the rules of the workspace the last cycle opened; `Reopening` keeps them and hands
+them back through `Cycles::rules`, refreshed after every successful reopen, whether for a build or
+for a check. `react` then takes the batch that is left, what the last build left behind (its graph
+and its inputs) and no rules, since `kept` has applied them, and answers build, check or ignore.
+File events come from the `notify` crate: FSEvents on macOS, inotify on Linux. Each build is a
+full reload of the workspace. That is fast enough that `watch` needs no long-lived Lua engine.

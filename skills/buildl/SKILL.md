@@ -97,7 +97,7 @@ To allow it, buildl.toml's [ceiling] proc.run needs "sh". Should I add it?
 | `env` written as a list of names | exit 5, `env must mark each variable "key" or "unkeyed"`. Write `env = { HOME = "unkeyed" }` |
 | `HOME` or `PATH` marked `"key"` | `plan` and `build` exit 5, `the variable HOME holds this machine's path …; mark it "unkeyed" if it only finds files`. Mark it `"unkeyed"` |
 | a program used but not in `proc.run` | `check` passes. `plan` and `build` exit 4 |
-| an `inputs` entry or a `subdir` a `.buildlignore` ignores | exit 5, `<path> is ignored by .buildlignore (<pattern>)`. Take the path out of `.buildlignore`, or out of the build file |
+| an `inputs` entry or a `subdir` a `.buildlignore` ignores | exit 5, `<build file>: inputs: <path> is ignored by <ignore file> (<pattern>)`, or `subdir:` in place of `inputs:`; the ignore file is whichever decided, such as `src/.buildlignore`. Take the path out of `.buildlignore`, or out of the build file |
 | an `inputs` file that does not exist | `check` passes. `plan` and `build` exit 5, `input <file> does not exist` |
 | `print` in `build.lua` | `print` is removed. `error("text", 0)` shows a value |
 

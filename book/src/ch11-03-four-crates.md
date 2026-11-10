@@ -220,7 +220,8 @@ The remote cache's gRPC client is `tonic`, with `tonic-prost`, `prost` and `pros
 messages, `tokio` for the runtime the client needs, and `uuid` to name uploads. Only the `remote`
 module names them. `notify` reports the operating system's file events to the `watch` module and
 to no other. `ignore` matches the patterns of `.buildlignore` files, in the `ignore_rules` module and
-nowhere else; `buildl-lua` does not depend on it, and reaches the rules through the core's port. In `buildl-cargo`, `serde` and `serde_json` read the output of `cargo metadata`.
+nowhere else; `buildl-lua` does not depend on it, and reaches the rules through the core's port. In
+`buildl-cargo`, `serde` and `serde_json` read the output of `cargo metadata`.
 
 Inside `buildl` there is one module per adapter, plus `plugins`, which serves no port but is kept
 apart as an adapter is, two shared modules and three that put everything together:
@@ -392,14 +393,16 @@ classDiagram
 
 `Ports::Remote` is called only by `build` and `test`. Every other command, a workspace with no
 `[remote]` table and a run with the remote turned off hold a cache that is never asked: `NoRemote`
-in the core's tests, `Remote::Off` in `LocalPorts`. `Ports::Log` is bound by both `EventLog` and
-`RunHistory`, because `plan`, `verify`, `build` and `test` read the last result of each discovery
-target from the log they append to. The two stay separate traits, since a writer and a reader never
-share a method. `Ports::Ignore` is asked by Load for each `inputs` entry and each `subdir`, in
-both discovery passes. `local_ports` makes one `BuildlIgnore` for each opening of the workspace and
-hands it both to `Ports::Ignore` and to `LuaSource`, whose walk asks it about every entry and
-never enters an ignored folder. `buildl watch` opens the workspace again on every cycle, so a
-changed `.buildlignore` applies from the next one; `Reopening` keeps the rules of the last
+in the core's tests, `Remote::Off` in `LocalPorts`. `Ports::Ignore` has a default of the same kind,
+`NothingIgnored`, which the core's tests bind and the watch loop passes to `react`. `Ports::Log` is
+bound by both `EventLog` and `RunHistory`, because `plan`, `verify`, `build` and `test` read the
+last result of each discovery target from the log they append to. The two stay separate traits,
+since a writer and a reader never share a method. `Ports::Ignore` is asked by Load for each
+`inputs` entry and each `subdir`, in both discovery passes. `local_ports` makes one `BuildlIgnore`
+for each opening of the workspace and hands it both to `Ports::Ignore` and to `LuaSource`, whose
+walk asks it about every entry and never enters an ignored folder. `buildl watch` opens the
+workspace again on every cycle. Each file is read lazily and kept by that instance, so a changed
+`.buildlignore` applies at the latest from the next open. `Reopening` keeps the rules of the last
 workspace it opened and returns them through `Cycles::rules`.
 
 Commands that need only a few ports are also free functions, beside the `Pipeline` methods. The
@@ -432,7 +435,7 @@ with a `Manifest` as well; `pipeline::log` over just `RunHistory` and `ContentSt
 "Milestone" is the step of the roadmap the adapter arrived with: 1 is the core build, 2 the rest of
 the everyday commands, 3 the sandbox, 4 approvers, 6 the remote cache and 7 watch mode. Plugins and
 discovery targets (5) and remote execution (8) added no port of their own. `IgnoreRules` came with
-`.buildlignore`, after the milestones, so its row has a dash.
+`.buildlignore`, outside any milestone, so its row has a dash.
 
 | Port | `buildl-core` uses it for | Adapter | Crate | Milestone |
 |---|---|---|---|---|
@@ -457,7 +460,7 @@ discovery targets (5) and remote execution (8) added no port of their own. `Igno
 | `Reporter` | output blocks, the status line, the summary and notices about the remote | the terminal reporter, with a live and a plain mode | `buildl` | 1 |
 | `IgnoreRules` | Load: is an `inputs` entry or a `subdir` ignored; watch: is a changed path ignored; the walk behind `buildl.sources` asks it too, through the `buildl-lua` adapter | `BuildlIgnore`: the `.buildlignore` files, read from the root down through the `ignore` crate's pattern matcher | `buildl` | — |
 | `Changes` | waiting for files of the workspace to change | `NotifyChanges`: `notify`, relative paths, a 50 ms window | `buildl` | 7 |
-| `Cycles` | one watch cycle: the workspace opened again and built, or loaded | `Reopening`, in `workspace/watching.rs` | `buildl` | 7 |
+| `Cycles` | one watch cycle: the workspace opened again and built, or loaded; it also carries `type Ignore` and `rules()`, the rules of the last workspace opened | `Reopening`, in `workspace/watching.rs` | `buildl` | 7 |
 | `WatchReport` | what a watch says about itself | the terminal reporter's `watch: ` lines | `buildl` | 7 |
 
 One more trait sits beside them: `BlobSource`, which an upload to the remote reads blobs through,
