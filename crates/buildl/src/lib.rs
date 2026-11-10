@@ -199,6 +199,7 @@ pub mod dispatch;
 pub mod exec;
 pub mod graph;
 pub mod host;
+pub mod ignore_rules;
 pub mod log;
 pub mod manifest;
 pub mod plugins;
