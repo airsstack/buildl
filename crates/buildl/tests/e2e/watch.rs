@@ -515,3 +515,62 @@ fn a_watch_records_what_plain_builds_record() {
     assert_eq!(watched.rows(), plain.rows());
     assert_eq!(watched.snapshot().first_difference(&plain.snapshot()), None);
 }
+
+/// A copy of `chain` whose build files do not load, so the first cycle leaves no graph and every
+/// change that is not dropped starts a build.
+fn chain_without_a_graph() -> Fixture {
+    let fixture = chain();
+    fixture.append("lib/build.lua", b"error(\"broken\")\n");
+    fixture
+}
+
+#[test]
+fn a_change_under_an_ignored_folder_starts_no_cycle() {
+    let fixture = chain_without_a_graph();
+    fs::write(fixture.root().join(".buildlignore"), "notes/\n").unwrap();
+
+    let rounds = watch(
+        &fixture,
+        vec![
+            Box::new(|fixture| {
+                fs::create_dir_all(fixture.root().join("notes")).unwrap();
+                fs::write(fixture.root().join("notes/a.md"), "a note\n").unwrap();
+                vec!["notes/a.md"]
+            }),
+            Box::new(|fixture| {
+                fs::write(fixture.root().join("README.md"), "about this\n").unwrap();
+                vec!["README.md"]
+            }),
+        ],
+    );
+
+    assert_eq!(rounds.len(), 2);
+    assert_eq!(rounds_after(&rounds, 0), 0);
+    assert_eq!(rounds[1].after, Some(1));
+    assert_eq!(rounds[1].paths, ["README.md"]);
+}
+
+#[test]
+fn a_changed_buildlignore_takes_effect_next_cycle() {
+    let fixture = chain_without_a_graph();
+
+    let rounds = watch(
+        &fixture,
+        vec![
+            Box::new(|fixture| {
+                fs::write(fixture.root().join(".buildlignore"), "notes/\n").unwrap();
+                vec![".buildlignore"]
+            }),
+            Box::new(|fixture| {
+                fs::create_dir_all(fixture.root().join("notes")).unwrap();
+                fs::write(fixture.root().join("notes/a.md"), "a note\n").unwrap();
+                vec!["notes/a.md"]
+            }),
+        ],
+    );
+
+    assert_eq!(rounds.len(), 2);
+    assert_eq!(rounds[1].after, Some(0));
+    assert_eq!(rounds[1].paths, [".buildlignore"]);
+    assert_eq!(rounds_after(&rounds, 1), 0);
+}
