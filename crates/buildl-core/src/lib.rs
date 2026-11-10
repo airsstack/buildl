@@ -181,8 +181,9 @@ pub use pipeline::{Collected, Pipeline, Shown, doctor, gc, log};
 pub use plan::plan;
 pub use ports::{
     ActionCache, Approver, BlobSource, Changes, Clock, ContentStore, Cycles, DeclarationSource,
-    Digester, Dispatcher, EventLog, ExecStrategy, GraphRecord, Host, Manifest, NoRemote, PortSet,
-    Ports, RemoteCache, Reporter, RunHistory, StatCache, Sweep, ToolResolver, WatchReport,
+    Digester, Dispatcher, EventLog, ExecStrategy, GraphRecord, Host, IgnoreRules, Manifest,
+    NoRemote, NothingIgnored, PortSet, Ports, RemoteCache, Reporter, RunHistory, StatCache, Sweep,
+    ToolResolver, WatchReport,
 };
 pub use resolve::{narrow, reach, resolve};
 pub use types::{
