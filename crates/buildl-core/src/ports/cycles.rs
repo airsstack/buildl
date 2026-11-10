@@ -19,7 +19,8 @@ pub trait Cycles {
     /// The ignore rules of the workspace a cycle opens.
     type Ignore: IgnoreRules;
 
-    /// The ignore rules of the last cycle whose workspace opened, or `None` while none has.
+    /// The ignore rules of the last workspace opened, for a build or for a graph check, or `None`
+    /// while none has opened.
     ///
     /// The loop asks them whether a changed path is ignored before it starts a cycle for it.
     fn rules(&self) -> Option<&Self::Ignore>;

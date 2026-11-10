@@ -7,7 +7,7 @@
 //! and showing what the loop says. Each is a port, and this file only sequences them.
 
 use crate::error::Error;
-use crate::ports::{Changes, Cycles, WatchReport};
+use crate::ports::{Changes, Cycles, NothingIgnored, WatchReport};
 use crate::types::{Cycle, Reaction, Reference, Trigger, WatchLayout};
 use crate::watch::react::{kept, react};
 
@@ -52,7 +52,8 @@ pub fn watch<C: Changes, Y: Cycles + WatchReport>(
         let Some(batch) = kept(&batch, &reference.layout, cycles.rules()) else {
             continue;
         };
-        let build = match react(&batch, &reference, cycles.rules()) {
+        // The rules have already cut `batch`, so `react` is not asked to cut it again.
+        let build = match react(&batch, &reference, None::<&NothingIgnored>) {
             Reaction::Build => true,
             Reaction::Ignore => false,
             Reaction::Check => cycles.graph().map_or(true, |graph| {
@@ -105,6 +106,7 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::{BTreeMap, VecDeque};
     use std::rc::Rc;
+    use std::sync::{Arc, Mutex};
 
     use super::watch;
     use crate::error::{Error, PortName, Result};
@@ -114,13 +116,26 @@ mod tests {
         SettingName, SettingValue, TargetGraph, Trigger, WatchLayout, Watched,
     };
 
-    /// Rules ignoring the paths they hold.
-    struct Rules(Vec<&'static str>);
+    /// Rules ignoring the paths they hold, and noting each path they are asked about.
+    struct Rules {
+        held: Vec<&'static str>,
+        asked: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl Rules {
+        fn new(held: Vec<&'static str>) -> Self {
+            Self {
+                held,
+                asked: Arc::default(),
+            }
+        }
+    }
 
     impl IgnoreRules for Rules {
         fn ignored(&self, path: &str, _kind: EntryKind) -> Result<Option<Ignoring>> {
+            self.asked.lock().unwrap().push(path.to_owned());
             Ok(self
-                .0
+                .held
                 .contains(&path)
                 .then(|| Ignoring::new(".buildlignore", path)))
         }
@@ -529,7 +544,7 @@ mod tests {
         let second = cycle(Some(layout("out")), Some(built("b")));
         let changes = batch(&["src/a.c"]);
         let (_, calls) = run_with(
-            Some(Rules(vec!["notes/a.md"])),
+            Some(Rules::new(vec!["notes/a.md"])),
             vec![batch(&["notes/a.md"]), changes.clone()],
             vec![first, second],
             vec![Ok(graph("b"))],
@@ -549,5 +564,34 @@ mod tests {
                 Call::Next,
             ]
         );
+    }
+
+    #[test]
+    fn the_trigger_names_only_the_paths_the_rules_keep() {
+        let first = cycle(Some(layout("out")), Some(built("a")));
+        let (_, calls) = run_with(
+            Some(Rules::new(vec!["notes/a.md"])),
+            vec![batch(&["notes/a.md", "src/a.c"])],
+            vec![first, cycle(None, None)],
+            vec![Ok(graph("b"))],
+        );
+        assert_eq!(
+            calls[5],
+            Call::Building(Trigger::Changed(batch(&["src/a.c"])))
+        );
+    }
+
+    #[test]
+    fn each_changed_path_is_asked_of_the_rules_once() {
+        let first = cycle(Some(layout("out")), Some(built("a")));
+        let rules = Rules::new(vec!["notes/a.md"]);
+        let asked = Arc::clone(&rules.asked);
+        let _ = run_with(
+            Some(rules),
+            vec![batch(&["notes/a.md", "src/a.c"])],
+            vec![first, cycle(None, None)],
+            vec![Ok(graph("b"))],
+        );
+        assert_eq!(*asked.lock().unwrap(), ["notes/a.md", "src/a.c"]);
     }
 }

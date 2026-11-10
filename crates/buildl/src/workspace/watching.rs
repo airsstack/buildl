@@ -6,7 +6,7 @@
 //!
 //! Responsibilities: [`Reopening`], which runs a cycle's build and its graph check on a
 //! workspace opened for that cycle alone, hands the loop the ignore rules of the last workspace
-//! it opened, and forwards the loop's lines to the caller's
+//! it opened for a build or a graph check, and forwards the loop's lines to the caller's
 //! reporter; and [`Workspace::watch`].
 //!
 //! Non-responsibilities: when a cycle starts and what a change means, which is the loop's in
@@ -27,8 +27,8 @@ use crate::workspace::{RunOptions, Workspace};
 
 /// The cycles of one watch: each opens the workspace again and runs on what it reads.
 ///
-/// It also keeps the `.buildlignore` rules of the last workspace it opened, for the loop to ask
-/// about each changed path.
+/// It also keeps the `.buildlignore` rules of the last workspace it opened, for a build or for a
+/// graph check, for the loop to ask about each changed path.
 ///
 /// The reporter is both the build's `Reporter` and the loop's `WatchReport` and is borrowed
 /// once, here, so one value writes to the terminal and the two kinds of line never interleave.
@@ -99,9 +99,9 @@ impl<R: Reporter, C: Console> Cycles for Reopening<'_, R, C> {
     }
 
     fn graph(&mut self) -> Result<TargetGraph> {
-        let workspace = Workspace {
-            wiring: self.wiring.reopened()?,
-        };
+        let wiring = self.wiring.reopened()?;
+        self.rules = Some(wiring.ignore().clone());
+        let workspace = Workspace { wiring };
         workspace.graph().map(|(graph, _)| graph)
     }
 }
@@ -263,20 +263,53 @@ mod tests {
         assert!(!rules);
     }
 
+    /// Whether the rules `cycles` hands back ignore `notes/a.md`, or `None` while it hands none.
+    fn ignores_notes(cycles: &Reopening<'_, Silent, NoTerminal>) -> Option<bool> {
+        cycles.rules().map(|rules| {
+            rules
+                .ignored("notes/a.md", EntryKind::Unknown)
+                .unwrap()
+                .is_some()
+        })
+    }
+
+    /// Asks the rules of `wiring` about `notes/a.md` while no `.buildlignore` exists, so they
+    /// hold "no rules" from then on; rules handed back from `wiring` itself, not from the
+    /// workspace a cycle reopens, would then miss a file written afterwards.
+    fn ask_before_the_file_exists(wiring: &Wiring) {
+        let asked = wiring.ignore().ignored("notes/a.md", EntryKind::Unknown);
+        assert!(asked.unwrap().is_none());
+    }
+
     #[test]
     fn a_cycle_hands_back_the_rules_it_read() {
         let (_dir, root) = workspace("");
         let wiring = Wiring::read(&root).unwrap();
+        ask_before_the_file_exists(&wiring);
         fs::write(root.join(".buildlignore"), "notes/\n").unwrap();
 
         let ignored = with_cycles(&wiring, |cycles| {
             let _ = cycles.build();
-            cycles
-                .rules()
-                .map(|rules| rules.ignored("notes/a.md", EntryKind::Unknown).unwrap())
+            ignores_notes(cycles)
         });
 
-        assert!(ignored.unwrap().is_some());
+        assert_eq!(ignored, Some(true));
+    }
+
+    #[test]
+    fn a_graph_check_hands_back_the_rules_it_read() {
+        let (_dir, root) = workspace(CEILING);
+        fs::write(root.join("build.lua"), "").unwrap();
+        let wiring = Wiring::read(&root).unwrap();
+        ask_before_the_file_exists(&wiring);
+        fs::write(root.join(".buildlignore"), "notes/\n").unwrap();
+
+        let ignored = with_cycles(&wiring, |cycles| {
+            cycles.graph().unwrap();
+            ignores_notes(cycles)
+        });
+
+        assert_eq!(ignored, Some(true));
     }
 
     #[test]
@@ -290,11 +323,9 @@ mod tests {
             fs::write(root.join("buildl.toml"), "[nonsense]\nx = 1\n").unwrap();
             let failed = cycles.build();
             assert!(failed.layout.is_none());
-            cycles
-                .rules()
-                .map(|rules| rules.ignored("notes/a.md", EntryKind::Unknown).unwrap())
+            ignores_notes(cycles)
         });
 
-        assert!(ignored.unwrap().is_some());
+        assert_eq!(ignored, Some(true));
     }
 }
