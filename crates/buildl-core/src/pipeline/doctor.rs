@@ -15,7 +15,9 @@ use crate::grants::outside::outside;
 use crate::grants::plugins::plugin_violations;
 use crate::grants::wanted::{sites, wanted};
 use crate::placement::layout::Layout;
-use crate::ports::{ContentStore, DeclarationSource, Dispatcher, Manifest, RunHistory};
+use crate::ports::{
+    ContentStore, DeclarationSource, Dispatcher, IgnoreRules, Manifest, RunHistory,
+};
 use crate::resolve::resolve;
 use crate::types::{Checkup, EntryName, Label, MachineFolders};
 
@@ -40,8 +42,13 @@ use crate::types::{Checkup, EntryName, Label, MachineFolders};
 /// declares different discovery targets than the first, whatever [`resolve`] returns, whatever
 /// the manifest port returns, and [`Error::OutputConflict`](crate::Error::OutputConflict) for two
 /// outputs that would be written to one place.
-pub fn doctor<S, D, M, H, C>(
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is a distinct port this command reads; grouping them would only rename them"
+)]
+pub fn doctor<S, I, D, M, H, C>(
     source: &S,
+    rules: &I,
     dispatcher: &mut D,
     manifest: &M,
     entry: &EntryName,
@@ -51,12 +58,13 @@ pub fn doctor<S, D, M, H, C>(
 ) -> Result<(Checkup, Vec<Label>)>
 where
     S: DeclarationSource,
+    I: IgnoreRules,
     D: Dispatcher,
     M: Manifest,
     H: RunHistory,
     C: ContentStore,
 {
-    let loaded = load_twice(source, dispatcher, entry, folders, |labels| {
+    let loaded = load_twice(source, rules, dispatcher, entry, folders, |labels| {
         results(history, cas, labels)
     })?;
     let graph = resolve(loaded.declarations)?;

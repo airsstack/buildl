@@ -13,8 +13,8 @@
 
 use crate::ports::{
     ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher, EventLog,
-    ExecStrategy, GraphRecord, Host, Manifest, RemoteCache, Reporter, RunHistory, StatCache,
-    ToolResolver,
+    ExecStrategy, GraphRecord, Host, IgnoreRules, Manifest, RemoteCache, Reporter, RunHistory,
+    StatCache, ToolResolver,
 };
 
 /// One implementation of each port, chosen together.
@@ -32,8 +32,8 @@ use crate::ports::{
 ///     Channel, Clock, ContentStore, DeclarationSource, Diagnostic, Digest, Digester, Directory,
 ///     Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EventLog, ExecStrategy,
 ///     FileMode, Found, GraphRecord, Host, InputStat, Label, LiveSink, LogLine, Manifest,
-///     NoRemote, OutcomeEvent, OutputPath, Platform, PortName, Ports, Program, RawOutcome,
-///     ReadyAction, RemoteNotice, Reporter, Result, RunHistory, SourcePath, StatCache, StatEntry,
+///     NoRemote, NothingIgnored, OutcomeEvent, OutputPath, Platform, PortName, Ports, Program,
+///     RawOutcome, ReadyAction, RemoteNotice, Reporter, Result, RunHistory, SourcePath, StatCache, StatEntry,
 ///     Summary, TargetGraph, Timestamp, ToolResolver, Turn, WantedSet, Workspace,
 /// };
 ///
@@ -271,6 +271,7 @@ use crate::ports::{
 ///     type Graph = Nothing;
 ///     type Reporter = Nothing;
 ///     type Approver = Nothing;
+///     type Ignore = NothingIgnored;
 ///     type Remote = NoRemote;
 /// }
 /// ```
@@ -307,6 +308,9 @@ pub trait Ports {
     /// How a build is asked whether it may do what it wants. Called only from the thread that
     /// called the build.
     type Approver: Approver;
+    /// How a path is asked whether the workspace's ignore files cover it. Called from the threads
+    /// that evaluate build files.
+    type Ignore: IgnoreRules;
     /// Where results shared between machines are looked up and stored. Called from the threads
     /// that run actions.
     type Remote: RemoteCache;

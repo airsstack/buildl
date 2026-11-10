@@ -36,6 +36,7 @@ use crate::dispatch::ThreadPool;
 use crate::exec::{Bare, InputSandbox, Local, OutPaths};
 use crate::graph::GraphFile;
 use crate::host::{LocalHost, written_root};
+use crate::ignore_rules::BuildlIgnore;
 use crate::log::LocalLog;
 use crate::manifest::{TomlManifest, WorkspaceRoot};
 use crate::plugins::{Lock, check};
@@ -69,6 +70,7 @@ impl<R: Reporter, C: Console> Ports for LocalPorts<R, C> {
     type Graph = GraphFile;
     type Reporter = R;
     type Approver = LocalApprover<C>;
+    type Ignore = BuildlIgnore;
     type Remote = Remote;
 }
 
@@ -87,6 +89,9 @@ pub struct Wiring {
     search: SearchPath,
     scratch: Scratch,
     data: DataDir,
+    /// The `.buildlignore` files of this reading of the workspace. Each reading makes its own,
+    /// so a changed file shows in the next one.
+    ignore: BuildlIgnore,
 }
 
 impl Wiring {
@@ -117,6 +122,7 @@ impl Wiring {
         let workspace = manifest.workspace()?;
         let scratch = Scratch::new(&std::env::temp_dir(), root.as_path());
         let written = written_root(pwd, start, root.as_path());
+        let ignore = BuildlIgnore::new(root.as_path());
         Ok(Self {
             root,
             written,
@@ -125,6 +131,7 @@ impl Wiring {
             search: SearchPath::from_process(),
             scratch,
             data: DataDir::User,
+            ignore,
         })
     }
 
@@ -188,6 +195,12 @@ impl Wiring {
             state: self.workspace.state.clone(),
             config,
         })
+    }
+
+    /// The `.buildlignore` rules of this workspace. Clones share what has been read.
+    #[must_use]
+    pub const fn ignore(&self) -> &BuildlIgnore {
+        &self.ignore
     }
 
     /// Keeps approvals in `dir` instead of the user's data directory.
@@ -491,7 +504,8 @@ impl Wiring {
     /// was fingerprinted. The approver is the one the manifest's `[approver]` table names; `console`
     /// is the one it asks on, and the other two never use it. The remote cache is the one the
     /// manifest's `[remote]` table names when `remote` consults it and the manifest names one, and
-    /// none otherwise; making it reads its token and sends nothing.
+    /// none otherwise; making it reads its token and sends nothing. The ignore rules are this
+    /// wiring's own, so every set of ports made from one wiring shares what they have read.
     ///
     /// # Errors
     ///
@@ -578,6 +592,7 @@ impl Wiring {
             graph: GraphFile::new(layout),
             reporter,
             approver: self.approver(console),
+            ignore: self.ignore.clone(),
             remote: Remote::of(self.workspace.remote.as_ref(), remote, root)?,
         })
     }
@@ -1237,6 +1252,33 @@ mod tests {
             matches!(plan.verdicts(), [Verdict::Dirty { .. }]),
             "{:?}",
             plan.verdicts()
+        );
+    }
+
+    #[test]
+    fn a_pipeline_over_the_ports_refuses_an_input_a_buildlignore_covers() {
+        let (_dir, root) = workspace(&bare());
+        fs::create_dir(root.join("notes")).unwrap();
+        fs::write(root.join("notes/a.md"), "a\n").unwrap();
+        fs::write(root.join(".buildlignore"), "notes/\n").unwrap();
+        fs::write(
+            root.join("build.lua"),
+            "buildl.target(\"copy\", { inputs = { \"notes/a.md\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+        )
+        .unwrap();
+        let wiring = Wiring::read(&root).unwrap();
+        let lock = wiring.lock().unwrap();
+
+        let mut pipeline: LocalPipeline<Silent, NoTerminal> = Pipeline::new(
+            wiring
+                .ports(&lock, Silent, NoTerminal, RemotePolicy::OFF)
+                .unwrap(),
+        );
+        let error = pipeline.check(wiring.entry()).unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "build.lua: inputs: notes/a.md is ignored by .buildlignore (notes/)"
         );
     }
 

@@ -13,7 +13,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crate::error::Error;
-use crate::ports::DeclarationSource;
+use crate::ports::{DeclarationSource, IgnoreRules};
 use crate::types::{Declaration, Directory, Discovered, EntryName, Evaluated};
 
 use super::traversal::{build_file, convert, resolve_subdirs};
@@ -25,8 +25,8 @@ pub(crate) enum FileResult {
     Stopped,
     /// The directory holds no build file.
     Absent,
-    /// The source failed, a `subdir` request left the workspace, or a declaration failed its
-    /// grammar: the first of these in the order the file is processed.
+    /// The source failed, a `subdir` request left the workspace, a declaration failed its
+    /// grammar, or an input is ignored: the first of these in the order the file is processed.
     Failed(Error),
     /// The file was evaluated and every declaration in it is valid.
     Loaded {
@@ -41,10 +41,12 @@ pub(crate) enum FileResult {
 ///
 /// Within the file the steps run in one fixed order, so a file that fails in more than one way
 /// always fails the same way: evaluate, then resolve the `subdir` requests, then convert each
-/// declaration in call order. `discovered` is handed to `source` as it is. Returns
+/// declaration in call order, asking `rules` about each input. `discovered` is handed to `source`
+/// as it is. Returns
 /// [`FileResult::Stopped`] without calling `source` when `stop` is already set.
-pub(crate) fn evaluate_file<S: DeclarationSource>(
+pub(crate) fn evaluate_file<S: DeclarationSource, I: IgnoreRules>(
     source: &S,
+    rules: &I,
     entry: &EntryName,
     directory: &Directory,
     discovered: &Discovered,
@@ -66,7 +68,7 @@ pub(crate) fn evaluate_file<S: DeclarationSource>(
     };
     let mut declarations = Vec::with_capacity(staged.declarations.len());
     for declaration in staged.declarations {
-        match convert(declaration, provenance) {
+        match convert(declaration, provenance, rules) {
             Ok(declaration) => declarations.push(declaration),
             Err(error) => return FileResult::Failed(error),
         }
@@ -90,7 +92,7 @@ mod tests {
 
     use super::{FileResult, evaluate_file};
     use crate::error::{DeclarationField, Error, EvaluationFailure, Result};
-    use crate::ports::DeclarationSource;
+    use crate::ports::{DeclarationSource, NothingIgnored};
     use crate::types::{
         BuildFile, DeclarationOrder, Diagnostic, Directory, Discovered, EntryName, Evaluated,
         Freshness, Label, NetworkAccess, Origin, OutputSource, StagedDeclaration, StagedFile,
@@ -134,6 +136,7 @@ mod tests {
     fn run(source: &Counting, directory: &str) -> FileResult {
         evaluate_file(
             source,
+            &NothingIgnored,
             &entry(),
             &Directory::parse(directory).unwrap(),
             &Discovered::empty(),
@@ -191,6 +194,7 @@ mod tests {
         let stop = AtomicBool::new(true);
         let result = evaluate_file(
             &source,
+            &NothingIgnored,
             &entry(),
             &Directory::root(),
             &Discovered::empty(),
@@ -304,6 +308,7 @@ mod tests {
 
         evaluate_file(
             &source,
+            &NothingIgnored,
             &entry(),
             &directory,
             &held,
@@ -311,6 +316,7 @@ mod tests {
         );
         evaluate_file(
             &source,
+            &NothingIgnored,
             &entry(),
             &directory,
             &Discovered::empty(),

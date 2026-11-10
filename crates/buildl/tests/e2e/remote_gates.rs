@@ -392,6 +392,7 @@ impl Ports for Gated {
     type Graph = <Real as Ports>::Graph;
     type Reporter = <Real as Ports>::Reporter;
     type Approver = <Real as Ports>::Approver;
+    type Ignore = <Real as Ports>::Ignore;
     type Remote = HeldRemote;
 }
 
@@ -447,6 +448,7 @@ impl Rig {
             graph,
             reporter,
             approver,
+            ignore,
             remote: _,
         } = wiring.ports(&lock, Silent, NoTerminal, RemotePolicy::OFF)?;
         let ports = PortSet::<Gated> {
@@ -472,6 +474,7 @@ impl Rig {
             graph,
             reporter,
             approver,
+            ignore,
             remote: HeldRemote {
                 seen: Arc::clone(&self.seen),
                 reply: self.reply,

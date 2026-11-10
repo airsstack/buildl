@@ -10,9 +10,9 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use buildl_core::{
     ActionOutcome, Argument, Command, ContentStore, Digest, Discovered, EntryName, Error, FileMode,
-    Label, LiveOutput, LogLine, LoggedRun, MachineFolders, OnFailure, OutcomeClass, OutputManifest,
-    OutputName, Pipeline, PortName, Produced, Rerun, Sample, Scope, StagedItem, StoredFile,
-    Summary, Tally, TargetGraph, TargetRole, Timestamp, Written, json, pipeline,
+    Label, LiveOutput, LogLine, LoggedRun, MachineFolders, NothingIgnored, OnFailure, OutcomeClass,
+    OutputManifest, OutputName, Pipeline, PortName, Produced, Rerun, Sample, Scope, StagedItem,
+    StoredFile, Summary, Tally, TargetGraph, TargetRole, Timestamp, Written, json, pipeline,
 };
 
 use crate::common::{
@@ -115,6 +115,7 @@ fn graph_of(
 ) -> Result<(TargetGraph, Vec<Label>), Error> {
     pipeline::graph(
         source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &MachineFolders::default(),
@@ -130,6 +131,7 @@ fn checked_with(
 ) -> Result<buildl_core::Loaded, Error> {
     pipeline::check(
         source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &MachineFolders::default(),
@@ -280,6 +282,7 @@ fn gc_keeps_rows_of_targets_declared_from_discovery() {
     let ports = pipeline.ports_mut();
     let collected = pipeline::gc(
         &declaring(),
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &MachineFolders::default(),
@@ -352,6 +355,7 @@ fn doctor_wants_include_discovered_targets() {
     let doctor = |history: &FakeHistory, cas: &FakeCas| {
         pipeline::doctor(
             &source(),
+            &NothingIgnored,
             &mut FakeDispatcher::default(),
             &manifest,
             &entry(),

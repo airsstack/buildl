@@ -215,6 +215,7 @@ mod tests {
     use crate::error::{Error, EvaluationFailure};
     use crate::load::evaluation::FileResult;
     use crate::load::traversal::{build_file, convert};
+    use crate::ports::NothingIgnored;
     use crate::types::{
         Declaration, DeclarationOrder, Diagnostic, Directory, EntryName, Origin, StagedDeclaration,
         StagedItem, StagedSetting, Written,
@@ -256,7 +257,12 @@ mod tests {
                 default: Written::new(""),
             }),
         };
-        convert(staged, build_file(directory, &entry()).provenance()).unwrap()
+        convert(
+            staged,
+            build_file(directory, &entry()).provenance(),
+            &NothingIgnored,
+        )
+        .unwrap()
     }
 
     fn failure_in(directory: &Directory) -> Error {

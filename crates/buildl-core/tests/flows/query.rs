@@ -8,8 +8,8 @@
 use std::collections::BTreeSet;
 
 use buildl_core::{
-    Direction, EntryName, Error, Label, MachineFolders, Pipeline, Query, StagedItem, Written,
-    pipeline,
+    Direction, EntryName, Error, Label, MachineFolders, NothingIgnored, Pipeline, Query,
+    StagedItem, Written, pipeline,
 };
 
 use crate::common::{
@@ -67,6 +67,7 @@ fn deps_answer_what_a_target_needs_across_build_files() {
     for start in ["//:app", "//:default"] {
         let answer = pipeline::query(
             &source,
+            &NothingIgnored,
             &mut FakeDispatcher::default(),
             &entry(),
             &MachineFolders::default(),
@@ -85,6 +86,7 @@ fn rdeps_answer_what_needs_a_target_across_build_files() {
     let source = fixture();
     let answer = pipeline::query(
         &source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &MachineFolders::default(),
@@ -98,6 +100,7 @@ fn rdeps_answer_what_needs_a_target_across_build_files() {
 
     let answer = pipeline::query(
         &source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &MachineFolders::default(),
@@ -115,6 +118,7 @@ fn a_pipeline_answers_what_the_free_function_answers() {
     let question = asked(Direction::Rdeps, "//:main.o");
     let free = pipeline::query(
         &fixture(),
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &MachineFolders::default(),
@@ -135,6 +139,7 @@ fn a_pipeline_answers_what_the_free_function_answers() {
 fn a_target_naming_nothing_is_refused_with_the_nearest_one() {
     let error = pipeline::query(
         &fixture(),
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &MachineFolders::default(),
@@ -157,6 +162,7 @@ fn a_missing_build_file_stops_the_query_before_it_is_answered() {
     let source = FakeSource::new(workspace(vec![("", file(root_items(), &["lib"]))]));
     let error = pipeline::query(
         &source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &MachineFolders::default(),

@@ -11,8 +11,8 @@ use std::path::Path;
 use buildl_core::{
     Declaration, DeclarationField, Declared, Diagnostic, Direction, Directory, Discovered,
     Dispatcher, EntryName, Error, EvaluationFailure, EvaluationLimit, Freshness, Label, LiveOutput,
-    MachineFolders, OnFailure, Origin, OutputName, Pipeline, PortName, Query, Scope, TargetRole,
-    Turn, Written, json, load, pipeline,
+    MachineFolders, NothingIgnored, OnFailure, Origin, OutputName, Pipeline, PortName, Query,
+    Scope, TargetRole, Turn, Written, json, load, pipeline,
 };
 
 use crate::common::{
@@ -27,6 +27,7 @@ fn entry() -> EntryName {
 fn names(source: &FakeSource) -> Vec<String> {
     load(
         source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &Discovered::empty(),
@@ -62,6 +63,7 @@ fn origin_is_carried_to_the_declaration() {
     ]));
     let declarations = load(
         &source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &Discovered::empty(),
@@ -123,6 +125,7 @@ fn a_shuffled_file_loads_to_byte_identical_canonical_json() {
     let a = json::canonical::to_vec(
         &load(
             &ordered,
+            &NothingIgnored,
             &mut FakeDispatcher::default(),
             &entry(),
             &Discovered::empty(),
@@ -133,6 +136,7 @@ fn a_shuffled_file_loads_to_byte_identical_canonical_json() {
     let b = json::canonical::to_vec(
         &load(
             &shuffled,
+            &NothingIgnored,
             &mut FakeDispatcher::default(),
             &entry(),
             &Discovered::empty(),
@@ -154,6 +158,7 @@ fn a_directory_requested_twice_is_evaluated_once() {
     ]));
     load(
         &source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &Discovered::empty(),
@@ -171,6 +176,7 @@ fn a_subdir_cannot_leave_the_workspace() {
         ]));
         match load(
             &source,
+            &NothingIgnored,
             &mut FakeDispatcher::default(),
             &entry(),
             &Discovered::empty(),
@@ -193,6 +199,7 @@ fn a_missing_root_names_no_requester() {
     let source = FakeSource::new(workspace(vec![]));
     match load(
         &source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &Discovered::empty(),
@@ -215,6 +222,7 @@ fn a_missing_subdir_names_the_file_that_requested_it() {
     let source = FakeSource::new(workspace(vec![("", file(vec![], &["lib"]))]));
     let error = load(
         &source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &Discovered::empty(),
@@ -238,6 +246,7 @@ fn the_requester_of_a_shared_missing_directory_does_not_depend_on_call_order() {
         ]));
         let error = load(
             &source,
+            &NothingIgnored,
             &mut FakeDispatcher::default(),
             &entry(),
             &Discovered::empty(),
@@ -261,6 +270,7 @@ fn an_evaluation_failure_passes_through_unchanged() {
     ]));
     match load(
         &source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &Discovered::empty(),
@@ -321,6 +331,7 @@ fn wide() -> BTreeMap<Directory, FakeFile> {
 fn every_order_and_pace_loads_the_same_declarations() {
     let expected: Vec<Declaration> = load(
         &FakeSource::new(wide()),
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &Discovered::empty(),
@@ -330,7 +341,14 @@ fn every_order_and_pace_loads_the_same_declarations() {
     for mut dispatcher in dispatchers() {
         let how = format!("{:?} {:?}", dispatcher.order, dispatcher.pace);
         let source = FakeSource::new(wide());
-        let found = load(&source, &mut dispatcher, &entry(), &Discovered::empty()).unwrap();
+        let found = load(
+            &source,
+            &NothingIgnored,
+            &mut dispatcher,
+            &entry(),
+            &Discovered::empty(),
+        )
+        .unwrap();
         assert_eq!(found, expected, "{how}");
         assert_eq!(source.evaluated().len(), 7, "{how}: every file, once");
     }
@@ -355,6 +373,7 @@ fn every_order_and_pace_reports_the_same_error() {
     let failure = |dispatcher: &mut FakeDispatcher| {
         let error = load(
             &FakeSource::new(files()),
+            &NothingIgnored,
             dispatcher,
             &entry(),
             &Discovered::empty(),
@@ -379,6 +398,7 @@ fn a_task_taken_after_the_error_evaluates_nothing() {
     ]));
     match load(
         &source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &Discovered::empty(),
@@ -405,7 +425,15 @@ fn a_lost_load_task_is_lost_build_files() {
             lose: BTreeMap::from([(1, loss)]),
             ..FakeDispatcher::default()
         };
-        match load(&source, &mut dispatcher, &entry(), &Discovered::empty()).unwrap_err() {
+        match load(
+            &source,
+            &NothingIgnored,
+            &mut dispatcher,
+            &entry(),
+            &Discovered::empty(),
+        )
+        .unwrap_err()
+        {
             Error::LostBuildFiles { directories } => {
                 assert_eq!(directories, [dir("a")], "{loss:?}");
             }
@@ -442,6 +470,7 @@ fn a_dispatcher_that_fails_fails_the_load_with_its_error() {
     ]));
     match load(
         &source,
+        &NothingIgnored,
         &mut FailingDispatcher,
         &entry(),
         &Discovered::empty(),
@@ -472,6 +501,10 @@ fn built() -> Pipeline<FakePorts> {
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one workspace is loaded by four entry points under two dispatchers, and each call lists its ports"
+)]
 fn check_graph_query_and_gc_load_in_any_order() {
     let mut jumbled = FakeDispatcher {
         order: Order::NewestFirst,
@@ -483,6 +516,7 @@ fn check_graph_query_and_gc_load_in_any_order() {
     let (history, cas) = (FakeHistory::default(), FakeCas::default());
     let checked = pipeline::check(
         &source(),
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &MachineFolders::default(),
@@ -494,6 +528,7 @@ fn check_graph_query_and_gc_load_in_any_order() {
         checked,
         pipeline::check(
             &source(),
+            &NothingIgnored,
             &mut jumbled,
             &entry(),
             &MachineFolders::default(),
@@ -506,6 +541,7 @@ fn check_graph_query_and_gc_load_in_any_order() {
     let canonical = |(graph, _)| json::canonical::to_vec(&graph).unwrap();
     let graphed = pipeline::graph(
         &source(),
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &MachineFolders::default(),
@@ -518,6 +554,7 @@ fn check_graph_query_and_gc_load_in_any_order() {
         canonical(
             pipeline::graph(
                 &source(),
+                &NothingIgnored,
                 &mut jumbled,
                 &entry(),
                 &MachineFolders::default(),
@@ -531,6 +568,7 @@ fn check_graph_query_and_gc_load_in_any_order() {
     let question = Query::new(Direction::Rdeps, Label::parse("//lib/core:base").unwrap());
     let (queried, _) = pipeline::query(
         &source(),
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &MachineFolders::default(),
@@ -544,6 +582,7 @@ fn check_graph_query_and_gc_load_in_any_order() {
         queried,
         pipeline::query(
             &source(),
+            &NothingIgnored,
             &mut jumbled,
             &entry(),
             &MachineFolders::default(),
@@ -560,6 +599,7 @@ fn check_graph_query_and_gc_load_in_any_order() {
         let ports = pipeline.ports_mut();
         pipeline::gc(
             &source(),
+            &NothingIgnored,
             dispatcher,
             &entry(),
             &MachineFolders::default(),
@@ -580,6 +620,7 @@ fn declared_target(item: buildl_core::StagedItem) -> Result<buildl_core::Target,
     let source = FakeSource::new(workspace(vec![("", file(vec![item], &[]))]));
     let declarations = load(
         &source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &Discovered::empty(),
