@@ -7,7 +7,7 @@
 //!
 //! Non-responsibilities: finding the kind out, which is the asker's and arrives through a port.
 //!
-//! This file declares a plain enum with no logic, so it carries no unit tests.
+//! This file holds only a type definition, so it carries no logic to unit-test.
 
 /// What a workspace path names, as its asker can tell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -182,7 +182,7 @@ pub enum Error {
         ignoring: Box<Ignoring>,
     },
     /// A `.buildlignore` that cannot be used.
-    #[error("{file}{}: {reason}", line_suffix(.line.as_ref()))]
+    #[error("{file}{}: {reason}", line_suffix(*.line))]
     IgnoreFile {
         /// The workspace-relative, `/`-separated path of the ignore file.
         file: String,
@@ -735,7 +735,7 @@ const fn ignored_field(path: &IgnoredPath) -> &'static str {
 }
 
 /// `:<line>` when an ignore file's fault is on a line; nothing otherwise.
-fn line_suffix(line: Option<&u32>) -> String {
+fn line_suffix(line: Option<u32>) -> String {
     line.map_or_else(String::new, |line| format!(":{line}"))
 }
 

@@ -21,9 +21,11 @@ pub trait IgnoreRules: Sync {
     ///
     /// `path` is workspace-relative and `/`-separated, and never empty: the workspace root itself
     /// is never asked. `kind` says what the asker knows the path to be, because a pattern ending
-    /// in `/` matches folders only. The decision is made from the root down: a path is ignored
-    /// when an ignore pattern covers it or any folder above it, and a later pattern, from a
-    /// deeper file, overrides an earlier one.
+    /// in `/` matches folders only. The decision is made from the root down, as git makes it:
+    /// each folder on the way to `path`, then `path` itself, is matched in turn. For one step, a
+    /// deeper ignore file outranks a shallower one, and within a file the last matching line
+    /// wins; a matching `!` line keeps the step. The first step that ends ignored decides, so
+    /// nothing under an ignored folder can be kept again.
     ///
     /// # Errors
     ///

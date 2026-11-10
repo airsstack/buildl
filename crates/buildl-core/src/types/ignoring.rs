@@ -25,6 +25,7 @@ impl Ignoring {
     ///
     /// The file is text, not a [`SourcePath`], because the folder holding it may have a name the
     /// source-path grammar refuses.
+    #[must_use]
     pub fn new(file: impl Into<String>, pattern: impl Into<String>) -> Self {
         Self {
             file: file.into(),
