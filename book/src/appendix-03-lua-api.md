@@ -86,7 +86,7 @@ Declares a target that builds files. Returns nothing.
 |---|---|---|---|
 | `run` | list of strings | | the command: program first, then its arguments |
 | `rule` | label | | a rule whose `run` is the command instead; exactly one of `run` and `rule` |
-| `inputs` | list of strings | `{}` | the files the command reads |
+| `inputs` | list of strings | `{}` | the files the command reads; a file a [`.buildlignore`](ch03-02-inputs-outputs-deps.md#leaving-paths-out-buildlignore) ignores is refused (exit code 5), a plugin's inputs included |
 | `deps` | list of labels | `{}` | the targets whose outputs the command reads |
 | `outputs` | list of strings | `{ name }` | the files the command writes |
 | `env` | table from name to `"key"` or `"unkeyed"` | `{}` | the environment variables the command is given, read from yours, each with its mark, below |
@@ -207,7 +207,9 @@ b.option("greeting", { default = "hello" })
 
 Adds the build file of the folder `path`, relative to this one, to the workspace. It is read too,
 and its targets are named by its folder from the workspace root, such as `//lib:name`. A path that
-leaves the workspace is refused. Returns nothing.
+leaves the workspace is refused, and so is a folder a
+[`.buildlignore`](ch03-02-inputs-outputs-deps.md#leaving-paths-out-buildlignore) ignores (exit code 5).
+Returns nothing.
 
 ```lua
 b.subdir("lib")
@@ -218,8 +220,12 @@ b.subdir("lib")
 Returns the files below this build file's folder whose path matches `pattern`, as a list of
 strings relative to the folder, sorted. `*` matches within one folder name and stops at `/`;
 `**/` matches any number of folders, none included. Only regular files are listed, links are not
-followed, and the output directory and `.buildl` are never searched. Every entry visited counts
-against `[declaration] walk_entries`.
+followed, and the output directory and `.buildl` are never searched. A path a
+[`.buildlignore`](ch03-02-inputs-outputs-deps.md#leaving-paths-out-buildlignore) ignores is not
+listed, and an ignored folder is not entered. Every other entry visited counts against
+`[declaration] walk_entries`; an ignored one does not. A `.buildlignore` the walk meets that cannot
+be used stops the build file with exit code 5. When the folder of the build file is itself
+ignored, the list is empty.
 
 ```lua
 local go_files = b.sources("**/*.go")

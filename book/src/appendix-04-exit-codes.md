@@ -176,6 +176,8 @@ A build file or `buildl.toml` is wrong, and editing it is the fix:
 - a declaration is refused: an unknown option, both or neither of `run` and `rule`, a name declared
   twice, a label or setting that names nothing, a dependency cycle, an input file that does not
   exist, two targets writing the same output, a command with no program;
+- an `inputs` entry or a `subdir` names a path a `.buildlignore` ignores, or a `.buildlignore`
+  cannot be used, below;
 - two evaluations of the build files declared different things;
 - a target declares `TZ`, `LC_ALL` or `SOURCE_DATE_EPOCH`, which the sandbox sets itself;
 - a target's `env` is wrong, or a target or a discovery output holds one of this machine's
@@ -194,6 +196,93 @@ b.target("hello.txt", { run = { "sh", "-c", "echo hello > $out" }
 ```console
 $ buildl build
 error: build.lua: syntax error: lua error in build.lua: syntax error: build.lua:3: '}' expected (to close '{' at line 2) near <eof>
+$ echo $?
+5
+```
+
+### `.buildlignore`
+
+These cases are also exit 5, and `buildl check` reports them, since the build files are read to
+find them. [Leaving paths out](ch03-02-inputs-outputs-deps.md#leaving-paths-out-buildlignore)
+says what the files do.
+
+| Case | Message |
+|---|---|
+| an `inputs` entry is ignored | `error: <build file>: inputs: <path> is ignored by <file> (<pattern>)` |
+| a `subdir` names an ignored folder | `error: <build file>: subdir: <folder> is ignored by <file> (<pattern>)` |
+| a pattern does not parse | `error: <file>:<line>: error parsing glob '<pattern>': <why>` |
+| the file is not UTF-8 | `error: <file>:<line>: not UTF-8`, the line being the first with bytes that are not |
+| the file cannot be used | `error: <file>: <why>`, with no line |
+
+An `inputs` entry under `notes/`, which the root `.buildlignore` ignores with `notes/`:
+
+```lua
+b.target("bundle", { inputs = { "notes/todo.txt" }, run = { "cat", "$in" }, stdout = true })
+```
+
+```console
+$ buildl check
+error: build.lua: inputs: notes/todo.txt is ignored by .buildlignore (notes/)
+$ echo $?
+5
+```
+
+A `subdir` of `examples`, which the root `.buildlignore` ignores with `examples/`:
+
+```lua
+b.subdir("examples")
+```
+
+```console
+$ buildl check
+error: build.lua: subdir: examples is ignored by .buildlignore (examples/)
+$ echo $?
+5
+```
+
+A pattern that does not parse, here `[z-a]` on line 1 of `lib/.buildlignore`. The message is the
+glob error with the file and line in front:
+
+```console
+$ buildl check
+error: lib/.buildlignore:1: error parsing glob '[z-a]': invalid range; 'z' > 'a'
+$ echo $?
+5
+```
+
+When the file is first read by `buildl.sources`, the build file that called it fails with the same
+text inside a runtime error. The exit code is the same:
+
+```console
+$ buildl check
+error: lib/build.lua: runtime error: line 4: buildl.sources: lib/.buildlignore:1: error parsing glob '[z-a]': invalid range; 'z' > 'a'
+$ echo $?
+5
+```
+
+A `lib/.buildlignore` whose second line holds a byte that is not UTF-8:
+
+```console
+$ buildl check
+error: lib/.buildlignore:2: not UTF-8
+$ echo $?
+5
+```
+
+A `lib/.buildlignore` that is a symbolic link is not followed:
+
+```console
+$ buildl check
+error: lib/.buildlignore: a symlink, not a file
+$ echo $?
+5
+```
+
+One that cannot be read gives the operating system's own text:
+
+```console
+$ buildl check
+error: lib/.buildlignore: Permission denied (os error 13)
 $ echo $?
 5
 ```

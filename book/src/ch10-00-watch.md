@@ -72,7 +72,7 @@ too often; it never misses a change.
 %% Watch mode loop
 flowchart TD
     EV["File events — from notify"] --> DB["Debounce — 50 ms window<br/>one batch of changed paths"]
-    DB --> DROP["Drop paths under out/,<br/>the state directory and .git"]
+    DB --> DROP["Drop paths under out/,<br/>the state directory and .git,<br/>and paths a .buildlignore ignores"]
     DROP --> E{"any path left?"}
     E -- no --> WAIT
     E -- yes --> Q{"no graph last cycle,<br/>or a path is a declared input<br/>or buildl.toml, buildl.lock,<br/>a plugin's extension.toml?"}
@@ -88,8 +88,10 @@ flowchart TD
 Changes arrive in batches: after the first, `watch` collects until 50 ms pass with no more. Then:
 
 - Paths under `out/` (or whatever `[workspace] out` names), under `.buildl` and under `.git` are
-  dropped. They are the build's own writes, or hold no source. A batch with nothing left does
-  nothing and prints nothing.
+  dropped. They are the build's own writes, or hold no source. So is a path a `.buildlignore`
+  ignores ([Inputs, Outputs and Dependencies](ch03-02-inputs-outputs-deps.md#leaving-paths-out-buildlignore)):
+  a file edited in an ignored folder, or a new one made there, starts nothing. A batch with nothing
+  left does nothing and prints nothing.
 - A declared input of the last build, `buildl.toml`, `buildl.lock` or the `extension.toml` of a
   plugin kept in the workspace starts a build. So does any change after a build that failed before
   it had a graph.
@@ -98,9 +100,15 @@ Changes arrive in batches: after the first, `watch` collects until 50 ms pass wi
   the same graph as the last build ran on, nothing happens. If they fail to load or declare a
   different one, a build runs.
 
-There is no list of file names to ignore. A new file can only reach a build through
-`b.sources`, and the check is exactly a reading of the build files, so a new file that a pattern
-now matches is built, and a comment edited in a build file is not.
+Apart from the `.buildlignore` files you write, there is no list of file names to ignore. A new
+file can only reach a build through `b.sources`, and the check is exactly a reading of the build
+files, so a new file that a pattern now matches is built, and a comment edited in a build file is
+not.
+
+The rules are those of the workspace as it was last opened, for a build or for a check. A
+`.buildlignore` that is edited is a change like any other, unless a pattern ignores it, and its new
+lines apply from the next time `watch` opens the workspace. Before the first open has succeeded no
+path is dropped for being ignored.
 
 `watch: <path> changed` names the first path of the batch in path order, and `and N more` counts
 the others that were kept.
@@ -149,7 +157,8 @@ opening the workspace again are the adapters':
 graph LR
     subgraph CORE["buildl-core: watch/"]
         LOOP["watch(changes, cycles, layout)"]
-        REACT["react(batch, reference)"]
+        KEPT["kept(batch, layout, rules)"]
+        REACT["react(batch, reference, rules)"]
         INP["watched_inputs(whole, scoped)"]
     end
     subgraph AD["buildl"]
@@ -158,13 +167,18 @@ graph LR
         WS["Workspace::build_watched<br/>Workspace::graph"]
     end
     NC -->|"Changes::next: ChangeBatch"| LOOP
+    LOOP --> KEPT
     LOOP --> REACT
+    RE -->|"Cycles::rules"| LOOP
     LOOP -->|"Cycles::build, Cycles::graph"| RE
     RE --> WS
     WS -->|"Pipeline::build_watched"| INP
 ```
 
-`react` takes a batch and what the last build left behind (its graph and its inputs) and answers
-build, check or ignore. File events come from the `notify` crate: FSEvents on macOS, inotify on
+`react` takes a batch, what the last build left behind (its graph and its inputs) and the ignore
+rules, and answers build, check or ignore. The loop first cuts the batch with `kept`, which drops
+the build's own paths and those the rules ignore, using the rules of the workspace the last cycle
+opened; `Reopening` keeps them and hands them back through `Cycles::rules`, refreshed after every
+successful reopen, whether for a build or for a check. File events come from the `notify` crate: FSEvents on macOS, inotify on
 Linux. Each build is a full reload of the workspace. That is fast enough that `watch` needs no
 long-lived Lua engine.
