@@ -26,6 +26,8 @@ tokio       = { workspace = true }
 clap        = { workspace = true }
 # The file events of `buildl watch`, named by the `watch` adapter module only.
 notify      = { workspace = true }
+# The `.gitignore`-syntax patterns of `.buildlignore`, named by the `ignore_rules` adapter module only.
+ignore      = { workspace = true }
 # Names of ByteStream uploads.
 uuid        = { workspace = true }
 # Hashing many input files at once. Named by the `Digester` adapter and by no

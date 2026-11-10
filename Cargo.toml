@@ -98,6 +98,9 @@ uuid        = { version = "1.29.0", default-features = false, features = ["v4"] 
 # under the workspace root. Named by the `watch` adapter module of `buildl` only. Default
 # features are kept: FSEvents on macOS, inotify on Linux.
 notify      = "8.2.1"
+# `.gitignore`-syntax matching for `.buildlignore` files. Named by the `ignore_rules`
+# adapter module of `buildl` only.
+ignore      = "0.4"
 # Internal workspace members, in dependency order — path for local builds, version
 # for publish-readiness. Members inherit these with `{ workspace = true }`. Cargo
 # strips the path and keeps the version when packaging, so a published crate
