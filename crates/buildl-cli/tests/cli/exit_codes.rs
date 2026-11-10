@@ -1675,6 +1675,19 @@ fn a_bad_pattern_exits_5() {
 }
 
 #[test]
+fn a_bad_buildlignore_found_by_the_walk_exits_5() {
+    // The pattern lists nothing from `lib`, so only the walk through it reads its ignore file.
+    let build_file = "buildl.target(\"app\", { inputs = buildl.sources(\"src/*.c\"), run = { \"cc\", \"$in\" } })\n";
+    let (_dir, root) = ignoring_workspace(build_file);
+    write(&root, "lib/.buildlignore", "[z-a]\n");
+
+    check_refuses(
+        &root,
+        "lib/.buildlignore:1: error parsing glob '[z-a]': invalid range; 'z' > 'a'",
+    );
+}
+
+#[test]
 fn a_non_utf8_buildlignore_exits_5() {
     let (_dir, root) = ignoring_workspace(&reading(&[]));
     fs::write(root.join("src/.buildlignore"), b"\xff\xfe\n").unwrap();
