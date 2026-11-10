@@ -11,8 +11,8 @@ use std::time::Duration;
 use buildl::Wiring;
 use buildl::buildl_core::{
     BuildFile, Declaration, DeclarationOrder, DeclarationSource, Diagnostic, Directory, Discovered,
-    EntryName, Error, Evaluated, EvaluationFailure, Result, StagedFile, StagedSubdir, Workers,
-    Written, load,
+    EntryName, Error, Evaluated, EvaluationFailure, NothingIgnored, Result, StagedFile,
+    StagedSubdir, Workers, Written, load,
 };
 use buildl::dispatch::ThreadPool;
 
@@ -95,7 +95,13 @@ fn entry() -> EntryName {
 fn two_sibling_build_files_are_evaluated_at_once() {
     let source = Rendezvous::new(PATIENT);
     let mut pool = ThreadPool::new(Workers::of(2));
-    let declarations = load(&source, &mut pool, &entry(), &Discovered::empty());
+    let declarations = load(
+        &source,
+        &NothingIgnored,
+        &mut pool,
+        &entry(),
+        &Discovered::empty(),
+    );
     assert_eq!(declarations.unwrap(), []);
 }
 
@@ -103,7 +109,14 @@ fn two_sibling_build_files_are_evaluated_at_once() {
 fn one_worker_never_overlaps() {
     let source = Rendezvous::new(IMPATIENT);
     let mut pool = ThreadPool::new(Workers::of(1));
-    let error = load(&source, &mut pool, &entry(), &Discovered::empty()).unwrap_err();
+    let error = load(
+        &source,
+        &NothingIgnored,
+        &mut pool,
+        &entry(),
+        &Discovered::empty(),
+    )
+    .unwrap_err();
     let Error::Evaluation {
         provenance,
         failure,
@@ -122,6 +135,7 @@ fn loaded_by(fixture: &Fixture, workers: usize) -> Result<Vec<Declaration>> {
     let wiring = Wiring::read(fixture.root())?;
     load(
         &wiring.source()?,
+        &NothingIgnored,
         &mut ThreadPool::new(Workers::of(workers)),
         wiring.entry(),
         &Discovered::empty(),

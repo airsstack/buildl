@@ -183,11 +183,11 @@ second binary and calls `buildl` as `buildl-cli` does:
 graph TD
     CLI["[Component: crate] buildl-cli<br/>main: reads the process,<br/>calls buildl::cli::run"]
     CARGO["[Component: crate] buildl-cargo<br/>main: reads the process,<br/>calls buildl::cli::execute"]
-    LIB["[Component: crate] buildl — composition root<br/>command line: cli — clap argument surface,<br/>outcome classes and error variants to exit codes<br/>adapters: manifest, host, digest, tools,<br/>cas, cache, log, statcache, graph,<br/>exec, dispatch, clock, report, approver, remote, watch<br/>no port: plugins — lock, check, fetch<br/>shared: state, search_path<br/>assembly: LocalPorts, Workspace facade"]
+    LIB["[Component: crate] buildl — composition root<br/>command line: cli — clap argument surface,<br/>outcome classes and error variants to exit codes<br/>adapters: manifest, host, digest, tools,<br/>cas, cache, log, statcache, graph,<br/>exec, dispatch, clock, report, approver, remote, watch,<br/>ignore_rules<br/>no port: plugins — lock, check, fetch<br/>shared: state, search_path<br/>assembly: LocalPorts, Workspace facade"]
     LUA["[Component: crate] buildl-lua<br/>implements DeclarationSource<br/>airsl Engine per build file<br/>buildl HostModule bound as a global<br/>buildl.use: one plugin instance per chain"]
     subgraph CORE["[Component: crate] buildl-core — no I/O, no Lua, no threads"]
         DATA["domain data<br/>Label, Digest, NodeId, Provenance<br/>Declaration, Origin, Discovered<br/>TargetGraph, Plan, Attribution<br/>KeyComponents, ActionKey<br/>RemoteAction, RemoteHit, RemoteUpload<br/>ChangedPath, ChangeBatch, Trigger<br/>WatchLayout, Built, Reference, Reaction<br/>Watched, Cycle<br/>ActionOutcome, OutcomeClass"]
-        PORTS["ports — traits<br/>DeclarationSource, Manifest, Host<br/>Digester, StatCache, ToolResolver<br/>ContentStore, ActionCache, EventLog<br/>RunHistory, Sweep, ExecStrategy, Dispatcher<br/>Clock, GraphRecord, Reporter<br/>Approver, RemoteCache<br/>Changes, Cycles, WatchReport"]
+        PORTS["ports — traits<br/>DeclarationSource, Manifest, Host<br/>Digester, StatCache, ToolResolver<br/>ContentStore, ActionCache, EventLog<br/>RunHistory, Sweep, ExecStrategy, Dispatcher<br/>Clock, GraphRecord, Reporter<br/>Approver, RemoteCache, IgnoreRules<br/>Changes, Cycles, WatchReport"]
         LOGIC["pure logic<br/>load, resolve, placement, plan, grants<br/>discovery, Schedule, record, verify<br/>react, watch, watched_inputs<br/>canonical JSON"]
     end
     AIRSL["[External crate] airsl<br/>Engine, Policy, HostModule"]
@@ -207,7 +207,7 @@ graph TD
 |---|---|---|---|
 | `buildl-core` | domain data, ports, the pure logic of every phase | `serde`, `serde_json`, `thiserror`, `sha2` | any buildl crate, `airsl`, any I/O API |
 | `buildl-lua` | the `DeclarationSource` adapter: evaluates one build file through airsl, and loads the plugins it uses | `buildl-core`, `airsl`, `globset`, `walkdir`, `serde`, `serde_json`, `toml` | `buildl` |
-| `buildl` | every other adapter; the `plugins` module; `LocalPorts`; the `Workspace` facade; the command line, in `cli`; re-exports `buildl-core` as `buildl::buildl_core` | `buildl-core`, `buildl-lua`, `clap`, `toml`, `toml_edit`, `rayon`, `serde`, `thiserror`, `tempfile`, `tonic`, `tonic-prost`, `prost`, `prost-types`, `tokio`, `uuid`, `notify` | nothing: it is the composition root |
+| `buildl` | every other adapter; the `plugins` module; `LocalPorts`; the `Workspace` facade; the command line, in `cli`; re-exports `buildl-core` as `buildl::buildl_core` | `buildl-core`, `buildl-lua`, `clap`, `toml`, `toml_edit`, `rayon`, `serde`, `thiserror`, `tempfile`, `tonic`, `tonic-prost`, `prost`, `prost-types`, `tokio`, `uuid`, `notify`, `ignore` | nothing: it is the composition root |
 | `buildl-cli` | `main` alone: reads the process and calls `buildl::cli::run` | `buildl` | `buildl-core` and `buildl-lua` directly |
 | `buildl-cargo` | the `cargo-buildl` binary, run as `cargo buildl`: reads the process, calls `buildl::cli::execute`, and runs `cargo buildl sync` itself (reads `cargo metadata`, rewrites the generated section of `build.lua`) | `buildl`, `clap`, `serde`, `serde_json`; `tempfile` as a dev dependency only | `buildl-core` and `buildl-lua` directly: it reaches core types through `buildl`, as in `buildl::buildl_core::TargetName` |
 
@@ -219,7 +219,9 @@ and nowhere else; `tempfile` gives the write-then-rename every state file and bl
 The remote cache's gRPC client is `tonic`, with `tonic-prost`, `prost` and `prost-types` for its
 messages, `tokio` for the runtime the client needs, and `uuid` to name uploads. Only the `remote`
 module names them. `notify` reports the operating system's file events to the `watch` module and
-to no other. In `buildl-cargo`, `serde` and `serde_json` read the output of `cargo metadata`.
+to no other. `ignore` matches the patterns of `.buildlignore` files, in the `ignore_rules` module and
+nowhere else; `buildl-lua` does not depend on it, and reaches the rules through the core's port. In
+`buildl-cargo`, `serde` and `serde_json` read the output of `cargo metadata`.
 
 Inside `buildl` there is one module per adapter, plus `plugins`, which serves no port but is kept
 apart as an adapter is, two shared modules and three that put everything together:
@@ -242,6 +244,7 @@ apart as an adapter is, two shared modules and three that put everything togethe
 | `approver` | the three approvers a manifest can name, `LocalApprover`, which picks one, and the approvals it remembers outside the workspace | `Approver` |
 | `remote` | the Remote Execution API client: its tokio runtime, the gRPC channel, blob transfer, `Execute` and `WaitExecution`, the retry rule; behind the `test-server` feature, an in-memory server for tests | `RemoteCache` |
 | `watch` | the workspace's file events through `notify`, gathered into batches by a 50 ms window | `Changes` |
+| `ignore_rules` | the `.buildlignore` files of one workspace, read from the root down, and the decision for a path | `IgnoreRules` |
 | `plugins` | `buildl.lock`, the digest of a plugin's files, the check that every plugin is there and unchanged, and fetching git plugins | none |
 | `state` | shared: where each state file is, the state lock, writing a file whole, clearing a path, the sandbox's scratch directory | none |
 | `search_path` | shared: the lookup of a program name | none |
@@ -271,6 +274,7 @@ Every value is a checked newtype or a handoff that can be written out:
 | Plugins | `PluginName`, `PluginVersion`, `PluginRef`, `PluginChain`, `Origin`, `PluginCap`, `PluginNetwork`, `PluginViolation`, `PluginSource`, `GitUrl`, `Rev`, `TagName`, `CommitId` |
 | Discovery | `Discovered`, `Loaded`, `TargetRole::Discovery` |
 | Remote cache | `RemoteSettings`, `RemoteAction`, `RemoteHit`, `RemoteUpload`, `Uploaded`, `Blob`, `RemotePolicy`, `RemoteUse`, `RemoteFailure`, `RemoteExecution`, `Executed`, `RemoteSwitch`, `RemoteCall`, `RemoteNotice`, and the smaller values they are made of |
+| Ignored paths | `EntryKind`, a path as its asker knows it: file, folder or unknown; `Ignoring`, the ignore file and the pattern that decided; `IgnoredPath`, the `inputs` file or `subdir` folder an error names |
 | Watch mode | `ChangedPath`, `ChangeBatch`, `Trigger`, `WatchLayout`, `Built`, `Reference`, `Reaction`, `Watched`, `Cycle` |
 | Execution settings | `Execution`, with `Workers`, `Timeout` and `Isolation`; none of them is part of a key |
 | A run and what it shows | `Scope`, `Purpose`, `Rerun`, `LiveOutput`, `Channel`, `LiveSink`, `Captured`, `Turn` |
@@ -327,6 +331,7 @@ pub trait Ports {
     type Graph: GraphRecord;
     type Reporter: Reporter;
     type Approver: Approver;
+    type Ignore: IgnoreRules;          // Load asks it, from several threads
     type Remote: RemoteCache;          // NoRemote when there is none
 }
 
@@ -369,6 +374,7 @@ classDiagram
         Graph: GraphRecord
         Reporter: Reporter
         Approver: Approver
+        Ignore: IgnoreRules
         Remote: RemoteCache
     }
     class LocalPorts {
@@ -387,10 +393,17 @@ classDiagram
 
 `Ports::Remote` is called only by `build` and `test`. Every other command, a workspace with no
 `[remote]` table and a run with the remote turned off hold a cache that is never asked: `NoRemote`
-in the core's tests, `Remote::Off` in `LocalPorts`. `Ports::Log` is bound by both `EventLog` and
-`RunHistory`, because `plan`, `verify`, `build` and `test` read the last result of each discovery
-target from the log they append to. The two stay separate traits, since a writer and a reader never
-share a method.
+in the core's tests, `Remote::Off` in `LocalPorts`. `Ports::Ignore` has a default of the same kind,
+`NothingIgnored`, which the core's tests bind and the watch loop passes to `react`. `Ports::Log` is
+bound by both `EventLog` and `RunHistory`, because `plan`, `verify`, `build` and `test` read the
+last result of each discovery target from the log they append to. The two stay separate traits,
+since a writer and a reader never share a method. `Ports::Ignore` is asked by Load for each
+`inputs` entry and each `subdir`, in both discovery passes. `local_ports` makes one `BuildlIgnore`
+for each opening of the workspace and hands it both to `Ports::Ignore` and to `LuaSource`, whose
+walk asks it about every entry and never enters an ignored folder. `buildl watch` opens the
+workspace again on every cycle. Each file is read lazily and kept by that instance, so a changed
+`.buildlignore` applies at the latest from the next open. `Reopening` keeps the rules of the last
+workspace it opened and returns them through `Cycles::rules`.
 
 Commands that need only a few ports are also free functions, beside the `Pipeline` methods. The
 free functions need no state directory and take no lock: `pipeline::check`, `pipeline::graph` and `pipeline::query`
@@ -402,8 +415,8 @@ with a `Manifest` as well; `pipeline::log` over just `RunHistory` and `ContentSt
 
 | Logic | Input → output | Ports used |
 |---|---|---|
-| load | workspace root and a `Discovered` → `Vec<Declaration>` | `DeclarationSource`, `Dispatcher` |
-| discovery | the build files, the log and the cas → declarations loaded twice, the second time with the discovery results | `DeclarationSource`, `Dispatcher`, `RunHistory`, `ContentStore` |
+| load | workspace root and a `Discovered` → `Vec<Declaration>`; an `inputs` entry or a `subdir` the rules ignore is `Error::Ignored` | `DeclarationSource`, `IgnoreRules`, `Dispatcher` |
+| discovery | the build files, the log and the cas → declarations loaded twice, the second time with the discovery results | `DeclarationSource`, `IgnoreRules`, `Dispatcher`, `RunHistory`, `ContentStore` |
 | resolve | `Vec<Declaration>` → `TargetGraph` | none |
 | narrow | `TargetGraph`, a `Scope` and a `Purpose` → the graph of what a run asked for | none |
 | reach | `TargetGraph` and a `Query` → the targets `deps()` or `rdeps()` reaches | none |
@@ -412,16 +425,17 @@ with a `Manifest` as well; `pipeline::log` over just `RunHistory` and `ContentSt
 | execute | the graph, the narrowed graph, its `Plan` and the run's choices → `Vec<ActionOutcome>` | `Manifest`, `Dispatcher`, `ExecStrategy`, `ContentStore`, `ActionCache`, `EventLog`, `Clock`, `Reporter`, `RemoteCache` |
 | last_run | the log's lines and a `Label` → the newest run of that label that stored its output | none |
 | verify | the graph, the narrowed graph, its `Plan` and a `Sample` → `Verification` | `Manifest`, `ActionCache`, `ContentStore`, `ExecStrategy`, `Dispatcher`, `Clock` |
-| react | a `ChangeBatch` and a `Reference` → a `Reaction`: build, check the build files, or nothing | none |
+| react | a `ChangeBatch`, a `Reference` and, when there are any, the ignore rules → a `Reaction`: build, check the build files, or nothing | `IgnoreRules` |
 | watched_inputs | the graph and the narrowed graph → the files a build reads | none |
-| watch | a `WatchLayout` → the error that ended it | `Changes`, `Cycles`, `WatchReport` |
+| watch | a `WatchLayout` → the error that ended it | `Changes`, `Cycles` (which hands back the rules of the last workspace it opened), `WatchReport` |
 | canonical JSON | value → sorted-key bytes, and those bytes, and no others, → the value | none |
 
 ## The port catalog
 
 "Milestone" is the step of the roadmap the adapter arrived with: 1 is the core build, 2 the rest of
 the everyday commands, 3 the sandbox, 4 approvers, 6 the remote cache and 7 watch mode. Plugins and
-discovery targets (5) and remote execution (8) added no port of their own.
+discovery targets (5) and remote execution (8) added no port of their own. `IgnoreRules` came with
+`.buildlignore`, outside any milestone, so its row has a dash.
 
 | Port | `buildl-core` uses it for | Adapter | Crate | Milestone |
 |---|---|---|---|---|
@@ -444,8 +458,9 @@ discovery targets (5) and remote execution (8) added no port of their own.
 | `Clock` | log timestamps and durations | the system clock | `buildl` | 1 |
 | `GraphRecord` | keeping the graph a build resolved | `.buildl/graph.json`, written whole | `buildl` | 1 |
 | `Reporter` | output blocks, the status line, the summary and notices about the remote | the terminal reporter, with a live and a plain mode | `buildl` | 1 |
+| `IgnoreRules` | Load: is an `inputs` entry or a `subdir` ignored; watch: is a changed path ignored; the walk behind `buildl.sources` asks it too, through the `buildl-lua` adapter | `BuildlIgnore`: the `.buildlignore` files, read from the root down through the `ignore` crate's pattern matcher | `buildl` | — |
 | `Changes` | waiting for files of the workspace to change | `NotifyChanges`: `notify`, relative paths, a 50 ms window | `buildl` | 7 |
-| `Cycles` | one watch cycle: the workspace opened again and built, or loaded | `Reopening`, in `workspace/watching.rs` | `buildl` | 7 |
+| `Cycles` | one watch cycle: the workspace opened again and built, or loaded; it also carries `type Ignore` and `rules()`, the rules of the last workspace opened | `Reopening`, in `workspace/watching.rs` | `buildl` | 7 |
 | `WatchReport` | what a watch says about itself | the terminal reporter's `watch: ` lines | `buildl` | 7 |
 
 One more trait sits beside them: `BlobSource`, which an upload to the remote reads blobs through,

@@ -17,7 +17,7 @@ use core::cmp::min_by;
 use crate::error::{Error, Result};
 use crate::load::machine_paths::{refuse_commands, refuse_discovered};
 use crate::load::{declaration_order, load};
-use crate::ports::{DeclarationSource, Dispatcher};
+use crate::ports::{DeclarationSource, Dispatcher, IgnoreRules};
 use crate::types::{
     Declaration, Declared, Discovered, EntryName, Label, Loaded, MachineFolders, TargetRole,
 };
@@ -75,13 +75,14 @@ fn discovery_change(pass_one: &[Declaration], pass_two: &[Declaration]) -> Optio
 /// # Errors
 ///
 /// Returns whatever the load returns, and [`Error::MachinePathInCommand`].
-pub(crate) fn first_pass<S: DeclarationSource, D: Dispatcher>(
+pub(crate) fn first_pass<S: DeclarationSource, I: IgnoreRules, D: Dispatcher>(
     source: &S,
+    rules: &I,
     dispatcher: &mut D,
     entry: &EntryName,
     folders: &MachineFolders,
 ) -> Result<Vec<Declaration>> {
-    let pass_one = load(source, dispatcher, entry, &Discovered::empty())?;
+    let pass_one = load(source, rules, dispatcher, entry, &Discovered::empty())?;
     refuse_commands(&pass_one, folders)?;
     Ok(pass_one)
 }
@@ -98,8 +99,9 @@ pub(crate) fn first_pass<S: DeclarationSource, D: Dispatcher>(
 /// Returns [`Error::MachinePathInDiscovery`], whatever the load returns,
 /// [`Error::MachinePathInCommand`], and [`Error::DiscoveryChanged`] when a discovery target was
 /// added, removed or changed since `pass_one`.
-pub(crate) fn second_pass<S: DeclarationSource, D: Dispatcher>(
+pub(crate) fn second_pass<S: DeclarationSource, I: IgnoreRules, D: Dispatcher>(
     source: &S,
+    rules: &I,
     dispatcher: &mut D,
     entry: &EntryName,
     pass_one: &[Declaration],
@@ -107,7 +109,7 @@ pub(crate) fn second_pass<S: DeclarationSource, D: Dispatcher>(
     folders: &MachineFolders,
 ) -> Result<Vec<Declaration>> {
     refuse_discovered(pass_one, discovered, folders)?;
-    let pass_two = load(source, dispatcher, entry, discovered)?;
+    let pass_two = load(source, rules, dispatcher, entry, discovered)?;
     refuse_commands(&pass_two, folders)?;
     discovery_change(pass_one, &pass_two).map_or(Ok(pass_two), Err)
 }
@@ -124,8 +126,9 @@ pub(crate) fn second_pass<S: DeclarationSource, D: Dispatcher>(
 /// [`Error::MachinePathInDiscovery`] for what holds one of `folders`, and
 /// [`Error::DiscoveryChanged`] when the second load declares different discovery targets than the
 /// first.
-pub(crate) fn load_twice<S, D, R>(
+pub(crate) fn load_twice<S, I, D, R>(
     source: &S,
+    rules: &I,
     dispatcher: &mut D,
     entry: &EntryName,
     folders: &MachineFolders,
@@ -133,10 +136,11 @@ pub(crate) fn load_twice<S, D, R>(
 ) -> Result<Loaded>
 where
     S: DeclarationSource,
+    I: IgnoreRules,
     D: Dispatcher,
     R: FnOnce(&[Label]) -> (Discovered, Vec<Label>),
 {
-    let pass_one = first_pass(source, dispatcher, entry, folders)?;
+    let pass_one = first_pass(source, rules, dispatcher, entry, folders)?;
     let labels = discovery_labels(&pass_one);
     if labels.is_empty() {
         return Ok(Loaded {
@@ -146,7 +150,15 @@ where
     }
     let (discovered, missing) = results_for(&labels);
     Ok(Loaded {
-        declarations: second_pass(source, dispatcher, entry, &pass_one, &discovered, folders)?,
+        declarations: second_pass(
+            source,
+            rules,
+            dispatcher,
+            entry,
+            &pass_one,
+            &discovered,
+            folders,
+        )?,
         missing,
     })
 }

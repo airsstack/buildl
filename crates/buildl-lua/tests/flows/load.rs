@@ -5,8 +5,8 @@ use std::path::PathBuf;
 
 use buildl_core::{
     Action, Argument, Command, Declaration, Declared, Directory, Discovered, EntryName, Freshness,
-    Label, NetworkAccess, Origin, OutputName, OutputSource, Provenance, SourcePath, Target,
-    TargetRole, load,
+    Label, NetworkAccess, NothingIgnored, Origin, OutputName, OutputSource, Provenance, SourcePath,
+    Target, TargetRole, load,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -63,10 +63,12 @@ fn load_turns_a_real_workspace_into_declarations() {
         fixture("workspace"),
         DeclarationLimits::default(),
         [],
+        NothingIgnored,
         BTreeMap::new(),
     );
     let declarations = load(
         &source,
+        &NothingIgnored,
         &mut InlineDispatcher,
         &EntryName::parse("build.lua").unwrap(),
         &Discovered::empty(),

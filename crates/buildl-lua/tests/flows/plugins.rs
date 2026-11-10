@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use buildl_core::{
     BuildFile, DeclarationSource, Diagnostic, Directory, Discovered, Error, Evaluated,
-    EvaluationFailure, PluginName, Provenance, StagedFile, StagedItem, Written,
+    EvaluationFailure, NothingIgnored, PluginName, Provenance, StagedFile, StagedItem, Written,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -40,7 +40,7 @@ fn plugin_in(dir: &Path, name: &str, main: &str, files: &[(&str, &str)]) {
 }
 
 /// A source whose plugins are the directories `<root>/plugins/<name>` for each of `names`.
-fn source(root: &Path, names: &[&str]) -> LuaSource {
+fn source(root: &Path, names: &[&str]) -> LuaSource<NothingIgnored> {
     let plugins: BTreeMap<PluginName, PathBuf> = names
         .iter()
         .map(|name| {
@@ -50,7 +50,13 @@ fn source(root: &Path, names: &[&str]) -> LuaSource {
             )
         })
         .collect();
-    LuaSource::new(root, DeclarationLimits::default(), [], plugins)
+    LuaSource::new(
+        root,
+        DeclarationLimits::default(),
+        [],
+        NothingIgnored,
+        plugins,
+    )
 }
 
 /// Evaluates `file` of the workspace at `root`, with `names` as its plugins.
@@ -391,7 +397,13 @@ fn store_plugin(main: &str, files: &[(&str, &str)]) -> (tempfile::TempDir, PathB
 /// Evaluates the root build file with `p` at `folder`.
 fn staged_from(root: &Path, folder: &Path) -> (EvaluationFailure, Diagnostic) {
     let plugins = BTreeMap::from([(PluginName::parse("p").unwrap(), folder.to_path_buf())]);
-    let source = LuaSource::new(root, DeclarationLimits::default(), [], plugins);
+    let source = LuaSource::new(
+        root,
+        DeclarationLimits::default(),
+        [],
+        NothingIgnored,
+        plugins,
+    );
     match source.evaluate(&root_file(), &Discovered::empty()) {
         Err(Error::Evaluation {
             failure,

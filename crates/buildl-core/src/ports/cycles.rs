@@ -11,10 +11,20 @@
 //! This file holds only a trait definition, so it carries no logic to unit-test.
 
 use crate::error::Result;
+use crate::ports::IgnoreRules;
 use crate::types::{Cycle, TargetGraph};
 
 /// Runs the work of one watching cycle.
 pub trait Cycles {
+    /// The ignore rules of the workspace a cycle opens.
+    type Ignore: IgnoreRules;
+
+    /// The ignore rules of the last workspace opened, for a build or for a graph check, or `None`
+    /// while none has opened.
+    ///
+    /// The loop asks them whether a changed path is ignored before it starts a cycle for it.
+    fn rules(&self) -> Option<&Self::Ignore>;
+
     /// Opens the workspace again and runs one build on it.
     ///
     /// The build's own failure is part of the returned [`Cycle`], not a way for this call to

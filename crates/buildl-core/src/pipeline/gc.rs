@@ -18,7 +18,9 @@ use std::collections::BTreeSet;
 use crate::discovery::{load_twice, results};
 use crate::error::Result;
 use crate::history::logged_outputs;
-use crate::ports::{ActionCache, ContentStore, DeclarationSource, Dispatcher, RunHistory, Sweep};
+use crate::ports::{
+    ActionCache, ContentStore, DeclarationSource, Dispatcher, IgnoreRules, RunHistory, Sweep,
+};
 use crate::resolve::resolve;
 use crate::types::{CacheRow, Digest, EntryName, Label, MachineFolders, OutputManifest};
 
@@ -65,8 +67,9 @@ pub struct Collected {
     clippy::too_many_arguments,
     reason = "each argument is a distinct part of one collection; grouping them would only rename them"
 )]
-pub fn gc<S, D, A, C, W, H>(
+pub fn gc<S, I, D, A, C, W, H>(
     source: &S,
+    rules: &I,
     dispatcher: &mut D,
     entry: &EntryName,
     folders: &MachineFolders,
@@ -77,13 +80,14 @@ pub fn gc<S, D, A, C, W, H>(
 ) -> Result<Collected>
 where
     S: DeclarationSource,
+    I: IgnoreRules,
     D: Dispatcher,
     A: ActionCache,
     C: ContentStore,
     W: Sweep,
     H: RunHistory,
 {
-    let loaded = load_twice(source, dispatcher, entry, folders, |labels| {
+    let loaded = load_twice(source, rules, dispatcher, entry, folders, |labels| {
         results(history, store, labels)
     })?;
     let graph = resolve(loaded.declarations)?;
@@ -155,7 +159,7 @@ mod tests {
     use super::{Collected, gc};
     use crate::error::{Error, EvaluationFailure, PortName, Result};
     use crate::ports::{
-        ActionCache, ContentStore, DeclarationSource, Dispatcher, RunHistory, Sweep,
+        ActionCache, ContentStore, DeclarationSource, Dispatcher, NothingIgnored, RunHistory, Sweep,
     };
     use crate::types::{
         ActionKey, Argument, BuildFile, CacheRow, Command, DeclarationOrder, Diagnostic, Digest,
@@ -440,6 +444,7 @@ mod tests {
         fn run(&mut self) -> Result<Collected> {
             gc(
                 &self.source,
+                &NothingIgnored,
                 &mut Inline,
                 &EntryName::parse("build.lua").unwrap(),
                 &MachineFolders::default(),

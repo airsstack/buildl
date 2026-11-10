@@ -16,6 +16,7 @@ tempfile
 buildl_core
 buildl_lua
 clap
+ignore
 notify
 prost
 prost_types

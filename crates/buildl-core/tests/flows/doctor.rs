@@ -9,8 +9,8 @@
 use std::collections::BTreeSet;
 
 use buildl_core::{
-    Checkup, Directory, EntryName, EnvName, Error, MachineFolders, NetworkAccess, Origin, Result,
-    StagedItem, StagedSetting, TargetRole, Want, Written, doctor,
+    Checkup, Directory, EntryName, EnvName, Error, MachineFolders, NetworkAccess, NothingIgnored,
+    Origin, Result, StagedItem, StagedSetting, TargetRole, Want, Written, doctor,
 };
 
 use crate::common::{
@@ -35,6 +35,7 @@ fn checked(items: Vec<StagedItem>) -> Result<Checkup> {
 fn checked_by(source: &FakeSource, manifest: &FakeManifest) -> Result<Checkup> {
     doctor(
         source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         manifest,
         &entry(),

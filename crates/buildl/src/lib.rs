@@ -120,6 +120,7 @@
 //! | [`clock`] | the wall clock | [`Clock`] |
 //! | [`report`] | what a build shows while it runs, and every rendering of a value as text | [`Reporter`] |
 //! | [`approver`] | whether a build may do what it wants | [`Approver`] |
+//! | [`ignore_rules`] | the `.buildlignore` files, and which paths they ignore | [`IgnoreRules`] |
 //! | [`remote`] | the cache of results other machines share | [`RemoteCache`] |
 //! | [`watch`] | the operating system's file events | [`Changes`] |
 //!
@@ -183,6 +184,7 @@
 //! [`ExecStrategy`]: buildl_core::ExecStrategy
 //! [`GraphRecord`]: buildl_core::GraphRecord
 //! [`Host`]: buildl_core::Host
+//! [`IgnoreRules`]: buildl_core::IgnoreRules
 //! [`Manifest`]: buildl_core::Manifest
 //! [`RemoteCache`]: buildl_core::RemoteCache
 //! [`Reporter`]: buildl_core::Reporter
@@ -199,6 +201,7 @@ pub mod dispatch;
 pub mod exec;
 pub mod graph;
 pub mod host;
+pub mod ignore_rules;
 pub mod log;
 pub mod manifest;
 pub mod plugins;

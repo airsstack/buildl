@@ -97,6 +97,7 @@ To allow it, buildl.toml's [ceiling] proc.run needs "sh". Should I add it?
 | `env` written as a list of names | exit 5, `env must mark each variable "key" or "unkeyed"`. Write `env = { HOME = "unkeyed" }` |
 | `HOME` or `PATH` marked `"key"` | `plan` and `build` exit 5, `the variable HOME holds this machine's path …; mark it "unkeyed" if it only finds files`. Mark it `"unkeyed"` |
 | a program used but not in `proc.run` | `check` passes. `plan` and `build` exit 4 |
+| an `inputs` entry or a `subdir` a `.buildlignore` ignores | exit 5, `<build file>: inputs: <path> is ignored by <ignore file> (<pattern>)`, or `subdir:` in place of `inputs:`; the ignore file is whichever decided, such as `src/.buildlignore`. Take the path out of `.buildlignore`, or out of the build file |
 | an `inputs` file that does not exist | `check` passes. `plan` and `build` exit 5, `input <file> does not exist` |
 | `print` in `build.lua` | `print` is removed. `error("text", 0)` shows a value |
 
@@ -156,6 +157,11 @@ target's `run` for the language:
 
 Go and Python have one target over all their sources. Do not make one target per file.
 
+Folders no target should read (documentation, notes, drafts) go in a `.buildlignore` file, written
+like a `.gitignore` and placed in any folder of the workspace. `b.sources` leaves those paths out,
+so do not filter its list by hand. An `inputs` entry or a `subdir` that names an ignored path is
+refused with exit code 5.
+
 `HOME` and `PATH` are marked `"unkeyed"` above, and the ceiling must allow that. A variable that
 only helps a program find files (`HOME`, `PATH`) is `"unkeyed"`: its value reaches the command, but
 only its name enters the action key, and it is not sent to a remote server. Machines with different
@@ -212,7 +218,7 @@ Plugin". Keep a C or C++ project in one build file: a header outside the build
 file's folder cannot be declared.
 
 Rust has a plugin too, `rust`, a thin wrapper over the `cargo` you already have. One call is one
-artifact, and it fills in the inputs (every file below the build file's folder, except `target/` and `.git/`),
+artifact, and it fills in the inputs (every file below the build file's folder, except `target/`, `.git/` and what a `.buildlignore` leaves out),
 `HOME` and `PATH` as unkeyed, and `network = true`. Name it in `buildl.toml` and run
 `buildl plugins fetch` once:
 

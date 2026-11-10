@@ -23,6 +23,7 @@ mod facade;
 mod failure;
 mod fetch;
 mod identical;
+mod ignore;
 mod incremental;
 mod log;
 mod named;

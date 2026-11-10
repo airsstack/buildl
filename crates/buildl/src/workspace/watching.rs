@@ -5,7 +5,8 @@
 //! reads the manifest again.
 //!
 //! Responsibilities: [`Reopening`], which runs a cycle's build and its graph check on a
-//! workspace opened for that cycle alone, and forwards the loop's lines to the caller's
+//! workspace opened for that cycle alone, hands the loop the ignore rules of the last workspace
+//! it opened for a build or a graph check, and forwards the loop's lines to the caller's
 //! reporter; and [`Workspace::watch`].
 //!
 //! Non-responsibilities: when a cycle starts and what a change means, which is the loop's in
@@ -20,10 +21,14 @@ use buildl_core::{
 };
 
 use crate::approver::Console;
+use crate::ignore_rules::BuildlIgnore;
 use crate::local_ports::Wiring;
 use crate::workspace::{RunOptions, Workspace};
 
 /// The cycles of one watch: each opens the workspace again and runs on what it reads.
+///
+/// It also keeps the `.buildlignore` rules of the last workspace it opened, for a build or for a
+/// graph check, for the loop to ask about each changed path.
 ///
 /// The reporter is both the build's `Reporter` and the loop's `WatchReport` and is borrowed
 /// once, here, so one value writes to the terminal and the two kinds of line never interleave.
@@ -34,6 +39,7 @@ pub(super) struct Reopening<'a, R, C> {
     options: RunOptions,
     reporter: &'a mut R,
     console: &'a mut C,
+    rules: Option<BuildlIgnore>,
 }
 
 impl<'a, R, C> Reopening<'a, R, C> {
@@ -53,13 +59,21 @@ impl<'a, R, C> Reopening<'a, R, C> {
             options,
             reporter,
             console,
+            rules: None,
         }
     }
 }
 
 impl<R: Reporter, C: Console> Cycles for Reopening<'_, R, C> {
+    type Ignore = BuildlIgnore;
+
+    fn rules(&self) -> Option<&BuildlIgnore> {
+        self.rules.as_ref()
+    }
+
     fn build(&mut self) -> Cycle {
         let opened = self.wiring.reopened().and_then(|wiring| {
+            self.rules = Some(wiring.ignore().clone());
             let layout = wiring.watch_layout()?;
             Ok((Workspace { wiring }, layout))
         });
@@ -85,9 +99,9 @@ impl<R: Reporter, C: Console> Cycles for Reopening<'_, R, C> {
     }
 
     fn graph(&mut self) -> Result<TargetGraph> {
-        let workspace = Workspace {
-            wiring: self.wiring.reopened()?,
-        };
+        let wiring = self.wiring.reopened()?;
+        self.rules = Some(wiring.ignore().clone());
+        let workspace = Workspace { wiring };
         workspace.graph().map(|(graph, _)| graph)
     }
 }
@@ -151,7 +165,9 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use buildl_core::{Cycles, Error, LiveOutput, OnFailure, PortName, Scope};
+    use buildl_core::{
+        Cycles, EntryKind, Error, IgnoreRules, LiveOutput, OnFailure, PortName, Scope,
+    };
 
     use crate::approver::NoTerminal;
     use crate::local_ports::Wiring;
@@ -235,5 +251,81 @@ mod tests {
         let graph = with_cycles(&wiring, |cycles| cycles.graph());
 
         assert!(graph.is_ok(), "{graph:?}");
+    }
+
+    #[test]
+    fn no_rules_before_a_cycle_opens() {
+        let (_dir, root) = workspace("");
+        let wiring = Wiring::read(&root).unwrap();
+
+        let rules = with_cycles(&wiring, |cycles| cycles.rules().is_some());
+
+        assert!(!rules);
+    }
+
+    /// Whether the rules `cycles` hands back ignore `notes/a.md`, or `None` while it hands none.
+    fn ignores_notes(cycles: &Reopening<'_, Silent, NoTerminal>) -> Option<bool> {
+        cycles.rules().map(|rules| {
+            rules
+                .ignored("notes/a.md", EntryKind::Unknown)
+                .unwrap()
+                .is_some()
+        })
+    }
+
+    /// Asks the rules of `wiring` about `notes/a.md` while no `.buildlignore` exists, so they
+    /// hold "no rules" from then on; rules handed back from `wiring` itself, not from the
+    /// workspace a cycle reopens, would then miss a file written afterwards.
+    fn ask_before_the_file_exists(wiring: &Wiring) {
+        let asked = wiring.ignore().ignored("notes/a.md", EntryKind::Unknown);
+        assert!(asked.unwrap().is_none());
+    }
+
+    #[test]
+    fn a_cycle_hands_back_the_rules_it_read() {
+        let (_dir, root) = workspace("");
+        let wiring = Wiring::read(&root).unwrap();
+        ask_before_the_file_exists(&wiring);
+        fs::write(root.join(".buildlignore"), "notes/\n").unwrap();
+
+        let ignored = with_cycles(&wiring, |cycles| {
+            let _ = cycles.build();
+            ignores_notes(cycles)
+        });
+
+        assert_eq!(ignored, Some(true));
+    }
+
+    #[test]
+    fn a_graph_check_hands_back_the_rules_it_read() {
+        let (_dir, root) = workspace(CEILING);
+        fs::write(root.join("build.lua"), "").unwrap();
+        let wiring = Wiring::read(&root).unwrap();
+        ask_before_the_file_exists(&wiring);
+        fs::write(root.join(".buildlignore"), "notes/\n").unwrap();
+
+        let ignored = with_cycles(&wiring, |cycles| {
+            cycles.graph().unwrap();
+            ignores_notes(cycles)
+        });
+
+        assert_eq!(ignored, Some(true));
+    }
+
+    #[test]
+    fn a_cycle_that_could_not_open_keeps_the_last_rules() {
+        let (_dir, root) = workspace("");
+        let wiring = Wiring::read(&root).unwrap();
+        fs::write(root.join(".buildlignore"), "notes/\n").unwrap();
+
+        let ignored = with_cycles(&wiring, |cycles| {
+            let _ = cycles.build();
+            fs::write(root.join("buildl.toml"), "[nonsense]\nx = 1\n").unwrap();
+            let failed = cycles.build();
+            assert!(failed.layout.is_none());
+            ignores_notes(cycles)
+        });
+
+        assert_eq!(ignored, Some(true));
     }
 }

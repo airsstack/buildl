@@ -11,8 +11,9 @@ use std::collections::BTreeMap;
 
 use buildl_core::{
     Digest, EntryName, EnvMark, EnvName, EnvValue, Error, Label, LiveOutput, MachineFolders,
-    NodeId, OnFailure, OutputSource, Pipeline, PlannedKey, Scope, SettingName, SettingValue,
-    StagedEnv, StagedItem, StagedMark, StagedSetting, TargetRole, Verdict, Written, pipeline,
+    NodeId, NothingIgnored, OnFailure, OutputSource, Pipeline, PlannedKey, Scope, SettingName,
+    SettingValue, StagedEnv, StagedItem, StagedMark, StagedSetting, TargetRole, Verdict, Written,
+    pipeline,
 };
 
 use crate::common::{
@@ -366,6 +367,7 @@ fn gc_refuses_a_machine_path_too() {
     let ports = pipeline.ports_mut();
     let error = pipeline::gc(
         &ports.source,
+        &NothingIgnored,
         &mut FakeDispatcher::default(),
         &entry(),
         &folders(),

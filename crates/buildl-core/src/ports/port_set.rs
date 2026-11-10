@@ -48,6 +48,8 @@ pub struct PortSet<P: Ports> {
     pub reporter: P::Reporter,
     /// Says whether a build may do what it wants.
     pub approver: P::Approver,
+    /// Says which workspace paths the ignore files cover.
+    pub ignore: P::Ignore,
     /// Looks results up in, and stores them to, a cache shared between machines.
     pub remote: P::Remote,
 }
@@ -71,6 +73,7 @@ where
     P::Graph: fmt::Debug,
     P::Reporter: fmt::Debug,
     P::Approver: fmt::Debug,
+    P::Ignore: fmt::Debug,
     P::Remote: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -90,6 +93,7 @@ where
             .field("graph", &self.graph)
             .field("reporter", &self.reporter)
             .field("approver", &self.approver)
+            .field("ignore", &self.ignore)
             .field("remote", &self.remote)
             .finish()
     }
@@ -108,8 +112,8 @@ mod tests {
     use crate::error::Result;
     use crate::ports::{
         ActionCache, Approver, Clock, ContentStore, DeclarationSource, Digester, Dispatcher,
-        EventLog, ExecStrategy, GraphRecord, Host, Manifest, NoRemote, Ports, Reporter, RunHistory,
-        StatCache, ToolResolver,
+        EventLog, ExecStrategy, GraphRecord, Host, Manifest, NoRemote, NothingIgnored, Ports,
+        Reporter, RunHistory, StatCache, ToolResolver,
     };
     use crate::types::{
         Approval, Attribution, BuildFile, CacheRow, Captured, Ceiling, Channel, Digest, Directory,
@@ -338,6 +342,7 @@ mod tests {
         type Graph = Stub;
         type Reporter = Stub;
         type Approver = Stub;
+        type Ignore = NothingIgnored;
         type Remote = NoRemote;
     }
 
@@ -359,6 +364,7 @@ mod tests {
             graph: Stub,
             reporter: Stub,
             approver: Stub,
+            ignore: NothingIgnored,
             remote: NoRemote,
         };
 
@@ -387,6 +393,10 @@ mod tests {
                 "field `{field}` missing from: {text}"
             );
         }
+        assert!(
+            text.contains("ignore: NothingIgnored"),
+            "field `ignore` missing from: {text}"
+        );
         assert!(
             text.contains("remote: NoRemote"),
             "field `remote` missing from: {text}"

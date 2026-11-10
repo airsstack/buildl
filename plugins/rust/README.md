@@ -81,7 +81,7 @@ What the plugin fills in on every target, so you write none of it:
 
 | Setting | Value |
 |---|---|
-| inputs | every file below the build file's folder (`buildl.sources("**/*")`), except a `target/` folder a plain `cargo build` left there and the `.git/` folder (git keeps different files in each clone, which would split the keys): sources, manifests, `build.rs`, toolchain files, and files read by `include_str!` or a build script |
+| inputs | every file below the build file's folder (`buildl.sources("**/*")`), except a `target/` folder a plain `cargo build` left there and the `.git/` folder (git keeps different files in each clone, which would split the keys), and also any path a `.buildlignore` leaves out, such as a documentation folder: sources, manifests, `build.rs`, toolchain files, and files read by `include_str!` or a build script |
 | env | `{ HOME = "unkeyed", PATH = "unkeyed" }`: cargo finds its crates and toolchain through `HOME` and the linker through `PATH`; only the names are in the key |
 | network | `network = true` |
 
@@ -142,7 +142,9 @@ rust.test("server-test", { args = rust.package("server") })
 rust.test("codec-test",  { args = rust.package("codec") })
 ```
 
-The inputs are every file below the root, so a change in any member rebuilds every target.
+The inputs are every file below the root, so a change in any member rebuilds every target. A
+`.buildlignore` keeps folders such as documentation or notes out of every target's inputs, so
+editing them rebuilds nothing.
 
 ## Crate types
 

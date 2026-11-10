@@ -253,6 +253,7 @@ impl Workspace {
     pub fn check(&self) -> Result<Loaded> {
         pipeline::check(
             &self.wiring.source()?,
+            self.wiring.ignore(),
             &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
             &self.wiring.machine_folders()?,
@@ -274,6 +275,7 @@ impl Workspace {
     pub fn graph(&self) -> Result<(TargetGraph, Vec<Label>)> {
         pipeline::graph(
             &self.wiring.source()?,
+            self.wiring.ignore(),
             &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
             &self.wiring.machine_folders()?,
@@ -296,6 +298,7 @@ impl Workspace {
     pub fn query(&self, query: &Query) -> Result<(BTreeSet<Label>, Vec<Label>)> {
         pipeline::query(
             &self.wiring.source()?,
+            self.wiring.ignore(),
             &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
             &self.wiring.machine_folders()?,
@@ -321,6 +324,7 @@ impl Workspace {
     pub fn doctor(&self) -> Result<(Doctor, Vec<Label>)> {
         let (checkup, missing) = pipeline::doctor(
             &self.wiring.source()?,
+            self.wiring.ignore(),
             &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.manifest(),
             self.wiring.entry(),
@@ -578,6 +582,7 @@ impl Workspace {
         let log = LocalLog::new(layout);
         let collected = pipeline::gc(
             &source,
+            self.wiring.ignore(),
             &mut self.wiring.dispatcher(RemotePolicy::OFF),
             self.wiring.entry(),
             &folders,
@@ -1338,6 +1343,57 @@ mod tests {
                 .contains("//:copy")
         );
         assert!(!root.join(".buildl/cache.journal").exists());
+    }
+
+    /// A workspace whose root `.buildlignore` holds `notes/` and whose one target reads
+    /// `notes/a.md`.
+    fn reading_an_ignored_input() -> (tempfile::TempDir, PathBuf) {
+        let (dir, root) = workspace(&[
+            ("buildl.toml", BARE),
+            (
+                "build.lua",
+                "buildl.target(\"copy\", { inputs = { \"notes/a.md\" }, run = { \"cp\", \"$in\", \"$out\" } })\n",
+            ),
+            ("notes/a.md", "a\n"),
+            (".buildlignore", "notes/\n"),
+        ]);
+        (dir, root)
+    }
+
+    /// Asserts `result` failed because an input is ignored.
+    fn assert_ignored<T: std::fmt::Debug>(result: Result<T>) {
+        let error = result.unwrap_err();
+        assert!(matches!(error, Error::Ignored { .. }), "{error:?}");
+    }
+
+    #[test]
+    fn graph_refuses_an_input_a_buildlignore_covers() {
+        let (_dir, root) = reading_an_ignored_input();
+
+        assert_ignored(Workspace::open(&root).unwrap().graph());
+    }
+
+    #[test]
+    fn query_refuses_an_input_a_buildlignore_covers() {
+        let (_dir, root) = reading_an_ignored_input();
+        let workspace = Workspace::open(&root).unwrap();
+        let query = workspace.query_of("deps(//:copy)").unwrap();
+
+        assert_ignored(workspace.query(&query));
+    }
+
+    #[test]
+    fn doctor_refuses_an_input_a_buildlignore_covers() {
+        let (_dir, root) = reading_an_ignored_input();
+
+        assert_ignored(Workspace::open(&root).unwrap().doctor());
+    }
+
+    #[test]
+    fn gc_refuses_an_input_a_buildlignore_covers() {
+        let (_dir, root) = reading_an_ignored_input();
+
+        assert_ignored(Workspace::open(&root).unwrap().gc());
     }
 
     #[test]

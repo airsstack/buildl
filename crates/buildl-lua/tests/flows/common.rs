@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use buildl_core::{
     BuildFile, DeclarationSource, Diagnostic, Directory, Discovered, Dispatcher, Error, Evaluated,
-    EvaluationFailure, Provenance, Result, Turn,
+    EvaluationFailure, NothingIgnored, Provenance, Result, Turn,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -38,8 +38,14 @@ pub(crate) fn root_file() -> BuildFile {
 
 /// Evaluates the root build file of the workspace at `root` under the default limits.
 pub(crate) fn evaluate(root: &Path) -> Result<Evaluated> {
-    LuaSource::new(root, DeclarationLimits::default(), [], BTreeMap::new())
-        .evaluate(&root_file(), &Discovered::empty())
+    LuaSource::new(
+        root,
+        DeclarationLimits::default(),
+        [],
+        NothingIgnored,
+        BTreeMap::new(),
+    )
+    .evaluate(&root_file(), &Discovered::empty())
 }
 
 /// The failure and diagnostic of evaluating a root build file holding `source`.

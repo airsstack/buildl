@@ -64,7 +64,7 @@ Limits on evaluating one build file. A build file that goes over one stops with 
 |---|---|---|---|---|
 | `memory` | string | `"16MB"` | the memory one build file may use: a whole number followed by `B`, `KB`, `MB` or `GB`, each 1024 times the one before; not zero | 155 |
 | `instructions` | integer | `10000000` | how many Lua instructions one build file may run; at least 1 | 157 |
-| `walk_entries` | integer | `100000` | how many directory entries one build file's source listings may visit; at least 1 | 159 |
+| `walk_entries` | integer | `100000` | how many directory entries one build file's source listings may visit; at least 1. A folder a `.buildlignore` ignores is not entered and an ignored path is not counted | 159 |
 
 ## `[execution]`
 

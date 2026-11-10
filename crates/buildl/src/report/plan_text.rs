@@ -153,12 +153,12 @@ mod tests {
         Discovered, Dispatcher, EnvMark, EnvName, EnvValue, Error, Evaluated, EventLog,
         ExecStrategy, Execution, FileMode, FileStat, Found, Freshness, GraphRecord, Host,
         InputDigest, InputStat, KeyComponents, Label, LiveSink, LogLine, Manifest, NetworkAccess,
-        NoRemote, Origin, OutcomeEvent, OutputName, OutputPath, OutputSource, OwnComponents, Plan,
-        PlannedKey, Platform, PluginCap, PluginName, PluginRef, PluginVersion, PortName, PortSet,
-        Ports, Produced, Program, Provenance, RawOutcome, ReadyAction, Rerun, Result, RunHistory,
-        Setting, SettingName, SettingValue, SourcePath, StatCache, StatEntry, Target, TargetGraph,
-        TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn, Verdict, WantedSet, Workspace,
-        plan, resolve,
+        NoRemote, NothingIgnored, Origin, OutcomeEvent, OutputName, OutputPath, OutputSource,
+        OwnComponents, Plan, PlannedKey, Platform, PluginCap, PluginName, PluginRef, PluginVersion,
+        PortName, PortSet, Ports, Produced, Program, Provenance, RawOutcome, ReadyAction, Rerun,
+        Result, RunHistory, Setting, SettingName, SettingValue, SourcePath, StatCache, StatEntry,
+        Target, TargetGraph, TargetRole, Timestamp, ToolIdentity, ToolResolver, Turn, Verdict,
+        WantedSet, Workspace, plan, resolve,
     };
 
     use super::{difference_text, plan_text, reason_text};
@@ -395,6 +395,7 @@ mod tests {
         type Graph = Unused;
         type Reporter = Silent;
         type Approver = Unused;
+        type Ignore = NothingIgnored;
         type Remote = NoRemote;
     }
 
@@ -416,6 +417,7 @@ mod tests {
             graph: Unused,
             reporter: Silent,
             approver: Unused,
+            ignore: NothingIgnored,
             remote: NoRemote,
         };
         plan(graph, &BTreeMap::new(), Rerun::Off, &mut ports).unwrap()

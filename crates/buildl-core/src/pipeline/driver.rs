@@ -26,8 +26,8 @@ use crate::grants::negotiate;
 use crate::load::{declaration_order, load};
 use crate::plan::plan;
 use crate::ports::{
-    ContentStore, DeclarationSource, Dispatcher, GraphRecord, Host, Manifest, PortSet, Ports,
-    RunHistory,
+    ContentStore, DeclarationSource, Dispatcher, GraphRecord, Host, IgnoreRules, Manifest, PortSet,
+    Ports, RunHistory,
 };
 use crate::resolve::{narrow, reach, resolve};
 use crate::types::{
@@ -116,6 +116,7 @@ impl<P: Ports> Pipeline<P> {
         let folders = self.ports.host.machine_folders();
         check(
             &self.ports.source,
+            &self.ports.ignore,
             &mut self.ports.dispatcher,
             entry,
             &folders,
@@ -141,6 +142,7 @@ impl<P: Ports> Pipeline<P> {
         let folders = self.ports.host.machine_folders();
         graph(
             &self.ports.source,
+            &self.ports.ignore,
             &mut self.ports.dispatcher,
             entry,
             &folders,
@@ -161,6 +163,7 @@ impl<P: Ports> Pipeline<P> {
         let folders = self.ports.host.machine_folders();
         query(
             &self.ports.source,
+            &self.ports.ignore,
             &mut self.ports.dispatcher,
             entry,
             &folders,
@@ -211,6 +214,7 @@ impl<P: Ports> Pipeline<P> {
     fn declared(&mut self, entry: &EntryName) -> Result<Loaded> {
         let PortSet {
             source,
+            ignore,
             dispatcher,
             log,
             cas,
@@ -218,7 +222,7 @@ impl<P: Ports> Pipeline<P> {
             ..
         } = &mut self.ports;
         let folders = host.machine_folders();
-        load_twice(source, dispatcher, entry, &folders, |labels| {
+        load_twice(source, ignore, dispatcher, entry, &folders, |labels| {
             results(log, cas, labels)
         })
     }
@@ -272,6 +276,7 @@ impl<P: Ports> Pipeline<P> {
         let folders = self.ports.host.machine_folders();
         let pass_one = first_pass(
             &self.ports.source,
+            &self.ports.ignore,
             &mut self.ports.dispatcher,
             entry,
             &folders,
@@ -306,6 +311,7 @@ impl<P: Ports> Pipeline<P> {
         }
         let declarations = second_pass(
             &self.ports.source,
+            &self.ports.ignore,
             &mut self.ports.dispatcher,
             entry,
             &pass_one,
@@ -616,8 +622,9 @@ impl<P: Ports> Pipeline<P> {
 /// [`Error::Nondeterministic`] when two loads declare different things, and
 /// [`Error::DiscoveryChanged`] when the loads with results declare different discovery targets
 /// than the load without.
-pub fn check<S, D, H, C>(
+pub fn check<S, I, D, H, C>(
     source: &S,
+    rules: &I,
     dispatcher: &mut D,
     entry: &EntryName,
     folders: &MachineFolders,
@@ -626,14 +633,15 @@ pub fn check<S, D, H, C>(
 ) -> Result<Loaded>
 where
     S: DeclarationSource,
+    I: IgnoreRules,
     D: Dispatcher,
     H: RunHistory,
     C: ContentStore,
 {
-    let first = first_pass(source, dispatcher, entry, folders)?;
+    let first = first_pass(source, rules, dispatcher, entry, folders)?;
     let labels = discovery_labels(&first);
     if labels.is_empty() {
-        let second = load(source, dispatcher, entry, &Discovered::empty())?;
+        let second = load(source, rules, dispatcher, entry, &Discovered::empty())?;
         return first_difference(&first, &second).map_or(
             Ok(Loaded {
                 declarations: first,
@@ -643,8 +651,16 @@ where
         );
     }
     let (discovered, missing) = results(history, cas, &labels);
-    let second = second_pass(source, dispatcher, entry, &first, &discovered, folders)?;
-    let third = load(source, dispatcher, entry, &discovered)?;
+    let second = second_pass(
+        source,
+        rules,
+        dispatcher,
+        entry,
+        &first,
+        &discovered,
+        folders,
+    )?;
+    let third = load(source, rules, dispatcher, entry, &discovered)?;
     first_difference(&second, &third).map_or(
         Ok(Loaded {
             declarations: second,
@@ -668,8 +684,9 @@ where
 /// [`Error::MachinePathInDiscovery`] for what holds one of `folders`,
 /// [`Error::DiscoveryChanged`] when the second load declares different discovery targets than the
 /// first, and otherwise whatever [`resolve`] returns.
-pub fn graph<S, D, H, C>(
+pub fn graph<S, I, D, H, C>(
     source: &S,
+    rules: &I,
     dispatcher: &mut D,
     entry: &EntryName,
     folders: &MachineFolders,
@@ -678,11 +695,12 @@ pub fn graph<S, D, H, C>(
 ) -> Result<(TargetGraph, Vec<Label>)>
 where
     S: DeclarationSource,
+    I: IgnoreRules,
     D: Dispatcher,
     H: RunHistory,
     C: ContentStore,
 {
-    let loaded = load_twice(source, dispatcher, entry, folders, |labels| {
+    let loaded = load_twice(source, rules, dispatcher, entry, folders, |labels| {
         results(history, cas, labels)
     })?;
     Ok((resolve(loaded.declarations)?, loaded.missing))
@@ -698,8 +716,13 @@ where
 ///
 /// Returns whatever [`graph`] returns, and [`Error::UnknownTarget`] when the target `asked` names
 /// is neither a target nor an alias.
-pub fn query<S, D, H, C>(
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is a distinct port this command reads; grouping them would only rename them"
+)]
+pub fn query<S, I, D, H, C>(
     source: &S,
+    rules: &I,
     dispatcher: &mut D,
     entry: &EntryName,
     folders: &MachineFolders,
@@ -709,11 +732,12 @@ pub fn query<S, D, H, C>(
 ) -> Result<(BTreeSet<Label>, Vec<Label>)>
 where
     S: DeclarationSource,
+    I: IgnoreRules,
     D: Dispatcher,
     H: RunHistory,
     C: ContentStore,
 {
-    let (graph, missing) = graph(source, dispatcher, entry, folders, history, cas)?;
+    let (graph, missing) = graph(source, rules, dispatcher, entry, folders, history, cas)?;
     Ok((reach(&graph, asked)?, missing))
 }
 

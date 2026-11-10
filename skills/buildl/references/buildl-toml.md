@@ -67,7 +67,7 @@ Limits on evaluating one build file. A build file that goes over one stops with 
 |---|---|---|---|
 | `memory` | string | `"16MB"` | a whole number followed by `B`, `KB`, `MB` or `GB`. Not zero |
 | `instructions` | integer | `10000000` | how many Lua instructions one build file may run. At least 1 |
-| `walk_entries` | integer | `100000` | how many directory entries its `sources` listings may visit. At least 1 |
+| `walk_entries` | integer | `100000` | how many directory entries its `sources` listings may visit; a folder a `.buildlignore` ignores is not entered and costs none. At least 1 |
 
 ```toml
 [declaration]

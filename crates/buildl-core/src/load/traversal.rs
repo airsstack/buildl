@@ -7,12 +7,13 @@
 //!
 //! Responsibilities: [`load`], which hands each build file to a
 //! [`Dispatcher`] and returns what `loading` makes of the results; the per-file steps `evaluation`
-//! calls; and the order declarations are returned in.
+//! calls, among them asking the [`IgnoreRules`] port about each input and each requested
+//! subdirectory; and the order declarations are returned in.
 //!
 //! Non-responsibilities: evaluating a build file, which the
-//! [`DeclarationSource`] port does; deciding how many files are evaluated at a time, which the
-//! dispatcher does; and checking one declaration against another, which the phase that builds the
-//! graph does.
+//! [`DeclarationSource`] port does; deciding which paths are ignored, which the [`IgnoreRules`]
+//! port does; deciding how many files are evaluated at a time, which the dispatcher does; and
+//! checking one declaration against another, which the phase that builds the graph does.
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -22,13 +23,13 @@ use std::sync::atomic::AtomicBool;
 use super::evaluation::{FileResult, evaluate_file};
 use super::loading::Loading;
 use crate::error::{ActionFound, DeclarationField, DeclarationSite, Error, NameKind, Result};
-use crate::ports::{DeclarationSource, Dispatcher};
+use crate::ports::{DeclarationSource, Dispatcher, IgnoreRules};
 use crate::types::{
     Action, Alias, Argument, BuildFile, Command, Declaration, DeclarationOrder, Declared,
-    Directory, Discovered, EntryName, EnvMark, EnvName, Freshness, Label, Origin, OutputName,
-    OutputSource, Provenance, Rule, Setting, SourcePath, StagedAlias, StagedDeclaration, StagedEnv,
-    StagedItem, StagedMark, StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target,
-    TargetName, TargetRole, Turn, Written,
+    Directory, Discovered, EntryKind, EntryName, EnvMark, EnvName, Freshness, IgnoredPath,
+    Ignoring, Label, Origin, OutputName, OutputSource, Provenance, Rule, Setting, SourcePath,
+    StagedAlias, StagedDeclaration, StagedEnv, StagedItem, StagedMark, StagedRule, StagedSetting,
+    StagedSubdir, StagedTarget, Target, TargetName, TargetRole, Turn, Written,
 };
 
 /// Evaluates the workspace's build files and returns their declarations, validated and sorted.
@@ -36,7 +37,8 @@ use crate::types::{
 /// The walk starts at the workspace root and follows `subdir` requests, evaluating each directory
 /// once, with `dispatcher` deciding how many files are evaluated at a time. Nothing is discovered
 /// from the filesystem: the evaluated build files are exactly the root's and those a `subdir`
-/// call reaches. `discovered` is handed to every evaluation. The result is sorted by declaring
+/// call reaches. `discovered` is handed to every evaluation, and each `inputs` entry and each
+/// requested `subdir` is asked of `rules` once it parses. The result is sorted by declaring
 /// directory, then declared name, then the whole declaration, and the error is the one a walk in
 /// breadth-first order would meet first, so neither depends on the order anything was evaluated or
 /// declared in.
@@ -49,13 +51,16 @@ use crate::types::{
 /// - [`Error::MissingBuildFile`] when the root or a requested directory holds no build file;
 /// - [`Error::InvalidDeclaration`] when a staged value fails its grammar, including a `subdir`
 ///   that would leave the workspace, and a discovery target that names `outputs` or always runs;
+/// - [`Error::Ignored`] when `rules` report an `inputs` entry or a requested `subdir` ignored;
+/// - whatever `rules` return for a path it cannot decide, an [`Error::IgnoreFile`];
 /// - [`Error::ActionConflict`] when a target names both or neither of `rule` and `run`;
 /// - [`Error::LostBuildFiles`] when `dispatcher` returned without evaluating a build file it was
 ///   given;
 ///
 /// or the error `dispatcher` itself returns.
-pub fn load<S: DeclarationSource, D: Dispatcher>(
+pub fn load<S: DeclarationSource, I: IgnoreRules, D: Dispatcher>(
     source: &S,
+    rules: &I,
     dispatcher: &mut D,
     entry: &EntryName,
     discovered: &Discovered,
@@ -64,7 +69,7 @@ pub fn load<S: DeclarationSource, D: Dispatcher>(
     let mut loading = Loading::new(entry, &stop);
     dispatcher.dispatch(
         |directory: Directory, _tell: &(dyn Fn(()) + Sync)| {
-            let result = evaluate_file(source, entry, &directory, discovered, &stop);
+            let result = evaluate_file(source, rules, entry, &directory, discovered, &stop);
             (directory, result)
         },
         |turn: Turn<(), (Directory, FileResult)>| match turn {
@@ -111,6 +116,17 @@ impl Site<'_> {
         }
     }
 
+    /// An `inputs` entry or `subdir` at this site, `path`, is ignored by `ignoring`.
+    fn ignored(&self, path: IgnoredPath, ignoring: Ignoring) -> Error {
+        Error::Ignored {
+            provenance: self.provenance.clone(),
+            origin: self.origin.clone(),
+            order: self.order,
+            path: Box::new(path),
+            ignoring: Box::new(ignoring),
+        }
+    }
+
     /// A target at this site found `found` instead of exactly one action.
     fn conflict(&self, found: ActionFound) -> Error {
         Error::ActionConflict {
@@ -122,12 +138,16 @@ impl Site<'_> {
     }
 }
 
-/// Resolves a file's `subdir` requests under its directory, sorted and without repeats.
+/// Resolves a file's `subdir` requests under its directory, sorted and without repeats, asking
+/// `rules` about each as a folder.
 ///
 /// Sorting here makes the breadth-first order independent of the order the requests were made in.
-pub(super) fn resolve_subdirs(
+/// A directory the grammar refuses is never asked, and one `rules` ignore is refused, so its build
+/// file is never handed to the source.
+pub(super) fn resolve_subdirs<I: IgnoreRules>(
     subdirs: &[StagedSubdir],
     provenance: &Provenance,
+    rules: &I,
 ) -> Result<Vec<Directory>> {
     let mut resolved = Vec::with_capacity(subdirs.len());
     for subdir in subdirs {
@@ -140,6 +160,9 @@ pub(super) fn resolve_subdirs(
             .path
             .under(site.directory())
             .map_err(site.invalid(DeclarationField::Subdir))?;
+        if let Some(ignoring) = rules.ignored(directory.as_str(), EntryKind::Folder)? {
+            return Err(site.ignored(IgnoredPath::Subdir(directory), ignoring));
+        }
         resolved.push(directory);
     }
     resolved.sort();
@@ -148,14 +171,18 @@ pub(super) fn resolve_subdirs(
 }
 
 /// Converts one staged declaration into a validated one.
-pub(super) fn convert(staged: StagedDeclaration, provenance: &Provenance) -> Result<Declaration> {
+pub(super) fn convert<I: IgnoreRules>(
+    staged: StagedDeclaration,
+    provenance: &Provenance,
+    rules: &I,
+) -> Result<Declaration> {
     let site = Site {
         provenance,
         origin: &staged.origin,
         order: staged.order,
     };
     let item = match staged.item {
-        StagedItem::Target(target) => Declared::Target(convert_target(target, &site)?),
+        StagedItem::Target(target) => Declared::Target(convert_target(target, &site, rules)?),
         StagedItem::Rule(rule) => Declared::Rule(convert_rule(rule, &site)?),
         StagedItem::Alias(alias) => Declared::Alias(convert_alias(&alias, &site)?),
         StagedItem::Setting(setting) => Declared::Setting(convert_setting(&setting, &site)?),
@@ -182,15 +209,26 @@ fn convert_command(run: &[Written<Argument>], site: &Site<'_>) -> Result<Command
     Command::new(arguments).map_err(site.invalid(DeclarationField::Run))
 }
 
-/// An input, joined under the declaring directory and validated as a workspace path.
-fn convert_input(input: &Written<SourcePath>, site: &Site<'_>) -> Result<SourcePath> {
+/// An input, joined under the declaring directory, validated as a workspace path and then asked of
+/// `rules` as a file.
+///
+/// A path the grammar refuses is never asked.
+fn convert_input<I: IgnoreRules>(
+    input: &Written<SourcePath>,
+    site: &Site<'_>,
+    rules: &I,
+) -> Result<SourcePath> {
     let directory = site.directory();
     let joined = if directory.is_root() {
         input.as_written().to_owned()
     } else {
         format!("{directory}/{}", input.as_written())
     };
-    SourcePath::parse(joined).map_err(site.invalid(DeclarationField::Input))
+    let path = SourcePath::parse(joined).map_err(site.invalid(DeclarationField::Input))?;
+    match rules.ignored(path.as_str(), EntryKind::File)? {
+        Some(ignoring) => Err(site.ignored(IgnoredPath::Input(path), ignoring)),
+        None => Ok(path),
+    }
 }
 
 /// Refuses what a discovery target may not carry: its output is fixed and it is always cached.
@@ -215,7 +253,11 @@ fn refuse_discovery_overrides(staged: &StagedTarget, site: &Site<'_>) -> Result<
     Ok(())
 }
 
-fn convert_target(staged: StagedTarget, site: &Site<'_>) -> Result<Target> {
+fn convert_target<I: IgnoreRules>(
+    staged: StagedTarget,
+    site: &Site<'_>,
+    rules: &I,
+) -> Result<Target> {
     let label = declared_label(&staged.name, site)?;
     if staged.role == TargetRole::Discovery {
         refuse_discovery_overrides(&staged, site)?;
@@ -231,7 +273,7 @@ fn convert_target(staged: StagedTarget, site: &Site<'_>) -> Result<Target> {
     };
     let mut inputs = Vec::with_capacity(staged.inputs.len());
     for input in &staged.inputs {
-        inputs.push(convert_input(input, site)?);
+        inputs.push(convert_input(input, site, rules)?);
     }
     let mut deps = Vec::with_capacity(staged.deps.len());
     for dep in &staged.deps {
@@ -418,12 +460,13 @@ mod tests {
 
     use super::{build_file, convert, declaration_order, resolve_subdirs};
     use crate::error::{ActionFound, DeclarationField, Error, NameKind};
+    use crate::ports::{IgnoreRules, NothingIgnored};
     use crate::types::{
-        Action, Declaration, DeclarationOrder, Declared, Directory, EntryName, EnvMark, EnvName,
-        Freshness, Label, NetworkAccess, Origin, OutputName, OutputSource, PluginName, PluginRef,
-        PluginVersion, Provenance, StagedAlias, StagedDeclaration, StagedEnv, StagedItem,
-        StagedMark, StagedRule, StagedSetting, StagedSubdir, StagedTarget, Target, TargetRole,
-        Written,
+        Action, Declaration, DeclarationOrder, Declared, Directory, EntryKind, EntryName, EnvMark,
+        EnvName, Freshness, Ignoring, Label, NetworkAccess, Origin, OutputName, OutputSource,
+        PluginName, PluginRef, PluginVersion, Provenance, StagedAlias, StagedDeclaration,
+        StagedEnv, StagedItem, StagedMark, StagedRule, StagedSetting, StagedSubdir, StagedTarget,
+        Target, TargetRole, Written,
     };
 
     fn file_in(directory: &str) -> Provenance {
@@ -471,7 +514,11 @@ mod tests {
         directory: &str,
         target: StagedTarget,
     ) -> crate::error::Result<Declaration> {
-        convert(declare(StagedItem::Target(target)), &file_in(directory))
+        convert(
+            declare(StagedItem::Target(target)),
+            &file_in(directory),
+            &NothingIgnored,
+        )
     }
 
     fn invalid_field(result: crate::error::Result<Declaration>) -> DeclarationField {
@@ -508,7 +555,7 @@ mod tests {
             path: Written::new(raw),
             order: DeclarationOrder::new(0),
         });
-        let resolved = resolve_subdirs(&subdirs, &file_in("lib")).unwrap();
+        let resolved = resolve_subdirs(&subdirs, &file_in("lib"), &NothingIgnored).unwrap();
         let rendered: Vec<&str> = resolved.iter().map(Directory::as_str).collect();
         assert_eq!(rendered, ["lib/alpha", "lib/mid", "lib/zeta"]);
     }
@@ -520,7 +567,7 @@ mod tests {
                 path: Written::new(raw),
                 order: DeclarationOrder::new(7),
             }];
-            match resolve_subdirs(&subdirs, &file_in("lib")).unwrap_err() {
+            match resolve_subdirs(&subdirs, &file_in("lib"), &NothingIgnored).unwrap_err() {
                 Error::InvalidDeclaration {
                     provenance,
                     order,
@@ -800,6 +847,106 @@ mod tests {
         assert_eq!(target_of(&declaration).inputs[0].as_str(), "main.c");
     }
 
+    /// Rules that ignore one path, and note every path they are asked about.
+    struct IgnoringOne {
+        path: &'static str,
+        asked: std::sync::Mutex<Vec<(String, EntryKind)>>,
+    }
+
+    impl IgnoringOne {
+        fn new(path: &'static str) -> Self {
+            Self {
+                path,
+                asked: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    impl IgnoreRules for IgnoringOne {
+        fn ignored(&self, path: &str, kind: EntryKind) -> crate::error::Result<Option<Ignoring>> {
+            self.asked.lock().unwrap().push((path.to_owned(), kind));
+            Ok((path == self.path).then(|| Ignoring::new("app/.buildlignore", "*.md")))
+        }
+    }
+
+    #[test]
+    fn an_ignored_input_is_refused_at_its_site_with_its_joined_path() {
+        let mut target = staged_target("app");
+        target.inputs = vec![Written::new("a.md")];
+        let rules = IgnoringOne::new("app/a.md");
+        let error =
+            convert(declare(StagedItem::Target(target)), &file_in("app"), &rules).unwrap_err();
+        match error {
+            Error::Ignored {
+                provenance,
+                order,
+                path,
+                ignoring,
+                ..
+            } => {
+                assert_eq!(provenance.file(), Path::new("app/build.lua"));
+                assert_eq!(order, DeclarationOrder::new(4));
+                assert_eq!(path.to_string(), "app/a.md");
+                assert_eq!(ignoring.pattern(), "*.md");
+            }
+            other => unreachable!("expected Ignored, got {other:?}"),
+        }
+        assert_eq!(
+            *rules.asked.lock().unwrap(),
+            [("app/a.md".to_owned(), EntryKind::File)]
+        );
+    }
+
+    #[test]
+    fn an_ignored_subdir_is_refused_at_its_site_with_its_joined_path() {
+        let subdirs = [StagedSubdir {
+            path: Written::new("sub"),
+            order: DeclarationOrder::new(3),
+        }];
+        let rules = IgnoringOne::new("app/sub");
+        match resolve_subdirs(&subdirs, &file_in("app"), &rules).unwrap_err() {
+            Error::Ignored {
+                provenance,
+                order,
+                path,
+                ..
+            } => {
+                assert_eq!(provenance.file(), Path::new("app/build.lua"));
+                assert_eq!(order, DeclarationOrder::new(3));
+                assert_eq!(path.to_string(), "app/sub");
+            }
+            other => unreachable!("expected Ignored, got {other:?}"),
+        }
+        assert_eq!(
+            *rules.asked.lock().unwrap(),
+            [("app/sub".to_owned(), EntryKind::Folder)]
+        );
+    }
+
+    #[test]
+    fn a_subdir_that_fails_its_grammar_is_not_asked() {
+        let subdirs = [StagedSubdir {
+            path: Written::new("../x"),
+            order: DeclarationOrder::new(0),
+        }];
+        let rules = IgnoringOne::new("../x");
+        match resolve_subdirs(&subdirs, &file_in(""), &rules).unwrap_err() {
+            Error::InvalidDeclaration { field, .. } => assert_eq!(field, DeclarationField::Subdir),
+            other => unreachable!("expected InvalidDeclaration, got {other:?}"),
+        }
+        assert!(rules.asked.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_input_that_fails_its_grammar_is_not_asked() {
+        let mut target = staged_target("app");
+        target.inputs = vec![Written::new("../x")];
+        let rules = IgnoringOne::new("../x");
+        let result = convert(declare(StagedItem::Target(target)), &file_in(""), &rules);
+        assert_eq!(invalid_field(result), DeclarationField::Input);
+        assert!(rules.asked.lock().unwrap().is_empty());
+    }
+
     #[test]
     fn a_rule_reference_resolves_against_the_declaring_directory() {
         let mut target = staged_target("main.o");
@@ -845,11 +992,17 @@ mod tests {
         };
         let mut neither = staged_target("app");
         neither.run = None;
-        match convert(by_plugin(neither), &file_in("")).unwrap_err() {
+        match convert(by_plugin(neither), &file_in(""), &NothingIgnored).unwrap_err() {
             Error::ActionConflict { origin: found, .. } => assert_eq!(found, origin),
             other => unreachable!("expected ActionConflict, got {other:?}"),
         }
-        match convert(by_plugin(staged_target("a/b")), &file_in("")).unwrap_err() {
+        match convert(
+            by_plugin(staged_target("a/b")),
+            &file_in(""),
+            &NothingIgnored,
+        )
+        .unwrap_err()
+        {
             Error::InvalidDeclaration { origin: found, .. } => assert_eq!(found, origin),
             other => unreachable!("expected InvalidDeclaration, got {other:?}"),
         }
@@ -930,13 +1083,22 @@ mod tests {
             run: vec![Written::new("cc"), Written::new("$in")],
             description: Some(Written::new("compile $in")),
         };
-        let converted = convert(declare(StagedItem::Rule(rule.clone())), &file).unwrap();
+        let converted = convert(
+            declare(StagedItem::Rule(rule.clone())),
+            &file,
+            &NothingIgnored,
+        )
+        .unwrap();
         assert_eq!(converted.item().name(), "cc");
 
         let mut bad_description = rule;
         bad_description.description = Some(Written::new("two\nlines"));
         assert_eq!(
-            invalid_field(convert(declare(StagedItem::Rule(bad_description)), &file)),
+            invalid_field(convert(
+                declare(StagedItem::Rule(bad_description)),
+                &file,
+                &NothingIgnored
+            )),
             DeclarationField::Description
         );
 
@@ -944,7 +1106,7 @@ mod tests {
             name: Written::new("default"),
             target: Written::new("app"),
         };
-        let converted = convert(declare(StagedItem::Alias(alias)), &file).unwrap();
+        let converted = convert(declare(StagedItem::Alias(alias)), &file, &NothingIgnored).unwrap();
         match converted.item() {
             Declared::Alias(alias) => assert_eq!(alias.target.to_string(), "//:app"),
             other => unreachable!("expected an alias, got {other:?}"),
@@ -954,7 +1116,11 @@ mod tests {
             target: Written::new("a/b"),
         };
         assert_eq!(
-            invalid_field(convert(declare(StagedItem::Alias(bad_alias)), &file)),
+            invalid_field(convert(
+                declare(StagedItem::Alias(bad_alias)),
+                &file,
+                &NothingIgnored
+            )),
             DeclarationField::Target
         );
 
@@ -962,13 +1128,24 @@ mod tests {
             name: Written::new("test_filter"),
             default: Written::new(""),
         };
-        assert!(convert(declare(StagedItem::Setting(setting)), &file).is_ok());
+        assert!(
+            convert(
+                declare(StagedItem::Setting(setting)),
+                &file,
+                &NothingIgnored
+            )
+            .is_ok()
+        );
         let bad_name = StagedSetting {
             name: Written::new("a.b"),
             default: Written::new(""),
         };
         assert_eq!(
-            invalid_field(convert(declare(StagedItem::Setting(bad_name)), &file)),
+            invalid_field(convert(
+                declare(StagedItem::Setting(bad_name)),
+                &file,
+                &NothingIgnored
+            )),
             DeclarationField::SettingName
         );
         let bad_value = StagedSetting {
@@ -976,7 +1153,11 @@ mod tests {
             default: Written::new("a\0b"),
         };
         assert_eq!(
-            invalid_field(convert(declare(StagedItem::Setting(bad_value)), &file)),
+            invalid_field(convert(
+                declare(StagedItem::Setting(bad_value)),
+                &file,
+                &NothingIgnored
+            )),
             DeclarationField::SettingValue
         );
     }

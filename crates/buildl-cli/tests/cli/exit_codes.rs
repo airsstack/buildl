@@ -1606,3 +1606,110 @@ fn log_shows_what_a_stdout_target_printed() {
     assert_eq!(code(&output), 0, "{}", stderr(&output));
     assert_eq!(stdout(&output), "one\ntwo\n");
 }
+
+/// A root build file with one target, `//:app`, reading `src/a.c` and `inputs` besides.
+fn reading(inputs: &[&str]) -> String {
+    let listed: Vec<String> = std::iter::once("src/a.c")
+        .chain(inputs.iter().copied())
+        .map(|input| format!("{input:?}"))
+        .collect();
+    format!(
+        "buildl.target(\"app\", {{ inputs = {{ {} }}, run = {{ \"cc\", \"$in\" }} }})\n",
+        listed.join(", ")
+    )
+}
+
+/// A workspace for the ignore-file cases: a manifest, `build_file`, and the sources they read.
+fn ignoring_workspace(build_file: &str) -> (tempfile::TempDir, PathBuf) {
+    workspace(&[
+        ("buildl.toml", &manifest(&["cc"])),
+        ("build.lua", build_file),
+        ("src/a.c", "int main(void) { return 0; }\n"),
+        ("notes/a.md", "notes\n"),
+        ("examples/build.lua", ""),
+    ])
+}
+
+/// Runs `check` at `root` and asserts it exits 5 with `text` on standard error.
+fn check_refuses(root: &Path, text: &str) {
+    let (status, said) = failed(root, &["check"]);
+    assert_eq!(status, 5, "{said}");
+    assert!(said.contains(text), "expected {text:?} in {said:?}");
+}
+
+#[test]
+fn an_ignored_input_exits_5() {
+    let (_dir, root) = ignoring_workspace(&reading(&["notes/a.md"]));
+    write(&root, ".buildlignore", "notes/\n");
+
+    check_refuses(
+        &root,
+        "build.lua: inputs: notes/a.md is ignored by .buildlignore (notes/)",
+    );
+}
+
+#[test]
+fn an_ignored_subdir_exits_5() {
+    let build_file = format!("{}buildl.subdir(\"examples\")\n", reading(&[]));
+    let (_dir, root) = ignoring_workspace(&build_file);
+    write(&root, ".buildlignore", "examples/\n");
+
+    let (status, said) = failed(&root, &["check"]);
+
+    assert_eq!(status, 5, "{said}");
+    assert_eq!(
+        said,
+        "error: build.lua: subdir: examples is ignored by .buildlignore (examples/)\n"
+    );
+}
+
+#[test]
+fn a_bad_pattern_exits_5() {
+    let (_dir, root) = ignoring_workspace(&reading(&[]));
+    write(&root, "src/.buildlignore", "[z-a]\n");
+
+    check_refuses(
+        &root,
+        "src/.buildlignore:1: error parsing glob '[z-a]': invalid range; 'z' > 'a'",
+    );
+}
+
+#[test]
+fn a_bad_buildlignore_found_by_the_walk_exits_5() {
+    // The pattern lists nothing from `lib`, so only the walk through it reads its ignore file.
+    let build_file = "buildl.target(\"app\", { inputs = buildl.sources(\"src/*.c\"), run = { \"cc\", \"$in\" } })\n";
+    let (_dir, root) = ignoring_workspace(build_file);
+    write(&root, "lib/.buildlignore", "[z-a]\n");
+
+    check_refuses(
+        &root,
+        "lib/.buildlignore:1: error parsing glob '[z-a]': invalid range; 'z' > 'a'",
+    );
+}
+
+#[test]
+fn a_non_utf8_buildlignore_exits_5() {
+    let (_dir, root) = ignoring_workspace(&reading(&[]));
+    fs::write(root.join("src/.buildlignore"), b"\xff\xfe\n").unwrap();
+
+    check_refuses(&root, "src/.buildlignore:1: not UTF-8");
+}
+
+#[test]
+fn a_symlinked_buildlignore_exits_5() {
+    let (_dir, root) = ignoring_workspace(&reading(&[]));
+    write(&root, "real-ignore", "*.tmp\n");
+    symlink("../real-ignore", root.join("src/.buildlignore")).unwrap();
+
+    check_refuses(&root, "src/.buildlignore: a symlink, not a file");
+}
+
+#[test]
+fn a_workspace_without_buildlignore_is_unchanged() {
+    let build_file = format!("{}buildl.subdir(\"examples\")\n", reading(&["notes/a.md"]));
+    let (_dir, root) = ignoring_workspace(&build_file);
+
+    let (status, said) = failed(&root, &["check"]);
+
+    assert_eq!(status, 0, "{said}");
+}

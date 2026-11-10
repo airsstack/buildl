@@ -10,13 +10,14 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use buildl_core::{
     ActionCache, Approval, Approver, Attribution, BuildFile, CacheRow, Ceiling, Clock,
     ContentStore, DeclarationOrder, DeclarationSource, Diagnostic, Digest, Digester, Directory,
-    Discovered, Dispatcher, EnvName, EnvValue, Error, Evaluated, EvaluationFailure, EventLog,
-    ExecStrategy, Exit, FileStat, Freshness, Host, InputKind, InputStat, Label, LogLine, Manifest,
-    NetworkAccess, Origin, OutcomeEvent, OutputPath, OutputSource, Platform, PluginName, PluginRef,
-    PluginVersion, PortName, PortSet, Ports, Program, RawOutcome, ReadyAction, Result, RunHistory,
-    SourcePath, StagedAlias, StagedDeclaration, StagedEnv, StagedFile, StagedItem, StagedMark,
-    StagedRule, StagedSetting, StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole,
-    Timestamp, ToolResolver, WantedSet, Workspace, Written,
+    Discovered, Dispatcher, EntryKind, EnvName, EnvValue, Error, Evaluated, EvaluationFailure,
+    EventLog, ExecStrategy, Exit, FileStat, Freshness, Host, IgnoreRules, Ignoring, InputKind,
+    InputStat, Label, LogLine, Manifest, NetworkAccess, Origin, OutcomeEvent, OutputPath,
+    OutputSource, Platform, PluginName, PluginRef, PluginVersion, PortName, PortSet, Ports,
+    Program, RawOutcome, ReadyAction, Result, RunHistory, SourcePath, StagedAlias,
+    StagedDeclaration, StagedEnv, StagedFile, StagedItem, StagedMark, StagedRule, StagedSetting,
+    StagedSubdir, StagedTarget, StatCache, StatEntry, Sweep, TargetRole, Timestamp, ToolResolver,
+    WantedSet, Workspace, Written,
 };
 use buildl_core::{
     ActionOutcome, Blob, BlobSource, DecodedTree, Executed, Pipeline, RemoteAction, RemoteCache,
@@ -1500,6 +1501,66 @@ impl Approver for FakeApprover {
     }
 }
 
+/// Ignore rules holding the paths they ignore, recording every question they are asked.
+///
+/// Built with [`FakeIgnore::default`] it ignores nothing. A path is ignored whatever kind it is
+/// asked as.
+#[derive(Debug, Default)]
+pub struct FakeIgnore {
+    ignored: BTreeMap<String, Ignoring>,
+    failure: Option<(String, String)>,
+    asked: Mutex<Vec<(String, EntryKind)>>,
+}
+
+impl FakeIgnore {
+    /// Rules ignoring each `(path, ignore file, pattern)`.
+    #[must_use]
+    pub fn ignoring(paths: &[(&str, &str, &str)]) -> Self {
+        Self {
+            ignored: paths
+                .iter()
+                .map(|(path, file, pattern)| ((*path).to_owned(), Ignoring::new(*file, *pattern)))
+                .collect(),
+            ..Self::default()
+        }
+    }
+
+    /// Rules that fail every question with an [`Error::IgnoreFile`] naming `file` and `reason`.
+    #[must_use]
+    pub fn failing(file: &str, reason: &str) -> Self {
+        Self {
+            failure: Some((file.to_owned(), reason.to_owned())),
+            ..Self::default()
+        }
+    }
+
+    /// Every `(path, kind)` asked so far, in the order asked.
+    #[must_use]
+    pub fn asked(&self) -> Vec<(String, EntryKind)> {
+        self.asked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
+impl IgnoreRules for FakeIgnore {
+    fn ignored(&self, path: &str, kind: EntryKind) -> Result<Option<Ignoring>> {
+        self.asked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((path.to_owned(), kind));
+        if let Some((file, reason)) = &self.failure {
+            return Err(Error::IgnoreFile {
+                file: file.clone(),
+                line: None,
+                reason: reason.clone(),
+            });
+        }
+        Ok(self.ignored.get(path).cloned())
+    }
+}
+
 /// The bundle choosing the fakes of this file.
 #[derive(Debug)]
 pub struct FakePorts;
@@ -1520,6 +1581,7 @@ impl Ports for FakePorts {
     type Graph = FakeGraphRecord;
     type Reporter = FakeReporter;
     type Approver = FakeApprover;
+    type Ignore = FakeIgnore;
     type Remote = FakeRemote;
 }
 
@@ -1549,8 +1611,8 @@ pub fn open_workspace() -> Workspace {
 /// An [`open_workspace`]; a `linux/x86_64` machine with no variable set; no workspace file,
 /// nothing recorded, no program and no row; an empty content store and an empty log; a strategy
 /// with no script; a dispatcher taking the oldest task first, one at a time; a clock that has
-/// not been read; no graph recorded; a reporter that has received no call; and an approver that
-/// grants every set and has been asked nothing.
+/// not been read; no graph recorded; a reporter that has received no call; an approver that
+/// grants every set and has been asked nothing; and ignore rules that ignore nothing.
 #[must_use]
 pub fn ports(source: FakeSource) -> PortSet<FakePorts> {
     PortSet {
@@ -1577,6 +1639,7 @@ pub fn ports(source: FakeSource) -> PortSet<FakePorts> {
         graph: FakeGraphRecord::default(),
         reporter: FakeReporter::default(),
         approver: FakeApprover::default(),
+        ignore: FakeIgnore::default(),
         remote: FakeRemote::default(),
     }
 }
@@ -1840,9 +1903,9 @@ mod tests {
         ActionCache, ActionKey, ActionOutcome, Argument, CacheRow, Captured, Channel, Clock,
         Command, ContentStore, Digest, Directory, Discovered, Dispatcher, EntryName, Error,
         EventLog, ExecStrategy, Exit, GraphRecord, KeyComponents, Label, NetworkAccess,
-        OutcomeClass, OutcomeEvent, OutputName, OutputPath, OutputSource, OwnComponents, Platform,
-        PortName, Provenance, ReadyAction, Reporter, SourcePath, Summary, Tally, TargetGraph,
-        TargetRole, Timestamp, json, load, resolve,
+        NothingIgnored, OutcomeClass, OutcomeEvent, OutputName, OutputPath, OutputSource,
+        OwnComponents, Platform, PortName, Provenance, ReadyAction, Reporter, SourcePath, Summary,
+        Tally, TargetGraph, TargetRole, Timestamp, json, load, resolve,
     };
 
     use super::{
@@ -1987,6 +2050,7 @@ mod tests {
         resolve(
             load(
                 &source,
+                &NothingIgnored,
                 &mut FakeDispatcher::default(),
                 &entry,
                 &Discovered::empty(),

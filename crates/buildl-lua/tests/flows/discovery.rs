@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use buildl_core::{
     BuildFile, DeclarationSource, Directory, Discovered, Evaluated, EvaluationFailure, Freshness,
-    Label, NetworkAccess, OutputSource, PluginName, Provenance, StagedEnv, StagedFile, StagedItem,
-    StagedMark, StagedTarget, TargetRole, Written,
+    Label, NetworkAccess, NothingIgnored, OutputSource, PluginName, Provenance, StagedEnv,
+    StagedFile, StagedItem, StagedMark, StagedTarget, TargetRole, Written,
 };
 use buildl_lua::{DeclarationLimits, LuaSource};
 
@@ -37,7 +37,13 @@ fn staged(root: &Path, plugins: &[&str], file: &BuildFile, discovered: &Discover
             )
         })
         .collect();
-    let source = LuaSource::new(root, DeclarationLimits::default(), [], plugins);
+    let source = LuaSource::new(
+        root,
+        DeclarationLimits::default(),
+        [],
+        NothingIgnored,
+        plugins,
+    );
     match source.evaluate(file, discovered).unwrap() {
         Evaluated::Staged(staged) => staged,
         Evaluated::Absent => panic!("the build file exists"),

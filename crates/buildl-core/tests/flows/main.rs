@@ -12,6 +12,7 @@ mod discovery;
 mod doctor;
 mod gc;
 mod graph;
+mod ignore;
 mod load;
 mod log;
 mod machine_paths;

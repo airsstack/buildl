@@ -99,16 +99,19 @@ deny = [
         book/src/ch11-03-four-crates.md: buildl-core must never depend on toml; buildl.toml parsing is \
         the Manifest adapter's, inside buildl; buildl-lua reads a plugin's extension.toml for \
         env.unkeyed, a key of buildl's own that airsl's manifest parser refuses""" },
-    { crate = "walkdir", wrappers = ["airsl", "buildl-lua", "notify"], reason = """\
+    { crate = "walkdir", wrappers = ["airsl", "buildl-lua", "notify", "ignore"], reason = """\
         book/src/ch11-03-four-crates.md: buildl-core does no filesystem traversal; buildl-lua walks the declaring \
         directory for b.sources(); notify walks a directory to watch it, inside the watch \
-        adapter of buildl""" },
+        adapter of buildl; ignore matches .buildlignore patterns inside the ignore-rules adapter of buildl""" },
     { crate = "tempfile", wrappers = ["airsl", "buildl-lua", "buildl", "buildl-cli", "buildl-cargo"], reason = """\
         book/src/ch11-03-four-crates.md: temp-file-then-rename is a storage concern of buildl's shared state module; \
         buildl-lua, buildl, buildl-cli and buildl-cargo also use it for the temp workspaces of their tests""" },
-    { crate = "globset", wrappers = ["airsl", "buildl-lua"], reason = """\
+    { crate = "globset", wrappers = ["airsl", "buildl-lua", "ignore"], reason = """\
         book/src/ch11-03-four-crates.md: b.sources() globbing is a filesystem read, not core logic; buildl-lua \
-        matches it host-side""" },
+        matches it host-side; ignore matches .buildlignore patterns inside the ignore-rules adapter of buildl""" },
+    { crate = "ignore", wrappers = ["buildl"], reason = """\
+        book/src/ch11-03-four-crates.md: .gitignore-syntax matching reads files and matches patterns, which buildl-core \
+        never does; it is confined to the ignore-rules adapter inside buildl""" },
     { crate = "rayon", wrappers = ["buildl"], reason = """\
         book/src/ch11-06-decision-records.md: rayon is confined to the Digester adapter inside buildl""" },
     { crate = "clap", wrappers = ["buildl", "buildl-cargo"], reason = """\

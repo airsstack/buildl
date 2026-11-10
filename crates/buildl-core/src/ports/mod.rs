@@ -27,6 +27,8 @@
 //! - [`RemoteCache`] — a cache of results shared between machines, asked and filled by the action
 //!   that made them; [`BlobSource`] — where the bytes an upload names are read from;
 //!   [`NoRemote`] — the remote cache of a build that has none.
+//! - [`IgnoreRules`] — whether a workspace path is ignored by a `.buildlignore`;
+//!   [`NothingIgnored`] — the rules of a build that has none.
 //! - [`Changes`] — the files that changed in the workspace, one debounced batch at a time.
 //! - [`Cycles`] — one build, and one load of the build files, on the workspace opened again.
 //! - [`WatchReport`] — what a watching loop tells a person: building, failed, waiting.
@@ -54,8 +56,10 @@ pub mod event_log;
 pub mod exec_strategy;
 pub mod graph_record;
 pub mod host;
+pub mod ignore_rules;
 pub mod manifest;
 pub mod no_remote;
+pub mod nothing_ignored;
 pub mod port_set;
 pub mod remote_cache;
 pub mod reporter;
@@ -81,8 +85,10 @@ pub use event_log::EventLog;
 pub use exec_strategy::ExecStrategy;
 pub use graph_record::GraphRecord;
 pub use host::Host;
+pub use ignore_rules::IgnoreRules;
 pub use manifest::Manifest;
 pub use no_remote::NoRemote;
+pub use nothing_ignored::NothingIgnored;
 pub use port_set::PortSet;
 pub use remote_cache::{BlobSource, RemoteCache};
 pub use reporter::Reporter;
