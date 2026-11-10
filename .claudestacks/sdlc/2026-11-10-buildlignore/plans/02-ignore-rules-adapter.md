@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-10
 depends-on: [01]
 built-on: 6643cfeb82a2
@@ -161,3 +161,25 @@ green. Commit `feat(buildl): decide ignored paths from .buildlignore files`.
 
 - `cargo make dod` and `cargo deny check -D unused-wrapper` green after each task.
 - `cargo make guard-crate-edges` and `cargo make guard-adapter-isolation` pass.
+
+## Review findings
+
+One reviewer pass over 2465268..9c41107: 0 blocking. Fixed in 54a2079 (`cargo make dod` exit 0; `guard-adapter-isolation`, `cargo deny check -D unused-wrapper` green) unless declined.
+
+- 🟡 no test pinned that a bad line holding braces is reported as written — fixed: `a_bad_line_with_braces_is_reported_as_written` (`{[z-a]`).
+- 🔵 no test pinned the trimmed map key — fixed: `a_pattern_is_reported_without_its_trailing_spaces`.
+- 🔵 no test pinned `NotADirectory` as no file — fixed: `a_path_under_a_regular_file_is_not_ignored`.
+- 🔵 doc said every file is read once, but a refused file is read again — fixed: doc corrected.
+- 🔵 index arithmetic with silent `get(..).unwrap_or(..)` fallbacks — fixed: each (folder, relative path) pair built directly with `split_at`.
+- 🔵 `a_bad_file_on_the_way_is_an_error` duplicated another test — fixed: asks `lib/deep/l.rs`.
+- 🔵 `new` accepted a relative root — fixed: documented as the canonical root, `debug_assert!(root.is_absolute())`.
+- 🔵 crate doc's port table left out `ignore_rules` — fixed.
+- 🔵 `is_folder: bool` parameter — declined: this plan names the signature; private to the module.
+- ❓ a `.buildlignore` under a folder symlinked outside the workspace is read through the link — declined: spec §2.2 refuses only a symlinked `.buildlignore` itself; the build reads its inputs through the same folder link, so reading the ignore file there exposes nothing new.
+
+## Deviations
+
+- 2026-11-10 — Task 2: `FolderRules`, `Decision`, `read`, `decide` are `pub(super)`, not `pub`: the workspace's `unreachable_pub` lint denies plain `pub` in a private module.
+- 2026-11-10 — Task 2: `ErrorKind::NotADirectory` when reading a folder's `.buildlignore` is treated as no file (a path under a regular file); the plan did not say. Pinned by a test.
+- 2026-11-10 — Task 2: `a_symlinked_file_is_refused` is `#[cfg(unix)]`.
+- 2026-11-10 — Tasks 1 and 2 ran in one coder with one gate run (disjoint files), committed separately.

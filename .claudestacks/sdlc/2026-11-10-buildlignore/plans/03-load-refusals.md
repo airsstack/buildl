@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-10
 depends-on: [01, 02]
 built-on: 6643cfeb82a2
@@ -169,3 +169,21 @@ and `cargo deny check -D unused-wrapper` are green. Commit `test(buildl-cli): ex
 - `cargo make dod` and `cargo deny check -D unused-wrapper` green after each task;
   `cargo make guard-module-edges`, `cargo make guard-adapter-isolation` and `cargo make
   guard-core-purity` pass.
+
+## Review findings
+
+One reviewer pass over 98b2a72, 46369d6, 18e49ae: 0 blocking. All fixed in e076560 (`cargo make dod`, `cargo deny check -D unused-wrapper` green).
+
+- 🟡 `graph`, `query`, `doctor`, `gc` in `workspace.rs` had no test with a `.buildlignore` — fixed: four tests each return `Error::Ignored`; with the call sites swapped to `&NothingIgnored` all four failed (Ok instead of Err), then restored.
+- 🔵 no test that a reopened wiring sees a changed `.buildlignore` — fixed: test in `local_ports.rs`.
+- 🔵 `an_ignored_subdir_exits_5` left out the provenance prefix — fixed: asserts `error: build.lua: subdir: examples is ignored by .buildlignore (examples/)`.
+- 🔵 `FileResult::Failed` doc named only an ignored input — fixed: also an ignored subdir and an unusable ignore file.
+- 🔵 ragged doc lines in `evaluation.rs`, `traversal.rs`, `bundle.rs`; doubled "and" in `common.rs` — fixed.
+
+## Deviations
+
+- 2026-11-10 — Task 1: `doctor` and `query` now take 8 arguments and carry `#[expect(clippy::too_many_arguments, reason = …)]`, as `gc` already did; `check_graph_query_and_gc_load_in_any_order` carries `#[expect(clippy::too_many_lines, reason = …)]`.
+- 2026-11-10 — Task 1: `crates/buildl-core/src/load/loading.rs` also changed (a caller of `load`), not in the file list.
+- 2026-11-10 — Task 1: `Wiring` exposes the instance as `Wiring::ignore()`; `reopened()` reads afresh, so each watch cycle gets a new one.
+- 2026-11-10 — Task 2: `common.rs` needed no change (`FakeSource::evaluated()` existed); `a_subdir_that_is_not_ignored_loads` checks with `contains` because `check` loads twice. Added `a_failing_rule_set_fails_a_subdir_question`.
+- 2026-11-10 — Tasks 2 and 3 ran in one coder with one gate run (disjoint files), committed separately.

@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-10
 built-on: 6643cfeb82a2
 ---
@@ -135,3 +135,20 @@ Commit `feat(buildl-core): add the IgnoreRules port`.
 - `cargo make guard-module-edges` and `cargo make guard-core-purity` pass: the new files use only
   `ports -> types`, `ports -> error` and `types -> error`, which exist
   (`crates/expected-module-edges.txt:43-44,48`).
+
+## Review findings
+
+One reviewer pass over c21a313..dceae96: 0 blocking.
+
+- ❓ `Error::Ignored` keeps `order` but its message omits it — declined: the message text is fixed by spec §5 and this plan; `order` stays for callers that read fields.
+- ❓ `IgnoreRules` doc stated the rule unclearly (deeper file vs ignored parent; last line in a file) — fixed in 2465268: the doc states the root-down rule, deeper file first, last matching line wins, first ignored step decides. `cargo check -p buildl-core --all-targets` → clean.
+- 🔵 `line_suffix(Option<&u32>)` → takes `Option<u32>` — fixed in 2465268.
+- 🔵 `Ignoring::new` lacked `#[must_use]` — fixed in 2465268.
+- 🔵 `entry_kind.rs` no-tests line worded unlike its siblings — fixed in 2465268.
+- 🔵 `path: &str` and `Ignoring`'s `String` fields are plain strings — declined: this plan names those types with its reasons.
+
+## Deviations
+
+- 2026-11-10 — Task 2: `Error::Ignored` holds `path: Box<IgnoredPath>` and `ignoring: Box<Ignoring>`, not plain values. Unboxed, `Error` passed clippy's `result_large_err` limit (128 bytes) and `cargo make dod` failed workspace-wide. Display text unchanged; later plans build them with `Box::new`.
+- 2026-11-10 — Task 2: `exit.rs`'s `every_error_variant_has_its_code` counts raised (27→29, 54→56) for the two new variants.
+- 2026-11-10 — Tasks 2 and 3 ran in one coder with one gate run (disjoint files), committed separately.
