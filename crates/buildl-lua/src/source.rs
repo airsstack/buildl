@@ -19,7 +19,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use airsl::Script;
 use buildl_core::{
     BuildFile, DeclarationSource, Diagnostic, Directory, Discovered, Error, Evaluated,
-    EvaluationFailure, PluginName, Result,
+    EvaluationFailure, IgnoreRules, PluginName, Result,
 };
 
 use crate::classify::classify;
@@ -46,7 +46,8 @@ use crate::staging::Staging;
 ///
 /// `buildl.sources` never lists a file under a directory the source was built to skip. A source
 /// built with the workspace's output and state directories therefore keeps a build file at the
-/// workspace root from seeing what the build wrote.
+/// workspace root from seeing what the build wrote. Nor does it list a path the source's
+/// [`IgnoreRules`] report ignored, an ignore file included.
 ///
 /// # Examples
 ///
@@ -55,7 +56,9 @@ use crate::staging::Staging;
 /// use std::fs;
 /// use std::path::PathBuf;
 ///
-/// use buildl_core::{BuildFile, DeclarationSource, Directory, Discovered, Evaluated, Provenance};
+/// use buildl_core::{
+///     BuildFile, DeclarationSource, Directory, Discovered, Evaluated, NothingIgnored, Provenance,
+/// };
 /// use buildl_lua::{DeclarationLimits, LuaSource};
 ///
 /// let workspace = tempfile::tempdir()?;
@@ -63,7 +66,13 @@ use crate::staging::Staging;
 /// fs::write(root.join("build.lua"), "buildl.alias('default', 'app')")?;
 ///
 /// let skipped = [Directory::parse("out")?, Directory::parse(".buildl")?];
-/// let source = LuaSource::new(&root, DeclarationLimits::default(), skipped, BTreeMap::new());
+/// let source = LuaSource::new(
+///     &root,
+///     DeclarationLimits::default(),
+///     skipped,
+///     NothingIgnored,
+///     BTreeMap::new(),
+/// );
 /// let file = BuildFile::new(Provenance::new(PathBuf::from("build.lua"), Directory::root()));
 /// assert!(matches!(
 ///     source.evaluate(&file, &Discovered::empty())?,
@@ -72,16 +81,18 @@ use crate::staging::Staging;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LuaSource {
+pub struct LuaSource<I> {
     root: PathBuf,
     limits: DeclarationLimits,
     skipped: Vec<Directory>,
+    ignore: I,
     plugins: BTreeMap<PluginName, PathBuf>,
 }
 
-impl LuaSource {
+impl<I: IgnoreRules + Clone + Send + 'static> LuaSource<I> {
     /// A source for the workspace at `root`, evaluating under `limits`, whose `buildl.sources`
-    /// stays out of `skipped` and whose `buildl.use` loads the plugins in `plugins`.
+    /// stays out of `skipped` and of every path `ignore` reports ignored, and whose `buildl.use`
+    /// loads the plugins in `plugins`.
     ///
     /// `root` must be the workspace root's canonical, absolute path. `buildl.sources` walks
     /// beneath it and refuses any directory that resolves outside it.
@@ -92,6 +103,13 @@ impl LuaSource {
     /// directory, or lies inside one, gets an empty list from `buildl.sources`. An empty `skipped`
     /// skips nothing: the walk then lists the workspace's own output and state directories too.
     ///
+    /// `ignore` is asked about each entry the walk meets, by its workspace-relative path and
+    /// kind, after the skipped directories are ruled out. The walk neither lists, enters nor
+    /// counts an entry it reports ignored, and a build file whose own directory is ignored gets an
+    /// empty list. An error from `ignore` stops the walk and refuses the `buildl.sources` call
+    /// with the error's text. Pass [`NothingIgnored`](buildl_core::NothingIgnored) for a workspace
+    /// with no ignore files.
+    ///
     /// `plugins` maps each plugin name a build file may use to the directory holding its
     /// `extension.toml`. The caller has already checked the directories, so this source reads
     /// them as given. A plugin's `require` stays inside its own directory, however that directory
@@ -101,18 +119,20 @@ impl LuaSource {
         root: impl Into<PathBuf>,
         limits: DeclarationLimits,
         skipped: impl IntoIterator<Item = Directory>,
+        ignore: I,
         plugins: BTreeMap<PluginName, PathBuf>,
     ) -> Self {
         Self {
             root: root.into(),
             limits,
             skipped: skipped.into_iter().collect(),
+            ignore,
             plugins,
         }
     }
 }
 
-impl DeclarationSource for LuaSource {
+impl<I: IgnoreRules + Clone + Send + 'static> DeclarationSource for LuaSource<I> {
     /// Evaluates `file`; `buildl.discovered` reads `discovered`.
     ///
     /// A file that does not exist is [`Evaluated::Absent`].
@@ -149,6 +169,7 @@ impl DeclarationSource for LuaSource {
                 file.directory(),
                 self.limits.walk_entries(),
                 &self.skipped,
+                self.ignore.clone(),
             ),
             Results::new(discovered, file.directory()),
             &self.root,
@@ -198,7 +219,7 @@ mod tests {
 
     use buildl_core::{
         BuildFile, DeclarationSource, Directory, Discovered, Error, Evaluated, EvaluationFailure,
-        Provenance, StagedItem,
+        NothingIgnored, Provenance, StagedItem,
     };
 
     use super::LuaSource;
@@ -219,8 +240,14 @@ mod tests {
     }
 
     fn failure(root: &Path) -> EvaluationFailure {
-        match LuaSource::new(root, DeclarationLimits::default(), [], BTreeMap::new())
-            .evaluate(&root_file(), &Discovered::empty())
+        match LuaSource::new(
+            root,
+            DeclarationLimits::default(),
+            [],
+            NothingIgnored,
+            BTreeMap::new(),
+        )
+        .evaluate(&root_file(), &Discovered::empty())
         {
             Err(Error::Evaluation { failure, .. }) => failure,
             other => panic!("expected an evaluation failure, got {other:?}"),
@@ -234,6 +261,7 @@ mod tests {
             dir.path(),
             DeclarationLimits::default(),
             [],
+            NothingIgnored,
             BTreeMap::new(),
         );
         assert_eq!(
@@ -281,7 +309,7 @@ mod tests {
     #[test]
     fn the_source_can_be_shared_across_threads() {
         const fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<LuaSource>();
+        assert_send_sync::<LuaSource<NothingIgnored>>();
     }
 
     #[test]
@@ -293,9 +321,15 @@ mod tests {
     #[test]
     fn evaluation_failures_carry_the_file_s_provenance() {
         let (_dir, root) = workspace(b"return (");
-        let error = LuaSource::new(&root, DeclarationLimits::default(), [], BTreeMap::new())
-            .evaluate(&root_file(), &Discovered::empty())
-            .unwrap_err();
+        let error = LuaSource::new(
+            &root,
+            DeclarationLimits::default(),
+            [],
+            NothingIgnored,
+            BTreeMap::new(),
+        )
+        .evaluate(&root_file(), &Discovered::empty())
+        .unwrap_err();
         assert!(
             error.to_string().starts_with("build.lua: syntax error: "),
             "{error}"
@@ -312,11 +346,19 @@ mod tests {
             "/ws",
             DeclarationLimits::default(),
             skipped.clone(),
+            NothingIgnored,
             BTreeMap::new(),
         );
         assert_eq!(source.skipped, skipped);
         assert_eq!(
-            LuaSource::new("/ws", DeclarationLimits::default(), [], BTreeMap::new()).skipped,
+            LuaSource::new(
+                "/ws",
+                DeclarationLimits::default(),
+                [],
+                NothingIgnored,
+                BTreeMap::new()
+            )
+            .skipped,
             []
         );
     }
@@ -333,6 +375,7 @@ mod tests {
             &root,
             DeclarationLimits::default(),
             [Directory::parse("out").unwrap()],
+            NothingIgnored,
             BTreeMap::new(),
         )
         .evaluate(&root_file(), &Discovered::empty())
@@ -349,11 +392,15 @@ mod tests {
     #[test]
     fn a_staged_file_is_returned_with_its_declarations() {
         let (_dir, root) = workspace(b"buildl.subdir('lib')\nbuildl.alias('default', 'app')");
-        let Evaluated::Staged(staged) =
-            LuaSource::new(&root, DeclarationLimits::default(), [], BTreeMap::new())
-                .evaluate(&root_file(), &Discovered::empty())
-                .unwrap()
-        else {
+        let Evaluated::Staged(staged) = LuaSource::new(
+            &root,
+            DeclarationLimits::default(),
+            [],
+            NothingIgnored,
+            BTreeMap::new(),
+        )
+        .evaluate(&root_file(), &Discovered::empty())
+        .unwrap() else {
             panic!("the build file exists");
         };
         assert_eq!(staged.declarations.len(), 1);

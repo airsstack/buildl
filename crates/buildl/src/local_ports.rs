@@ -55,7 +55,7 @@ use crate::tools::PathTools;
 pub struct LocalPorts<R, C>(PhantomData<fn() -> (R, C)>);
 
 impl<R: Reporter, C: Console> Ports for LocalPorts<R, C> {
-    type Source = LuaSource;
+    type Source = LuaSource<BuildlIgnore>;
     type Manifest = TomlManifest;
     type Host = LocalHost;
     type Digester = FileDigester;
@@ -276,7 +276,8 @@ impl Wiring {
     ///
     /// Build files are evaluated under the ceilings the manifest sets, each one it leaves out
     /// taking its default, and their source listings stay out of the output and the state
-    /// directory.
+    /// directory and out of everything the workspace's `.buildlignore` files cover. The source
+    /// asks the same rules, shared with [`ignore`](Self::ignore), that the rest of the run does.
     ///
     /// Every plugin `buildl.toml` names is checked first, once, against `buildl.lock` and the
     /// plugin store: a command that makes a source refuses before any build file is opened. The
@@ -286,7 +287,7 @@ impl Wiring {
     ///
     /// Returns [`Error::CorruptState`] when `buildl.lock` is damaged, an adapter error when it
     /// cannot be read, and what [`check`] returns for a plugin that is not there to use.
-    pub fn source(&self) -> Result<LuaSource> {
+    pub fn source(&self) -> Result<LuaSource<BuildlIgnore>> {
         let lock = Lock::read(self.root.as_path())?;
         let checked = check(
             self.root.as_path(),
@@ -317,6 +318,7 @@ impl Wiring {
             self.root.as_path(),
             limits,
             [self.workspace.out.clone(), self.workspace.state.clone()],
+            self.ignore.clone(),
             plugins,
         ))
     }
@@ -625,6 +627,7 @@ mod tests {
     use crate::exec::{Bare, InputSandbox, Local, OutPaths};
     use crate::graph::GraphFile;
     use crate::host::LocalHost;
+    use crate::ignore_rules::BuildlIgnore;
     use crate::local_ports::{LocalPipeline, Wiring};
     use crate::log::LocalLog;
     use crate::manifest::TomlManifest;
@@ -746,6 +749,7 @@ mod tests {
                 )
                 .with_walk_entries(NonZeroU64::new(70).unwrap()),
                 skipped.clone(),
+                BuildlIgnore::new(&root),
                 BTreeMap::new(),
             )
         );
@@ -760,6 +764,7 @@ mod tests {
                 DeclarationLimits::new(defaults.memory_bytes(), NonZeroU64::new(5000).unwrap())
                     .with_walk_entries(defaults.walk_entries()),
                 skipped.clone(),
+                BuildlIgnore::new(&root),
                 BTreeMap::new(),
             )
         );
@@ -768,7 +773,13 @@ mod tests {
         let none = Wiring::read(&root).unwrap();
         assert_eq!(
             none.source().unwrap(),
-            LuaSource::new(&root, defaults, skipped, BTreeMap::new())
+            LuaSource::new(
+                &root,
+                defaults,
+                skipped,
+                BuildlIgnore::new(&root),
+                BTreeMap::new(),
+            )
         );
     }
 

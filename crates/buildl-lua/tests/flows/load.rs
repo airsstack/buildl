@@ -63,6 +63,7 @@ fn load_turns_a_real_workspace_into_declarations() {
         fixture("workspace"),
         DeclarationLimits::default(),
         [],
+        NothingIgnored,
         BTreeMap::new(),
     );
     let declarations = load(

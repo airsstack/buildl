@@ -23,7 +23,9 @@ use std::sync::{Arc, Mutex, TryLockError};
 
 use airsl::mlua::{self, Lua, Table, Value};
 use airsl::{HostModule, InstallContext, ModuleName};
-use buildl_core::{EvaluationFailure, EvaluationLimit, Origin, PluginName, StagedItem, TargetRole};
+use buildl_core::{
+    EvaluationFailure, EvaluationLimit, IgnoreRules, Origin, PluginName, StagedItem, TargetRole,
+};
 
 use crate::decode_all;
 use crate::plugin::Plugins;
@@ -37,15 +39,15 @@ use crate::staging::{Exceeded, Staging};
 
 /// The `buildl` host module for one build file's evaluation.
 #[derive(Debug)]
-pub(crate) struct BuildlModule {
+pub(crate) struct BuildlModule<I> {
     name: ModuleName,
     staging: Arc<Mutex<Staging>>,
-    sources: Sources,
+    sources: Sources<I>,
     results: Results,
-    plugins: Plugins,
+    plugins: Plugins<I>,
 }
 
-impl BuildlModule {
+impl<I: IgnoreRules + Clone + Send + 'static> BuildlModule<I> {
     /// A module staging into `staging`, whose `buildl.sources` walks `sources`, whose
     /// `buildl.discovered` reads `results`, and whose `buildl.use` loads the plugins in `plugins`,
     /// each from the directory it maps to.
@@ -57,7 +59,7 @@ impl BuildlModule {
     /// Never in practice: the only failure is `buildl` not being a valid module name.
     pub(crate) fn new(
         staging: Arc<Mutex<Staging>>,
-        sources: Sources,
+        sources: Sources<I>,
         results: Results,
         root: &Path,
         plugins: BTreeMap<PluginName, PathBuf>,
@@ -73,7 +75,7 @@ impl BuildlModule {
     }
 }
 
-impl HostModule for BuildlModule {
+impl<I: IgnoreRules + Clone + Send + 'static> HostModule for BuildlModule<I> {
     fn name(&self) -> &ModuleName {
         &self.name
     }
@@ -128,10 +130,10 @@ const NOT_LANGUAGE: [&str; 4] = ["buildl", "airsstack", "_G", "require"];
 /// byte budget, `sources` walks the build file's directory whichever table asks, and
 /// `buildl.discovered` reads the same results, relative to the same directory. For the same reason
 /// `buildl.folder()` gives the build file's directory, `""` at the workspace root, in a plugin too.
-pub(crate) fn primitives_table(
+pub(crate) fn primitives_table<I: IgnoreRules + Clone + Send + 'static>(
     lua: &Lua,
     staging: &Arc<Mutex<Staging>>,
-    sources: &Sources,
+    sources: &Sources<I>,
     results: &Results,
     origin: &Origin,
 ) -> mlua::Result<Table> {
@@ -364,8 +366,9 @@ mod tests {
     use airsl::{Engine, LanguageSurface, ModuleSet, Policy, Script};
     use buildl_core::{
         DeclarationOrder, Diagnostic, Directory, EvaluationFailure, EvaluationLimit, Freshness,
-        NetworkAccess, Origin, OutputSource, StagedAlias, StagedDeclaration, StagedFile,
-        StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, TargetRole, Written,
+        NetworkAccess, NothingIgnored, Origin, OutputSource, StagedAlias, StagedDeclaration,
+        StagedFile, StagedItem, StagedRule, StagedSetting, StagedSubdir, StagedTarget, TargetRole,
+        Written,
     };
 
     use airsl::mlua::{Lua, Table, Value};
@@ -425,6 +428,7 @@ mod tests {
                         &Directory::root(),
                         DeclarationLimits::default().walk_entries(),
                         &[],
+                        NothingIgnored,
                     ),
                     Results::none(),
                     &root,
@@ -715,6 +719,7 @@ mod tests {
             &Directory::root(),
             DeclarationLimits::default().walk_entries(),
             &[],
+            NothingIgnored,
         );
         let outer = Origin::plugins(vec![plugin("outer")]).unwrap();
         let nested = Origin::plugins(vec![plugin("outer"), plugin("inner")]).unwrap();

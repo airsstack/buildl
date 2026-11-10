@@ -12,15 +12,16 @@
 //! Non-responsibilities: turning the paths into inputs. They are returned to Lua as text relative
 //! to the declaring directory, and joined with it after evaluation.
 
+use core::cell::RefCell;
 use core::num::NonZeroU64;
 use core::sync::atomic::{AtomicU64, Ordering};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use buildl_core::{Directory, EvaluationFailure, EvaluationLimit};
+use buildl_core::{Directory, EntryKind, Error, EvaluationFailure, EvaluationLimit, IgnoreRules};
 use globset::GlobBuilder;
-use walkdir::WalkDir;
+use walkdir::{DirEntry, WalkDir};
 
 use crate::refusal::Refusal;
 
@@ -33,23 +34,29 @@ use crate::refusal::Refusal;
 /// directory is a workspace-relative path, matched against the whole path from the workspace
 /// root: a directory of the same name deeper in the tree is not skipped. A declaring directory
 /// that is itself a skipped directory, or lies inside one, yields no files.
+///
+/// The walk also never lists, enters or counts a path `ignore` reports ignored, and yields no
+/// files when its declaring directory is ignored.
 #[derive(Debug, Clone)]
-pub(crate) struct Sources {
+pub(crate) struct Sources<I> {
     root: PathBuf,
     directory: PathBuf,
     skipped: Arc<[PathBuf]>,
+    ignore: I,
     ceiling: NonZeroU64,
     visited: Arc<AtomicU64>,
 }
 
-impl Sources {
+impl<I: IgnoreRules> Sources<I> {
     /// The walk for `directory`, under the canonical workspace `root`, that visits at most
-    /// `ceiling` directory entries over its lifetime and skips every directory in `skipped`.
+    /// `ceiling` directory entries over its lifetime, skips every directory in `skipped` and
+    /// leaves out every path `ignore` reports ignored.
     pub(crate) fn new(
         root: &Path,
         directory: &Directory,
         ceiling: NonZeroU64,
         skipped: &[Directory],
+        ignore: I,
     ) -> Self {
         Self {
             root: root.to_path_buf(),
@@ -58,6 +65,7 @@ impl Sources {
                 .iter()
                 .map(|skipped| root.join(skipped.as_str()))
                 .collect(),
+            ignore,
             ceiling,
             visited: Arc::new(AtomicU64::new(0)),
         }
@@ -68,8 +76,13 @@ impl Sources {
     ///
     /// The matcher uses the same flags as airsl's `glob` module: `*` stops at `/`, and `**/`
     /// matches zero or more directories. Every entry the walk visits, of any kind, counts against
-    /// the ceiling; visiting more than it refuses with the walk limit. A skipped directory is
-    /// neither visited nor counted.
+    /// the ceiling; visiting more than it refuses with the walk limit. A skipped directory and an
+    /// ignored entry are neither visited nor counted, so an ignored folder is never entered. The
+    /// declaring directory is asked about first, unless it is the workspace root, and yields
+    /// nothing when it is ignored.
+    ///
+    /// An error from the ignore rules stops the walk and is returned as a runtime refusal with
+    /// the error's text.
     pub(crate) fn find(&self, pattern: &str) -> Result<Vec<String>, Refusal> {
         let matcher = GlobBuilder::new(pattern)
             .literal_separator(true)
@@ -97,12 +110,24 @@ impl Sources {
         if self.skipped.iter().any(|skipped| base.starts_with(skipped)) {
             return Ok(found);
         }
+        if self
+            .is_ignored(&base, EntryKind::Folder)
+            .map_err(|error| rule_refusal(&error))?
+        {
+            return Ok(found);
+        }
+        // The predicate can only answer keep or drop, so the first rule error waits here until
+        // the loop reads it.
+        let rule_error: RefCell<Option<Error>> = RefCell::new(None);
         for entry in WalkDir::new(&base)
             .follow_root_links(false)
             .sort_by_file_name()
             .into_iter()
-            .filter_entry(|entry| !self.skipped.iter().any(|skipped| entry.path() == skipped))
+            .filter_entry(|entry| entry.depth() == 0 || self.keeps(entry, &rule_error))
         {
+            if let Some(error) = rule_error.take() {
+                return Err(rule_refusal(&error));
+            }
             let entry = entry
                 .map_err(|error| Refusal::new(EvaluationFailure::Runtime, error.to_string()))?;
             if self.visited.fetch_add(1, Ordering::Relaxed) >= self.ceiling.get() {
@@ -130,9 +155,58 @@ impl Sources {
             })?;
             found.push(text.to_owned());
         }
+        if let Some(error) = rule_error.take() {
+            return Err(rule_refusal(&error));
+        }
         found.sort();
         Ok(found)
     }
+
+    /// Whether the walk goes on to `entry`: it is not a skipped directory and the ignore rules do
+    /// not report it ignored. An error from the rules is kept in `rule_error`, unless one is
+    /// already there, and drops the entry.
+    fn keeps(&self, entry: &DirEntry, rule_error: &RefCell<Option<Error>>) -> bool {
+        if self
+            .skipped
+            .iter()
+            .any(|skipped| entry.path() == skipped.as_path())
+        {
+            return false;
+        }
+        let kind = if entry.file_type().is_dir() {
+            EntryKind::Folder
+        } else {
+            EntryKind::File
+        };
+        match self.is_ignored(entry.path(), kind) {
+            Ok(ignored) => !ignored,
+            Err(error) => {
+                rule_error.borrow_mut().get_or_insert(error);
+                false
+            }
+        }
+    }
+
+    /// Whether the ignore rules report the absolute `path` ignored. The workspace root and a path
+    /// whose workspace-relative form is not UTF-8 are not asked about and are not ignored.
+    fn is_ignored(&self, path: &Path, kind: EntryKind) -> Result<bool, Error> {
+        let Some(relative) = path
+            .strip_prefix(&self.root)
+            .ok()
+            .and_then(|relative| relative.to_str())
+        else {
+            return Ok(false);
+        };
+        if relative.is_empty() {
+            return Ok(false);
+        }
+        Ok(self.ignore.ignored(relative, kind)?.is_some())
+    }
+}
+
+/// An ignore-rules error as the refusal a `buildl.sources` call fails with.
+fn rule_refusal(error: &Error) -> Refusal {
+    Refusal::new(EvaluationFailure::Runtime, error.to_string())
 }
 
 #[cfg(test)]
@@ -147,7 +221,12 @@ mod tests {
     use std::os::unix::fs::symlink;
     use std::path::{Path, PathBuf};
 
-    use buildl_core::{Directory, EvaluationFailure, EvaluationLimit};
+    use std::sync::{Arc, Mutex};
+
+    use buildl_core::{
+        Directory, EntryKind, Error, EvaluationFailure, EvaluationLimit, IgnoreRules, Ignoring,
+        NothingIgnored,
+    };
 
     use super::Sources;
     use crate::limits::DeclarationLimits;
@@ -164,20 +243,24 @@ mod tests {
         (dir, root)
     }
 
-    fn sources(root: &Path, directory: &str) -> Sources {
+    fn sources(root: &Path, directory: &str) -> Sources<NothingIgnored> {
         sources_capped(root, directory, DeclarationLimits::default().walk_entries())
     }
 
-    fn sources_capped(root: &Path, directory: &str, walk_entries: NonZeroU64) -> Sources {
+    fn sources_capped(
+        root: &Path,
+        directory: &str,
+        walk_entries: NonZeroU64,
+    ) -> Sources<NothingIgnored> {
         let directory = if directory.is_empty() {
             Directory::root()
         } else {
             Directory::parse(directory).unwrap()
         };
-        Sources::new(root, &directory, walk_entries, &[])
+        Sources::new(root, &directory, walk_entries, &[], NothingIgnored)
     }
 
-    fn skipping(root: &Path, directory: &str, skipped: &[&str]) -> Sources {
+    fn skipping(root: &Path, directory: &str, skipped: &[&str]) -> Sources<NothingIgnored> {
         let directory = if directory.is_empty() {
             Directory::root()
         } else {
@@ -192,6 +275,7 @@ mod tests {
             &directory,
             DeclarationLimits::default().walk_entries(),
             &skipped,
+            NothingIgnored,
         )
     }
 
@@ -203,6 +287,75 @@ mod tests {
         EvaluationFailure::LimitReached {
             limit: EvaluationLimit::Walk,
         }
+    }
+
+    /// Rules ignoring the workspace-relative paths in `ignored`, failing every question when
+    /// `fails` is set, and remembering every question asked.
+    #[derive(Debug, Clone, Default)]
+    struct Rules {
+        ignored: Vec<&'static str>,
+        fails: bool,
+        asked: Arc<Mutex<Vec<(String, EntryKind)>>>,
+    }
+
+    impl Rules {
+        fn ignoring(ignored: &[&'static str]) -> Self {
+            Self {
+                ignored: ignored.to_vec(),
+                ..Self::default()
+            }
+        }
+
+        fn failing() -> Self {
+            Self {
+                fails: true,
+                ..Self::default()
+            }
+        }
+
+        fn asked(&self) -> Vec<(String, EntryKind)> {
+            self.asked.lock().unwrap().clone()
+        }
+    }
+
+    impl IgnoreRules for Rules {
+        fn ignored(&self, path: &str, kind: EntryKind) -> buildl_core::Result<Option<Ignoring>> {
+            self.asked.lock().unwrap().push((path.to_owned(), kind));
+            if self.fails {
+                return Err(Error::IgnoreFile {
+                    file: "lib/.buildlignore".to_owned(),
+                    line: Some(1),
+                    reason: "unusable".to_owned(),
+                });
+            }
+            Ok(self
+                .ignored
+                .contains(&path)
+                .then(|| Ignoring::new(".buildlignore", path)))
+        }
+    }
+
+    fn with_rules(
+        root: &Path,
+        directory: &str,
+        skipped: &[&str],
+        rules: Rules,
+        walk_entries: NonZeroU64,
+    ) -> Sources<Rules> {
+        let directory = if directory.is_empty() {
+            Directory::root()
+        } else {
+            Directory::parse(directory).unwrap()
+        };
+        let skipped: Vec<Directory> = skipped
+            .iter()
+            .map(|path| Directory::parse(*path).unwrap())
+            .collect();
+        Sources::new(root, &directory, walk_entries, &skipped, rules)
+    }
+
+    fn unbounded() -> NonZeroU64 {
+        DeclarationLimits::default().walk_entries()
     }
 
     #[test]
@@ -395,7 +548,13 @@ mod tests {
         let (_dir, root) = workspace(&["a.c", "out/1.c", "out/2.c", "out/sub/3.c"]);
         let skipped = [Directory::parse("out").unwrap()];
         // The root and a.c are two entries; none of out is visited.
-        let walk = Sources::new(&root, &Directory::root(), entries(2), &skipped);
+        let walk = Sources::new(
+            &root,
+            &Directory::root(),
+            entries(2),
+            &skipped,
+            NothingIgnored,
+        );
         assert_eq!(walk.find("**/*.c").unwrap(), ["a.c"]);
     }
 
@@ -408,6 +567,7 @@ mod tests {
             &Directory::parse("out/pkg").unwrap(),
             entries(1),
             &skipped,
+            NothingIgnored,
         );
         assert_eq!(walk.find("*.c").unwrap(), Vec::<String>::new());
         let walk = Sources::new(
@@ -415,6 +575,7 @@ mod tests {
             &Directory::parse("out").unwrap(),
             entries(1),
             &skipped,
+            NothingIgnored,
         );
         assert_eq!(walk.find("**/*.c").unwrap(), Vec::<String>::new());
     }
@@ -436,5 +597,129 @@ mod tests {
         fs::write(root.join(OsStr::from_bytes(b"bad\xff.c")), "").unwrap();
         let refusal = sources(&root, "").find("*.c").unwrap_err();
         assert_eq!(refusal.failure(), &EvaluationFailure::Runtime);
+    }
+
+    #[test]
+    fn an_ignored_folder_is_not_entered() {
+        let mut files: Vec<String> = (0..50).map(|index| format!("notes/{index}.md")).collect();
+        files.push("a.c".to_owned());
+        let files: Vec<&str> = files.iter().map(String::as_str).collect();
+        let (_dir, root) = workspace(&files);
+        // The root and a.c are two entries; none of notes is visited.
+        let walk = with_rules(&root, "", &[], Rules::ignoring(&["notes"]), entries(2));
+        assert_eq!(walk.find("**/*").unwrap(), ["a.c"]);
+    }
+
+    #[test]
+    fn an_ignored_file_is_not_listed() {
+        let (_dir, root) = workspace(&["a.log", "b.log"]);
+        let walk = with_rules(&root, "", &[], Rules::ignoring(&["a.log"]), unbounded());
+        assert_eq!(walk.find("*.log").unwrap(), ["b.log"]);
+    }
+
+    #[test]
+    fn a_buildlignore_is_listed_unless_ignored() {
+        let (_dir, root) = workspace(&[".buildlignore", "a.c"]);
+        assert_eq!(
+            sources(&root, "").find("**/*").unwrap(),
+            [".buildlignore", "a.c"]
+        );
+        let walk = with_rules(
+            &root,
+            "",
+            &[],
+            Rules::ignoring(&[".buildlignore"]),
+            unbounded(),
+        );
+        assert_eq!(walk.find("**/*").unwrap(), ["a.c"]);
+    }
+
+    #[test]
+    fn entries_are_asked_with_their_kind_and_full_path() {
+        let (_dir, root) = workspace(&["lib/docs/d.md", "lib/l.rs"]);
+        let rules = Rules::default();
+        let walk = with_rules(&root, "lib", &[], rules.clone(), unbounded());
+        assert_eq!(walk.find("**/*").unwrap(), ["docs/d.md", "l.rs"]);
+        assert_eq!(
+            rules.asked(),
+            [
+                ("lib".to_owned(), EntryKind::Folder),
+                ("lib/docs".to_owned(), EntryKind::Folder),
+                ("lib/docs/d.md".to_owned(), EntryKind::File),
+                ("lib/l.rs".to_owned(), EntryKind::File),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_skip_list_wins_over_the_rules() {
+        let (_dir, root) = workspace(&["a.c", "out/o.c", ".buildl/s.c"]);
+        let rules = Rules::default();
+        let walk = with_rules(&root, "", &["out", ".buildl"], rules.clone(), unbounded());
+        assert_eq!(walk.find("**/*.c").unwrap(), ["a.c"]);
+        assert!(
+            rules
+                .asked()
+                .iter()
+                .all(|(path, _)| !path.starts_with("out") && !path.starts_with(".buildl")),
+            "{:?}",
+            rules.asked()
+        );
+    }
+
+    #[test]
+    fn a_walk_from_an_ignored_folder_lists_nothing() {
+        let (_dir, root) = workspace(&["notes/a.md", "notes/sub/b.md"]);
+        let walk = with_rules(&root, "notes", &[], Rules::ignoring(&["notes"]), entries(1));
+        assert_eq!(walk.find("**/*").unwrap(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_rule_error_stops_the_walk_with_its_text() {
+        let (_dir, root) = workspace(&["lib/a.c", "lib/b.c"]);
+        let walk = with_rules(&root, "lib", &[], Rules::failing(), unbounded());
+        let refusal = walk.find("*.c").unwrap_err();
+        assert_eq!(refusal.failure(), &EvaluationFailure::Runtime);
+        assert_eq!(
+            refusal.diagnostic("sources", None).as_str(),
+            "buildl.sources: lib/.buildlignore:1: unusable"
+        );
+    }
+
+    #[test]
+    fn the_root_is_never_asked() {
+        let (_dir, root) = workspace(&["a.c", "lib/b.c"]);
+        let rules = Rules::default();
+        let walk = with_rules(&root, "", &[], rules.clone(), unbounded());
+        assert_eq!(walk.find("**/*.c").unwrap(), ["a.c", "lib/b.c"]);
+        let asked = rules.asked();
+        assert!(
+            asked.contains(&("a.c".to_owned(), EntryKind::File)),
+            "{asked:?}"
+        );
+        assert!(asked.iter().all(|(path, _)| !path.is_empty()), "{asked:?}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_non_utf8_entry_is_not_asked() {
+        use std::ffi::OsStr;
+        use std::os::unix::ffi::OsStrExt;
+
+        let (_dir, root) = workspace(&["lib/a.c"]);
+        let folder = root.join("lib").join(OsStr::from_bytes(b"bad\xff"));
+        fs::create_dir(&folder).unwrap();
+        fs::write(folder.join("x.h"), "").unwrap();
+        let rules = Rules::default();
+        let walk = with_rules(&root, "lib", &[], rules.clone(), unbounded());
+        assert_eq!(walk.find("*.c").unwrap(), ["a.c"]);
+        assert!(
+            rules
+                .asked()
+                .iter()
+                .all(|(path, _)| path == "lib" || path == "lib/a.c"),
+            "{:?}",
+            rules.asked()
+        );
     }
 }

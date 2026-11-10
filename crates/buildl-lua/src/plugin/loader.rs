@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use airsl::mlua::{self, Lua, Table, Value};
-use buildl_core::{EvaluationFailure, PluginName, PluginRef};
+use buildl_core::{EvaluationFailure, IgnoreRules, PluginName, PluginRef};
 
 use crate::module::{guarded, plugin_chunk_name};
 use crate::plugin::environment;
@@ -34,16 +34,16 @@ use crate::values;
 /// Clones share their instances, so every `use` of one evaluation, from the build file or from a
 /// plugin, draws on one cache.
 #[derive(Debug, Clone)]
-pub(crate) struct Plugins {
-    shared: Arc<Shared>,
+pub(crate) struct Plugins<I> {
+    shared: Arc<Shared<I>>,
 }
 
 #[derive(Debug)]
-struct Shared {
+struct Shared<I> {
     root: PathBuf,
     directories: BTreeMap<PluginName, PathBuf>,
     staging: Arc<Mutex<Staging>>,
-    sources: Sources,
+    sources: Sources<I>,
     results: Results,
     instances: Mutex<BTreeMap<Vec<PluginName>, Value>>,
 }
@@ -70,7 +70,7 @@ struct Fresh {
     text: String,
 }
 
-impl Plugins {
+impl<I: IgnoreRules + Clone + Send + 'static> Plugins<I> {
     /// The plugins of an evaluation in the workspace at `root`: each name in `directories` maps to
     /// the directory holding that plugin's `extension.toml`.
     ///
@@ -81,7 +81,7 @@ impl Plugins {
         root: &Path,
         directories: BTreeMap<PluginName, PathBuf>,
         staging: &Arc<Mutex<Staging>>,
-        sources: &Sources,
+        sources: &Sources<I>,
         results: &Results,
     ) -> Self {
         Self {
@@ -102,7 +102,7 @@ impl Plugins {
     }
 
     /// The source walk the build file and its plugins share.
-    pub(super) fn sources(&self) -> &Sources {
+    pub(super) fn sources(&self) -> &Sources<I> {
         &self.shared.sources
     }
 
@@ -261,7 +261,9 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use airsl::mlua::{Lua, Value};
-    use buildl_core::{Directory, EvaluationFailure, PluginName, PluginRef, PluginVersion};
+    use buildl_core::{
+        Directory, EvaluationFailure, NothingIgnored, PluginName, PluginRef, PluginVersion,
+    };
 
     use super::{Found, Plugins};
     use crate::limits::DeclarationLimits;
@@ -271,7 +273,7 @@ mod tests {
     use crate::staging::Staging;
 
     /// A workspace root holding the plugin `p` at `plugins/p`, and the `Plugins` that know it.
-    fn workspace() -> (tempfile::TempDir, PathBuf, Plugins) {
+    fn workspace() -> (tempfile::TempDir, PathBuf, Plugins<NothingIgnored>) {
         let dir = tempfile::tempdir().unwrap();
         let root = fs::canonicalize(dir.path()).unwrap();
         let plugin = root.join("plugins/p");
@@ -288,6 +290,7 @@ mod tests {
             &Directory::root(),
             DeclarationLimits::default().walk_entries(),
             &[],
+            NothingIgnored,
         );
         let directories = BTreeMap::from([(PluginName::parse("p").unwrap(), plugin.clone())]);
         let plugins = Plugins::new(&root, directories, &staging, &sources, &Results::none());

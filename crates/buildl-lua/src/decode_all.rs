@@ -74,7 +74,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use airsl::{Engine, Script};
-    use buildl_core::Directory;
+    use buildl_core::{Directory, NothingIgnored};
 
     use crate::engine::build;
     use crate::limits::DeclarationLimits;
@@ -89,7 +89,13 @@ mod tests {
         let root = std::fs::canonicalize(dir.path()).unwrap();
         let module = BuildlModule::new(
             Arc::new(Mutex::new(Staging::new(u64::MAX))),
-            Sources::new(&root, &Directory::root(), limits.walk_entries(), &[]),
+            Sources::new(
+                &root,
+                &Directory::root(),
+                limits.walk_entries(),
+                &[],
+                NothingIgnored,
+            ),
             Results::none(),
             &root,
             BTreeMap::new(),

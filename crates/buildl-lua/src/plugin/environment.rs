@@ -15,7 +15,7 @@
 use std::path::Path;
 
 use airsl::mlua::{self, Lua, Table, Value};
-use buildl_core::{Origin, PluginRef};
+use buildl_core::{IgnoreRules, Origin, PluginRef};
 
 use crate::curated::CURATED_REGISTRY_KEY;
 use crate::module::{LANGUAGE_REGISTRY_KEY, primitives_table};
@@ -42,9 +42,9 @@ use crate::snapshot::copy_tables;
 /// # Errors
 ///
 /// Returns mlua's error when a table or function cannot be created, or `chain` is empty.
-pub(super) fn build(
+pub(super) fn build<I: IgnoreRules + Clone + Send + 'static>(
     lua: &Lua,
-    plugins: &Plugins,
+    plugins: &Plugins<I>,
     chain: &[PluginRef],
     dir: &Path,
     label: &str,
@@ -93,7 +93,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use airsl::mlua::{Lua, Table, Value};
-    use buildl_core::{Directory, PluginName, PluginRef, PluginVersion};
+    use buildl_core::{Directory, NothingIgnored, PluginName, PluginRef, PluginVersion};
 
     use super::build;
     use crate::curated::CURATED_REGISTRY_KEY;
@@ -142,6 +142,7 @@ mod tests {
             &Directory::root(),
             DeclarationLimits::default().walk_entries(),
             &[],
+            NothingIgnored,
         );
         let plugins = Plugins::new(
             Path::new("."),
