@@ -175,7 +175,18 @@ fn escape_braces(line: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{escape_braces, trimmed};
+    use std::path::Path;
+
+    use buildl_core::Error;
+
+    use super::{Decision, FolderRules, escape_braces, trimmed};
+
+    fn parsed(text: &str) -> FolderRules {
+        match FolderRules::parse(Path::new("/ws"), ".buildlignore".to_owned(), text) {
+            Ok(rules) => rules,
+            Err(err) => unreachable!("fixture does not parse: {err}"),
+        }
+    }
 
     #[test]
     fn a_bare_brace_is_escaped() {
@@ -201,5 +212,27 @@ mod tests {
     fn trailing_spaces_go_unless_escaped() {
         assert_eq!(trimmed("a  "), "a");
         assert_eq!(trimmed("a\\ "), "a\\ ");
+    }
+
+    #[test]
+    fn a_bad_line_with_braces_is_reported_as_written() {
+        let refused = FolderRules::parse(Path::new("/ws"), ".buildlignore".to_owned(), "{[z-a]\n");
+        let Err(err @ Error::IgnoreFile { line: Some(1), .. }) = refused else {
+            unreachable!("expected an IgnoreFile error on line 1");
+        };
+        assert!(
+            err.to_string()
+                .starts_with(".buildlignore:1: error parsing glob '{[z-a]': "),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn a_pattern_is_reported_without_its_trailing_spaces() {
+        let rules = parsed("{a  \n");
+        let Decision::Ignored(ignoring) = rules.decide("{a", false) else {
+            unreachable!("expected {{a to be ignored");
+        };
+        assert_eq!(ignoring.pattern(), "{a");
     }
 }

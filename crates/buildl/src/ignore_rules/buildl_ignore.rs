@@ -30,21 +30,30 @@ struct Inner {
 /// The `.buildlignore` files of one workspace, asked about one path at a time.
 ///
 /// A cheap-to-clone handle: clones share the files already read. Each folder's file is read the
-/// first time a path needs it and not again, so a change to a file shows only in a new
-/// instance. Two instances over the same root are equal.
+/// first time a path needs it and a file that was used is not read again, so a change to one
+/// shows only in a new instance. A file that is refused is not kept: it is read, and refused,
+/// again on every question that needs it. Two instances over the same root are equal.
 #[derive(Clone)]
 pub struct BuildlIgnore {
     inner: Arc<Inner>,
 }
 
 impl BuildlIgnore {
-    /// Rules over the workspace at `root`, the canonical path of the workspace root. Nothing is
-    /// read until a path is asked about.
+    /// Rules over the workspace at `root`. Nothing is read until a path is asked about.
+    ///
+    /// `root` must be the canonical, absolute path of the workspace root: every file is read
+    /// under it, so a relative root would follow the process's working directory.
+    ///
+    /// # Panics
+    ///
+    /// Panics in a debug build when `root` is not absolute.
     #[must_use]
     pub fn new(root: impl Into<PathBuf>) -> Self {
+        let root = root.into();
+        debug_assert!(root.is_absolute(), "the workspace root must be absolute");
         Self {
             inner: Arc::new(Inner {
-                root: root.into(),
+                root,
                 folders: Mutex::new(HashMap::new()),
             }),
         }
@@ -83,17 +92,13 @@ impl BuildlIgnore {
         }
     }
 
-    /// Asks the files of `levels`, the root and the folders down to the target's own, deepest
-    /// first, about `target`. The first file with a line that matches decides.
-    fn decide_target(&self, levels: &[&str], target: &str, is_folder: bool) -> Result<Decision> {
-        for level in levels.iter().rev() {
-            let Some(rules) = self.rules_of(level)? else {
+    /// Asks `folders`, each a folder's workspace-relative path paired with the target's path
+    /// relative to that folder, listed from the root down, deepest first. The first file with a
+    /// line that matches decides.
+    fn decide_target(&self, folders: &[(&str, &str)], is_folder: bool) -> Result<Decision> {
+        for (folder, relative) in folders.iter().rev() {
+            let Some(rules) = self.rules_of(folder)? else {
                 continue;
-            };
-            let relative = if level.is_empty() {
-                target
-            } else {
-                target.get(level.len() + 1..).unwrap_or(target)
             };
             match rules.decide(relative, is_folder) {
                 Decision::NoMatch => {}
@@ -106,20 +111,20 @@ impl BuildlIgnore {
 
 impl IgnoreRules for BuildlIgnore {
     fn ignored(&self, path: &str, kind: EntryKind) -> Result<Option<Ignoring>> {
-        // The folders on the way down end at each `/`; the root is the folder above them all.
+        // The folders on the way down end at each `/`; the path itself is the last target.
         let ends: Vec<usize> = path.match_indices('/').map(|(end, _)| end).collect();
-        let mut levels: Vec<&str> = vec![""];
-        levels.extend(ends.iter().filter_map(|end| path.get(..*end)));
-        for (depth, level_count) in (1..=levels.len()).enumerate() {
+        for (depth, end) in ends.iter().copied().chain([path.len()]).enumerate() {
             let on_the_way = depth < ends.len();
-            let target = if on_the_way {
-                path.get(..ends[depth]).unwrap_or(path)
-            } else {
-                path
-            };
+            let (target, _) = path.split_at(end);
             let is_folder = on_the_way || self.is_folder(path, kind);
-            let above = levels.get(..level_count).unwrap_or(&levels);
-            if let Decision::Ignored(ignoring) = self.decide_target(above, target, is_folder)? {
+            // The root's file bears on the target, and so does that of each folder above it.
+            let mut folders = vec![("", target)];
+            for folder_end in ends.iter().copied().take(depth) {
+                let (folder, _) = path.split_at(folder_end);
+                let (_, relative) = target.split_at(folder_end + 1);
+                folders.push((folder, relative));
+            }
+            if let Decision::Ignored(ignoring) = self.decide_target(&folders, is_folder)? {
                 return Ok(Some(ignoring));
             }
         }
@@ -383,11 +388,17 @@ mod tests {
 
     #[test]
     fn a_bad_file_on_the_way_is_an_error() {
-        let (_dir, rules) = workspace(&[("lib/.buildlignore", b"[z-a]\n"), ("lib/l.rs", b"")]);
+        let (_dir, rules) = workspace(&[("lib/.buildlignore", b"[z-a]\n"), ("lib/deep/l.rs", b"")]);
         assert!(matches!(
-            rules.ignored("lib/l.rs", EntryKind::File),
+            rules.ignored("lib/deep/l.rs", EntryKind::File),
             Err(Error::IgnoreFile { .. })
         ));
+    }
+
+    #[test]
+    fn a_path_under_a_regular_file_is_not_ignored() {
+        let (_dir, rules) = workspace(&[(".buildlignore", b"c.txt\n"), ("a.txt", b"")]);
+        assert!(!file_ignored(&rules, "a.txt/b"));
     }
 
     #[test]
