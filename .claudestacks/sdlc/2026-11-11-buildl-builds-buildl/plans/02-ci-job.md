@@ -1,5 +1,5 @@
 ---
-status: approved
+status: executing
 created: 2026-11-11
 depends-on: [01]
 built-on: a6e2956d9de2
@@ -107,3 +107,22 @@ no change to buildl in this chain.
 
 - Task 1's YAML check and Task 2's runs.
 - `cargo make dod` and `cargo deny check -D unused-wrapper` green.
+
+## Review findings
+
+- 🔵 `ci.yml`: the comment said the installer "does not refuse a bad pin"; it refuses a malformed
+  or unreleased version, and only an empty pin or `latest` installs the newest. Fixed: the comment
+  is reworded; `ruby -ryaml -e 'YAML.load_file(".github/workflows/ci.yml")'` → `yaml ok`; folded
+  into `7c95637`.
+- ❓ Task 2 (the GitHub run) has not run: it waits for the author's word to push.
+
+## Deviations
+
+- 2026-11-11: the job sets `defaults.run.shell: bash` (GitHub runs it as `bash -e -o pipefail`).
+  The second-pass step keeps `set -o pipefail` and captures buildl's exit code
+  (`out="$(…)" || rc=$?`), so a failing buildl still prints its output before the step fails.
+- 2026-11-11: `cargo make dod` (rc 0, "Build Done in 59.91 seconds") and
+  `cargo deny check -D unused-wrapper` (ok) ran once, covering this plan's and plan 03's commits;
+  neither changes Rust code. Commit `7c95637`.
+- 2026-11-11: Task 2 has not run: it pushes the branch and opens the pull request, which waits for
+  the author's word. The plan stays `executing`.

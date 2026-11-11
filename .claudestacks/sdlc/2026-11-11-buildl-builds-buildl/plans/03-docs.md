@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-11
 depends-on: [02]
 built-on: a6e2956d9de2
@@ -79,3 +79,28 @@ ran and recorded.
 
 - `git grep -n 'The last layer is an aim' -- book/` matches nothing.
 - `cargo make book-build`, `cargo make dod` and `cargo deny check -D unused-wrapper` green.
+
+## Review findings
+
+- 🟡 README and book: the install line was followed by `buildl plugins fetch` in the same shell,
+  but the installer changes `PATH` only for new shells. Fixed: `export PATH="$HOME/.local/bin:$PATH"`
+  is added in both.
+- 🔵 "a cold `tests` runs longer than the default ten minutes" was not measured. Fixed: the
+  timeout is a margin, citing the recorded 238 s cold `buildl test`.
+- 🔵 "the stray files the `.gitignore` expects" read as complete. Fixed: the three patterns are
+  named.
+- 🔵 "each target has 529 inputs … rebuilds nothing": the probes have no inputs and always run.
+  Fixed: "each cargo target", "rebuilds no cargo target".
+- 🔵 "does not refuse a bad pin", "before anything else runs". Fixed: "refuses a malformed or
+  unreleased version, but an empty pin, or `latest`, installs the newest release", "before any
+  buildl command runs".
+- After the fixes: `cargo make book-build` rc 0, and the built page holds
+  `id="buildl-builds-buildl"`; `git grep -n 'The last layer is an aim' -- book/` matches nothing.
+  Commit `d6888de`.
+
+## Deviations
+
+- 2026-11-11: this plan ran before plan 02 is `done`. Plan 02's Task 2 (the GitHub run) waits for
+  the author's word, and this plan reads only plan 02 Task 1's file and plan 01's recorded run. If
+  the GitHub run changes the job, this section follows it.
+- 2026-11-11: the gates ran once, with plan 02's commit (see there); this plan changes prose only.
