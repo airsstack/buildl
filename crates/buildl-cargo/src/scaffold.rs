@@ -8,7 +8,7 @@ use std::fmt::Write;
 use crate::section;
 
 /// The tag of the `rust` plugin that `init` pins in `buildl.toml`.
-pub(crate) const RUST_PLUGIN_TAG: &str = "plugin-rust-v0.2.0";
+pub(crate) const RUST_PLUGIN_TAG: &str = "plugin-rust-v0.2.1";
 
 /// The `.gitignore` lines `init` makes sure are there.
 const IGNORED: [&str; 2] = ["/out/", "/.buildl/"];
@@ -132,7 +132,7 @@ fs.write    = [\"out\", \".buildl\"]
 
 [plugins.rust]
 github      = \"airsstack/buildl\"
-rev         = \"plugin-rust-v0.2.0\"
+rev         = \"plugin-rust-v0.2.1\"
 dir         = \"plugins/rust\"
 proc.run    = [\"sh\", \"rustc\"]
 env.read    = [\"HOME\", \"PATH\"]
@@ -141,7 +141,7 @@ network     = true
 ";
 
         assert_eq!(buildl_toml("demo"), expected);
-        assert_eq!(RUST_PLUGIN_TAG, "plugin-rust-v0.2.0");
+        assert_eq!(RUST_PLUGIN_TAG, "plugin-rust-v0.2.1");
     }
 
     #[test]
