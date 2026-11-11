@@ -82,6 +82,21 @@ sh install.sh --claude
 | AI agents | [With an AI agent](https://airsstack.github.io/buildl/ch01-04-with-an-ai-agent.html) |
 | Examples | [`examples/`](examples/): working workspaces for Go, Rust and Python; the Rust one uses the [`rust` plugin](plugins/rust/README.md), as [`plugins/c`](plugins/c/README.md) serves C and C++ |
 
+## Building this repository
+
+buildl builds and tests this repository with the release `.buildl-version` names:
+
+```sh
+curl -LsSf https://airsstack.github.io/buildl/install.sh | BUILDL_VERSION="$(cat .buildl-version)" sh
+export PATH="$HOME/.local/bin:$PATH"   # the installer changes PATH only for new shells
+buildl plugins fetch
+buildl build
+buildl test
+```
+
+`cargo make dod` stays the gate. See [buildl builds
+buildl](https://airsstack.github.io/buildl/ch11-07-testing-layers.html#buildl-builds-buildl).
+
 ## Crates
 
 | Crate | Holds |

@@ -32,3 +32,7 @@ examples/*/out/
 examples/*/.buildl/
 .github/smoke/out/
 .github/smoke/.buildl/
+
+# What buildl leaves behind when it builds this repository
+/out/
+/.buildl/

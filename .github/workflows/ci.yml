@@ -66,6 +66,104 @@ jobs:
       - name: cargo make dod
         run: cargo make dod
 
+  # buildl builds and tests this repository with a released buildl: the version
+  # `.buildl-version` names is the pin. The job proves the root build.lua,
+  # buildl.toml and .buildlignore work on that release, and that a second run is
+  # served from the store, which `actions/cache` keeps between runs.
+  self-build:
+    name: buildl builds buildl
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install the latest stable Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup show
+          cargo --version
+
+      # An empty pin (or `latest`) installs the latest release, and `v0.3.0`
+      # installs 0.3.0, so the step fails unless the binary reports the pin.
+      - name: Install buildl
+        id: pin
+        run: |
+          pin="$(cat .buildl-version)"
+          curl -LsSf https://airsstack.github.io/buildl/install.sh |
+            BUILDL_VERSION="$pin" BUILDL_CLI_NO_MODIFY_PATH=1 sh
+          got="$("$HOME/.local/bin/buildl" --version)"
+          if [ "$got" != "buildl $pin" ]; then
+            echo "::error::.buildl-version is '$pin', but the installed binary says '$got'"
+            exit 1
+          fi
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          echo "version=$pin" >> "$GITHUB_OUTPUT"
+
+      # The compiler is part of the cache key: a new stable makes a new cache.
+      - name: Toolchain key
+        id: rustc
+        run: |
+          if command -v sha256sum > /dev/null; then
+            hash="$(rustc -vV | sha256sum | cut -d ' ' -f 1)"
+          elif command -v shasum > /dev/null; then
+            hash="$(rustc -vV | shasum -a 256 | cut -d ' ' -f 1)"
+          else
+            echo "::error::neither sha256sum nor shasum is on PATH"
+            exit 1
+          fi
+          echo "hash=$hash" >> "$GITHUB_OUTPUT"
+
+      # On an exact hit nothing is saved; on a miss the newest cache for the same
+      # OS and pin is restored, and the post step saves a new one if the job passes.
+      - name: Cache the buildl store
+        uses: actions/cache@v5
+        with:
+          path: .buildl
+          key: buildl-${{ matrix.os }}-${{ steps.pin.outputs.version }}-${{ steps.rustc.outputs.hash }}-${{ hashFiles('Cargo.toml', 'Cargo.lock', 'rust-toolchain.toml', 'crates/**', 'build.lua', 'buildl.toml', 'buildl.lock', '.buildlignore', '.buildl-version') }}
+          restore-keys: buildl-${{ matrix.os }}-${{ steps.pin.outputs.version }}-
+
+      - name: buildl plugins fetch
+        run: buildl plugins fetch
+
+      - name: buildl build
+        run: buildl build
+
+      - name: buildl test
+        run: buildl test
+
+      # A second pass changes nothing, so the store serves every target but the
+      # four toolchain probes. buildl prints its summary on stderr.
+      - name: Second pass is served from the store
+        run: |
+          set -o pipefail
+          expect() {
+            want="$1"; shift
+            rc=0
+            out="$("$@" 2>&1)" || rc=$?
+            printf '%s\n' "$out"
+            if [ "$rc" -ne 0 ]; then
+              echo "::error::'$*' exited $rc"
+              exit 1
+            fi
+            last="$(printf '%s\n' "$out" | tail -n 1)"
+            if [ "$last" != "$want" ]; then
+              echo "::error::'$*' ended '$last', expected '$want'"
+              exit 1
+            fi
+          }
+          expect '4 built, 2 cached' buildl build
+          expect 'tests: 2 passed (2 cached)' buildl test
+
+      - name: buildl gc
+        run: buildl gc
+
   examples:
     name: Examples
     # Each example under examples/ is a workspace of its own, built and tested by

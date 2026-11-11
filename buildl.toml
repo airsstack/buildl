@@ -1,0 +1,24 @@
+[workspace]
+name   = "buildl"
+entry  = "build.lua"
+out    = "out"
+config = 1
+
+[ceiling]
+proc.run    = ["sh", "rustc"]
+env.read    = ["HOME", "PATH"]
+env.unkeyed = ["HOME", "PATH"]
+fs.read     = ["."]
+fs.write    = ["out", ".buildl"]
+
+[execution]
+timeout = "30m"
+
+[plugins.rust]
+github      = "airsstack/buildl"
+rev         = "plugin-rust-v0.2.1"
+dir         = "plugins/rust"
+proc.run    = ["sh", "rustc"]
+env.read    = ["HOME", "PATH"]
+env.unkeyed = ["HOME", "PATH"]
+network     = true
