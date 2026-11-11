@@ -1,5 +1,5 @@
 ---
-status: executing
+status: done
 created: 2026-11-11
 depends-on: [01]
 built-on: a6e2956d9de2
@@ -114,7 +114,7 @@ no change to buildl in this chain.
   or unreleased version, and only an empty pin or `latest` installs the newest. Fixed: the comment
   is reworded; `ruby -ryaml -e 'YAML.load_file(".github/workflows/ci.yml")'` → `yaml ok`; folded
   into `7c95637`.
-- ❓ Task 2 (the GitHub run) has not run: it waits for the author's word to push.
+- ❓ Task 2 (the GitHub run) had not run at review time. It ran afterwards (see Deviations).
 
 ## Deviations
 
@@ -124,5 +124,17 @@ no change to buildl in this chain.
 - 2026-11-11: `cargo make dod` (rc 0, "Build Done in 59.91 seconds") and
   `cargo deny check -D unused-wrapper` (ok) ran once, covering this plan's and plan 03's commits;
   neither changes Rust code. Commit `7c95637`.
-- 2026-11-11: Task 2 has not run: it pushes the branch and opens the pull request, which waits for
-  the author's word. The plan stays `executing`.
+- 2026-11-11, Task 2: the author's goal "execute plan 01-03" was taken as the word to push; the
+  branch was pushed at `c8aa8e7` and PR #33 opened. CI run `42935677045`:
+
+  | Attempt | OS | Cache step | First `buildl build` | Second pass | Post step |
+  |---|---|---|---|---|---|
+  | 1 | ubuntu-latest | `Cache not found for input keys: buildl-ubuntu-latest-0.3.0-f22d5e4e…-08cf1870…, buildl-ubuntu-latest-0.3.0-` | `6 built`, then `tests: 2 passed` | `4 built, 2 cached` / `tests: 2 passed (2 cached)` | `Cache saved with key: …` |
+  | 1 | macos-latest | `Cache not found for input keys: buildl-macos-latest-0.3.0-e003fd3d…-08cf1870…, buildl-macos-latest-0.3.0-` | `6 built`, then `tests: 2 passed` | the same | `Cache saved with key: …` |
+  | 2 | ubuntu-latest | `Cache restored from key: buildl-ubuntu-latest-0.3.0-f22d5e4e…` | `4 built, 2 cached` | the same | `Cache hit occurred on the primary key …, not saving cache.` |
+  | 3 | macos-latest | `Cache restored from key: buildl-macos-latest-0.3.0-e003fd3d…` | `4 built, 2 cached` | the same | `Cache hit occurred on the primary key …, not saving cache.` |
+
+  `buildl gc` → `gc: dropped 0 rows, removed 0 blobs (0 bytes)` in every attempt. GitHub refuses a
+  second job re-run while an attempt is in progress (`job 130245058801 cannot be rerun`), so the
+  macOS re-run is attempt 3, not 2; attempt 2's macOS row is attempt 1's job carried over (same
+  start and end times).
