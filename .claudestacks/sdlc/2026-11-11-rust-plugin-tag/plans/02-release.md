@@ -1,5 +1,5 @@
 ---
-status: approved
+status: done
 created: 2026-11-11
 depends-on: [01]
 built-on: ba5384fc9684
@@ -74,3 +74,18 @@ pointed at GitHub (`github = "airsstack/buildl"`, `rev = "plugin-rust-v0.2.1"`, 
 
 - Task 1 and Task 2 checks; the board row for this chain reads `chain complete` once both plans
   are `done`.
+
+## Deviations
+
+- 2026-11-11: the author ran both steps from `main` by hand; the checks below were run after.
+  Before the release: `cargo publish --dry-run -p buildl-cargo` packaged and compiled 0.1.2
+  ("warning: aborting upload due to dry run").
+  - `git ls-remote --tags origin 'plugin-rust-*'` → `plugin-rust-v0.2.1` at `43d7a542…` (the
+    merge commit of PR #32), `plugin-rust-v0.2.0` still at `d0717135…`.
+  - `git show 43d7a54:plugins/rust/extension.toml` → `version = "0.2.1"`; `git diff --quiet 60f2d45
+    43d7a54 -- plugins/rust ':!plugins/rust/extension.toml' ':!plugins/rust/README.md'` → rc 0.
+  - A scratch copy of `examples/cargo-buildl` (no `prepare.sh`, `github = "airsstack/buildl"`,
+    `rev = "plugin-rust-v0.2.1"`): `buildl plugins fetch` → "fetched rust
+    43d7a542023880fe37657ac8ba0564a25146f72a"; `buildl plan` → "declared by plugin rust@0.2.1
+    for //:app", rc 0.
+  - `cargo info buildl-cargo@0.1.2 --registry crates-io`, outside the workspace → "version: 0.1.2".
