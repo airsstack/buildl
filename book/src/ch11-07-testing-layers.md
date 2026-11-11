@@ -112,4 +112,113 @@ server, which the job sets, and skip otherwise. A workspace built with `--remote
 every target `remote`, and a second build in a fresh checkout ends with every target `fetched` and
 byte-identical outputs.
 
-The last layer is an aim rather than a test: `buildl`'s own gate running under `buildl`.
+## buildl builds buildl
+
+The last layer is buildl building and testing this repository, with a released buildl. The
+repository root is a buildl workspace: `build.lua`, `buildl.toml`, `buildl.lock`, `.buildlignore`
+and `.buildl-version`. `cargo make dod` stays the gate; this layer shows that the release can run
+it.
+
+`build.lua` is written by hand, not by `cargo buildl init` or `cargo buildl sync`, and makes four
+calls on the [`rust` plugin](ch08-05-the-rust-plugin.md), pinned at `plugin-rust-v0.2.1`:
+
+| Target | Call | cargo runs |
+|---|---|---|
+| `buildl` | `rust.binary("buildl", …)` on `rust.package("buildl-cli")` | `cargo build --locked --bin buildl --profile dev --target-dir target -p buildl-cli` |
+| `cargo-buildl` | `rust.binary("cargo-buildl", …)` on `rust.package("buildl-cargo")` | the same, for `cargo-buildl` and `-p buildl-cargo` |
+| `tests` | `rust.test("tests", …)` | `cargo test --locked --profile dev --target-dir target --workspace --all-targets --all-features` |
+| `doctests` | `rust.test("doctests", …)` | `cargo test --locked --profile dev --target-dir target --workspace --all-features --doc` |
+
+`tests` and `doctests` carry the arguments of `cargo make test` and `cargo make test-doc`, so a pass
+means what the gate's two test steps mean. `buildl.toml` holds what `cargo buildl init` writes,
+plus `[execution] timeout = "30m"`, a margin over the default ten minutes: a cold `buildl test`
+took 238 seconds on an aarch64 macOS machine, and a CI runner has fewer cores.
+
+### What is an input
+
+The `rust` plugin takes every file under the workspace as an input of every target. The root
+`.buildlignore` keeps only what cargo reads:
+
+```text
+/*
+!/Cargo.toml
+!/Cargo.lock
+!/rust-toolchain.toml
+!/crates/
+.DS_*
+*.rs.bk
+mutants.out*/
+```
+
+The first line leaves out everything at the root; the next four bring back the workspace manifest,
+the lock file, the toolchain file and the crates. buildl reads no `.gitignore`, so the last three
+leave out three kinds of stray file the repository's `.gitignore` also lists: `.DS_*`, `*.rs.bk`
+and `mutants.out*/`. Each cargo target then has 529 inputs, and an edit to `book/`, `examples/`,
+`skills/` or any other root folder rebuilds no cargo target. A new file at the root stays out; a new file cargo reads outside `crates/` needs
+a `!/<path>` line. Any other file left under `crates/` is an input, and makes every target dirty on
+that machine.
+
+### The pin
+
+`.buildl-version` holds one line, the version without a `v`: `0.3.0`. buildl never reads it; people
+and CI install that release with it:
+
+```console
+$ curl -LsSf https://airsstack.github.io/buildl/install.sh | BUILDL_VERSION="$(cat .buildl-version)" sh
+$ export PATH="$HOME/.local/bin:$PATH"
+$ buildl plugins fetch
+$ buildl build
+$ buildl test
+```
+
+The installer refuses a malformed or unreleased version, but an empty pin, or `latest`, installs the
+newest release. So CI checks that `buildl --version` prints exactly `buildl <pin>` before any
+buildl command runs.
+
+### The toolchain probe
+
+`rust-toolchain.toml` tracks `stable`, so a `rustup update` changes the compiler without changing an
+input. Each call passes `version_probe = true`, which declares a `<name>.version` target running
+`rustc -vV` and puts its output in the key, so a new compiler rebuilds. The cost shows in `plan`:
+right after a full build it reads `4 to run, 2 conditional, 0 clean`, and a build that changes
+nothing ends `4 built, 2 cached`, the four being the probes.
+
+The probe runs in the sandbox, without `rust-toolchain.toml`, so it reports rustup's default
+toolchain. On a machine whose default is not `stable`, an update to `stable` changes what cargo
+uses without changing what the probe reports, and a stale result can stay cached. The remedy there
+is to delete `.buildl/`, then run `buildl plugins fetch`.
+
+### The CI job
+
+The `self-build` job, on Linux and macOS, installs the pinned release, builds and tests twice, and
+keeps `.buildl/` in GitHub's Actions cache:
+
+```mermaid
+flowchart TD
+    install["install the pinned buildl, check its version"] --> restore["restore .buildl/"]
+    restore --> fetch["buildl plugins fetch"]
+    fetch --> first["buildl build, buildl test"]
+    first --> second["second pass: 4 built, 2 cached, then tests: 2 passed (2 cached)"]
+    second --> gc["buildl gc"]
+    gc -- "miss, job passed" --> save["save .buildl/ under the key"]
+    gc -- "exact hit" --> done["save nothing"]
+```
+
+| | |
+|---|---|
+| key | `buildl-<os>-<pin>-<sha256 of rustc -vV>-<hash of the inputs>` |
+| restore key | `buildl-<os>-<pin>-`: the newest cache for the same OS and release |
+| inputs hashed | `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `crates/**`, `build.lua`, `buildl.toml`, `buildl.lock`, `.buildlignore`, `.buildl-version` |
+
+The key only decides what is restored; buildl decides what is clean from its own action keys, so a
+restored older store is rebuilt where its inputs changed. The second pass must end with the two
+lines in the diagram, which buildl prints on stderr. `buildl gc` then drops what the current
+results no longer need, so the saved store does not grow. The cache is saved only on a miss, and
+only when the job passed.
+
+### After each release
+
+The pin can name only a published release, so it moves after the release is out, in its own
+change: `.buildl-version` names the new version, and the build files change in the same change if
+the release needs it. The new pin is a cache miss, and the restore key never brings back a store
+another release wrote.
