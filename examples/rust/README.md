@@ -34,7 +34,7 @@ fs.write    = ["out", ".buildl"]
 
 [plugins.rust]
 github      = "airsstack/buildl"
-rev         = "plugin-rust-v0.2.0"
+rev         = "plugin-rust-v0.2.1"
 dir         = "plugins/rust"
 proc.run    = ["sh", "rustc"]
 env.read    = ["HOME", "PATH"]
@@ -60,7 +60,7 @@ table.
 Needs the `buildl` binary, a Rust toolchain and `git`. With the published tag:
 
 ```sh
-buildl plugins fetch     # clones the repository at plugin-rust-v0.2.0, keeps plugins/rust, writes buildl.lock
+buildl plugins fetch     # clones the repository at plugin-rust-v0.2.1, keeps plugins/rust, writes buildl.lock
 buildl build             # builds out/hello
 ./out/hello              # hello from rust
 buildl test              # tests: 1 passed
@@ -69,7 +69,7 @@ buildl test              # tests: 1 passed
 From `examples/`, `sh check.sh rust` runs the shared checks on a copy. The published tag is the
 normal route; to run the plugin as this checkout holds it instead, as CI does, the copy first runs
 `prepare.sh`: it commits this checkout's `plugins/rust` to a temporary git repository, tags it
-`plugin-rust-v0.2.0`, points the copy's `buildl.toml` at that repository with `git = "file://…"`
+`plugin-rust-v0.2.1`, points the copy's `buildl.toml` at that repository with `git = "file://…"`
 instead of `github`, and fetches. Then `assert.sh` checks the program's output, that `buildl plan`
 after an edit to `src/main.rs` runs `//:hello` and `//:unit`, that the test passes, that a second
 `buildl test` is served from the cache, and that `buildl log //:unit` shows what `cargo test`

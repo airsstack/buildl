@@ -5,7 +5,7 @@
 #
 # The tags exist once the plugins are released, and CI runs the plugins as this checkout
 # has them anyway. So the checkout's plugins/rust and plugins/c go into one temporary git
-# repository, tagged plugin-rust-v0.2.0 and plugin-c-v0.2.0, and the copy's buildl.toml
+# repository, tagged plugin-rust-v0.2.1 and plugin-c-v0.2.0, and the copy's buildl.toml
 # names that repository instead of GitHub.
 
 set -eu
@@ -27,7 +27,7 @@ cp -R "${BUILDL_REPO}/plugins/c" "${repo}/plugins/c"
 git -C "${repo}" add plugins
 git -C "${repo}" -c user.name=buildl -c user.email=buildl@example.invalid \
     -c commit.gpgsign=false commit --quiet -m "the rust and c plugins"
-for tag in plugin-rust-v0.2.0 plugin-c-v0.2.0; do
+for tag in plugin-rust-v0.2.1 plugin-c-v0.2.0; do
     git -C "${repo}" -c user.name=buildl -c user.email=buildl@example.invalid \
         -c tag.gpgsign=false tag "${tag}"
 done

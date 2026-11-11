@@ -56,7 +56,7 @@ cargo buildl sync --check              # in CI: exit code 5 when build.lua is be
 From `examples/`, `sh check.sh cargo-buildl` runs the shared checks on a copy; it needs `git`, a
 Rust toolchain and `cargo-buildl` beside `buildl` (`cargo build -p buildl-cargo`, or
 `CARGO_BUILDL`). The copy first runs `prepare.sh`: it commits this checkout's `plugins/rust` to a
-temporary git repository, tags it `plugin-rust-v0.2.0`, points the copy's `buildl.toml` at it with
+temporary git repository, tags it `plugin-rust-v0.2.1`, points the copy's `buildl.toml` at it with
 `git = "file://…"`, and fetches. Then `assert.sh` checks what `out/app` prints, that `out/` holds
 the binary and `libffi.a` alone, and that `sync --check` passes. It adds a second binary,
 `app/src/bin/extra.rs`, and checks that `sync --check` exits 5, that `sync` adds
