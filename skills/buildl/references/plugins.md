@@ -133,7 +133,7 @@ Two plugins are fetched from `airsstack/buildl`, each with its own `dir` and tag
 | Plugin | `rev` | `dir` | Functions |
 |---|---|---|---|
 | `c` | `plugin-c-v0.2.0` | `plugins/c` | `c.binary`, `c.library`, `c.shared_library`, `c.test` |
-| `rust` | `plugin-rust-v0.2.0` | `plugins/rust` | `rust.binary`, `rust.library`, `rust.test` |
+| `rust` | `plugin-rust-v0.2.1` | `plugins/rust` | `rust.binary`, `rust.library`, `rust.test` |
 
 The `rust` plugin runs `cargo` through `sh -c`, so its table lists `sh` and `rustc` in `proc.run`,
 `HOME` and `PATH` in `env.read` and `env.unkeyed`, and `network = true`, because cargo downloads

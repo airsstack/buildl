@@ -48,10 +48,10 @@ run    //schema:gen: input schema/schema.json changed
   unkeyed variables: HOME, PATH
   write into:        .buildl, out
   reach the network: //rust:cli
-  sh: declared by plugin rust@0.1.0 for //rust:cli
-  HOME (unkeyed): declared by plugin rust@0.1.0 for //rust:cli
-  PATH (unkeyed): declared by plugin rust@0.1.0 for //rust:cli
-  //rust:cli: declared by plugin rust@0.1.0 for //rust:cli
+  sh: declared by plugin rust@0.2.1 for //rust:cli
+  HOME (unkeyed): declared by plugin rust@0.2.1 for //rust:cli
+  PATH (unkeyed): declared by plugin rust@0.2.1 for //rust:cli
+  //rust:cli: declared by plugin rust@0.2.1 for //rust:cli
 1 to run, 3 conditional, 0 clean
 ```
 
@@ -78,10 +78,10 @@ clean  //schema:gen
   unkeyed variables: HOME, PATH
   write into:        .buildl, out
   reach the network: //rust:cli
-  sh: declared by plugin rust@0.1.0 for //rust:cli
-  HOME (unkeyed): declared by plugin rust@0.1.0 for //rust:cli
-  PATH (unkeyed): declared by plugin rust@0.1.0 for //rust:cli
-  //rust:cli: declared by plugin rust@0.1.0 for //rust:cli
+  sh: declared by plugin rust@0.2.1 for //rust:cli
+  HOME (unkeyed): declared by plugin rust@0.2.1 for //rust:cli
+  PATH (unkeyed): declared by plugin rust@0.2.1 for //rust:cli
+  //rust:cli: declared by plugin rust@0.2.1 for //rust:cli
 0 to run, 0 conditional, 4 clean
 ```
 
@@ -108,10 +108,10 @@ run    //schema:gen: input schema/schema.json changed
   unkeyed variables: HOME, PATH
   write into:        .buildl, out
   reach the network: //rust:cli
-  sh: declared by plugin rust@0.1.0 for //rust:cli
-  HOME (unkeyed): declared by plugin rust@0.1.0 for //rust:cli
-  PATH (unkeyed): declared by plugin rust@0.1.0 for //rust:cli
-  //rust:cli: declared by plugin rust@0.1.0 for //rust:cli
+  sh: declared by plugin rust@0.2.1 for //rust:cli
+  HOME (unkeyed): declared by plugin rust@0.2.1 for //rust:cli
+  PATH (unkeyed): declared by plugin rust@0.2.1 for //rust:cli
+  //rust:cli: declared by plugin rust@0.2.1 for //rust:cli
 1 to run, 3 conditional, 0 clean
 $ buildl build
 --- //rust:cli
