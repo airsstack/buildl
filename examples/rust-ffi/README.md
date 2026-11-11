@@ -51,7 +51,7 @@ fs.write    = ["out", ".buildl"]
 
 [plugins.rust]
 github      = "airsstack/buildl"
-rev         = "plugin-rust-v0.2.0"
+rev         = "plugin-rust-v0.2.1"
 dir         = "plugins/rust"
 proc.run    = ["sh", "rustc"]
 env.read    = ["HOME", "PATH"]
@@ -87,7 +87,7 @@ buildl test              # tests: 2 passed
 
 From `examples/`, `sh check.sh rust-ffi` runs the shared checks on a copy. The copy first runs
 `prepare.sh`: it commits this checkout's `plugins/rust` and `plugins/c` to one temporary git
-repository, tags it `plugin-rust-v0.2.0` and `plugin-c-v0.2.0`, points both plugins in the copy's
+repository, tags it `plugin-rust-v0.2.1` and `plugin-c-v0.2.0`, points both plugins in the copy's
 `buildl.toml` at it with `git = "file://…"`, and fetches. Then `assert.sh` checks what both programs
 print, that a comment added to `c/include/clamp.h` reruns the object of `clamp.c` and leaves
 `//rust:calc` cached (the object comes out the same bytes), that a comment added to

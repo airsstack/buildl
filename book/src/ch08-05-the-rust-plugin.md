@@ -39,7 +39,7 @@ fs.write    = ["out", ".buildl"]
 
 [plugins.rust]
 github      = "airsstack/buildl"
-rev         = "plugin-rust-v0.2.0"
+rev         = "plugin-rust-v0.2.1"
 dir         = "plugins/rust"
 proc.run    = ["sh", "rustc"]
 env.read    = ["HOME", "PATH"]
@@ -117,7 +117,7 @@ tests: 1 passed
 ```
 
 What cargo printed is shown with the target, as any program's output is. `plan` after the build
-shows what the plugin declared. Everything is clean, and its `declared by plugin rust@0.1.0` lines
+shows what the plugin declared. Everything is clean, and its `declared by plugin rust@0.2.1` lines
 say who wanted what:
 
 ```console
@@ -127,10 +127,10 @@ clean  //:hello
   unkeyed variables: HOME, PATH
   write into:        .buildl, out
   reach the network: //:hello
-  sh: declared by plugin rust@0.1.0 for //:hello
-  HOME (unkeyed): declared by plugin rust@0.1.0 for //:hello
-  PATH (unkeyed): declared by plugin rust@0.1.0 for //:hello
-  //:hello: declared by plugin rust@0.1.0 for //:hello
+  sh: declared by plugin rust@0.2.1 for //:hello
+  HOME (unkeyed): declared by plugin rust@0.2.1 for //:hello
+  PATH (unkeyed): declared by plugin rust@0.2.1 for //:hello
+  //:hello: declared by plugin rust@0.2.1 for //:hello
 0 to run, 0 conditional, 1 clean
 ```
 
@@ -145,11 +145,11 @@ run    //:unit: input src/main.rs changed
   unkeyed variables: HOME, PATH
   write into:        .buildl, out
   reach the network: //:hello, //:unit
-  sh: declared by plugin rust@0.1.0 for //:hello
-  HOME (unkeyed): declared by plugin rust@0.1.0 for //:hello
-  PATH (unkeyed): declared by plugin rust@0.1.0 for //:hello
-  //:hello: declared by plugin rust@0.1.0 for //:hello
-  //:unit: declared by plugin rust@0.1.0 for //:unit
+  sh: declared by plugin rust@0.2.1 for //:hello
+  HOME (unkeyed): declared by plugin rust@0.2.1 for //:hello
+  PATH (unkeyed): declared by plugin rust@0.2.1 for //:hello
+  //:hello: declared by plugin rust@0.2.1 for //:hello
+  //:unit: declared by plugin rust@0.2.1 for //:unit
 2 to run, 0 conditional, 0 clean
 ```
 
@@ -396,7 +396,7 @@ stops with exit code 4:
 
 ```console
 $ buildl build
-error: build.lua: //:hello (plugin rust@0.1.0): program sh is outside plugin rust@0.1.0 (proc.run allows: rustc)
+error: build.lua: //:hello (plugin rust@0.2.1): program sh is outside plugin rust@0.2.1 (proc.run allows: rustc)
 ```
 
 Programs cargo starts itself, that is `rustc`, the linker and build scripts, are not seen by the
@@ -469,5 +469,5 @@ buildl repository are the builds above, each with a README. From `examples/`, `s
 (or `rust-workspace`, `rust-ffi`, `polyglot`) runs `check`, `build`,
 `test`, `verify` and the example's own assertions on a copy. The copy first runs `prepare.sh`,
 which commits this checkout's `plugins/rust` to a temporary git repository, tags it
-`plugin-rust-v0.2.0` and points the copy's `buildl.toml` at it, so the check runs the plugin as the
+`plugin-rust-v0.2.1` and points the copy's `buildl.toml` at it, so the check runs the plugin as the
 checkout holds it instead of the published tag.

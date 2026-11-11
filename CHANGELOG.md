@@ -5,6 +5,20 @@ Notable changes to this workspace, newest first. The format follows
 [SemVer](https://semver.org/) — with the caveat that for a `0.1.z` version the *middle* number is
 the slot Cargo treats as breaking, so a compatible change ships as a `z` bump.
 
+## buildl-cargo 0.1.2 and the rust plugin 0.2.1 — 2026-11-11
+
+It publishes `buildl-cargo` at 0.1.2 and tags the `rust` plugin `plugin-rust-v0.2.1`. No other
+crate is released, and the plugin's code does not change.
+
+### Fixed
+
+- **`plugin-rust-v0.2.0` was tagged at the 0.1.0 plugin**: at that tag `rust.library` takes `kind`
+  as a string and accepts `output`, so a workspace pinning it ran 0.1.0. `plugin-rust-v0.2.1` is
+  the plugin 0.2.0 describes (`kind` a list of crate types, `output` refused), and
+  `cargo buildl init` pins it from `buildl-cargo` 0.1.2. A
+  workspace on `plugin-rust-v0.2.0` moves by changing its `rev` to `plugin-rust-v0.2.1` and running
+  `buildl plugins fetch`. `plugin-rust-v0.2.0` is left where it is.
+
 ## 0.3.0 — 2026-11-10
 
 It publishes `buildl-core`, `buildl-lua`, `buildl` and `buildl-cli` at 0.3.0, and `buildl-cargo` at

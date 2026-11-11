@@ -5,7 +5,7 @@
 #
 # The tag exists once the plugin is released, but CI runs the plugin as this checkout has it,
 # not the published tag. So the checkout's plugins/rust goes into a temporary git repository, tagged
-# plugin-rust-v0.2.0, and the copy's buildl.toml names that repository instead of GitHub.
+# plugin-rust-v0.2.1, and the copy's buildl.toml names that repository instead of GitHub.
 
 set -eu
 BUILDL="${BUILDL:-buildl}"
@@ -26,7 +26,7 @@ git -C "${repo}" add plugins
 git -C "${repo}" -c user.name=buildl -c user.email=buildl@example.invalid \
     -c commit.gpgsign=false commit --quiet -m "the rust plugin"
 git -C "${repo}" -c user.name=buildl -c user.email=buildl@example.invalid \
-    -c tag.gpgsign=false tag plugin-rust-v0.2.0
+    -c tag.gpgsign=false tag plugin-rust-v0.2.1
 
 # Point the plugin at the local repository instead of the published one.
 line='github      = "airsstack/buildl"'
